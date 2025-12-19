@@ -1,5 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
-
+import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn,OneToOne ,JoinColumn} from 'typeorm';
+import { Worker } from '../../worker/entities/worker.entity'; 
 @Entity('user')
 export class User {
 
@@ -33,4 +33,8 @@ export class User {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+ @OneToOne(() => Worker, worker => worker.user, { cascade: true })
+  @JoinColumn({ name: 'worker_id' })
+  worker: Worker;
 }
