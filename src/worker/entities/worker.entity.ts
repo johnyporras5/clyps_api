@@ -1,5 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
-
+import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn,OneToOne,JoinColumn} from 'typeorm';
+import { User } from '../../user/entities/user.entity'; 
 @Entity('worker')
 export class Worker {
 
@@ -23,4 +23,12 @@ export class Worker {
 
   @Column({ name: 'description', type: 'text', nullable: true })
   description: string;
+
+   // Relación uno a uno con User
+  @OneToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
+
+  @Column({ name: 'user_id', unique: true })
+  userId: number;
 }
