@@ -1,6 +1,7 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, OneToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, OneToOne, OneToMany } from 'typeorm';
 import { Worker } from '../../worker/entities/worker.entity';
 import { Client } from '../../client/entities/client.entity';
+import { UserVerificationCodes } from '../../user-verification-codes/entities/user-verification-codes.entity';
 
 @Entity('user')
 export class User {
@@ -20,10 +21,7 @@ export class User {
   @Column({ name: 'user_type', length: 5, nullable: true })
   userType: string;
 
-
-  @Column({ name: 'email_verified', default: 0 })
-  emailVerified: number;
-
+ 
   @Column({ name: 'last_login', type: 'datetime', nullable: true })
   lastLogin: Date;
 
@@ -36,9 +34,17 @@ export class User {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
+   @Column({ name: 'email_verified', type: 'tinyint', default: 0 })
+  emailVerified: number; // 0 = false, 1 = true
+
  @OneToOne(() => Worker, worker => worker.user, { nullable: true, cascade:true })
   worker?: Worker;
 
   @OneToOne(() => Client, client => client.user, { nullable: true, cascade:true })
   client?: Client;
+
+  @OneToMany(() => UserVerificationCodes, verificationCode => verificationCode.user)
+  verificationCodes: UserVerificationCodes[];
+
+
 }
