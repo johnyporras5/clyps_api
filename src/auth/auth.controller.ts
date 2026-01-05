@@ -39,10 +39,10 @@ export class AuthController {
    * Registro para clientes
    * POST /auth/register/client
    */
-  @Post('register/client')
-  async registerClient(@Body() registerDto: RegisterClientDto) {
-    return this.authService.registerClient(registerDto);
-  }
+@Post('register/client')
+async registerClient(@Body() registerDto: RegisterClientDto) {
+  return this.authService.registerClient(registerDto);
+}
 
   /**
    * Login para todos los tipos de usuarios

@@ -9,10 +9,11 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { User } from '../user/entities/user.entity';
 import { Worker } from '../worker/entities/worker.entity'; 
+import { Client } from 'src/client/entities/client.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User,Worker]),
+    TypeOrmModule.forFeature([User,Worker,Client]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

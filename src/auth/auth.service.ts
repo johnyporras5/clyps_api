@@ -8,6 +8,9 @@ import { RegisterBaseDto } from './dto/register-base.dto';
 import { LoginDto } from './dto/login.dto';
 import { Worker } from '../worker/entities/worker.entity'; 
 import { RegisterWorkerDto } from './dto/register-worker.dto';
+import { Client } from '../client/entities/client.entity'; 
+import { RegisterClientDto } from './dto/register-client.dto'; 
+
 
 @Injectable()
 export class AuthService {
@@ -16,7 +19,10 @@ export class AuthService {
     private userRepository: Repository<User>,
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
+    @InjectRepository(Client) 
+    private clientRepository: Repository<Client>,
     private jwtService: JwtService,
+
   ) {}
 
   /**
@@ -166,12 +172,70 @@ export class AuthService {
   /**
    * Registro específico para clientes
    */
-  async registerClient(registerDto: RegisterBaseDto): Promise<{ 
+  async registerClient(registerDto: RegisterClientDto): Promise<{ 
     message: string; 
     user: Partial<User>;
     access_token?: string;
   }> {
-    return this.registerUser(registerDto, 'cli');
+    // Verificar si el email ya existe
+    const existingUserByEmail = await this.userRepository.findOne({
+      where: { email: registerDto.email }
+    });
+
+    if (existingUserByEmail) {
+      throw new ConflictException('El email ya está registrado');
+    }
+
+    // Verificar si el username ya existe
+    const existingUserByUsername = await this.userRepository.findOne({
+      where: { username: registerDto.username }
+    });
+
+    if (existingUserByUsername) {
+      throw new ConflictException('El nombre de usuario ya está en uso');
+    }
+
+    // Encriptar contraseña
+    const hashedPassword = await bcrypt.hash(registerDto.password, 10);
+
+    // Crear usuario
+    const user = this.userRepository.create({
+      username: registerDto.username,
+      email: registerDto.email,
+      password: hashedPassword,
+      userType: 'cli',
+    });
+
+    const savedUser = await this.userRepository.save(user);
+
+    // Crear perfil de client
+    const client = this.clientRepository.create({
+      name: registerDto.name,
+      lastName: registerDto.lastName,
+      email: registerDto.email,
+      location: registerDto.location,
+      userId: savedUser.id
+    });
+
+    await this.clientRepository.save(client);
+
+    // Generar token JWT para login automático después del registro
+    const payload = {
+      email: user.email,
+      sub: user.id,
+      userType: user.userType
+    };
+
+    const access_token = this.jwtService.sign(payload);
+
+    // Eliminar password del objeto de respuesta
+    const { password, ...userWithoutPassword } = user;
+
+    return {
+      message: 'Client registrado exitosamente',
+      user: userWithoutPassword,
+      access_token
+    };
   }
 
   /**
