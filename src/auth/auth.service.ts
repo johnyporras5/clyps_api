@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException,BadRequestException,NotFoundException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -13,6 +13,12 @@ import { RegisterClientDto } from './dto/register-client.dto';
 import { EmailService } from '../email/email.service';
 import { VerificationService } from '../verification/verification.service';
 import { TokenBlacklistService } from './services/token_blacklist.service'; 
+
+// Importar todos los DTOs de cambio de contraseña
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { RequestPasswordResetDto, ResetPasswordDto, VerifyResetCodeDto } from './dto/reset-password.dto';
+import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -22,74 +28,13 @@ export class AuthService {
     private workerRepository: Repository<Worker>,
     @InjectRepository(Client) 
     private clientRepository: Repository<Client>,
+    private jwtService: JwtService,
     private emailService: EmailService,
     private verificationService: VerificationService,
-    private jwtService: JwtService,
-    private tokenBlacklistService: TokenBlacklistService, 
-
-
+    private tokenBlacklistService: TokenBlacklistService,
   ) {}
 
-  /**
-   * Método interno de registro con tipo de usuario específico
-   */
-  private async registerUser(
-    registerDto: RegisterBaseDto, 
-    userType: 'adm' | 'wrk' | 'cli'
-  ): Promise<{ 
-    message: string; 
-    user: Partial<User>;
-    access_token?: string;
-  }> {
-    // Verificar si el email ya existe
-    const existingUserByEmail = await this.userRepository.findOne({
-      where: { email: registerDto.email }
-    });
-
-    if (existingUserByEmail) {
-      throw new ConflictException('El email ya está registrado');
-    }
-
-    // Verificar si el username ya existe
-    const existingUserByUsername = await this.userRepository.findOne({
-      where: { username: registerDto.username }
-    });
-
-    if (existingUserByUsername) {
-      throw new ConflictException('El nombre de usuario ya está en uso');
-    }
-
-    // Encriptar contraseña
-    const hashedPassword = await bcrypt.hash(registerDto.password, 10);
-
-    // Crear usuario
-    const user = this.userRepository.create({
-      username: registerDto.username,
-      email: registerDto.email,
-      password: hashedPassword,
-      userType: userType,
-    });
-
-    await this.userRepository.save(user);
-
-    // Generar token JWT para login automático después del registro
-    const payload = {
-      email: user.email,
-      sub: user.id,
-      userType: user.userType
-    };
-
-    const access_token = this.jwtService.sign(payload);
-
-    // Eliminar password del objeto de respuesta
-    const { password, ...userWithoutPassword } = user;
-
-    return {
-      message: `${userType.charAt(0).toUpperCase() + userType.slice(1)} registrado exitosamente`,
-      user: userWithoutPassword,
-      access_token
-    };
-  }
+  // ==================== MÉTODOS DE REGISTRO ====================
 
   /**
    * Registro específico para administradores
@@ -105,9 +50,8 @@ export class AuthService {
     });
 
     if (existingUserByEmail) {
-      // AGREGADO: Si el usuario existe pero no está verificado, permitir reenviar código
+      // Si el usuario existe pero no está verificado, permitir reenviar código
       if (existingUserByEmail.emailVerified === 0) {
-        // Enviar código de verificación
         await this.sendVerificationCode(registerDto.email);
         throw new ConflictException({
           message: 'El email ya está registrado pero no verificado. Se ha enviado un nuevo código de verificación.',
@@ -136,15 +80,15 @@ export class AuthService {
       email: registerDto.email,
       password: hashedPassword,
       userType: 'adm',
-      emailVerified: 0, // AGREGADO: No verificado por defecto
+      emailVerified: 0,
     });
 
     await this.userRepository.save(user);
 
-    // AGREGADO: Enviar código de verificación
+    // Enviar código de verificación
     await this.sendVerificationCode(user.email);
 
-    // Generar token JWT para login automático después del registro
+    // Generar token JWT
     const payload = {
       email: user.email,
       sub: user.id,
@@ -163,7 +107,7 @@ export class AuthService {
     };
   }
 
-   /**
+  /**
    * Registro específico para trabajadores
    */
   async registerWorker(registerDto: RegisterWorkerDto): Promise<{ 
@@ -177,9 +121,8 @@ export class AuthService {
     });
 
     if (existingUserByEmail) {
-      // AGREGADO: Si el usuario existe pero no está verificado, permitir reenviar código
+      // Si el usuario existe pero no está verificado, permitir reenviar código
       if (existingUserByEmail.emailVerified === 0) {
-        // Enviar código de verificación
         await this.sendVerificationCode(registerDto.email);
         throw new ConflictException({
           message: 'El email ya está registrado pero no verificado. Se ha enviado un nuevo código de verificación.',
@@ -208,7 +151,7 @@ export class AuthService {
       email: registerDto.email,
       password: hashedPassword,
       userType: 'wrk',
-      emailVerified: 0, // AGREGADO: No verificado por defecto
+      emailVerified: 0,
     });
 
     const savedUser = await this.userRepository.save(user);
@@ -226,7 +169,7 @@ export class AuthService {
 
     await this.workerRepository.save(worker);
 
-    // AGREGADO: Enviar código de verificación
+    // Enviar código de verificación
     await this.sendVerificationCode(user.email);
 
     // Generar token JWT
@@ -262,9 +205,8 @@ export class AuthService {
     });
 
     if (existingUserByEmail) {
-      // AGREGADO: Si el usuario existe pero no está verificado, permitir reenviar código
+      // Si el usuario existe pero no está verificado, permitir reenviar código
       if (existingUserByEmail.emailVerified === 0) {
-        // Enviar código de verificación
         await this.sendVerificationCode(registerDto.email);
         throw new ConflictException({
           message: 'El email ya está registrado pero no verificado. Se ha enviado un nuevo código de verificación.',
@@ -293,7 +235,7 @@ export class AuthService {
       email: registerDto.email,
       password: hashedPassword,
       userType: 'cli',
-      emailVerified: 0, // AGREGADO: No verificado por defecto
+      emailVerified: 0,
     });
 
     const savedUser = await this.userRepository.save(user);
@@ -309,7 +251,7 @@ export class AuthService {
 
     await this.clientRepository.save(client);
 
-    // AGREGADO: Enviar código de verificación
+    // Enviar código de verificación
     await this.sendVerificationCode(user.email);
 
     // Generar token JWT
@@ -331,13 +273,9 @@ export class AuthService {
     };
   }
 
-  /**
-   * Login para todos los tipos de usuarios
-   */
-   async login(loginDto: LoginDto): Promise<{ 
-    access_token: string; 
-    user: Partial<User> 
-  }> {
+  // ==================== MÉTODOS DE LOGIN ====================
+
+  async login(loginDto: LoginDto): Promise<{ access_token: string; user: Partial<User> }> {
     const user = await this.userRepository.findOne({
       where: { email: loginDto.email }
     });
@@ -346,14 +284,14 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    // Verificar contraseña
+    // Primero verificamos si la contraseña es válida
     const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    // AGREGADO: Verificar si el email no está verificado
+    // Si el usuario no está verificado
     if (user.emailVerified === 0) {
       // Verificar si ya hay un código activo
       const codeStatus = await this.verificationService.getVerificationCodeStatus(user.id);
@@ -405,11 +343,10 @@ export class AuthService {
       }
     }
 
-    // Actualizar lastLogin
+    // Actualizar lastLogin del usuario
     user.lastLogin = new Date();
     await this.userRepository.save(user);
 
-    // Generar token JWT
     const payload = {
       email: user.email,
       sub: user.id,
@@ -418,7 +355,6 @@ export class AuthService {
 
     const access_token = this.jwtService.sign(payload);
 
-    // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
 
     return {
@@ -427,22 +363,7 @@ export class AuthService {
     };
   }
 
-  /**
-   * Verificar si un email ya existe
-   */
-  async checkEmailExists(email: string): Promise<{ exists: boolean }> {
-    const user = await this.userRepository.findOne({ where: { email } });
-    return { exists: !!user };
-  }
-
-  /**
-   * Verificar si un username ya existe
-   */
-  async checkUsernameExists(username: string): Promise<{ exists: boolean }> {
-    const user = await this.userRepository.findOne({ where: { username } });
-    return { exists: !!user };
-  }
-
+  // ==================== MÉTODOS DE VERIFICACIÓN ====================
 
   /**
    * Método separado para enviar código de verificación
@@ -487,11 +408,8 @@ export class AuthService {
     };
   }
 
-  /**
-   * Verificar email con código
-   */
   async verifyEmail(email: string, code: string): Promise<{ message: string }> {
-    const success = await this.verificationService.verifyCodeByEmail(email, code);
+    const success = await this.verificationService.verifyCode(email, code);
 
     if (success) {
       return { message: 'Email verificado correctamente. Ahora puedes iniciar sesión.' };
@@ -500,16 +418,14 @@ export class AuthService {
     throw new BadRequestException('Error al verificar el email');
   }
 
-  /**
-   * Reenviar código de verificación
-   */
   async resendVerificationCode(email: string): Promise<{ message: string }> {
+    // Usar el método separado para reenviar código
     const result = await this.sendVerificationCode(email);
     return { message: result.message };
   }
 
   /**
-   * Verificar si un usuario existe y su estado (verificado o no)
+   * Método para verificar si un usuario existe y su estado
    */
   async checkUserStatus(email: string): Promise<{ exists: boolean; verified: boolean; userId?: number }> {
     const user = await this.userRepository.findOne({ where: { email } });
@@ -525,31 +441,276 @@ export class AuthService {
     };
   }
 
+  // ==================== MÉTODOS DE CAMBIO Y RESETEO DE CONTRASEÑA ====================
 
   /**
-   * Cerrar sesión - agregar token a la blacklist
+   * Cambiar contraseña (usuario autenticado)
+   */
+  async changePassword(userId: number, changePasswordDto: ChangePasswordDto): Promise<{ message: string }> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    // Verificar contraseña actual
+    const isCurrentPasswordValid = await bcrypt.compare(
+      changePasswordDto.currentPassword,
+      user.password
+    );
+
+    if (!isCurrentPasswordValid) {
+      throw new UnauthorizedException('La contraseña actual es incorrecta');
+    }
+
+    // Verificar que las nuevas contraseñas coincidan
+    if (changePasswordDto.newPassword !== changePasswordDto.confirmNewPassword) {
+      throw new BadRequestException('Las nuevas contraseñas no coinciden');
+    }
+
+    // Verificar que la nueva contraseña no sea igual a la actual
+    const isSamePassword = await bcrypt.compare(
+      changePasswordDto.newPassword,
+      user.password
+    );
+
+    if (isSamePassword) {
+      throw new BadRequestException('La nueva contraseña debe ser diferente a la actual');
+    }
+
+    // Encriptar nueva contraseña
+    const hashedNewPassword = await bcrypt.hash(changePasswordDto.newPassword, 10);
+
+    // Actualizar contraseña
+    user.password = hashedNewPassword;
+    await this.userRepository.save(user);
+
+    // Enviar email de notificación
+    try {
+      await this.emailService.sendPasswordChangedNotification(
+        user.email,
+        user.username
+      );
+    } catch (error) {
+      console.warn('No se pudo enviar email de notificación:', error.message);
+    }
+
+    return { message: 'Contraseña cambiada exitosamente' };
+  }
+
+  async requestPasswordReset(requestPasswordResetDto: RequestPasswordResetDto): Promise<{ message: string }> {
+    const user = await this.userRepository.findOne({
+      where: { email: requestPasswordResetDto.email }
+    });
+
+    // Verificar explícitamente si el usuario existe
+    if (!user) {
+      throw new NotFoundException('No existe un usuario registrado con este email');
+    }
+
+    // Verificar si el email está verificado (opcional, dependiendo de tus requisitos)
+    if (user.emailVerified === 0) {
+      throw new BadRequestException('Por favor verifica tu email antes de solicitar un reseteo de contraseña');
+    }
+
+    // Generar código de reseteo
+    const code = await this.verificationService.generatePasswordResetCode(user.id);
+
+    // Enviar email con el código
+    const emailSent = await this.emailService.sendPasswordResetCode(
+      user.email,
+      code,
+      user.username
+    );
+
+    if (!emailSent) {
+      console.warn('No se pudo enviar email de reseteo de contraseña');
+      throw new BadRequestException('No se pudo enviar el código de reseteo de contraseña');
+    }
+
+    return {
+      message: 'Se ha enviado un código de restablecimiento de contraseña a tu email'
+    };
+  }
+
+  /**
+   * Verificar código de reseteo de contraseña
+   */
+  async verifyResetCode(verifyResetCodeDto: VerifyResetCodeDto): Promise<{ message: string; valid: boolean }> {
+    const user = await this.userRepository.findOne({
+      where: { email: verifyResetCodeDto.email }
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    const isValid = await this.verificationService.verifyCodeByUserId(
+      user.id,
+      verifyResetCodeDto.code,
+      'password_reset'
+    );
+
+    if (isValid) {
+      return {
+        message: 'Código válido. Puedes proceder a cambiar tu contraseña.',
+        valid: true
+      };
+    }
+
+    return {
+      message: 'Código inválido o expirado',
+      valid: false
+    };
+  }
+
+  /**
+   * Resetear contraseña usando código
+   */
+  async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<{ message: string }> {
+    const user = await this.userRepository.findOne({
+      where: { email: resetPasswordDto.email }
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    // Verificar que el código sea válido
+    const isValid = await this.verificationService.verifyCodeByUserId(
+      user.id,
+      resetPasswordDto.code,
+      'password_reset'
+    );
+
+    if (!isValid) {
+      throw new BadRequestException('Código inválido o expirado');
+    }
+
+    // Encriptar nueva contraseña
+    const hashedNewPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
+
+    // Actualizar contraseña
+    user.password = hashedNewPassword;
+    await this.userRepository.save(user);
+
+    // Enviar email de confirmación
+    try {
+      await this.emailService.sendPasswordChangedNotification(user.email, user.username);
+    } catch (error) {
+      console.warn('No se pudo enviar email de notificación:', error.message);
+    }
+
+    return { message: 'Contraseña restablecida exitosamente' };
+  }
+
+  /**
+   * Logout - Invalidar token actual
    */
   async logout(authHeader: string, userId: number): Promise<{ message: string }> {
     const token = this.tokenBlacklistService.extractTokenFromHeader(authHeader);
-    
+
     if (!token) {
-      throw new UnauthorizedException('Token no proporcionado');
+      throw new BadRequestException('Token no proporcionado');
     }
 
+    // Agregar token a la blacklist
     await this.tokenBlacklistService.addToBlacklist(token, userId, 'logout');
-    
+
+    // Actualizar lastLogout del usuario
+    await this.userRepository.update(userId, {
+      lastLogout: new Date(),
+    });
+
+    // Opcional: Limpiar tokens expirados periódicamente
+    await this.tokenBlacklistService.cleanupExpiredTokens();
+
     return { message: 'Sesión cerrada exitosamente' };
   }
 
   /**
-   * Cerrar sesión en todos los dispositivos
+   * Forzar logout de todos los dispositivos
    */
   async forceLogoutAllDevices(userId: number): Promise<{ message: string }> {
-    const count = await this.tokenBlacklistService.forceLogoutUser(userId, 'force_logout_all');
-    
-    return { 
-      message: `Se han invalidado ${count} tokens para este usuario` 
+    // Invalidar todos los tokens del usuario
+    const invalidated = await this.tokenBlacklistService.forceLogoutUser(userId, 'force_logout');
+
+    // Actualizar lastLogout
+    await this.userRepository.update(userId, {
+      lastLogout: new Date(),
+    });
+
+    return {
+      message: `Sesiones cerradas exitosamente. ${invalidated} tokens invalidados.`
     };
+  }
+
+  /**
+   * Cambiar contraseña sin autenticación (usando código de verificación)
+   * Para usuarios que olvidaron su contraseña
+   */
+  async changePasswordWithoutAuth(
+    changePasswordDto: ChangePasswordWithoutAuthDto
+  ): Promise<{ message: string }> {
+    const user = await this.userRepository.findOne({ 
+      where: { email: changePasswordDto.email } 
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    // Verificar que las nuevas contraseñas coincidan
+    if (changePasswordDto.newPassword !== changePasswordDto.confirmNewPassword) {
+      throw new BadRequestException('Las nuevas contraseñas no coinciden');
+    }
+
+    // Verificar que la nueva contraseña no sea igual a la anterior
+    const isSamePassword = await bcrypt.compare(
+      changePasswordDto.newPassword,
+      user.password
+    );
+
+    if (isSamePassword) {
+      throw new BadRequestException('La nueva contraseña debe ser diferente a la anterior');
+    }
+
+    // Encriptar nueva contraseña
+    const hashedNewPassword = await bcrypt.hash(changePasswordDto.newPassword, 10);
+
+    // Actualizar contraseña
+    user.password = hashedNewPassword;
+    await this.userRepository.save(user);
+
+    // Enviar email de notificación
+    try {
+      await this.emailService.sendPasswordChangedNotification(
+        user.email,
+        user.username
+      );
+    } catch (error) {
+      console.warn('No se pudo enviar email de notificación:', error.message);
+    }
+
+    return { message: 'Contraseña cambiada exitosamente' };
+  }
+
+  // ==================== MÉTODOS ADICIONALES (DE TU CÓDIGO ORIGINAL) ====================
+
+  /**
+   * Verificar si un email ya existe
+   */
+  async checkEmailExists(email: string): Promise<{ exists: boolean }> {
+    const user = await this.userRepository.findOne({ where: { email } });
+    return { exists: !!user };
+  }
+
+  /**
+   * Verificar si un username ya existe
+   */
+  async checkUsernameExists(username: string): Promise<{ exists: boolean }> {
+    const user = await this.userRepository.findOne({ where: { username } });
+    return { exists: !!user };
   }
 
   /**
@@ -569,6 +730,4 @@ export class AuthService {
       message: `Se han limpiado ${count} tokens expirados` 
     };
   }
-
- 
 }
