@@ -1,4 +1,3 @@
-// src/auth/auth.module.ts
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -12,9 +11,13 @@ import { Worker } from '../worker/entities/worker.entity';
 import { Client } from 'src/client/entities/client.entity';
 import { EmailModule } from '../email/email.module';
 import { VerificationModule } from '../verification/verification.module';
+import { BlacklistedToken } from './entities/blacklisted_token.entity'; 
+import { TokenBlacklistService } from './services/token_blacklist.service'; 
+
+
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Worker, Client]),
+    TypeOrmModule.forFeature([User, Worker, Client,BlacklistedToken]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -31,7 +34,7 @@ import { VerificationModule } from '../verification/verification.module';
     VerificationModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtStrategy, PassportModule],
+  providers: [AuthService, JwtStrategy,TokenBlacklistService ],
+  exports: [AuthService, JwtStrategy, PassportModule,TokenBlacklistService ],
 })
 export class AuthModule { }

@@ -6,17 +6,26 @@ import {
   HttpStatus, 
   Get, 
   Param,
-  Query 
+  Query,
+  UseGuards,
+  Req,
+  Headers
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
 import { RegisterClientDto } from './dto/register-client.dto';
 import { LoginDto } from './dto/login.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TokenBlacklistService } from './services/token_blacklist.service'; 
+
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService,
+  private readonly tokenBlacklistService: TokenBlacklistService,)
+  
+  {}
 
   // ========== ENDPOINTS DE REGISTRO  ==========
 
@@ -136,4 +145,39 @@ export class AuthController {
       userId: result.userId
     };
   }
+
+
+  
+   // ========== LOGOUT ==========
+
+  /**
+   * Cerrar sesión
+   * POST /auth/logout
+   * Requiere: JWT token
+   */
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async logout(
+    @Headers('authorization') authHeader: string, // ✅ Corregido: usar decorador @Headers
+    @Req() req: any
+  ) {
+    const userId = req.user.sub;
+    return this.authService.logout(authHeader, userId);
+  }
+
+  /**
+   * Cerrar sesión en todos los dispositivos
+   * POST /auth/logout-all
+   * Requiere: JWT token
+   */
+  @Post('logout-all')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async forceLogoutAllDevices(@Req() req: any) {
+    const userId = req.user.sub;
+    return this.authService.forceLogoutAllDevices(userId);
+  }
+
+
 }

@@ -12,7 +12,7 @@ import { Client } from '../client/entities/client.entity';
 import { RegisterClientDto } from './dto/register-client.dto'; 
 import { EmailService } from '../email/email.service';
 import { VerificationService } from '../verification/verification.service';
-
+import { TokenBlacklistService } from './services/token_blacklist.service'; 
 @Injectable()
 export class AuthService {
   constructor(
@@ -25,6 +25,8 @@ export class AuthService {
     private emailService: EmailService,
     private verificationService: VerificationService,
     private jwtService: JwtService,
+    private tokenBlacklistService: TokenBlacklistService, 
+
 
   ) {}
 
@@ -522,4 +524,51 @@ export class AuthService {
       userId: user.id
     };
   }
+
+
+  /**
+   * Cerrar sesión - agregar token a la blacklist
+   */
+  async logout(authHeader: string, userId: number): Promise<{ message: string }> {
+    const token = this.tokenBlacklistService.extractTokenFromHeader(authHeader);
+    
+    if (!token) {
+      throw new UnauthorizedException('Token no proporcionado');
+    }
+
+    await this.tokenBlacklistService.addToBlacklist(token, userId, 'logout');
+    
+    return { message: 'Sesión cerrada exitosamente' };
+  }
+
+  /**
+   * Cerrar sesión en todos los dispositivos
+   */
+  async forceLogoutAllDevices(userId: number): Promise<{ message: string }> {
+    const count = await this.tokenBlacklistService.forceLogoutUser(userId, 'force_logout_all');
+    
+    return { 
+      message: `Se han invalidado ${count} tokens para este usuario` 
+    };
+  }
+
+  /**
+   * Verificar si un token está en blacklist (útil para pruebas)
+   */
+  async isTokenBlacklisted(token: string): Promise<{ isBlacklisted: boolean }> {
+    const isBlacklisted = await this.tokenBlacklistService.isTokenBlacklisted(token);
+    return { isBlacklisted };
+  }
+
+  /**
+   * Limpiar tokens expirados automáticamente
+   */
+  async cleanupExpiredTokens(): Promise<{ message: string }> {
+    const count = await this.tokenBlacklistService.cleanupExpiredTokens();
+    return { 
+      message: `Se han limpiado ${count} tokens expirados` 
+    };
+  }
+
+ 
 }
