@@ -6,13 +6,13 @@ import * as bcrypt from 'bcrypt';
 import { User } from '../user/entities/user.entity';
 import { RegisterBaseDto } from './dto/register-base.dto';
 import { LoginDto } from './dto/login.dto';
-import { Worker } from '../worker/entities/worker.entity'; 
+import { Worker } from '../worker/entities/worker.entity';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
-import { Client } from '../client/entities/client.entity'; 
-import { RegisterClientDto } from './dto/register-client.dto'; 
+import { Client } from '../client/entities/client.entity';
+import { RegisterClientDto } from './dto/register-client.dto';
 import { EmailService } from '../email/email.service';
 import { VerificationService } from '../verification/verification.service';
-import { TokenBlacklistService } from './services/token_blacklist.service'; 
+import { TokenBlacklistService } from './services/token_blacklist.service';
 
 // Importar todos los DTOs de cambio de contraseña
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -26,21 +26,21 @@ export class AuthService {
     private userRepository: Repository<User>,
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
-    @InjectRepository(Client) 
+    @InjectRepository(Client)
     private clientRepository: Repository<Client>,
     private jwtService: JwtService,
     private emailService: EmailService,
     private verificationService: VerificationService,
     private tokenBlacklistService: TokenBlacklistService,
-  ) {}
+  ) { }
 
   // ==================== MÉTODOS DE REGISTRO ====================
 
   /**
    * Registro específico para administradores
    */
-  async registerAdmin(registerDto: RegisterBaseDto): Promise<{ 
-    message: string; 
+  async registerAdmin(registerDto: RegisterBaseDto): Promise<{
+    message: string;
     user: Partial<User>;
     access_token?: string;
   }> {
@@ -108,11 +108,39 @@ export class AuthService {
   }
 
   /**
-   * Registro específico para trabajadores
+   * Genera una contraseña segura automáticamente
    */
-  async registerWorker(registerDto: RegisterWorkerDto): Promise<{ 
-    message: string; 
+  private generateRandomPassword(length: number = 12): string {
+    const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const lowercase = 'abcdefghijklmnopqrstuvwxyz';
+    const numbers = '0123456789';
+    const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
+
+    const allChars = uppercase + lowercase + numbers + symbols;
+    let password = '';
+
+    // Asegurar al menos un carácter de cada tipo
+    password += uppercase.charAt(Math.floor(Math.random() * uppercase.length));
+    password += lowercase.charAt(Math.floor(Math.random() * lowercase.length));
+    password += numbers.charAt(Math.floor(Math.random() * numbers.length));
+    password += symbols.charAt(Math.floor(Math.random() * symbols.length));
+
+    // Completar el resto de la longitud
+    for (let i = 4; i < length; i++) {
+      password += allChars.charAt(Math.floor(Math.random() * allChars.length));
+    }
+
+    // Mezclar la contraseña
+    return password.split('').sort(() => Math.random() - 0.5).join('');
+  }
+
+  /**
+   * Registro específico para trabajadores CON CONTRASEÑA AUTOMÁTICA
+   */
+  async registerWorker(registerDto: RegisterWorkerDto): Promise<{
+    message: string;
     user: Partial<User>;
+    generatedPassword?: string; // Hacer opcional
     access_token?: string;
   }> {
     // Verificar si el email ya existe
@@ -142,10 +170,13 @@ export class AuthService {
       throw new ConflictException('El nombre de usuario ya está en uso');
     }
 
-    // Encriptar contraseña
-    const hashedPassword = await bcrypt.hash(registerDto.password, 10);
+    // Generar contraseña automáticamente
+    const generatedPassword = this.generateRandomPassword(12);
 
-    // Crear usuario
+    // Encriptar contraseña generada
+    const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+
+    // Crear usuario con la contraseña generada
     const user = this.userRepository.create({
       username: registerDto.username,
       email: registerDto.email,
@@ -169,6 +200,19 @@ export class AuthService {
 
     await this.workerRepository.save(worker);
 
+    // Enviar credenciales por correo
+    const credentialsSent = await this.emailService.sendWorkerCredentials(
+      user.email,
+      user.username,
+      generatedPassword
+    );
+
+    if (!credentialsSent) {
+      console.warn('No se pudieron enviar las credenciales por correo, pero el usuario fue creado');
+      // Podrías decidir lanzar una excepción o continuar
+      // throw new BadRequestException('No se pudieron enviar las credenciales por correo');
+    }
+
     // Enviar código de verificación
     await this.sendVerificationCode(user.email);
 
@@ -184,18 +228,21 @@ export class AuthService {
     // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
 
-    return {
-      message: 'Trabajador registrado exitosamente. Por favor verifica tu email.',
+    // Construir objeto de respuesta
+    const response: any = {
+      message: 'Trabajador registrado exitosamente. Las credenciales han sido enviadas al correo electrónico.',
       user: userWithoutPassword,
       access_token
     };
+
+     return response;
   }
 
   /**
    * Registro específico para clientes
    */
-  async registerClient(registerDto: RegisterClientDto): Promise<{ 
-    message: string; 
+  async registerClient(registerDto: RegisterClientDto): Promise<{
+    message: string;
     user: Partial<User>;
     access_token?: string;
   }> {
@@ -652,8 +699,8 @@ export class AuthService {
   async changePasswordWithoutAuth(
     changePasswordDto: ChangePasswordWithoutAuthDto
   ): Promise<{ message: string }> {
-    const user = await this.userRepository.findOne({ 
-      where: { email: changePasswordDto.email } 
+    const user = await this.userRepository.findOne({
+      where: { email: changePasswordDto.email }
     });
 
     if (!user) {
@@ -726,8 +773,8 @@ export class AuthService {
    */
   async cleanupExpiredTokens(): Promise<{ message: string }> {
     const count = await this.tokenBlacklistService.cleanupExpiredTokens();
-    return { 
-      message: `Se han limpiado ${count} tokens expirados` 
+    return {
+      message: `Se han limpiado ${count} tokens expirados`
     };
   }
 }
