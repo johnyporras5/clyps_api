@@ -13,11 +13,13 @@ import { EmailModule } from '../email/email.module';
 import { VerificationModule } from '../verification/verification.module';
 import { BlacklistedToken } from './entities/blacklisted_token.entity'; 
 import { TokenBlacklistService } from './services/token_blacklist.service'; 
+import { Company } from 'src/company/entities/company.entity';
+import { CompanyService } from 'src/company/company.service';
 
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Worker, Client,BlacklistedToken]),
+    TypeOrmModule.forFeature([User, Worker, Client,BlacklistedToken,Company]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -34,7 +36,7 @@ import { TokenBlacklistService } from './services/token_blacklist.service';
     VerificationModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy,TokenBlacklistService ],
+  providers: [AuthService, JwtStrategy,TokenBlacklistService, CompanyService],
   exports: [AuthService, JwtStrategy, PassportModule,TokenBlacklistService ],
 })
 export class AuthModule { }

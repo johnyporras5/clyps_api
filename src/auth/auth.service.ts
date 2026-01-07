@@ -13,7 +13,9 @@ import { RegisterClientDto } from './dto/register-client.dto';
 import { EmailService } from '../email/email.service';
 import { VerificationService } from '../verification/verification.service';
 import { TokenBlacklistService } from './services/token_blacklist.service';
-
+import { Company } from '../company/entities/company.entity';
+import { CompanyService } from '../company/company.service';
+import { CreateCompanyDto } from '../company/dto/create-company.dto';
 // Importar todos los DTOs de cambio de contraseña
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RequestPasswordResetDto, ResetPasswordDto, VerifyResetCodeDto } from './dto/reset-password.dto';
@@ -28,6 +30,9 @@ export class AuthService {
     private workerRepository: Repository<Worker>,
     @InjectRepository(Client)
     private clientRepository: Repository<Client>,
+    private companyService: CompanyService,
+    @InjectRepository(Company)  
+    private companyRepository: Repository<Company>,
     private jwtService: JwtService,
     private emailService: EmailService,
     private verificationService: VerificationService,
@@ -39,73 +44,87 @@ export class AuthService {
   /**
    * Registro específico para administradores
    */
-  async registerAdmin(registerDto: RegisterBaseDto): Promise<{
-    message: string;
-    user: Partial<User>;
-    access_token?: string;
-  }> {
-    // Verificar si el email ya existe
-    const existingUserByEmail = await this.userRepository.findOne({
-      where: { email: registerDto.email }
-    });
+/**
+ * Registro específico para administradores
+ */
+async registerAdmin(registerDto: RegisterBaseDto): Promise<{
+  message: string;
+  user: Partial<User>;
+  access_token?: string;
+}> {
+  // Verificar si el email ya existe
+  const existingUserByEmail = await this.userRepository.findOne({
+    where: { email: registerDto.email }
+  });
 
-    if (existingUserByEmail) {
-      // Si el usuario existe pero no está verificado, permitir reenviar código
-      if (existingUserByEmail.emailVerified === 0) {
-        await this.sendVerificationCode(registerDto.email);
-        throw new ConflictException({
-          message: 'El email ya está registrado pero no verificado. Se ha enviado un nuevo código de verificación.',
-          requiresVerification: true,
-          userId: existingUserByEmail.id,
-        });
-      }
-      throw new ConflictException('El email ya está registrado');
+  if (existingUserByEmail) {
+    // Si el usuario existe pero no está verificado, permitir reenviar código
+    if (existingUserByEmail.emailVerified === 0) {
+      await this.sendVerificationCode(registerDto.email);
+      throw new ConflictException({
+        message: 'El email ya está registrado pero no verificado. Se ha enviado un nuevo código de verificación.',
+        requiresVerification: true,
+        userId: existingUserByEmail.id,
+      });
     }
+    throw new ConflictException('El email ya está registrado');
+  }
 
-    // Verificar si el username ya existe
-    const existingUserByUsername = await this.userRepository.findOne({
-      where: { username: registerDto.username }
-    });
+  // Verificar si el username ya existe
+  const existingUserByUsername = await this.userRepository.findOne({
+    where: { username: registerDto.username }
+  });
 
-    if (existingUserByUsername) {
-      throw new ConflictException('El nombre de usuario ya está en uso');
-    }
+  if (existingUserByUsername) {
+    throw new ConflictException('El nombre de usuario ya está en uso');
+  }
 
-    // Encriptar contraseña
-    const hashedPassword = await bcrypt.hash(registerDto.password, 10);
+  // Encriptar contraseña
+  const hashedPassword = await bcrypt.hash(registerDto.password, 10);
 
-    // Crear usuario
-    const user = this.userRepository.create({
-      username: registerDto.username,
-      email: registerDto.email,
-      password: hashedPassword,
-      userType: 'adm',
-      emailVerified: 0,
-    });
+  // Crear usuario
+  const user = this.userRepository.create({
+    username: registerDto.username,
+    email: registerDto.email,
+    password: hashedPassword,
+    userType: 'adm',
+    emailVerified: 0,
+  });
 
-    await this.userRepository.save(user);
+  const savedUser = await this.userRepository.save(user);
+
+  // ==================== CREAR COMPANY PARA EL ADMIN ====================
+  // Opción 1: Usar el servicio de Company (más limpio)
+  const companyData: CreateCompanyDto = {
+    name: `Empresa de ${registerDto.username}`,
+    email: registerDto.email,
+    userId: savedUser.id,
+    // Los campos location, logo y description no se pasan, 
+    // lo que significa que serán null en la base de datos
+  };
+
+  await this.companyService.create(companyData);
 
     // Enviar código de verificación
-    await this.sendVerificationCode(user.email);
+  await this.sendVerificationCode(savedUser.email);
 
-    // Generar token JWT
-    const payload = {
-      email: user.email,
-      sub: user.id,
-      userType: user.userType
+  // Generar token JWT
+  const payload = {
+    email: savedUser.email,
+    sub: savedUser.id,
+    userType: savedUser.userType
+  };
+
+  const access_token = this.jwtService.sign(payload);
+
+  // Eliminar password del objeto de respuesta
+  const { password, ...userWithoutPassword } = savedUser;
+
+  return {
+    message: 'Administrador registrado exitosamente. Por favor verifica tu email.',
+    user: userWithoutPassword,
     };
-
-    const access_token = this.jwtService.sign(payload);
-
-    // Eliminar password del objeto de respuesta
-    const { password, ...userWithoutPassword } = user;
-
-    return {
-      message: 'Administrador registrado exitosamente. Por favor verifica tu email.',
-      user: userWithoutPassword,
-      access_token
-    };
-  }
+}
 
   /**
    * Genera una contraseña segura automáticamente
@@ -235,7 +254,7 @@ export class AuthService {
       access_token
     };
 
-     return response;
+    return response;
   }
 
   /**
