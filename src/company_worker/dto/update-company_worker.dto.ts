@@ -1,10 +1,10 @@
 import { IsOptional, IsEmail, IsString, IsJSON, IsNumber } from 'class-validator';
 
 export class UpdateCompanyWorkerDto {
-
+  @IsOptional()
   @IsNumber()
   workerId?: number;
-
+  @IsOptional()
   @IsNumber()
   companyId?: number;
 
