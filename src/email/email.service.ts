@@ -1117,585 +1117,644 @@ export class EmailService {
     `;
   }
 
-  async sendWorkerCredentials(email: string, username: string, password: string): Promise<boolean> {
-    return this.sendCredentialsEmail(email, username, password, 'Bienvenido a CLYPS - Tus Credenciales de Acceso', this.getWorkerCredentialsTemplate(username, password));
-  }
+ async sendWorkerCredentials(
+  email: string, 
+  username: string, 
+  password: string, 
+  companyName: string  // Agregar este parámetro
+): Promise<boolean> {
+  return this.sendCredentialsEmail(
+    email, 
+    username, 
+    password, 
+    companyName,  // Pasar el nombre de la compañía
+    'Bienvenido a CLYPS - Tus Credenciales de Acceso', 
+    this.getWorkerCredentialsTemplate(username, password, companyName)  // Pasar companyName al template
+  );
+}
 
-  private async sendCredentialsEmail(email: string, username: string, password: string, subject: string, html: string): Promise<boolean> {
-    try {
-      if (!this.resend) {
-        this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
-        return false;
-      }
-
-      this.logger.log(`Enviando credenciales a ${email}`);
-
-      const { data, error } = await this.resend.emails.send({
-        from: this.fromEmail,
-        to: email,
-        subject,
-        html,
-      });
-
-      if (error) {
-        this.logger.error('Error de Resend:', error);
-        return false;
-      }
-
-      this.logger.log(`✅ Credenciales enviadas exitosamente a ${email}`);
-      return true;
-    } catch (error) {
-      this.logger.error('Error inesperado enviando credenciales:', error);
+private async sendCredentialsEmail(
+  email: string, 
+  username: string, 
+  password: string, 
+  companyName: string,  // Agregar este parámetro
+  subject: string, 
+  html: string
+): Promise<boolean> {
+  try {
+    if (!this.resend) {
+      this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
       return false;
     }
-  }
 
-  private getWorkerCredentialsTemplate(username: string, password: string): string {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <meta http-equiv="X-UA-Compatible" content="IE=edge">
-          <title>Bienvenido a CLYPS - Credenciales de Acceso</title>
-          <style type="text/css">
-              /* RESET */
-              body, table, td, div, p, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-              table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse !important; }
-              img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
-              table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-              
-              /* MOBILE STYLES */
-              @media screen and (max-width: 630px) {
-                  .container {
-                      width: 94% !important;
-                      margin: 0 auto !important;
-                      padding: 10px !important;
-                  }
-                  .header {
-                      padding: 25px 20px !important;
-                      text-align: center !important;
-                  }
-                  .content {
-                      padding: 0 !important;
-                  }
-                  .logo {
-                      font-size: 32px !important;
-                      line-height: 36px !important;
-                  }
-                  .welcome-title {
-                      font-size: 24px !important;
-                      line-height: 28px !important;
-                  }
-                  .welcome-subtitle {
-                      font-size: 14px !important;
-                      line-height: 18px !important;
-                  }
-                  .welcome-section, .credentials-section, .steps-section, .security-section, .support-section {
-                      padding: 25px 20px !important;
-                  }
-                  .greeting {
-                      font-size: 22px !important;
-                      line-height: 26px !important;
-                      margin-bottom: 15px !important;
-                  }
-                  .welcome-message {
-                      font-size: 15px !important;
-                      line-height: 22px !important;
-                  }
-                  .credentials-grid {
-                      grid-template-columns: 1fr !important;
-                      gap: 15px !important;
-                  }
-                  .credential-card {
-                      padding: 20px !important;
-                  }
-                  .credential-value {
-                      font-size: 16px !important;
-                      line-height: 20px !important;
-                  }
-                  .steps-grid {
-                      grid-template-columns: 1fr !important;
-                      gap: 15px !important;
-                  }
-                  .step-card {
-                      padding: 20px !important;
-                  }
-                  .step-header {
-                      margin-bottom: 12px !important;
-                  }
-                  .step-name {
-                      font-size: 16px !important;
-                      line-height: 20px !important;
-                  }
-                  .steps-title {
-                      font-size: 20px !important;
-                      line-height: 24px !important;
-                      margin-bottom: 25px !important;
-                  }
-                  .footer {
-                      padding: 25px 20px !important;
-                  }
-                  .footer-logo {
-                      font-size: 20px !important;
-                      line-height: 24px !important;
-                  }
-              }
-              
-              /* TABLET STYLES */
-              @media screen and (min-width: 631px) and (max-width: 769px) {
-                  .container {
-                      width: 90% !important;
-                  }
-                  .credentials-grid, .steps-grid {
-                      grid-template-columns: 1fr 1fr !important;
-                  }
-              }
-              
-              /* DESKTOP STYLES */
-              body {
-                  margin: 0 !important;
-                  padding: 0 !important;
-                  width: 100% !important;
-                  background-color: #f8fafc !important;
-                  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
-                  line-height: 1.6 !important;
-                  color: #334155 !important;
-                  -webkit-font-smoothing: antialiased !important;
-                  -moz-osx-font-smoothing: grayscale !important;
-              }
-              .container {
-                  max-width: 620px !important;
-                  width: 100% !important;
-                  margin: 30px auto !important;
-                  background-color: #ffffff !important;
-                  border-radius: 12px !important;
-                  overflow: hidden !important;
-                  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
-                  border: 1px solid #e2e8f0 !important;
-              }
-              .header {
-                  background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%) !important;
-                  color: #ffffff !important;
-                  padding: 40px !important;
-                  text-align: center !important;
-                  position: relative !important;
-              }
-              .header:before {
-                  content: '' !important;
-                  position: absolute !important;
-                  top: 0 !important;
-                  left: 0 !important;
-                  right: 0 !important;
-                  height: 4px !important;
-                  background: linear-gradient(90deg, #7c3aed, #c4b5fd) !important;
-              }
-              .logo {
-                  font-size: 40px !important;
-                  font-weight: 700 !important;
-                  letter-spacing: 0.5px !important;
-                  margin: 0 0 10px 0 !important;
-                  font-family: 'Arial Black', 'Segoe UI', sans-serif !important;
-                  line-height: 1.2 !important;
-              }
-              .welcome-title {
-                  font-size: 28px !important;
-                  font-weight: 600 !important;
-                  margin: 0 0 8px 0 !important;
-                  line-height: 1.2 !important;
-              }
-              .welcome-subtitle {
-                  font-size: 16px !important;
-                  font-weight: 300 !important;
-                  opacity: 0.9 !important;
-                  margin: 0 !important;
-                  line-height: 1.4 !important;
-              }
-              .content {
-                  padding: 0 !important;
-              }
-              .welcome-section {
-                  padding: 40px !important;
-                  text-align: center !important;
-              }
-              .greeting {
-                  font-size: 24px !important;
-                  font-weight: 600 !important;
-                  color: #1e293b !important;
-                  margin: 0 0 20px 0 !important;
-                  line-height: 1.3 !important;
-              }
-              .welcome-message {
-                  color: #475569 !important;
-                  margin: 0 0 30px 0 !important;
-                  font-size: 16px !important;
-                  line-height: 1.7 !important;
-                  max-width: 500px !important;
-                  margin-left: auto !important;
-                  margin-right: auto !important;
-              }
-              .credentials-section {
-                  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
-                  padding: 40px !important;
-                  margin: 20px 0 !important;
-                  border-top: 1px solid #e2e8f0 !important;
-                  border-bottom: 1px solid #e2e8f0 !important;
-              }
-              .section-title {
-                  font-size: 18px !important;
-                  font-weight: 600 !important;
-                  color: #4f46e5 !important;
-                  text-align: center !important;
-                  margin: 0 0 30px 0 !important;
-                  text-transform: uppercase !important;
-                  letter-spacing: 1px !important;
-                  line-height: 1.2 !important;
-              }
-              .credentials-grid {
-                  display: grid !important;
-                  grid-template-columns: 1fr 1fr !important;
-                  gap: 25px !important;
-                  margin: 0 auto !important;
-                  max-width: 500px !important;
-              }
-              .credential-card {
-                  background-color: #ffffff !important;
-                  border-radius: 10px !important;
-                  padding: 25px !important;
-                  border: 1px solid #e2e8f0 !important;
-                  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
-                  transition: transform 0.2s, box-shadow 0.2s !important;
-              }
-              .credential-card:hover {
-                  transform: translateY(-2px) !important;
-                  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
-              }
-              .credential-icon {
-                  font-size: 24px !important;
-                  margin-bottom: 15px !important;
-                  color: #8b5cf6 !important;
-                  line-height: 1 !important;
-              }
-              .credential-label {
-                  font-size: 13px !important;
-                  color: #64748b !important;
-                  margin: 0 0 8px 0 !important;
-                  text-transform: uppercase !important;
-                  letter-spacing: 1px !important;
-                  font-weight: 600 !important;
-                  line-height: 1.2 !important;
-              }
-              .credential-value {
-                  font-size: 18px !important;
-                  font-weight: 600 !important;
-                  color: #1e293b !important;
-                  margin: 0 !important;
-                  word-break: break-all !important;
-                  line-height: 1.3 !important;
-              }
-              .password-value {
-                  color: #dc2626 !important;
-                  font-family: 'Courier New', monospace !important;
-                  letter-spacing: 1px !important;
-              }
-              .steps-section {
-                  padding: 40px !important;
-              }
-              .steps-title {
-                  font-size: 22px !important;
-                  font-weight: 600 !important;
-                  color: #1e293b !important;
-                  text-align: center !important;
-                  margin: 0 0 35px 0 !important;
-                  position: relative !important;
-                  padding-bottom: 15px !important;
-                  line-height: 1.2 !important;
-              }
-              .steps-title:after {
-                  content: '' !important;
-                  position: absolute !important;
-                  bottom: 0 !important;
-                  left: 50% !important;
-                  transform: translateX(-50%) !important;
-                  width: 80px !important;
-                  height: 3px !important;
-                  background: linear-gradient(90deg, #8b5cf6, #a78bfa) !important;
-              }
-              .steps-grid {
-                  display: grid !important;
-                  grid-template-columns: 1fr 1fr !important;
-                  gap: 25px !important;
-              }
-              .step-card {
-                  background-color: #f8fafc !important;
-                  border-radius: 10px !important;
-                  padding: 30px !important;
-                  border: 1px solid #e2e8f0 !important;
-                  position: relative !important;
-                  overflow: hidden !important;
-              }
-              .step-card:before {
-                  content: '' !important;
-                  position: absolute !important;
-                  top: 0 !important;
-                  left: 0 !important;
-                  right: 0 !important;
-                  height: 4px !important;
-                  background: linear-gradient(90deg, #7c3aed, #c4b5fd) !important;
-              }
-              .step-header {
-                  display: flex !important;
-                  align-items: center !important;
-                  margin-bottom: 15px !important;
-              }
-              .step-number {
-                  display: flex !important;
-                  align-items: center !important;
-                  justify-content: center !important;
-                  width: 36px !important;
-                  height: 36px !important;
-                  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%) !important;
-                  color: white !important;
-                  border-radius: 50% !important;
-                  font-weight: 700 !important;
-                  font-size: 16px !important;
-                  margin-right: 15px !important;
-                  flex-shrink: 0 !important;
-                  line-height: 1 !important;
-              }
-              .step-name {
-                  font-size: 17px !important;
-                  font-weight: 600 !important;
-                  color: #1e293b !important;
-                  margin: 0 !important;
-                  line-height: 1.3 !important;
-              }
-              .step-description {
-                  color: #475569 !important;
-                  font-size: 14.5px !important;
-                  line-height: 1.6 !important;
-                  margin: 0 !important;
-              }
-              .security-section {
-                  background-color: #fef3c7 !important;
-                  padding: 30px 40px !important;
-                  margin: 20px 0 !important;
-                  border-top: 1px solid #fcd34d !important;
-                  border-bottom: 1px solid #fcd34d !important;
-              }
-              .security-title {
-                  font-size: 18px !important;
-                  font-weight: 600 !important;
-                  color: #92400e !important;
-                  margin: 0 0 15px 0 !important;
-                  display: flex !important;
-                  align-items: center !important;
-                  line-height: 1.3 !important;
-              }
-              .security-icon {
-                  margin-right: 10px !important;
-                  font-size: 20px !important;
-              }
-              .security-list {
-                  list-style: none !important;
-                  padding: 0 !important;
-                  margin: 0 !important;
-              }
-              .security-list li {
-                  padding: 8px 0 !important;
-                  color: #78350f !important;
-                  font-size: 14.5px !important;
-                  display: flex !important;
-                  align-items: flex-start !important;
-                  line-height: 1.5 !important;
-              }
-              .security-list li:before {
-                  content: "•" !important;
-                  color: #d97706 !important;
-                  font-weight: bold !important;
-                  display: inline-block !important;
-                  width: 20px !important;
-                  margin-left: -20px !important;
-              }
-              .support-section {
-                  padding: 30px 40px !important;
-                  text-align: center !important;
-              }
-              .support-message {
-                  color: #475569 !important;
-                  font-size: 15px !important;
-                  line-height: 1.6 !important;
-                  margin: 0 0 20px 0 !important;
-              }
-              .footer {
-                  background-color: #1e293b !important;
-                  color: #cbd5e1 !important;
-                  padding: 30px 40px !important;
-                  text-align: center !important;
-              }
-              .footer-logo {
-                  font-size: 24px !important;
-                  font-weight: 700 !important;
-                  color: #ffffff !important;
-                  margin: 0 0 15px 0 !important;
-                  font-family: 'Arial Black', 'Segoe UI', sans-serif !important;
-                  line-height: 1.2 !important;
-              }
-              .footer-text {
-                  font-size: 13px !important;
-                  margin: 8px 0 !important;
-                  opacity: 0.8 !important;
-                  line-height: 1.5 !important;
-              }
-              .footer-divider {
-                  height: 1px !important;
-                  background-color: #334155 !important;
-                  margin: 20px 0 !important;
-              }
-              /* FALLBACK FOR OUTLOOK */
-              .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div {
-                  line-height: 100% !important;
-              }
-              /* IOS FIX */
-              a[x-apple-data-detectors] {
-                  color: inherit !important;
-                  text-decoration: none !important;
-                  font-size: inherit !important;
-                  font-family: inherit !important;
-                  font-weight: inherit !important;
-                  line-height: inherit !important;
-              }
-          </style>
-      </head>
-      <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
-          <!--[if (gte mso 9)|(IE)]>
-          <table width="600" align="center" cellpadding="0" cellspacing="0" border="0">
-          <tr>
-          <td>
-          <![endif]-->
-          
-          <div class="container" style="max-width: 620px; margin: 30px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0;">
-              <div class="header" style="background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%); color: #ffffff; padding: 40px; text-align: center; position: relative;">
-                  <h1 class="logo" style="font-size: 40px; font-weight: 700; letter-spacing: 0.5px; margin: 0 0 10px 0; font-family: 'Arial Black', 'Segoe UI', sans-serif;">CLYPS</h1>
-                  <h2 class="welcome-title" style="font-size: 28px; font-weight: 600; margin: 0 0 8px 0;">¡Bienvenido al Equipo!</h2>
-                  <p class="welcome-subtitle" style="font-size: 16px; font-weight: 300; opacity: 0.9; margin: 0;">Sistema de Gestión de Citas Profesional</p>
-              </div>
-              
-              <div class="content" style="padding: 0;">
-                  <div class="welcome-section" style="padding: 40px; text-align: center;">
-                      <h2 class="greeting" style="font-size: 24px; font-weight: 600; color: #1e293b; margin: 0 0 20px 0;">Estimado/a ${username},</h2>
-                      <p class="welcome-message" style="color: #475569; margin: 0 0 30px 0; font-size: 16px; line-height: 1.7; max-width: 500px; margin-left: auto; margin-right: auto;">
-                          Nos complace darle la bienvenida a CLYPS, la plataforma líder en gestión de citas. 
-                          Su cuenta de colaborador ha sido creada exitosamente y estamos encantados de tenerle en nuestro equipo.
-                      </p>
-                  </div>
-                  
-                  <div class="credentials-section" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); padding: 40px; margin: 20px 0; border-top: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
-                      <h3 class="section-title" style="font-size: 18px; font-weight: 600; color: #4f46e5; text-align: center; margin: 0 0 30px 0; text-transform: uppercase; letter-spacing: 1px;">Sus Credenciales de Acceso</h3>
-                      <div class="credentials-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin: 0 auto; max-width: 500px;">
-                          <div class="credential-card" style="background-color: #ffffff; border-radius: 10px; padding: 25px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                              <div class="credential-icon" style="font-size: 24px; margin-bottom: 15px; color: #8b5cf6;">👤</div>
-                              <p class="credential-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Usuario / Email</p>
-                              <p class="credential-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${username}</p>
-                          </div>
-                          
-                          <div class="credential-card" style="background-color: #ffffff; border-radius: 10px; padding: 25px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                              <div class="credential-icon" style="font-size: 24px; margin-bottom: 15px; color: #8b5cf6;">🔒</div>
-                              <p class="credential-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Contraseña Temporal</p>
-                              <p class="credential-value password-value" style="font-size: 18px; font-weight: 600; color: #dc2626; margin: 0; font-family: 'Courier New', monospace; letter-spacing: 1px;">${password}</p>
-                          </div>
-                      </div>
-                  </div>
-                  
-                  <div class="steps-section" style="padding: 40px;">
-                      <h3 class="steps-title" style="font-size: 22px; font-weight: 600; color: #1e293b; text-align: center; margin: 0 0 35px 0; position: relative; padding-bottom: 15px;">Primeros Pasos en CLYPS</h3>
-                      <div class="steps-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px;">
-                          <div class="step-card" style="background-color: #f8fafc; border-radius: 10px; padding: 30px; border: 1px solid #e2e8f0; position: relative; overflow: hidden;">
-                              <div class="step-header" style="display: flex; align-items: center; margin-bottom: 15px;">
-                                  <div class="step-number" style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-radius: 50%; font-weight: 700; font-size: 16px; margin-right: 15px;">1</div>
-                                  <h4 class="step-name" style="font-size: 17px; font-weight: 600; color: #1e293b; margin: 0;">Inicio de Sesión</h4>
-                              </div>
-                              <p class="step-description" style="color: #475569; font-size: 14.5px; line-height: 1.6; margin: 0;">
-                                  Acceda al sistema utilizando las credenciales proporcionadas arriba. 
-                                  Le recomendamos utilizar el navegador Chrome o Firefox para una mejor experiencia.
-                              </p>
-                          </div>
-                          
-                          <div class="step-card" style="background-color: #f8fafc; border-radius: 10px; padding: 30px; border: 1px solid #e2e8f0; position: relative; overflow: hidden;">
-                              <div class="step-header" style="display: flex; align-items: center; margin-bottom: 15px;">
-                                  <div class="step-number" style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-radius: 50%; font-weight: 700; font-size: 16px; margin-right: 15px;">2</div>
-                                  <h4 class="step-name" style="font-size: 17px; font-weight: 600; color: #1e293b; margin: 0;">Verificación de Cuenta</h4>
-                              </div>
-                              <p class="step-description" style="color: #475569; font-size: 14.5px; line-height: 1.6; margin: 0;">
-                                  Verifique su cuenta mediante el código que recibirá en su correo electrónico. 
-                                  Este paso es esencial para garantizar la seguridad de su acceso.
-                              </p>
-                          </div>
-                          
-                          <div class="step-card" style="background-color: #f8fafc; border-radius: 10px; padding: 30px; border: 1px solid #e2e8f0; position: relative; overflow: hidden;">
-                              <div class="step-header" style="display: flex; align-items: center; margin-bottom: 15px;">
-                                  <div class="step-number" style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-radius: 50%; font-weight: 700; font-size: 16px; margin-right: 15px;">3</div>
-                                  <h4 class="step-name" style="font-size: 17px; font-weight: 600; color: #1e293b; margin: 0;">Actualización de Seguridad</h4>
-                              </div>
-                              <p class="step-description" style="color: #475569; font-size: 14.5px; line-height: 1.6; margin: 0;">
-                                  Cambie su contraseña temporal por una permanente en la sección de Perfil. 
-                                  Utilice una combinación segura de caracteres para mayor protección.
-                              </p>
-                          </div>
-                          
-                          <div class="step-card" style="background-color: #f8fafc; border-radius: 10px; padding: 30px; border: 1px solid #e2e8f0; position: relative; overflow: hidden;">
-                              <div class="step-header" style="display: flex; align-items: center; margin-bottom: 15px;">
-                                  <div class="step-number" style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-radius: 50%; font-weight: 700; font-size: 16px; margin-right: 15px;">4</div>
-                                  <h4 class="step-name" style="font-size: 17px; font-weight: 600; color: #1e293b; margin: 0;">Configuración de Perfil</h4>
-                              </div>
-                              <p class="step-description" style="color: #475569; font-size: 14.5px; line-height: 1.6; margin: 0;">
-                                  Complete su perfil profesional con su información personal, especialidades 
-                                  y horarios de disponibilidad para comenzar a recibir citas.
-                              </p>
-                          </div>
-                      </div>
-                  </div>
-                  
-                  <div class="security-section" style="background-color: #fef3c7; padding: 30px 40px; margin: 20px 0; border-top: 1px solid #fcd34d; border-bottom: 1px solid #fcd34d;">
-                      <h3 class="security-title" style="font-size: 18px; font-weight: 600; color: #92400e; margin: 0 0 15px 0; display: flex; align-items: center;">
-                          <span class="security-icon" style="margin-right: 10px; font-size: 20px;">⚠️</span>
-                          Directrices de Seguridad
-                      </h3>
-                      <ul class="security-list" style="list-style: none; padding: 0; margin: 0;">
-                          <li style="padding: 8px 0; color: #78350f; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">Esta contraseña es temporal y debe ser cambiada inmediatamente después de su primer acceso.</li>
-                          <li style="padding: 8px 0; color: #78350f; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">No comparta sus credenciales con nadie, incluyendo otros miembros del equipo.</li>
-                          <li style="padding: 8px 0; color: #78350f; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">Utilice contraseñas diferentes para cada servicio y aplicación.</li>
-                          <li style="padding: 8px 0; color: #78350f; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">Si detecta actividad sospechosa, contacte inmediatamente con el administrador del sistema.</li>
-                      </ul>
-                  </div>
-                  
-                  <div class="support-section" style="padding: 30px 40px; text-align: center;">
-                      <p class="support-message" style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">
-                          Nuestro equipo de soporte está disponible para asistirle en cualquier momento. 
-                          Si encuentra alguna dificultad durante el proceso de configuración, no dude en contactarnos.
-                      </p>
-                  </div>
-              </div>
-              
-              <div class="footer" style="background-color: #1e293b; color: #cbd5e1; padding: 30px 40px; text-align: center;">
-                  <h3 class="footer-logo" style="font-size: 24px; font-weight: 700; color: #ffffff; margin: 0 0 15px 0; font-family: 'Arial Black', 'Segoe UI', sans-serif;">CLYPS</h3>
-                  <p class="footer-text" style="font-size: 13px; margin: 8px 0; opacity: 0.8;">© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
-                  <p class="footer-text" style="font-size: 13px; margin: 8px 0; opacity: 0.8;">Sistema de Gestión de Citas Profesional</p>
-                  <div class="footer-divider" style="height: 1px; background-color: #334155; margin: 20px 0;"></div>
-                  <p class="footer-text" style="font-size: 12px; margin: 8px 0; opacity: 0.7;">
-                      Este correo contiene información confidencial. Por favor, no lo comparta ni reenvíe.
-                  </p>
-              </div>
-          </div>
-          
-          <!--[if (gte mso 9)|(IE)]>
-          </td>
-          </tr>
-          </table>
-          <![endif]-->
-      </body>
-      </html>
-    `;
+    this.logger.log(`Enviando credenciales a ${email} para la compañía ${companyName}`);
+
+    const { data, error } = await this.resend.emails.send({
+      from: this.fromEmail,
+      to: email,
+      subject,
+      html,
+    });
+
+    if (error) {
+      this.logger.error('Error de Resend:', error);
+      return false;
+    }
+
+    this.logger.log(`✅ Credenciales enviadas exitosamente a ${email} para la compañía ${companyName}`);
+    return true;
+  } catch (error) {
+    this.logger.error('Error inesperado enviando credenciales:', error);
+    return false;
   }
+}
+
+ private getWorkerCredentialsTemplate(username: string, password: string, companyName: string): string {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Bienvenido a CLYPS - Credenciales de Acceso</title>
+        <style type="text/css">
+            /* RESET */
+            body, table, td, div, p, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+            table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse !important; }
+            img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+            table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+            
+            /* MOBILE STYLES */
+            @media screen and (max-width: 630px) {
+                .container {
+                    width: 94% !important;
+                    margin: 0 auto !important;
+                    padding: 10px !important;
+                }
+                .header {
+                    padding: 25px 20px !important;
+                    text-align: center !important;
+                }
+                .content {
+                    padding: 0 !important;
+                }
+                .logo {
+                    font-size: 32px !important;
+                    line-height: 36px !important;
+                }
+                .welcome-title {
+                    font-size: 24px !important;
+                    line-height: 28px !important;
+                }
+                .welcome-subtitle {
+                    font-size: 14px !important;
+                    line-height: 18px !important;
+                }
+                .company-info {
+                    padding: 20px !important;
+                    margin: 15px 0 !important;
+                }
+                .company-name {
+                    font-size: 20px !important;
+                    line-height: 24px !important;
+                }
+                .welcome-section, .credentials-section, .steps-section, .security-section, .support-section {
+                    padding: 25px 20px !important;
+                }
+                .greeting {
+                    font-size: 22px !important;
+                    line-height: 26px !important;
+                    margin-bottom: 15px !important;
+                }
+                .welcome-message {
+                    font-size: 15px !important;
+                    line-height: 22px !important;
+                }
+                .credentials-grid {
+                    grid-template-columns: 1fr !important;
+                    gap: 15px !important;
+                }
+                .credential-card {
+                    padding: 20px !important;
+                }
+                .credential-value {
+                    font-size: 16px !important;
+                    line-height: 20px !important;
+                }
+                .steps-grid {
+                    grid-template-columns: 1fr !important;
+                    gap: 15px !important;
+                }
+                .step-card {
+                    padding: 20px !important;
+                }
+                .step-header {
+                    margin-bottom: 12px !important;
+                }
+                .step-name {
+                    font-size: 16px !important;
+                    line-height: 20px !important;
+                }
+                .steps-title {
+                    font-size: 20px !important;
+                    line-height: 24px !important;
+                    margin-bottom: 25px !important;
+                }
+                .footer {
+                    padding: 25px 20px !important;
+                }
+                .footer-logo {
+                    font-size: 20px !important;
+                    line-height: 24px !important;
+                }
+            }
+            
+            /* TABLET STYLES */
+            @media screen and (min-width: 631px) and (max-width: 769px) {
+                .container {
+                    width: 90% !important;
+                }
+                .credentials-grid, .steps-grid {
+                    grid-template-columns: 1fr 1fr !important;
+                }
+            }
+            
+            /* DESKTOP STYLES */
+            body {
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 100% !important;
+                background-color: #f8fafc !important;
+                font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
+                line-height: 1.6 !important;
+                color: #334155 !important;
+                -webkit-font-smoothing: antialiased !important;
+                -moz-osx-font-smoothing: grayscale !important;
+            }
+            .container {
+                max-width: 620px !important;
+                width: 100% !important;
+                margin: 30px auto !important;
+                background-color: #ffffff !important;
+                border-radius: 12px !important;
+                overflow: hidden !important;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
+                border: 1px solid #e2e8f0 !important;
+            }
+            .header {
+                background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%) !important;
+                color: #ffffff !important;
+                padding: 40px !important;
+                text-align: center !important;
+                position: relative !important;
+            }
+            .header:before {
+                content: '' !important;
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                height: 4px !important;
+                background: linear-gradient(90deg, #7c3aed, #c4b5fd) !important;
+            }
+            .logo {
+                font-size: 40px !important;
+                font-weight: 700 !important;
+                letter-spacing: 0.5px !important;
+                margin: 0 0 10px 0 !important;
+                font-family: 'Arial Black', 'Segoe UI', sans-serif !important;
+                line-height: 1.2 !important;
+            }
+            .welcome-title {
+                font-size: 28px !important;
+                font-weight: 600 !important;
+                margin: 0 0 8px 0 !important;
+                line-height: 1.2 !important;
+            }
+            .welcome-subtitle {
+                font-size: 16px !important;
+                font-weight: 300 !important;
+                opacity: 0.9 !important;
+                margin: 0 !important;
+                line-height: 1.4 !important;
+            }
+            .content {
+                padding: 0 !important;
+            }
+            .company-info {
+                background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%) !important;
+                padding: 30px !important;
+                text-align: center !important;
+                margin: 20px 0 !important;
+                border-top: 1px solid #d1d5db !important;
+                border-bottom: 1px solid #d1d5db !important;
+            }
+            .company-label {
+                font-size: 14px !important;
+                color: #6b7280 !important;
+                margin: 0 0 10px 0 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 1.5px !important;
+                font-weight: 600 !important;
+                line-height: 1.2 !important;
+            }
+            .company-name {
+                font-size: 24px !important;
+                font-weight: 700 !important;
+                color: #1f2937 !important;
+                margin: 0 !important;
+                line-height: 1.3 !important;
+            }
+            .welcome-section {
+                padding: 40px !important;
+                text-align: center !important;
+            }
+            .greeting {
+                font-size: 24px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                margin: 0 0 20px 0 !important;
+                line-height: 1.3 !important;
+            }
+            .welcome-message {
+                color: #475569 !important;
+                margin: 0 0 30px 0 !important;
+                font-size: 16px !important;
+                line-height: 1.7 !important;
+                max-width: 500px !important;
+                margin-left: auto !important;
+                margin-right: auto !important;
+            }
+            .credentials-section {
+                background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
+                padding: 40px !important;
+                margin: 20px 0 !important;
+                border-top: 1px solid #e2e8f0 !important;
+                border-bottom: 1px solid #e2e8f0 !important;
+            }
+            .section-title {
+                font-size: 18px !important;
+                font-weight: 600 !important;
+                color: #4f46e5 !important;
+                text-align: center !important;
+                margin: 0 0 30px 0 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 1px !important;
+                line-height: 1.2 !important;
+            }
+            .credentials-grid {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr !important;
+                gap: 25px !important;
+                margin: 0 auto !important;
+                max-width: 500px !important;
+            }
+            .credential-card {
+                background-color: #ffffff !important;
+                border-radius: 10px !important;
+                padding: 25px !important;
+                border: 1px solid #e2e8f0 !important;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+                transition: transform 0.2s, box-shadow 0.2s !important;
+            }
+            .credential-card:hover {
+                transform: translateY(-2px) !important;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
+            }
+            .credential-icon {
+                font-size: 24px !important;
+                margin-bottom: 15px !important;
+                color: #8b5cf6 !important;
+                line-height: 1 !important;
+            }
+            .credential-label {
+                font-size: 13px !important;
+                color: #64748b !important;
+                margin: 0 0 8px 0 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 1px !important;
+                font-weight: 600 !important;
+                line-height: 1.2 !important;
+            }
+            .credential-value {
+                font-size: 18px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                margin: 0 !important;
+                word-break: break-all !important;
+                line-height: 1.3 !important;
+            }
+            .password-value {
+                color: #dc2626 !important;
+                font-family: 'Courier New', monospace !important;
+                letter-spacing: 1px !important;
+            }
+            .steps-section {
+                padding: 40px !important;
+            }
+            .steps-title {
+                font-size: 22px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                text-align: center !important;
+                margin: 0 0 35px 0 !important;
+                position: relative !important;
+                padding-bottom: 15px !important;
+                line-height: 1.2 !important;
+            }
+            .steps-title:after {
+                content: '' !important;
+                position: absolute !important;
+                bottom: 0 !important;
+                left: 50% !important;
+                transform: translateX(-50%) !important;
+                width: 80px !important;
+                height: 3px !important;
+                background: linear-gradient(90deg, #8b5cf6, #a78bfa) !important;
+            }
+            .steps-grid {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr !important;
+                gap: 25px !important;
+            }
+            .step-card {
+                background-color: #f8fafc !important;
+                border-radius: 10px !important;
+                padding: 30px !important;
+                border: 1px solid #e2e8f0 !important;
+                position: relative !important;
+                overflow: hidden !important;
+            }
+            .step-card:before {
+                content: '' !important;
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                height: 4px !important;
+                background: linear-gradient(90deg, #7c3aed, #c4b5fd) !important;
+            }
+            .step-header {
+                display: flex !important;
+                align-items: center !important;
+                margin-bottom: 15px !important;
+            }
+            .step-number {
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                width: 36px !important;
+                height: 36px !important;
+                background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%) !important;
+                color: white !important;
+                border-radius: 50% !important;
+                font-weight: 700 !important;
+                font-size: 16px !important;
+                margin-right: 15px !important;
+                flex-shrink: 0 !important;
+                line-height: 1 !important;
+            }
+            .step-name {
+                font-size: 17px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                margin: 0 !important;
+                line-height: 1.3 !important;
+            }
+            .step-description {
+                color: #475569 !important;
+                font-size: 14.5px !important;
+                line-height: 1.6 !important;
+                margin: 0 !important;
+            }
+            .security-section {
+                background-color: #fef3c7 !important;
+                padding: 30px 40px !important;
+                margin: 20px 0 !important;
+                border-top: 1px solid #fcd34d !important;
+                border-bottom: 1px solid #fcd34d !important;
+            }
+            .security-title {
+                font-size: 18px !important;
+                font-weight: 600 !important;
+                color: #92400e !important;
+                margin: 0 0 15px 0 !important;
+                display: flex !important;
+                align-items: center !important;
+                line-height: 1.3 !important;
+            }
+            .security-icon {
+                margin-right: 10px !important;
+                font-size: 20px !important;
+            }
+            .security-list {
+                list-style: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            .security-list li {
+                padding: 8px 0 !important;
+                color: #78350f !important;
+                font-size: 14.5px !important;
+                display: flex !important;
+                align-items: flex-start !important;
+                line-height: 1.5 !important;
+            }
+            .security-list li:before {
+                content: "•" !important;
+                color: #d97706 !important;
+                font-weight: bold !important;
+                display: inline-block !important;
+                width: 20px !important;
+                margin-left: -20px !important;
+            }
+            .support-section {
+                padding: 30px 40px !important;
+                text-align: center !important;
+            }
+            .support-message {
+                color: #475569 !important;
+                font-size: 15px !important;
+                line-height: 1.6 !important;
+                margin: 0 0 20px 0 !important;
+            }
+            .footer {
+                background-color: #1e293b !important;
+                color: #cbd5e1 !important;
+                padding: 30px 40px !important;
+                text-align: center !important;
+            }
+            .footer-logo {
+                font-size: 24px !important;
+                font-weight: 700 !important;
+                color: #ffffff !important;
+                margin: 0 0 15px 0 !important;
+                font-family: 'Arial Black', 'Segoe UI', sans-serif !important;
+                line-height: 1.2 !important;
+            }
+            .footer-text {
+                font-size: 13px !important;
+                margin: 8px 0 !important;
+                opacity: 0.8 !important;
+                line-height: 1.5 !important;
+            }
+            .footer-divider {
+                height: 1px !important;
+                background-color: #334155 !important;
+                margin: 20px 0 !important;
+            }
+            /* FALLBACK FOR OUTLOOK */
+            .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div {
+                line-height: 100% !important;
+            }
+            /* IOS FIX */
+            a[x-apple-data-detectors] {
+                color: inherit !important;
+                text-decoration: none !important;
+                font-size: inherit !important;
+                font-family: inherit !important;
+                font-weight: inherit !important;
+                line-height: inherit !important;
+            }
+        </style>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+        <!--[if (gte mso 9)|(IE)]>
+        <table width="600" align="center" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+        <td>
+        <![endif]-->
+        
+        <div class="container" style="max-width: 620px; margin: 30px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0;">
+            <div class="header" style="background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%); color: #ffffff; padding: 40px; text-align: center; position: relative;">
+                <h1 class="logo" style="font-size: 40px; font-weight: 700; letter-spacing: 0.5px; margin: 0 0 10px 0; font-family: 'Arial Black', 'Segoe UI', sans-serif;">CLYPS</h1>
+                <h2 class="welcome-title" style="font-size: 28px; font-weight: 600; margin: 0 0 8px 0;">¡Bienvenido al Equipo!</h2>
+                <p class="welcome-subtitle" style="font-size: 16px; font-weight: 300; opacity: 0.9; margin: 0;">Sistema de Gestión de Citas Profesional</p>
+            </div>
+            
+            <div class="content" style="padding: 0;">
+                <div class="company-info" style="background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%); padding: 30px; text-align: center; margin: 20px 0; border-top: 1px solid #d1d5db; border-bottom: 1px solid #d1d5db;">
+                    <p class="company-label" style="font-size: 14px; color: #6b7280; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600;">Compañía Asignada</p>
+                    <h3 class="company-name" style="font-size: 24px; font-weight: 700; color: #1f2937; margin: 0;">${companyName}</h3>
+                </div>
+                
+                <div class="welcome-section" style="padding: 40px; text-align: center;">
+                    <h2 class="greeting" style="font-size: 24px; font-weight: 600; color: #1e293b; margin: 0 0 20px 0;">Estimado/a ${username},</h2>
+                    <p class="welcome-message" style="color: #475569; margin: 0 0 30px 0; font-size: 16px; line-height: 1.7; max-width: 500px; margin-left: auto; margin-right: auto;">
+                        Nos complace darle la bienvenida a CLYPS. Su cuenta ha sido creada exitosamente 
+                        y ha sido asignado como trabajador en la compañía <strong>${companyName}</strong>. 
+                        Estamos encantados de tenerle en nuestro equipo.
+                    </p>
+                </div>
+                
+                <div class="credentials-section" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); padding: 40px; margin: 20px 0; border-top: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
+                    <h3 class="section-title" style="font-size: 18px; font-weight: 600; color: #4f46e5; text-align: center; margin: 0 0 30px 0; text-transform: uppercase; letter-spacing: 1px;">Sus Credenciales de Acceso</h3>
+                    <div class="credentials-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin: 0 auto; max-width: 500px;">
+                        <div class="credential-card" style="background-color: #ffffff; border-radius: 10px; padding: 25px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="credential-icon" style="font-size: 24px; margin-bottom: 15px; color: #8b5cf6;">👤</div>
+                            <p class="credential-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Usuario / Email</p>
+                            <p class="credential-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${username}</p>
+                        </div>
+                        
+                        <div class="credential-card" style="background-color: #ffffff; border-radius: 10px; padding: 25px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="credential-icon" style="font-size: 24px; margin-bottom: 15px; color: #8b5cf6;">🔒</div>
+                            <p class="credential-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Contraseña Temporal</p>
+                            <p class="credential-value password-value" style="font-size: 18px; font-weight: 600; color: #dc2626; margin: 0; font-family: 'Courier New', monospace; letter-spacing: 1px;">${password}</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="steps-section" style="padding: 40px;">
+                    <h3 class="steps-title" style="font-size: 22px; font-weight: 600; color: #1e293b; text-align: center; margin: 0 0 35px 0; position: relative; padding-bottom: 15px;">Primeros Pasos en CLYPS</h3>
+                    <div class="steps-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px;">
+                        <div class="step-card" style="background-color: #f8fafc; border-radius: 10px; padding: 30px; border: 1px solid #e2e8f0; position: relative; overflow: hidden;">
+                            <div class="step-header" style="display: flex; align-items: center; margin-bottom: 15px;">
+                                <div class="step-number" style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-radius: 50%; font-weight: 700; font-size: 16px; margin-right: 15px;">1</div>
+                                <h4 class="step-name" style="font-size: 17px; font-weight: 600; color: #1e293b; margin: 0;">Inicio de Sesión</h4>
+                            </div>
+                            <p class="step-description" style="color: #475569; font-size: 14.5px; line-height: 1.6; margin: 0;">
+                                Acceda al sistema utilizando las credenciales proporcionadas. 
+                                Recuerde que trabajará para la compañía <strong>${companyName}</strong>.
+                            </p>
+                        </div>
+                        
+                        <div class="step-card" style="background-color: #f8fafc; border-radius: 10px; padding: 30px; border: 1px solid #e2e8f0; position: relative; overflow: hidden;">
+                            <div class="step-header" style="display: flex; align-items: center; margin-bottom: 15px;">
+                                <div class="step-number" style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-radius: 50%; font-weight: 700; font-size: 16px; margin-right: 15px;">2</div>
+                                <h4 class="step-name" style="font-size: 17px; font-weight: 600; color: #1e293b; margin: 0;">Verificación de Cuenta</h4>
+                            </div>
+                            <p class="step-description" style="color: #475569; font-size: 14.5px; line-height: 1.6; margin: 0;">
+                                Verifique su cuenta mediante el código que recibirá en su correo electrónico. 
+                                Este paso es esencial para garantizar la seguridad de su acceso.
+                            </p>
+                        </div>
+                        
+                        <div class="step-card" style="background-color: #f8fafc; border-radius: 10px; padding: 30px; border: 1px solid #e2e8f0; position: relative; overflow: hidden;">
+                            <div class="step-header" style="display: flex; align-items: center; margin-bottom: 15px;">
+                                <div class="step-number" style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-radius: 50%; font-weight: 700; font-size: 16px; margin-right: 15px;">3</div>
+                                <h4 class="step-name" style="font-size: 17px; font-weight: 600; color: #1e293b; margin: 0;">Actualización de Seguridad</h4>
+                            </div>
+                            <p class="step-description" style="color: #475569; font-size: 14.5px; line-height: 1.6; margin: 0;">
+                                Cambie su contraseña temporal por una permanente en la sección de Perfil. 
+                                Utilice una combinación segura de caracteres para mayor protección.
+                            </p>
+                        </div>
+                        
+                        <div class="step-card" style="background-color: #f8fafc; border-radius: 10px; padding: 30px; border: 1px solid #e2e8f0; position: relative; overflow: hidden;">
+                            <div class="step-header" style="display: flex; align-items: center; margin-bottom: 15px;">
+                                <div class="step-number" style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; border-radius: 50%; font-weight: 700; font-size: 16px; margin-right: 15px;">4</div>
+                                <h4 class="step-name" style="font-size: 17px; font-weight: 600; color: #1e293b; margin: 0;">Configuración de Perfil</h4>
+                            </div>
+                            <p class="step-description" style="color: #475569; font-size: 14.5px; line-height: 1.6; margin: 0;">
+                                Complete su perfil profesional para la compañía <strong>${companyName}</strong> 
+                                con su información personal, especialidades y horarios de disponibilidad.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="security-section" style="background-color: #fef3c7; padding: 30px 40px; margin: 20px 0; border-top: 1px solid #fcd34d; border-bottom: 1px solid #fcd34d;">
+                    <h3 class="security-title" style="font-size: 18px; font-weight: 600; color: #92400e; margin: 0 0 15px 0; display: flex; align-items: center;">
+                        <span class="security-icon" style="margin-right: 10px; font-size: 20px;">⚠️</span>
+                        Directrices de Seguridad
+                    </h3>
+                    <ul class="security-list" style="list-style: none; padding: 0; margin: 0;">
+                        <li style="padding: 8px 0; color: #78350f; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">Esta contraseña es temporal y debe ser cambiada inmediatamente después de su primer acceso.</li>
+                        <li style="padding: 8px 0; color: #78350f; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">No comparta sus credenciales con nadie, incluyendo otros miembros del equipo.</li>
+                        <li style="padding: 8px 0; color: #78350f; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">Utilice contraseñas diferentes para cada servicio y aplicación.</li>
+                        <li style="padding: 8px 0; color: #78350f; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">Si detecta actividad sospechosa, contacte inmediatamente con el administrador de <strong>${companyName}</strong>.</li>
+                    </ul>
+                </div>
+                
+                <div class="support-section" style="padding: 30px 40px; text-align: center;">
+                    <p class="support-message" style="color: #475569; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">
+                        Para cualquier consulta relacionada con su asignación en <strong>${companyName}</strong>, 
+                        contacte con el administrador de la compañía. 
+                        Nuestro equipo de soporte también está disponible para asistirle.
+                    </p>
+                </div>
+            </div>
+            
+            <div class="footer" style="background-color: #1e293b; color: #cbd5e1; padding: 30px 40px; text-align: center;">
+                <h3 class="footer-logo" style="font-size: 24px; font-weight: 700; color: #ffffff; margin: 0 0 15px 0; font-family: 'Arial Black', 'Segoe UI', sans-serif;">CLYPS</h3>
+                <p class="footer-text" style="font-size: 13px; margin: 8px 0; opacity: 0.8;">© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
+                <p class="footer-text" style="font-size: 13px; margin: 8px 0; opacity: 0.8;">Sistema de Gestión de Citas Profesional</p>
+                <div class="footer-divider" style="height: 1px; background-color: #334155; margin: 20px 0;"></div>
+                <p class="footer-text" style="font-size: 12px; margin: 8px 0; opacity: 0.7;">
+                    Este correo contiene información confidencial. Por favor, no lo comparta ni reenvíe.
+                </p>
+            </div>
+        </div>
+        
+        <!--[if (gte mso 9)|(IE)]>
+        </td>
+        </tr>
+        </table>
+        <![endif]-->
+    </body>
+    </html>
+  `;
+}
+
 }
