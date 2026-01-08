@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsDate, Length, IsEmail, IsNotEmpty } from 'class-validator';
+import { IsOptional, IsString, IsDate, Length, IsEmail, IsNotEmpty,IsJSON } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class RegisterWorkerDto {
@@ -39,4 +39,8 @@ export class RegisterWorkerDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsJSON()
+  calendar?: any; 
 }

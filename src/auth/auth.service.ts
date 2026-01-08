@@ -304,7 +304,7 @@ async registerWorker(
       throw new NotFoundException('No se encontró el perfil del trabajador');
     }
 
-    // Crear registro en company_worker
+    // Crear registro en company_worker con el campo calendar
     const companyWorker = this.companyWorkerRepository.create({
       workerId: worker.id,
       companyId: company.id,
@@ -312,6 +312,7 @@ async registerWorker(
       isActive: 1,
       startDate: new Date(),
       servicesDetail: {},
+      calendar: registerDto.calendar || {}, // <-- AGREGAR CAMPO CALENDAR AQUÍ
     });
 
     await this.companyWorkerRepository.save(companyWorker);
@@ -384,12 +385,7 @@ async registerWorker(
     user: userWithoutPassword,
   };
 
-  // Solo incluir password generada si es nuevo trabajador
-  if (!isExistingWorker) {
-    response.generatedPassword = generatedPassword;
-    response.access_token = access_token;
-  }
-
+ 
   return response;
 }
 
