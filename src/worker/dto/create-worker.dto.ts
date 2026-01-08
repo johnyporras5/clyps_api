@@ -1,6 +1,10 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, Length } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber, Length } from 'class-validator';
 
 export class CreateWorkerDto {
+
+  @IsNotEmpty()
+  @IsNumber()
+  userId: number; // Agregar esto
 
   @IsOptional()
   @IsString()
