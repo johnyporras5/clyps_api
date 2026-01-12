@@ -288,6 +288,8 @@ async registerWorker(
       birthdate: registerDto.birthdate,
       picture: registerDto.picture,
       description: registerDto.description,
+      isActive: 1,
+      location:registerDto.location,
       userId: user.id
     });
 

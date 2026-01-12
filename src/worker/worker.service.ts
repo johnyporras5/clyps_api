@@ -1,17 +1,21 @@
-import { 
-  Injectable, 
-  NotFoundException, 
+import {
+  Injectable,
+  NotFoundException,
   UnauthorizedException,
   ForbiddenException,
   BadRequestException,
   ConflictException // Agregar esto
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Like } from 'typeorm';
 import { Worker } from './entities/worker.entity';
 import { CreateWorkerDto } from './dto/create-worker.dto';
 import { UpdateWorkerDto } from './dto/update-worker.dto';
 import { User } from '../user/entities/user.entity';
+import { FindAllWorkersDto } from './dto/find-all-workers.dto';
+import { paginate, PaginationResult } from '../common/utils/pagination.util';
+import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+import { Company } from '../company/entities/company.entity';
 
 @Injectable()
 export class WorkerService {
@@ -20,20 +24,101 @@ export class WorkerService {
     private workerRepository: Repository<Worker>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
-  ) {}
+    @InjectRepository(CompanyWorker)
+    private companyWorkerRepository: Repository<CompanyWorker>,
+    @InjectRepository(Company)
+    private companyRepository: Repository<Company>,
+  ) { }
 
-  async findAll(): Promise<Worker[]> {
-    return await this.workerRepository.find({
-      relations: ['user']
+  // Método para admin: puede filtrar por companyId o ver todos
+  async findAll(query: FindAllWorkersDto): Promise<PaginationResult<Worker>> {
+    const { page, limit, companyId, search, isActive } = query;
+
+    // Si no se especifica companyId, mostrar todos los workers
+    if (!companyId) {
+      const whereConditions: any = {};
+
+      if (search) {
+        whereConditions.name = Like(`%${search}%`);
+      }
+
+      // Filtro por isActive de la tabla worker
+      if (isActive !== undefined) {
+        whereConditions.isActive = Number(isActive);
+      }
+
+      return paginate<Worker>(
+        this.workerRepository,
+        { page, limit },
+        whereConditions,
+        ['user']
+      );
+    }
+
+    // Si se especifica companyId, usar QueryBuilder para el join
+    const queryBuilder = this.workerRepository
+      .createQueryBuilder('worker')
+      .leftJoinAndSelect('worker.user', 'user')
+      .innerJoin(
+        'company_worker',
+        'cw',
+        'cw.worker_id = worker.id AND cw.company_id = :companyId',
+        { companyId }
+      );
+
+    // **NUEVO: SIEMPRE filtrar por worker.is_active = 1 cuando hay companyId**
+    queryBuilder.andWhere('worker.is_active = :workerActive', {
+      workerActive: 1
     });
+
+    // Aplicar filtro de estado activo en CompanyWorker
+    if (isActive !== undefined) {
+      const isActiveValue = Number(isActive);
+      queryBuilder.andWhere('cw.is_active = :cwActive', {
+        cwActive: isActiveValue
+      });
+    }
+
+    // Aplicar búsqueda por texto
+    if (search) {
+      queryBuilder.andWhere(
+        '(worker.name LIKE :search OR worker.last_name LIKE :search OR user.email LIKE :search)',
+        { search: `%${search}%` }
+      );
+    }
+
+    return paginate<Worker>(queryBuilder, { page, limit });
+  }
+
+  // Método para administradores de compañía: solo ven los workers de su compañía
+  async findAllWithCompanyFilter(
+    query: FindAllWorkersDto,
+    adminId: number
+  ): Promise<PaginationResult<Worker>> {
+    // Obtener la compañía del administrador
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new UnauthorizedException('No tienes una compañía asignada');
+    }
+
+    // Forzar el filtro por la compañía del administrador
+    const queryWithCompany = {
+      ...query,
+      companyId: company.id
+    };
+
+    return this.findAll(queryWithCompany);
   }
 
   async findOne(id: number, userId?: number, userType?: string): Promise<Worker> {
-    const worker = await this.workerRepository.findOne({ 
+    const worker = await this.workerRepository.findOne({
       where: { id },
       relations: ['user']
     });
-    
+
     if (!worker) {
       throw new NotFoundException(`Worker with id ${id} not found`);
     }
@@ -50,11 +135,11 @@ export class WorkerService {
   }
 
   async findByUserId(userId: number): Promise<Worker> {
-    const worker = await this.workerRepository.findOne({ 
+    const worker = await this.workerRepository.findOne({
       where: { userId },
       relations: ['user']
     });
-    
+
     if (!worker) {
       throw new NotFoundException(`Worker profile for user ${userId} not found`);
     }
@@ -64,7 +149,7 @@ export class WorkerService {
 
   async create(createWorkerDto: CreateWorkerDto): Promise<Worker> {
     // Verificar que el usuario existe y es de tipo 'wrk'
-    const user = await this.userRepository.findOne({ 
+    const user = await this.userRepository.findOne({
       where: { id: createWorkerDto.userId }
     });
 
@@ -90,11 +175,11 @@ export class WorkerService {
   }
 
   async update(id: number, updateWorkerDto: UpdateWorkerDto, userId: number): Promise<Worker> {
-    const worker = await this.workerRepository.findOne({ 
+    const worker = await this.workerRepository.findOne({
       where: { id },
       relations: ['user']
     });
-    
+
     if (!worker) {
       throw new NotFoundException(`Worker with id ${id} not found`);
     }
@@ -109,11 +194,11 @@ export class WorkerService {
   }
 
   async updateByUserId(userId: number, updateWorkerDto: UpdateWorkerDto): Promise<Worker> {
-    const worker = await this.workerRepository.findOne({ 
+    const worker = await this.workerRepository.findOne({
       where: { userId },
       relations: ['user']
     });
-    
+
     if (!worker) {
       throw new NotFoundException(`Worker profile for user ${userId} not found`);
     }
@@ -134,7 +219,7 @@ export class WorkerService {
     const worker = await this.workerRepository.findOne({
       where: { id: workerId, userId: userId }
     });
-    
+
     return !!worker;
   }
 }

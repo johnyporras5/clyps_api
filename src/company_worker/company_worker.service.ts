@@ -126,48 +126,47 @@ async updateWorkerByUserId(
   return await this.companyWorkerRepository.save(companyWorker);
 }
 
- /**
- * Eliminar trabajador de la compañía (solo de company_worker)
- * @param workerId ID del trabajador (id de la tabla worker)
- * @param adminId ID del administrador que realiza la acción
- * @returns Mensaje de confirmación
- */
-async removeWorkerFromCompany(
-  workerId: number,
-  adminId: number
-): Promise<{ message: string }> {
-  // 1. Verificar que el administrador tiene una compañía
-  const company = await this.companyRepository.findOne({
-    where: { userId: adminId }
-  });
+  /**
+   * Desactivar trabajador de la compañía (cambia isActive a 0)
+   * @param workerId ID del trabajador (id de la tabla worker)
+   * @param adminId ID del administrador que realiza la acción
+   * @returns Mensaje de confirmación
+   */
+  async removeWorkerFromCompany(
+    workerId: number,
+    adminId: number
+  ): Promise<{ message: string }> {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
 
-  if (!company) {
-    throw new UnauthorizedException('No tienes una compañía asignada');
-  }
-
-  // 2. Buscar la asignación específica por workerId y companyId
-  const companyWorker = await this.companyWorkerRepository.findOne({
-    where: {
-      workerId: workerId,           // Buscar por workerId
-      companyId: company.id         // y companyId del admin
-      // NO buscar por userId: workerId porque userId es diferente
+    if (!company) {
+      throw new UnauthorizedException('No tienes una compañía asignada');
     }
-  });
 
-  if (!companyWorker) {
-    throw new NotFoundException('Este trabajador no está asignado a tu compañía');
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        workerId: workerId,
+        companyId: company.id
+      }
+    });
+
+    if (!companyWorker) {
+      throw new NotFoundException('Este trabajador no está asignado a tu compañía');
+    }
+
+    // En lugar de eliminar, actualizamos isActive a 0
+    companyWorker.isActive = 0;
+    companyWorker.endDate = new Date(); // Opcional: establecer fecha de finalización
+    await this.companyWorkerRepository.save(companyWorker);
+
+    return {
+      message: `Trabajador desactivado exitosamente de la compañía '${company.name}'.`
+    };
   }
-
-  // 3. Eliminar el registro
-  await this.companyWorkerRepository.delete(companyWorker.id);
-
-  return {
-    message: `Trabajador eliminado exitosamente de la compañía '${company.name}'. El trabajador mantiene su cuenta y perfil.`
-  };
-}
 
   /**
-   * Eliminar trabajador por ID de usuario (alternativa)
+   * Desactivar trabajador por ID de usuario
    * @param userId ID del usuario trabajador
    * @param adminId ID del administrador
    */
@@ -175,16 +174,14 @@ async removeWorkerFromCompany(
     userId: number,
     adminId: number
   ): Promise<{ message: string }> {
-    // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
       where: { userId: adminId }
     });
 
     if (!company) {
-      throw new UnauthorizedException('Solo Administradores pueden Eliminar trabajadores');
+      throw new UnauthorizedException('Solo Administradores pueden desactivar trabajadores');
     }
 
-    // 2. Buscar por userId en lugar de workerId
     const companyWorker = await this.companyWorkerRepository.findOne({
       where: {
         userId: userId,
@@ -196,12 +193,15 @@ async removeWorkerFromCompany(
       throw new NotFoundException('Este trabajador no está asignado a tu compañía');
     }
 
-    // 3. Eliminar el registro
-    await this.companyWorkerRepository.delete(companyWorker.id);
+    // En lugar de eliminar, actualizamos isActive a 0
+    companyWorker.isActive = 0;
+    companyWorker.endDate = new Date(); // Opcional: establecer fecha de finalización
+    await this.companyWorkerRepository.save(companyWorker);
 
     return {
-      message: `Trabajador eliminado exitosamente de la compañía '${company.name}'.`
+      message: `Trabajador desactivado exitosamente de la compañía '${company.name}'.`
     };
   }
+
 
 }
