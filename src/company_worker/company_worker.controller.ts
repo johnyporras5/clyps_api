@@ -11,6 +11,8 @@ import {
   HttpStatus,
   UseGuards,
   Req,
+  Query
+
 } from '@nestjs/common';
 import { CompanyWorkerService } from './company_worker.service';
 import { CompanyWorker } from './entities/company_worker.entity';
@@ -24,7 +26,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 export class CompanyWorkerController {
   constructor(
     private readonly companyWorkerService: CompanyWorkerService,
-  ) {}
+  ) { }
 
   // ==================== ENDPOINTS CRUD BÁSICOS ====================
 
@@ -152,10 +154,10 @@ export class CompanyWorkerController {
   @HttpCode(HttpStatus.OK)
   async getMyCompanyData(@Req() req: any): Promise<CompanyWorker> {
     const userId = req.user.sub;
-    
+
     // Este método necesitarías crearlo en el servicio
     // return this.companyWorkerService.findByUserId(userId);
-    
+
     // O puedes usar el endpoint existente con lógica específica
     const adminId = req.user.sub; // Esto sería el workerId
     // Adapta según tu lógica
@@ -163,20 +165,20 @@ export class CompanyWorkerController {
   }
 
   /**
-   * Obtener todos los trabajadores de mi compañía (para administradores)
-   * GET /company-workers/my-company/workers
-   * Solo administradores
-   */
+    * Obtener trabajadores de mi compañía con filtro por nombre
+    * GET /company-workers/my-company/workers
+    * Solo administradores
+    */
   @Get('my-company/workers')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
-  async getMyCompanyWorkers(@Req() req: any): Promise<CompanyWorker[]> {
+  async getMyCompanyWorkers(
+    @Req() req: any,
+    @Query('name') name?: string
+  ): Promise<any[]> {
     const adminId = req.user.sub;
-    
-    // Este método necesitarías crearlo en el servicio
-    // return this.companyWorkerService.findByCompanyAdmin(adminId);
-    
-    throw new Error('Método no implementado aún');
+
+    return this.companyWorkerService.getCompanyWorkersWithNameFilter(adminId, name);
   }
 }

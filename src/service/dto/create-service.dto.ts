@@ -1,7 +1,18 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsArray, Min, Max, IsEnum, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+import { Currency } from '../../common/enum/currency.enum';
+
+class WorkerAssignmentDto {
+  @IsNumber()
+  id: number;
+
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  percentage: number; 
+}
 
 export class CreateServiceDto {
-
   @IsOptional()
   @IsString()
   name?: string;
@@ -15,6 +26,22 @@ export class CreateServiceDto {
   standardTime?: number;
 
   @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => WorkerAssignmentDto)
+  workers?: WorkerAssignmentDto[];
+
+  @IsOptional()
+  @IsEnum(Currency)
+  currency?: Currency;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
   @IsNumber()
-  companyId?: number;
+  @Min(0)
+  @Max(100)
+  percentage?: number; // Porcentaje general del servicio
 }

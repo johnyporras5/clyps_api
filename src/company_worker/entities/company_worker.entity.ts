@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, JoinColumn, ManyToOne } from 'typeorm';
+import { Worker } from '../../worker/entities/worker.entity'; 
 
 @Entity('company_worker')
 export class CompanyWorker {
@@ -29,4 +30,8 @@ export class CompanyWorker {
 
   @Column({ name: 'calendar', type: 'json', nullable: true })
   calendar: any;
+
+  @ManyToOne(() => Worker, { eager: true })
+  @JoinColumn({ name: 'worker_id' })
+  worker: Worker;
 }

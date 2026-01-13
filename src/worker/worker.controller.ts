@@ -27,26 +27,6 @@ import { PaginationResult } from '../common/utils/pagination.util';
 export class WorkerController {
   constructor(private readonly workerService: WorkerService) {}
 
-  // Obtener todos los workers (solo admin) con filtros y paginación
-@Get()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('adm') // Ahora también permite a administradores de compañía
-  async findAll(
-    @Query() query: FindAllWorkersDto,
-    @Req() req: any
-  ): Promise<PaginationResult<Worker>> {
-    const userType = req.user.userType;
-    const userId = req.user.sub;
-    
-    // Si es administrador de compañía, solo puede ver los workers de su compañía
-    if (userType === 'com') {
-      return this.workerService.findAllWithCompanyFilter(query, userId);
-    }
-    
-    // Si es admin, puede ver todos con los filtros que quiera
-    return this.workerService.findAll(query);
-  }
-
   // Obtener un worker por ID (cualquier usuario autenticado)
   @Get(':id')
   @UseGuards(JwtAuthGuard)
