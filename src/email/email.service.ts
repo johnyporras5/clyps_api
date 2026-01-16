@@ -1757,4 +1757,91 @@ private async sendCredentialsEmail(
   `;
 }
 
+
+async sendClientCredentials(email: string, username: string, password: string): Promise<boolean> {
+  return this.sendCredentialsEmail(
+    email, 
+    username, 
+    password, 
+    'CLYPS', // Sin compañía para cliente
+    'Bienvenido a CLYPS - Tus Credenciales de Acceso', 
+    this.getClientCredentialsTemplate(username, password) // Nuevo template para cliente
+  );
+}
+
+private getClientCredentialsTemplate(username: string, password: string): string {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Bienvenido a CLYPS - Tus Credenciales</title>
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
+            .content { padding: 20px; }
+            .credentials { background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; }
+            .credential-item { margin: 10px 0; }
+            .label { font-weight: bold; color: #333; }
+            .value { font-family: 'Courier New', monospace; background-color: #e9ecef; padding: 5px 10px; border-radius: 3px; }
+            .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
+            .warning { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>CLYPS</h1>
+                <p>Sistema de Gestión de Citas</p>
+            </div>
+            
+            <div class="content">
+                <h2>¡Bienvenido/a ${username}!</h2>
+                <p>Tu cuenta de cliente ha sido creada exitosamente en CLYPS.</p>
+                
+                <div class="credentials">
+                    <h3>Tus Credenciales de Acceso:</h3>
+                    <div class="credential-item">
+                        <span class="label">Usuario/Email:</span>
+                        <div class="value">${username}</div>
+                    </div>
+                    <div class="credential-item">
+                        <span class="label">Contraseña Temporal:</span>
+                        <div class="value">${password}</div>
+                    </div>
+                </div>
+                
+                <div class="warning">
+                    <strong>⚠️ IMPORTANTE:</strong>
+                    <p>Esta contraseña es temporal. Por seguridad, te recomendamos:</p>
+                    <ul>
+                        <li>Cambiar tu contraseña después del primer inicio de sesión</li>
+                        <li>No compartas tus credenciales con nadie</li>
+                        <li>Verifica tu correo electrónico para activar tu cuenta</li>
+                    </ul>
+                </div>
+                
+                <p><strong>Próximos pasos:</strong></p>
+                <ol>
+                    <li>Inicia sesión en CLYPS usando las credenciales proporcionadas</li>
+                    <li>Verifica tu correo electrónico con el código que recibirás</li>
+                    <li>Completa tu perfil de cliente</li>
+                    <li>Comienza a reservar citas con nuestros profesionales</li>
+                </ol>
+                
+                <p>Si tienes alguna pregunta, no dudes en contactar a nuestro equipo de soporte.</p>
+            </div>
+            
+            <div class="footer">
+                <p>© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
+                <p>Este es un mensaje automático, por favor no responder.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+  `;
+}
+
 }

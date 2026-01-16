@@ -21,7 +21,6 @@ export class Service {
   @Column({
     type: 'json',
     nullable: true,
-    default: '[]'
   })
   workers: Array<{
     id: number;
@@ -36,4 +35,9 @@ export class Service {
 
   @Column({ name: 'percentage', type: 'decimal', nullable: true })
   percentage: number;
+
+
+   constructor() {
+    this.workers = [];
+  }
 }

@@ -1,111 +1,48 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan } from 'typeorm';
+import { Repository } from 'typeorm';
 import { UserVerificationCodes } from './entities/user-verification-codes.entity';
+import { CreateUserVerificationCodesDto } from './dto/create-user_verification_codes.dto';
+import { UpdateUserVerificationCodesDto } from './dto/update-user_verification_codes.dto';
 
 @Injectable()
 export class UserVerificationCodesService {
   constructor(
     @InjectRepository(UserVerificationCodes)
-    private verificationCodesRepository: Repository<UserVerificationCodes>,
+    private UserVerificationCodesRepository: Repository<UserVerificationCodes>,
   ) {}
 
-  async create(userId: number, code: string, expiresAt: Date, codeType: string = 'email_verification'): Promise<UserVerificationCodes> {
-    const verificationCode = this.verificationCodesRepository.create({
-      userId,
-      code,
-      expiresAt,
-      codeType,
-      used: 0,
-    });
-    return await this.verificationCodesRepository.save(verificationCode);
+  async findAll(): Promise<UserVerificationCodes[]> {
+    return await this.UserVerificationCodesRepository.find();
   }
 
-  async findActiveCode(userId: number, codeType: string = 'email_verification'): Promise<UserVerificationCodes | null> {
-    const now = new Date();
-    return await this.verificationCodesRepository.findOne({
-      where: {
-        userId,
-        codeType,
-        used: 0,
-        expiresAt: MoreThan(now),
-      },
-      order: { id: 'DESC' },
-    });
+  async findOne(id: number): Promise<UserVerificationCodes> {
+    const UserVerificationCodes = await this.UserVerificationCodesRepository.findOne({ where: { id } });
+    if (!UserVerificationCodes) {
+      throw new NotFoundException(`UserVerificationCodes with id ${id} not found`);
+    }
+    return UserVerificationCodes;
   }
 
-  async findCodeByUserIdAndCode(userId: number, code: string, codeType?: string): Promise<UserVerificationCodes | null> {
-    const where: any = {
-      userId,
-      code,
-      used: 0,
-    };
-    
-    if (codeType) {
-      where.codeType = codeType;
+  async create(createUserVerificationCodesDto: CreateUserVerificationCodesDto): Promise<UserVerificationCodes> {
+    const UserVerificationCodes = this.UserVerificationCodesRepository.create(createUserVerificationCodesDto);
+    return await this.UserVerificationCodesRepository.save(UserVerificationCodes);
+  }
+
+  async update(id: number, updateUserVerificationCodesDto: UpdateUserVerificationCodesDto): Promise<UserVerificationCodes> {
+    const UserVerificationCodes = await this.UserVerificationCodesRepository.findOne({ where: { id } });
+    if (!UserVerificationCodes) {
+      throw new NotFoundException(`UserVerificationCodes with id ${id} not found`);
     }
     
-    return await this.verificationCodesRepository.findOne({
-      where,
-      order: { id: 'DESC' },
-    });
+    Object.assign(UserVerificationCodes, updateUserVerificationCodesDto);
+    return await this.UserVerificationCodesRepository.save(UserVerificationCodes);
   }
 
-  async markAsUsed(id: number): Promise<void> {
-    await this.verificationCodesRepository.update(id, { used: 1 });
-  }
-
-  async delete(id: number): Promise<void> {
-    await this.verificationCodesRepository.delete(id);
-  }
-
-  async deleteExpiredCodes(): Promise<number> {
-    const now = new Date();
-    const result = await this.verificationCodesRepository
-      .createQueryBuilder()
-      .delete()
-      .where('expires_at < :now', { now })
-      .execute();
-    
-    return result.affected || 0;
-  }
-
-  async deleteExpiredCodesByUser(userId: number, codeType?: string): Promise<number> {
-    const now = new Date();
-    let query = this.verificationCodesRepository
-      .createQueryBuilder()
-      .delete()
-      .where('user_id = :userId AND expires_at < :now', {
-        userId,
-        now
-      });
-    
-    if (codeType) {
-      query = query.andWhere('code_type = :codeType', { codeType });
+  async remove(id: number): Promise<void> {
+    const result = await this.UserVerificationCodesRepository.delete(id);
+    if (result.affected === 0) {
+      throw new NotFoundException(`UserVerificationCodes with id ${id} not found`);
     }
-    
-    const result = await query.execute();
-    return result.affected || 0;
-  }
-
-  async getVerificationCodeStatus(userId: number): Promise<{ 
-    hasActiveCode: boolean; 
-    expiresAt?: Date; 
-    secondsRemaining?: number;
-  }> {
-    const now = new Date();
-    const activeCode = await this.findActiveCode(userId);
-    
-    if (!activeCode) {
-      return { hasActiveCode: false };
-    }
-    
-    const secondsRemaining = Math.floor((activeCode.expiresAt.getTime() - now.getTime()) / 1000);
-    
-    return {
-      hasActiveCode: true,
-      expiresAt: activeCode.expiresAt,
-      secondsRemaining
-    };
   }
 }

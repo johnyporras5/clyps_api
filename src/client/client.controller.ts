@@ -1,38 +1,41 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  UseGuards,
+  Request,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ClientService } from './client.service';
-import { Client } from './entities/client.entity';
-import { CreateClientDto } from './dto/create-client.dto';
-import { UpdateClientDto } from './dto/update-client.dto';
+import { PaginationDto } from '../common/dto/pagination.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('clients')
+@UseGuards(JwtAuthGuard)
 export class ClientController {
-  constructor(private readonly ClientService: ClientService) {}
+  constructor(private readonly clientService: ClientService) {}
 
-  @Get()
-  async findAll(): Promise<Client[]> {
-    return this.ClientService.findAll();
-  }
-
-  @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number): Promise<Client> {
-    return this.ClientService.findOne(id);
-  }
-
-  @Post()
-  async create(@Body() createClientDto: CreateClientDto): Promise<Client> {
-    return this.ClientService.create(createClientDto);
-  }
-
-  @Put(':id')
-  async update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() updateClientDto: UpdateClientDto,
-  ): Promise<Client> {
-    return this.ClientService.update(id, updateClientDto);
-  }
-
-  @Delete(':id')
-  async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return this.ClientService.remove(id);
+  /**
+   * Endpoint principal para listar clientes según las reglas de visibilidad
+   * 
+   * Reglas:
+   * 1. Clientes PÚBLICOS: Visibles para TODOS los administradores logueados
+   * 2. Clientes PRIVADOS: Solo visibles para administradores cuyas compañías 
+   *    están en el array 'companies' del cliente
+   * 3. Admin sin compañías: Solo puede ver clientes públicos
+   */
+  @Get('admin/companies')
+  async findAllByAdminCompanies(
+    @Request() req,
+    @Query() paginationDto: PaginationDto,
+  ) {
+    // Extraer adminId del token JWT (soporta tanto 'id' como 'sub')
+    const adminId = req.user?.id || req.user?.sub;
+    
+    if (!adminId) {
+      throw new UnauthorizedException('Usuario no autenticado correctamente');
+    }
+    
+    return await this.clientService.findAllByAdminCompanies(adminId, paginationDto);
   }
 }

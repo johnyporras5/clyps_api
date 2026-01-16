@@ -25,11 +25,21 @@ export class Client {
   @Column({ name: 'picture', length: 500, nullable: true })
   picture: string;
 
+  @Column({ name: 'is_active', type: 'tinyint', default: 1 })
+  isActive: number;
+
   @Column({ name: 'location', length: 245, nullable: true })
   location: string;
 
   @Column({ name: 'user_id' })
   userId: number;
+
+  @Column({ type: 'json', nullable: true })
+  companies: number[];
+
+  @Column({ name: 'is_public', type: 'tinyint', default: 0 })
+  isPublic: number; // 0 = privado, 1 = público
+
 
   // Relación uno a uno con User
   @OneToOne(() => User, { nullable: false, onDelete: 'CASCADE' })

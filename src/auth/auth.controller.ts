@@ -13,14 +13,12 @@ import {
   Patch
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { RegisterBaseDto } from './dto/register-base.dto';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
 import { RegisterClientDto } from './dto/register-client.dto';
+import { RegisterAdminDto } from './dto/register-admin.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TokenBlacklistService } from './services/token_blacklist.service'; 
-
-// Importar DTOs de cambio de contraseña
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RequestPasswordResetDto, ResetPasswordDto, VerifyResetCodeDto } from './dto/reset-password.dto';
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
@@ -40,7 +38,7 @@ export class AuthController {
    */
   @Post('register/admin')
   @HttpCode(HttpStatus.CREATED)
-  async registerAdmin(@Body() registerDto: RegisterBaseDto) {
+  async registerAdmin(@Body() registerDto: RegisterAdminDto) {
     return this.authService.registerAdmin(registerDto);
   }
 

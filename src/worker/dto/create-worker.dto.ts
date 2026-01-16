@@ -5,7 +5,7 @@ export class CreateWorkerDto {
 
   @IsNotEmpty()
   @IsNumber()
-  userId: number; // Agregar esto
+  userId: number; 
 
   @IsOptional()
   @IsString()
