@@ -400,7 +400,24 @@ export class AuthService {
     generatedPassword?: string;
     access_token?: string;
   }> {
-    // 1. Verificar si el email ya existe en la tabla User
+    // ==================== VALIDACIÓN INICIAL DE COMPAÑÍAS ====================
+    let validCompanyIds: number[] = [];
+
+    if (registerDto.companies && registerDto.companies.length > 0) {
+      const existingCompanies = await this.companyRepository.findByIds(registerDto.companies);
+      const existingCompanyIds = existingCompanies.map(company => company.id);
+      const invalidCompanyIds = registerDto.companies.filter(id => !existingCompanyIds.includes(id));
+
+      if (invalidCompanyIds.length > 0) {
+        throw new NotFoundException(
+          `No se puede registrar el cliente. Las siguientes compañías no existen: ${invalidCompanyIds.join(', ')}`
+        );
+      }
+
+      validCompanyIds = existingCompanyIds;
+    }
+
+    // 1. Verificar si el correo ya existe en la tabla User
     const existingUserByEmail = await this.userRepository.findOne({
       where: { email: registerDto.email }
     });
@@ -412,24 +429,18 @@ export class AuthService {
 
     // ==================== VERIFICAR SI YA EXISTE EL USUARIO ====================
     if (existingUserByEmail) {
-      // Si el usuario existe, verificar si ya es un cliente
       if (existingUserByEmail.userType !== 'cli') {
         throw new ConflictException('El email ya está registrado como otro tipo de usuario (no cliente)');
       }
 
-      // Usuario existe y es cliente (verificado o no)
       user = existingUserByEmail;
       isExistingUser = true;
 
-      // Verificar si el usuario ya está verificado
       if (existingUserByEmail.emailVerified === 0) {
-        // Si no está verificado, enviar nuevo código
         await this.sendVerificationCode(registerDto.email);
-        // NO lanzamos excepción, continuamos con el flujo
       }
     } else {
-      // ==================== CREAR NUEVO CLIENTE ====================
-      // Verificar si el username ya existe
+      // ==================== CREAR NUEVO USUARIO ====================
       const existingUserByUsername = await this.userRepository.findOne({
         where: { username: registerDto.username }
       });
@@ -438,13 +449,9 @@ export class AuthService {
         throw new ConflictException('El nombre de usuario ya está en uso');
       }
 
-      // Generar contraseña automáticamente
       generatedPassword = this.generateRandomPassword(12);
-
-      // Encriptar contraseña generada
       const hashedPassword = await bcrypt.hash(generatedPassword, 10);
 
-      // Crear usuario con la contraseña generada
       const newUser = this.userRepository.create({
         username: registerDto.username,
         email: registerDto.email,
@@ -455,7 +462,6 @@ export class AuthService {
 
       user = await this.userRepository.save(newUser);
 
-      // Enviar credenciales por correo solo si es nuevo
       const credentialsSent = await this.emailService.sendClientCredentials(
         user.email,
         user.username,
@@ -466,20 +472,20 @@ export class AuthService {
         console.warn('No se pudieron enviar las credenciales por correo, pero el usuario fue creado');
       }
 
-      // Enviar código de verificación solo si es nuevo
       await this.sendVerificationCode(user.email);
     }
 
     // ==================== VERIFICAR SI YA TIENE PERFIL DE CLIENTE ====================
-    // Buscar el perfil de cliente
     client = await this.clientRepository.findOne({
       where: { userId: user.id }
     });
 
     let createdClientProfile = false;
+    let updatedClientProfile = false;
+    let addedNewCompanies = false;
 
-    // Si no existe perfil de cliente, crearlo
     if (!client) {
+      // Crear nuevo perfil de cliente
       console.log(`Creando perfil de cliente para usuario: ${user.email}`);
 
       const newClient = this.clientRepository.create({
@@ -489,20 +495,123 @@ export class AuthService {
         phone: registerDto.phone,
         birthDate: registerDto.birthdate,
         picture: registerDto.picture,
-        isActive: registerDto.isActive,
-        companies: registerDto.companies,
-        isPublic: registerDto.isPublic,
+        isActive: registerDto.isActive !== undefined ? registerDto.isActive : 1,
+        companies: validCompanyIds,
+        isPublic: registerDto.isPublic !== undefined ? registerDto.isPublic : 0,
         location: registerDto.location,
         userId: user.id
       });
 
       client = await this.clientRepository.save(newClient);
       createdClientProfile = true;
-
       console.log(`Perfil de cliente creado con ID: ${client.id}`);
+    } else {
+      // ==================== VERIFICAR SI HAY CAMBIOS REALES ====================
+      console.log(`Verificando cambios para cliente existente: ${user.email}`);
+
+      // Preparar objeto con solo los campos que vienen en el DTO (no undefined)
+      const updateData: any = {};
+      let hasChanges = false;
+
+      // Comparar cada campo individualmente, solo si viene en el DTO
+      if (registerDto.name !== undefined && registerDto.name !== client.name) {
+        updateData.name = registerDto.name;
+        hasChanges = true;
+        console.log(`Cambio detectado en nombre: ${client.name} -> ${registerDto.name}`);
+      }
+
+      if (registerDto.lastName !== undefined && registerDto.lastName !== client.lastName) {
+        updateData.lastName = registerDto.lastName;
+        hasChanges = true;
+        console.log(`Cambio detectado en apellido: ${client.lastName} -> ${registerDto.lastName}`);
+      }
+
+      if (registerDto.email !== undefined && registerDto.email !== client.email) {
+        updateData.email = registerDto.email;
+        hasChanges = true;
+        console.log(`Cambio detectado en email: ${client.email} -> ${registerDto.email}`);
+      }
+
+      if (registerDto.phone !== undefined && registerDto.phone !== client.phone) {
+        updateData.phone = registerDto.phone;
+        hasChanges = true;
+        console.log(`Cambio detectado en teléfono: ${client.phone} -> ${registerDto.phone}`);
+      }
+
+      if (registerDto.birthdate !== undefined) {
+        const currentBirthDate = client.birthDate ? new Date(client.birthDate).toISOString().split('T')[0] : null;
+        const newBirthDate = registerDto.birthdate ? new Date(registerDto.birthdate).toISOString().split('T')[0] : null;
+
+        if (currentBirthDate !== newBirthDate) {
+          updateData.birthDate = registerDto.birthdate;
+          hasChanges = true;
+          console.log(`Cambio detectado en fecha de nacimiento: ${currentBirthDate} -> ${newBirthDate}`);
+        }
+      }
+
+      if (registerDto.picture !== undefined && registerDto.picture !== client.picture) {
+        updateData.picture = registerDto.picture;
+        hasChanges = true;
+        console.log(`Cambio detectado en imagen: ${client.picture} -> ${registerDto.picture}`);
+      }
+
+      if (registerDto.isActive !== undefined && registerDto.isActive !== client.isActive) {
+        updateData.isActive = registerDto.isActive;
+        hasChanges = true;
+        console.log(`Cambio detectado en estado activo: ${client.isActive} -> ${registerDto.isActive}`);
+      }
+
+      if (registerDto.location !== undefined && registerDto.location !== client.location) {
+        updateData.location = registerDto.location;
+        hasChanges = true;
+        console.log(`Cambio detectado en ubicación: ${client.location} -> ${registerDto.location}`);
+      }
+
+      if (registerDto.isPublic !== undefined && registerDto.isPublic !== client.isPublic) {
+        updateData.isPublic = registerDto.isPublic;
+        hasChanges = true;
+        console.log(`Cambio detectado en visibilidad: ${client.isPublic} -> ${registerDto.isPublic}`);
+      }
+
+      // Manejar compañías: solo agregar nuevas, no eliminar existentes
+      const currentCompanies = client.companies || [];
+      let newCompaniesToAdd: number[] = [];
+
+      if (validCompanyIds.length > 0) {
+        newCompaniesToAdd = validCompanyIds.filter(id => !currentCompanies.includes(id));
+
+        if (newCompaniesToAdd.length > 0) {
+          const updatedCompaniesList = [...new Set([...currentCompanies, ...newCompaniesToAdd])];
+          updateData.companies = updatedCompaniesList;
+          addedNewCompanies = true;
+          hasChanges = true;
+          console.log(`Agregando nuevas compañías: ${newCompaniesToAdd.join(', ')}`);
+          console.log(`Compañías totales después de agregar: ${updatedCompaniesList.join(', ')}`);
+        }
+      }
+
+      // Solo actualizar si hay cambios reales
+      if (hasChanges) {
+        console.log(`Detectados cambios reales. Actualizando perfil del cliente...`);
+
+        // Aplicar actualizaciones
+        await this.clientRepository.update(client.id, updateData);
+        updatedClientProfile = true;
+
+        // Recargar el cliente actualizado
+        client = await this.clientRepository.findOne({
+          where: { id: client.id }
+        });
+
+        console.log(`Perfil de cliente actualizado exitosamente.`);
+      } else {
+        console.log(`No se detectaron cambios reales en el perfil del cliente. No se realizaron actualizaciones.`);
+        console.log(`Compañías actuales del cliente: ${currentCompanies.join(', ') || 'ninguna'}`);
+        console.log(`Compañías solicitadas: ${validCompanyIds.join(', ') || 'ninguna'}`);
+      }
     }
 
-    // Generar token JWT solo para nuevo cliente (usuario nuevo)
+    // Generar token JWT solo para nuevo cliente
     let access_token: string | undefined;
     if (!isExistingUser) {
       const payload = {
@@ -516,56 +625,75 @@ export class AuthService {
     // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
 
-    // ==================== CONSTRUIR MENSAJE DE RESPUESTA MEJORADO ====================
-    let message: string;
+    // ==================== CONSTRUIR MENSAJE DE RESPUESTA ====================
+    const actionParts: string[] = [];
 
     if (isExistingUser) {
-      // Usuario ya existente
-      const actionParts: string[] = [];
-
-      // Determinar si hubo cambios
       const isVerified = user.emailVerified === 1;
 
-      // Base del mensaje según estado de verificación
-      if (!isVerified) {
-        actionParts.push(`El cliente ya estaba registrado en el sistema pero su correo no estaba verificado.`);
-        actionParts.push(`Se ha enviado un nuevo código de verificación para completar este proceso.`);
+      if (!createdClientProfile && !updatedClientProfile) {
+        // No hubo cambios en el perfil
+        if (isVerified) {
+          actionParts.push(`El cliente ya estaba registrado y verificado en el sistema.`);
+        } else {
+          actionParts.push(`El cliente ya estaba registrado en el sistema pero su correo no estaba verificado.`);
+          actionParts.push(`Se ha enviado un nuevo código de verificación para completar este proceso.`);
+        }
+
+        // CORRECCIÓN: Verificar que client no sea null y que companies exista
+        if (client && Array.isArray(client.companies) && client.companies.length > 0) {
+          actionParts.push(`El cliente mantiene sus ${client.companies.length} compañía(s) actuales sin cambios.`);
+        }
       } else {
-        actionParts.push(`El cliente ya estaba registrado y verificado en el sistema.`);
-      }
+        // Hubo cambios en el perfil
+        if (createdClientProfile) {
+          actionParts.push(`Se completó el perfil del cliente con la información proporcionada.`);
+        } else if (updatedClientProfile) {
+          actionParts.push(`Se actualizó el perfil del cliente con la nueva información.`);
+        }
 
-      // Agregar detalles específicos
-      if (createdClientProfile) {
-        actionParts.push(`Se ha completado su perfil de cliente con la información proporcionada.`);
-      } else {
-        actionParts.push(`Ya tenía un perfil de cliente registrado en el sistema.`);
+        if (addedNewCompanies) {
+          actionParts.push(`Se agregaron nuevas compañías al perfil del cliente.`);
+        }
       }
-
-      // Agregar recomendación si no está verificado
-      if (!isVerified) {
-        actionParts.push(`Una vez que verifique su correo electrónico, podrá acceder a todas las funcionalidades.`);
-      }
-
-      message = actionParts.join(' ');
     } else {
-      // Usuario nuevo
-      const newUserParts = [
-        `Cliente registrado exitosamente en el sistema CLYPS.`,
-        `Las credenciales de acceso han sido enviadas a su correo electrónico.`,
-        `Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`
-      ];
-      message = newUserParts.join(' ');
+      // Nuevo cliente
+      actionParts.push(`Cliente registrado exitosamente en el sistema CLYPS.`);
+      actionParts.push(`Las credenciales de acceso han sido enviadas a su correo electrónico.`);
+      actionParts.push(`Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`);
+
+      if (validCompanyIds.length > 0) {
+        actionParts.push(`El cliente ha sido afiliado a ${validCompanyIds.length} compañía(s).`);
+      }
     }
+
+    const message = actionParts.join(' ');
+
+    // CORRECCIÓN: Usar optional chaining para evitar errores cuando client es null
+    const totalCompanies = client?.companies?.length || 0;
 
     // Construir objeto de respuesta
     const response: any = {
       message,
       user: userWithoutPassword,
+      profileStatus: {
+        isNewUser: !isExistingUser,
+        profileCreated: createdClientProfile,
+        profileUpdated: updatedClientProfile,
+        hasNewCompanies: addedNewCompanies,
+        totalCompanies: totalCompanies,
+        noChangesDetected: isExistingUser && !createdClientProfile && !updatedClientProfile
+      }
     };
+
+    // Solo incluir generatedPassword y access_token si es un nuevo usuario
+    if (!isExistingUser) {
+      response.generatedPassword = generatedPassword;
+      response.access_token = access_token;
+    }
 
     return response;
   }
-
   // ==================== MÉTODOS DE LOGIN ====================
 
   async login(loginDto: LoginDto): Promise<{ access_token: string; user: Partial<User> }> {
