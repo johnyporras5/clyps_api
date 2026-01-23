@@ -20,6 +20,7 @@ import { RequestPasswordResetDto, ResetPasswordDto, VerifyResetCodeDto } from '.
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { RegisterAdminDto } from './dto/register-admin.dto';
+import { FileUploadService } from '../common/services/file_upload.service';
 
 
 @Injectable()
@@ -40,17 +41,18 @@ export class AuthService {
     private emailService: EmailService,
     private verificationService: VerificationService,
     private tokenBlacklistService: TokenBlacklistService,
+    private fileUploadService: FileUploadService,
+
   ) { }
 
   // ==================== MÉTODOS DE REGISTRO ====================
-
   /**
-   * Registro específico para administradores
-   */
-  /**
-   * Registro específico para administradores
-   */
-  async registerAdmin(registerDto: RegisterAdminDto): Promise<{
+    * Registro específico para administradores (con o sin logo)
+    */
+  async registerAdmin(
+    registerDto: RegisterAdminDto,
+    logoFile?: Express.Multer.File
+  ): Promise<{
     message: string;
     user: Partial<User>;
     access_token?: string;
@@ -95,15 +97,31 @@ export class AuthService {
     });
 
     const savedUser = await this.userRepository.save(user);
+    // ==================== SUBIR LOGO DE LA COMPAÑÍA (SI SE PROPORCIONA) ====================
+    let logoFileName: string | undefined = undefined; 
+
+    if (logoFile) {
+      try {
+        const logoInfo = await this.fileUploadService.saveFile(
+          logoFile,
+          'company_logo',
+          'company',
+          savedUser.id
+        );
+        logoFileName = logoInfo.fileName;
+        console.log(`✅ Logo guardado: ${logoFileName}`);
+      } catch (error) {
+        console.error('❌ Error al guardar el logo:', error);
+        // Continuamos sin logo si hay error
+      }
+    }
 
     // ==================== CREAR COMPANY PARA EL ADMIN ====================
-    // Opción 1: Usar el servicio de Company (más limpio)
     const companyData: CreateCompanyDto = {
       name: `Empresa de ${registerDto.username}`,
       email: registerDto.email,
       userId: savedUser.id,
-      // Los campos location, logo y description no se pasan, 
-      // lo que significa que serán null en la base de datos
+      logo: logoFileName,
     };
 
     await this.companyService.create(companyData);

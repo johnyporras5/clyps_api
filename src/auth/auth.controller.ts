@@ -1,16 +1,21 @@
-import { 
-  Controller, 
-  Post, 
-  Body, 
-  HttpCode, 
-  HttpStatus, 
-  Get, 
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  Get,
   Param,
   Query,
   UseGuards,
   Req,
   Headers,
-  Patch
+  Patch,
+  UploadedFile,
+  UseInterceptors,
+  ParseFilePipe,
+  MaxFileSizeValidator,
+  FileTypeValidator
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
@@ -18,28 +23,43 @@ import { RegisterClientDto } from './dto/register-client.dto';
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { TokenBlacklistService } from './services/token_blacklist.service'; 
+import { TokenBlacklistService } from './services/token_blacklist.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RequestPasswordResetDto, ResetPasswordDto, VerifyResetCodeDto } from './dto/reset-password.dto';
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
+import { RegisterAdminWithLogoDto } from './dto/register-admin-with-logo.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly tokenBlacklistService: TokenBlacklistService,
-  ) {}
+  ) { }
 
   // ==================== ENDPOINTS DE REGISTRO ====================
 
   /**
-   * Registro para administradores
+   * Registro para administradores (con o sin logo)
    * POST /auth/register/admin
    */
   @Post('register/admin')
+  @UseInterceptors(FileInterceptor('logo'))
   @HttpCode(HttpStatus.CREATED)
-  async registerAdmin(@Body() registerDto: RegisterAdminDto) {
-    return this.authService.registerAdmin(registerDto);
+  async registerAdmin(
+    @Body() registerDto: RegisterAdminDto, // Primero el DTO obligatorio
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }), // 5MB
+          new FileTypeValidator({ fileType: 'image/(jpeg|png|jpg|gif|webp)' }),
+        ],
+        fileIsRequired: false,
+      }),
+    )
+    logoFile?: Express.Multer.File, 
+  ) {
+    return this.authService.registerAdmin(registerDto, logoFile);
   }
 
   /**
