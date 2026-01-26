@@ -49,9 +49,14 @@ export class AuthController {
    * POST /auth/register/worker
    */
   @Post('register/worker')
+  @UseGuards(JwtAuthGuard) // Proteger el endpoint
   @HttpCode(HttpStatus.CREATED)
-  async registerWorker(@Body() registerDto: RegisterWorkerDto) {
-    return this.authService.registerWorker(registerDto);
+  async registerWorker(
+    @Body() registerDto: RegisterWorkerDto,
+    @Req() req: any // Para obtener el admin autenticado
+  ) {
+    const adminId = req.user.sub; // ID del administrador autenticado
+    return this.authService.registerWorker(registerDto, adminId);
   }
 
   /**

@@ -20,6 +20,8 @@ import { CreateCompanyDto } from '../company/dto/create-company.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RequestPasswordResetDto, ResetPasswordDto, VerifyResetCodeDto } from './dto/reset-password.dto';
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
+import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+
 
 @Injectable()
 export class AuthService {
@@ -33,6 +35,8 @@ export class AuthService {
     private companyService: CompanyService,
     @InjectRepository(Company)  
     private companyRepository: Repository<Company>,
+    @InjectRepository(CompanyWorker) 
+    private companyWorkerRepository: Repository<CompanyWorker>,
     private jwtService: JwtService,
     private emailService: EmailService,
     private verificationService: VerificationService,
@@ -156,10 +160,13 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
   /**
    * Registro específico para trabajadores CON CONTRASEÑA AUTOMÁTICA
    */
-  async registerWorker(registerDto: RegisterWorkerDto): Promise<{
+ async registerWorker(
+    registerDto: RegisterWorkerDto, 
+    adminId: number // ID del administrador que registra
+  ): Promise<{
     message: string;
     user: Partial<User>;
-    generatedPassword?: string; // Hacer opcional
+    generatedPassword?: string;
     access_token?: string;
   }> {
     // Verificar si el email ya existe
@@ -187,6 +194,15 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
 
     if (existingUserByUsername) {
       throw new ConflictException('El nombre de usuario ya está en uso');
+    }
+
+    // Verificar que el admin existe y es administrador
+    const admin = await this.userRepository.findOne({
+      where: { id: adminId, userType: 'adm' }
+    });
+
+    if (!admin) {
+      throw new UnauthorizedException('Solo los administradores pueden registrar trabajadores');
     }
 
     // Generar contraseña automáticamente
@@ -217,7 +233,30 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
       userId: savedUser.id
     });
 
-    await this.workerRepository.save(worker);
+    const savedWorker = await this.workerRepository.save(worker);
+
+    // ==================== ASIGNAR A COMPAÑÍA DEL ADMIN ====================
+    // Buscar la compañía del administrador
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
+    }
+
+    // Crear registro en company_worker
+    const companyWorker = this.companyWorkerRepository.create({
+      workerId: savedWorker.id,
+      companyId: company.id,
+      userId: savedUser.id, // ID del usuario worker
+      isActive: 1, // Activo por defecto
+      startDate: new Date(),
+      // endDate se deja como null (sin fecha de finalización)
+      servicesDetail: {}, // JSON vacío por defecto
+    });
+
+    await this.companyWorkerRepository.save(companyWorker);
 
     // Enviar credenciales por correo
     const credentialsSent = await this.emailService.sendWorkerCredentials(
@@ -228,14 +267,12 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
 
     if (!credentialsSent) {
       console.warn('No se pudieron enviar las credenciales por correo, pero el usuario fue creado');
-      // Podrías decidir lanzar una excepción o continuar
-      // throw new BadRequestException('No se pudieron enviar las credenciales por correo');
     }
 
     // Enviar código de verificación
     await this.sendVerificationCode(user.email);
 
-    // Generar token JWT
+    // Generar token JWT para el worker
     const payload = {
       email: user.email,
       sub: user.id,
@@ -249,7 +286,7 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
 
     // Construir objeto de respuesta
     const response: any = {
-      message: 'Trabajador registrado exitosamente. Las credenciales han sido enviadas al correo electrónico.',
+      message: `Trabajador registrado exitosamente y asignado a la compañía '${company.name}'. Las credenciales han sido enviadas al correo electrónico.`,
       user: userWithoutPassword,
       access_token
     };

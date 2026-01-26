@@ -15,11 +15,12 @@ import { BlacklistedToken } from './entities/blacklisted_token.entity';
 import { TokenBlacklistService } from './services/token_blacklist.service'; 
 import { Company } from 'src/company/entities/company.entity';
 import { CompanyService } from 'src/company/company.service';
+import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Worker, Client,BlacklistedToken,Company]),
+    TypeOrmModule.forFeature([User, Worker, Client,BlacklistedToken,Company,CompanyWorker]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
