@@ -9,38 +9,38 @@ import { UpdateCompanyDto } from './dto/update-company.dto';
 export class CompanyService {
   constructor(
     @InjectRepository(Company)
-    private CompanyRepository: Repository<Company>,
+    private companyRepository: Repository<Company>,
   ) {}
 
   async findAll(): Promise<Company[]> {
-    return await this.CompanyRepository.find();
+    return await this.companyRepository.find();
   }
 
   async findOne(id: number): Promise<Company> {
-    const Company = await this.CompanyRepository.findOne({ where: { id } });
-    if (!Company) {
+    const company = await this.companyRepository.findOne({ where: { id } });
+    if (!company) {
       throw new NotFoundException(`Company with id ${id} not found`);
     }
-    return Company;
+    return company;
   }
 
   async create(createCompanyDto: CreateCompanyDto): Promise<Company> {
-    const Company = this.CompanyRepository.create(createCompanyDto);
-    return await this.CompanyRepository.save(Company);
+     const company = this.companyRepository.create(createCompanyDto);
+    return await this.companyRepository.save(company);
   }
 
   async update(id: number, updateCompanyDto: UpdateCompanyDto): Promise<Company> {
-    const Company = await this.CompanyRepository.findOne({ where: { id } });
-    if (!Company) {
+    const company = await this.companyRepository.findOne({ where: { id } });
+    if (!company) {
       throw new NotFoundException(`Company with id ${id} not found`);
     }
     
-    Object.assign(Company, updateCompanyDto);
-    return await this.CompanyRepository.save(Company);
+    Object.assign(company, updateCompanyDto);
+    return await this.companyRepository.save(company);
   }
 
   async remove(id: number): Promise<void> {
-    const result = await this.CompanyRepository.delete(id);
+    const result = await this.companyRepository.delete(id);
     if (result.affected === 0) {
       throw new NotFoundException(`Company with id ${id} not found`);
     }
