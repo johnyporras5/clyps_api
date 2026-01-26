@@ -98,7 +98,7 @@ export class AuthService {
 
     const savedUser = await this.userRepository.save(user);
     // ==================== SUBIR LOGO DE LA COMPAÑÍA (SI SE PROPORCIONA) ====================
-    let logoFileName: string | undefined = undefined; 
+    let logoFileName: string | undefined = undefined;
 
     if (logoFile) {
       try {
@@ -418,22 +418,6 @@ export class AuthService {
     generatedPassword?: string;
     access_token?: string;
   }> {
-    // ==================== VALIDACIÓN INICIAL DE COMPAÑÍAS ====================
-    let validCompanyIds: number[] = [];
-
-    if (registerDto.companies && registerDto.companies.length > 0) {
-      const existingCompanies = await this.companyRepository.findByIds(registerDto.companies);
-      const existingCompanyIds = existingCompanies.map(company => company.id);
-      const invalidCompanyIds = registerDto.companies.filter(id => !existingCompanyIds.includes(id));
-
-      if (invalidCompanyIds.length > 0) {
-        throw new NotFoundException(
-          `No se puede registrar el cliente. Las siguientes compañías no existen: ${invalidCompanyIds.join(', ')}`
-        );
-      }
-
-      validCompanyIds = existingCompanyIds;
-    }
 
     // 1. Verificar si el correo ya existe en la tabla User
     const existingUserByEmail = await this.userRepository.findOne({
@@ -514,7 +498,7 @@ export class AuthService {
         birthDate: registerDto.birthdate,
         picture: registerDto.picture,
         isActive: registerDto.isActive !== undefined ? registerDto.isActive : 1,
-        companies: validCompanyIds,
+        companies: [],
         isPublic: registerDto.isPublic !== undefined ? registerDto.isPublic : 0,
         location: registerDto.location,
         userId: user.id
@@ -591,23 +575,6 @@ export class AuthService {
         console.log(`Cambio detectado en visibilidad: ${client.isPublic} -> ${registerDto.isPublic}`);
       }
 
-      // Manejar compañías: solo agregar nuevas, no eliminar existentes
-      const currentCompanies = client.companies || [];
-      let newCompaniesToAdd: number[] = [];
-
-      if (validCompanyIds.length > 0) {
-        newCompaniesToAdd = validCompanyIds.filter(id => !currentCompanies.includes(id));
-
-        if (newCompaniesToAdd.length > 0) {
-          const updatedCompaniesList = [...new Set([...currentCompanies, ...newCompaniesToAdd])];
-          updateData.companies = updatedCompaniesList;
-          addedNewCompanies = true;
-          hasChanges = true;
-          console.log(`Agregando nuevas compañías: ${newCompaniesToAdd.join(', ')}`);
-          console.log(`Compañías totales después de agregar: ${updatedCompaniesList.join(', ')}`);
-        }
-      }
-
       // Solo actualizar si hay cambios reales
       if (hasChanges) {
         console.log(`Detectados cambios reales. Actualizando perfil del cliente...`);
@@ -624,8 +591,6 @@ export class AuthService {
         console.log(`Perfil de cliente actualizado exitosamente.`);
       } else {
         console.log(`No se detectaron cambios reales en el perfil del cliente. No se realizaron actualizaciones.`);
-        console.log(`Compañías actuales del cliente: ${currentCompanies.join(', ') || 'ninguna'}`);
-        console.log(`Compañías solicitadas: ${validCompanyIds.join(', ') || 'ninguna'}`);
       }
     }
 
@@ -680,11 +645,7 @@ export class AuthService {
       actionParts.push(`Las credenciales de acceso han sido enviadas a su correo electrónico.`);
       actionParts.push(`Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`);
 
-      if (validCompanyIds.length > 0) {
-        actionParts.push(`El cliente ha sido afiliado a ${validCompanyIds.length} compañía(s).`);
-      }
     }
-
     const message = actionParts.join(' ');
 
     // CORRECCIÓN: Usar optional chaining para evitar errores cuando client es null
@@ -704,13 +665,7 @@ export class AuthService {
       }
     };
 
-    // Solo incluir generatedPassword y access_token si es un nuevo usuario
-    if (!isExistingUser) {
-      response.generatedPassword = generatedPassword;
-      response.access_token = access_token;
-    }
-
-    return response;
+       return response;
   }
   // ==================== MÉTODOS DE LOGIN ====================
 
