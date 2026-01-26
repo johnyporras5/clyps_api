@@ -31,6 +31,11 @@ export class VerificationService {
     return code;
   }
 
+  // ✅ AGREGAR ESTE MÉTODO FALTANTE
+  async generatePasswordResetCode(userId: number): Promise<string> {
+    return this.generateVerificationCode(userId, 'password_reset');
+  }
+
   async verifyCodeByEmail(email: string, code: string, codeType: string = 'email_verification'): Promise<boolean> {
     const user = await this.userRepository.findOne({ where: { email } });
     if (!user) {
@@ -61,6 +66,10 @@ export class VerificationService {
     
     console.log(`✅ Código de ${codeType} verificado exitosamente para ${email}`);
     return true;
+  }
+
+  async verifyCode(email: string, code: string): Promise<boolean> {
+    return this.verifyCodeByEmail(email, code, 'email_verification');
   }
 
   async verifyCodeByUserId(userId: number, code: string, codeType: string): Promise<boolean> {
