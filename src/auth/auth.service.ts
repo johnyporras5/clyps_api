@@ -288,7 +288,7 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
     const response: any = {
       message: `Trabajador registrado exitosamente y asignado a la compañía '${company.name}'. Las credenciales han sido enviadas al correo electrónico.`,
       user: userWithoutPassword,
-      access_token
+
     };
 
     return response;
@@ -372,7 +372,6 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
     return {
       message: 'Cliente registrado exitosamente. Por favor verifica tu email.',
       user: userWithoutPassword,
-      access_token
     };
   }
 
