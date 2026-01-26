@@ -1,4 +1,5 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsEmail, IsString, Length, IsNumber,IsDate } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateClientDto {
 
@@ -9,6 +10,20 @@ export class CreateClientDto {
   @IsOptional()
   @IsString()
   lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 20)
+  phone?: string;
+
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  birthdate?: Date;
+
+  @IsOptional()
+  @IsString()
+  picture?: string;
 
   @IsOptional()
   @IsEmail()
