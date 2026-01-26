@@ -164,4 +164,111 @@ export class EmailService {
       </html>
     `;
   }
+
+   async sendWorkerCredentials(email: string, username: string, password: string): Promise<boolean> {
+    return this.sendCredentialsEmail(email, username, password, 'Bienvenido a la plataforma - Tus credenciales de acceso', this.getWorkerCredentialsTemplate(username, password));
+  }
+
+  private async sendCredentialsEmail(email: string, username: string, password: string, subject: string, html: string): Promise<boolean> {
+    try {
+      if (!this.resend) {
+        this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
+        return false;
+      }
+
+      this.logger.log(`Enviando credenciales a ${email}`);
+
+      const { data, error } = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: email,
+        subject,
+        html,
+      });
+
+      if (error) {
+        this.logger.error('Error de Resend:', error);
+        return false;
+      }
+
+      this.logger.log(`✅ Credenciales enviadas exitosamente a ${email}`);
+      return true;
+    } catch (error) {
+      this.logger.error('Error inesperado enviando credenciales:', error);
+      return false;
+    }
+  }
+
+  private getWorkerCredentialsTemplate(username: string, password: string): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <style>
+              body { font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px; }
+              .container { background-color: white; padding: 30px; border-radius: 10px; max-width: 600px; margin: 0 auto; }
+              .header { background-color: #2563eb; color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center; }
+              .credentials { background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0; }
+              .credential-item { margin: 10px 0; }
+              .label { font-weight: bold; color: #475569; }
+              .value { font-size: 18px; color: #1e293b; padding: 8px 12px; background-color: white; border: 1px solid #e2e8f0; border-radius: 4px; }
+              .password { font-size: 20px; font-weight: bold; color: #dc2626; letter-spacing: 1px; }
+              .warning { background-color: #fef2f2; border: 1px solid #fecaca; padding: 15px; border-radius: 8px; color: #dc2626; margin: 20px 0; }
+              .instructions { color: #475569; line-height: 1.6; }
+              .button { display: inline-block; background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin-top: 20px; }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <div class="header">
+                  <h1>Bienvenido a Nuestra Plataforma</h1>
+              </div>
+              
+              <h2>Hola ${username},</h2>
+              
+              <p class="instructions">
+                  Tu cuenta de trabajador ha sido creada exitosamente. 
+                  A continuación encontrarás tus credenciales de acceso:
+              </p>
+              
+              <div class="credentials">
+                  <div class="credential-item">
+                      <div class="label">Usuario/Email:</div>
+                      <div class="value">${username}</div>
+                  </div>
+                  
+                  <div class="credential-item">
+                      <div class="label">Contraseña:</div>
+                      <div class="value password">${password}</div>
+                  </div>
+              </div>
+              
+              <div class="warning">
+                  <strong>⚠️ Importante:</strong> Esta es tu contraseña temporal. 
+                  Por seguridad, te recomendamos cambiarla después de iniciar sesión por primera vez.
+                  No compartas esta contraseña con nadie.
+              </div>
+              
+              <p class="instructions">
+                  Para comenzar a usar la plataforma:
+              </p>
+              <ol class="instructions">
+                  <li>Inicia sesión con las credenciales proporcionadas</li>
+                  <li>Verifica tu correo electrónico (recibirás un código de verificación)</li>
+                  <li>Cambia tu contraseña en la sección de perfil</li>
+                  <li>Completa tu perfil de trabajador</li>
+              </ol>
+              
+              <p class="instructions">
+                  Si tienes algún problema para iniciar sesión, por favor contacta con nuestro equipo de soporte.
+              </p>
+              
+              <p class="instructions">
+                  Saludos cordiales,<br>
+                  El equipo de la plataforma
+              </p>
+          </div>
+      </body>
+      </html>
+    `;
+  }
 }

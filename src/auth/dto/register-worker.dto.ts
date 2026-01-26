@@ -1,8 +1,15 @@
-import { RegisterBaseDto } from './register-base.dto';
-import { IsOptional, IsString, IsDate } from 'class-validator';
+import { IsOptional, IsString, IsDate, MinLength, IsEmail, IsNotEmpty } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class RegisterWorkerDto extends RegisterBaseDto {
+export class RegisterWorkerDto {
+  @IsString()
+  @IsNotEmpty()
+  username: string;
+
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+
   @IsOptional()
   @IsString()
   name?: string;
