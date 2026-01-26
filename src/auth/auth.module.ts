@@ -16,6 +16,7 @@ import { TokenBlacklistService } from './services/token_blacklist.service';
 import { Company } from 'src/company/entities/company.entity';
 import { CompanyService } from 'src/company/company.service';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
+import { CommonModule } from '../common/common.module';
 
 
 @Module({
@@ -35,6 +36,7 @@ import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity
 
     EmailModule,
     VerificationModule,
+    CommonModule
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy,TokenBlacklistService, CompanyService],

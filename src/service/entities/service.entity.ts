@@ -15,6 +15,29 @@ export class Service {
   @Column({ name: 'standard_time', nullable: true })
   standardTime: number;
 
-  @PrimaryColumn({ name: 'company_id' })
+  @Column({ name: 'company_id' })
   companyId: number;
+
+  @Column({
+    type: 'json',
+    nullable: true,
+  })
+  workers: Array<{
+    id: number;
+    percentage: number;
+  }>;
+
+  @Column({ name: 'currency', length: 10, nullable: true, default: 'VES' })
+  currency: string;
+
+  @Column({ name: 'description', type: 'text', nullable: true })
+  description: string;
+
+  @Column({ name: 'percentage', type: 'decimal', nullable: true })
+  percentage: number;
+
+
+   constructor() {
+    this.workers = [];
+  }
 }

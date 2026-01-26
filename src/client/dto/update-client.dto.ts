@@ -1,4 +1,5 @@
-import { IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import { IsOptional, IsEmail, IsString, IsIn, IsNumber, IsArray, Min, Max, IsInt } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateClientDto {
 
@@ -15,9 +16,26 @@ export class UpdateClientDto {
   email?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsIn([0, 1])
+  isActive?: number = 1;
+
+  @IsOptional()
   @IsString()
   location?: string;
 
   @IsNumber()
   userId?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  companies?: number[] = [];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1)
+  isPublic?: number = 0;
 }

@@ -1,6 +1,6 @@
 import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
 
-export class RegisterBaseDto {
+export class RegisterAdminWithLogoDto {
   @IsString()
   @IsNotEmpty()
   username: string;

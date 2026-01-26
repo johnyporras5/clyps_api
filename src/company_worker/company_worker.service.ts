@@ -5,6 +5,9 @@ import { CompanyWorker } from './entities/company_worker.entity';
 import { Company } from '../company/entities/company.entity';
 import { CreateCompanyWorkerDto } from './dto/create-company_worker.dto';
 import { UpdateCompanyWorkerDto } from './dto/update-company_worker.dto';
+import { Worker } from '../worker/entities/worker.entity';
+import { WorkerFeedback } from '../worker_feedback/entities/worker_feedback.entity';
+
 
 @Injectable()
 export class CompanyWorkerService {
@@ -13,6 +16,10 @@ export class CompanyWorkerService {
     private companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
+    @InjectRepository(Worker)
+    private workerRepository: Repository<Worker>,
+    @InjectRepository(WorkerFeedback)
+    private workerFeedbackRepository: Repository<WorkerFeedback>,
   ) { }
 
   async findAll(): Promise<CompanyWorker[]> {
@@ -197,7 +204,7 @@ export class CompanyWorkerService {
   }
 
   /**
-   * Eliminar trabajador por ID de usuario (alternativa)
+   * Desactivar trabajador por ID de usuario
    * @param userId ID del usuario trabajador
    * @param adminId ID del administrador
    */
@@ -205,16 +212,14 @@ export class CompanyWorkerService {
     userId: number,
     adminId: number
   ): Promise<{ message: string }> {
-    // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
       where: { userId: adminId }
     });
 
     if (!company) {
-      throw new UnauthorizedException('Solo Administradores pueden Eliminar trabajadores');
+      throw new UnauthorizedException('Solo Administradores pueden desactivar trabajadores');
     }
 
-    // 2. Buscar por userId en lugar de workerId
     const companyWorker = await this.companyWorkerRepository.findOne({
       where: {
         userId: userId,
@@ -226,11 +231,13 @@ export class CompanyWorkerService {
       throw new NotFoundException('Este trabajador no está asignado a tu compañía');
     }
 
-    // 3. Eliminar el registro
-    await this.companyWorkerRepository.delete(companyWorker.id);
+    // En lugar de eliminar, actualizamos isActive a 0
+    companyWorker.isActive = 0;
+    companyWorker.endDate = new Date(); // Opcional: establecer fecha de finalización
+    await this.companyWorkerRepository.save(companyWorker);
 
     return {
-      message: `Trabajador eliminado exitosamente de la compañía '${company.name}'.`
+      message: `Trabajador desactivado exitosamente de la compañía '${company.name}'.`
     };
   }
 }

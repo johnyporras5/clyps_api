@@ -5,9 +5,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { GeneratedModules } from './generated-modules';
 import { AuthModule } from './auth/auth.module';
-//import { CleanupTask } from './tasks/cleanup.task';
-//import { VerificationModule } from './verification/verification.module';
-
+import { CleanupTask } from './tasks/cleanup.task';
+import { VerificationModule } from './verification/verification.module';
 //import { SeedsModule } from './database/seeds/seeds.module';
 import { join } from 'path';
 import { ServeStaticModule } from '@nestjs/serve-static';
@@ -85,12 +84,12 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 
     GeneratedModules,
     AuthModule,
-    //VerificationModule,
+    VerificationModule,
        //SeedsModule,
     //TemplatesModule,
     
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService,CleanupTask],
 })
 export class AppModule {}

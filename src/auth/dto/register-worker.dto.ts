@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsDate, Length, IsEmail, IsNotEmpty,IsJSON } from 'class-validator';
+import { IsOptional, IsString, IsDate, Length, IsEmail, IsNotEmpty, IsJSON, IsNumber,IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class RegisterWorkerDto {
@@ -22,7 +22,7 @@ export class RegisterWorkerDto {
   @IsString()
   @Length(0, 20)
   phone?: string;
-  
+
   @IsOptional()
   @IsString()
   address?: string;
@@ -41,6 +41,16 @@ export class RegisterWorkerDto {
   description?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsIn([0, 1])
+  isActive?: number = 1;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsOptional()
   @IsJSON()
-  calendar?: any; 
+  calendar?: any;
 }

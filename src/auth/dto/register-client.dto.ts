@@ -1,8 +1,15 @@
-import { RegisterBaseDto } from './register-base.dto';
-import { IsOptional, IsString, IsDate, Length, } from 'class-validator';
+import { IsOptional, IsString, IsDate, Length, IsNotEmpty, IsEmail, IsNumber, IsIn, IsArray, Min, Max, IsInt } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class RegisterClientDto extends RegisterBaseDto {
+export class RegisterClientDto {
+  @IsString()
+  @IsNotEmpty()
+  username: string;
+
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+
   @IsOptional()
   @IsString()
   name?: string;
@@ -26,6 +33,24 @@ export class RegisterClientDto extends RegisterBaseDto {
   picture?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsIn([0, 1])
+  isActive?: number = 1;
+
+  @IsOptional()
   @IsString()
   location?: string;
+
+
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  companies?: number[] = [];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1)
+  isPublic?: number = 0;
 }

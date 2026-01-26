@@ -1,4 +1,5 @@
-import { IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import { IsOptional, IsString, IsNumber,IsIn } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateWorkerDto {
 
@@ -9,6 +10,10 @@ export class UpdateWorkerDto {
   @IsOptional()
   @IsString()
   lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
 
   @IsOptional()
   @IsString()
@@ -24,4 +29,14 @@ export class UpdateWorkerDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsIn([0, 1])
+  isActive?: number = 1;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
 }

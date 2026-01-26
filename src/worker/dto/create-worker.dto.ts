@@ -1,6 +1,11 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, Length } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber, Length, IsIn } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateWorkerDto {
+
+  @IsNotEmpty()
+  @IsNumber()
+  userId: number; 
 
   @IsOptional()
   @IsString()
@@ -29,4 +34,14 @@ export class CreateWorkerDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsIn([0, 1])
+  isActive?: number = 1;
+  
+  @IsOptional()
+  @IsString()
+  location?: string;
 }
