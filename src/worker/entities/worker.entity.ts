@@ -11,7 +11,10 @@ export class Worker {
 
   @Column({ name: 'last_name', length: 145, nullable: true })
   lastName: string;
-
+  
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  phone: string;
+  
   @Column({ name: 'address', length: 145, nullable: true })
   address: string;
 

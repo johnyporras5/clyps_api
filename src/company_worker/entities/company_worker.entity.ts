@@ -26,4 +26,7 @@ export class CompanyWorker {
 
   @Column({ name: 'user_id', nullable: true })
   userId: number;
+
+  @Column({ name: 'calendar', type: 'json', nullable: true })
+  calendar: any;
 }

@@ -157,36 +157,66 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
     return password.split('').sort(() => Math.random() - 0.5).join('');
   }
 
-  /**
-   * Registro específico para trabajadores CON CONTRASEÑA AUTOMÁTICA
-   */
- async registerWorker(
-    registerDto: RegisterWorkerDto, 
-    adminId: number // ID del administrador que registra
-  ): Promise<{
-    message: string;
-    user: Partial<User>;
-    generatedPassword?: string;
-    access_token?: string;
-  }> {
-    // Verificar si el email ya existe
-    const existingUserByEmail = await this.userRepository.findOne({
-      where: { email: registerDto.email }
-    });
+/**
+ * Registro específico para trabajadores CON CONTRASEÑA AUTOMÁTICA
+ */
+async registerWorker(
+  registerDto: RegisterWorkerDto, 
+  adminId: number // ID del administrador que registra
+): Promise<{
+  message: string;
+  user: Partial<User>;
+  generatedPassword?: string;
+  access_token?: string;
+}> {
+  // 1. Verificar si el email ya existe en la tabla User
+  const existingUserByEmail = await this.userRepository.findOne({
+    where: { email: registerDto.email }
+  });
 
-    if (existingUserByEmail) {
-      // Si el usuario existe pero no está verificado, permitir reenviar código
-      if (existingUserByEmail.emailVerified === 0) {
-        await this.sendVerificationCode(registerDto.email);
-        throw new ConflictException({
-          message: 'El email ya está registrado pero no verificado. Se ha enviado un nuevo código de verificación.',
-          requiresVerification: true,
-          userId: existingUserByEmail.id,
-        });
-      }
-      throw new ConflictException('El email ya está registrado');
+  let user: User;
+  let worker: Worker | null = null;
+  let isExistingWorker = false;
+  let generatedPassword: string | undefined;
+
+  // Verificar que el admin existe y es administrador
+  const admin = await this.userRepository.findOne({
+    where: { id: adminId, userType: 'adm' }
+  });
+
+  if (!admin) {
+    throw new UnauthorizedException('Solo los administradores pueden registrar trabajadores');
+  }
+
+  // Buscar la compañía del administrador
+  const company = await this.companyRepository.findOne({
+    where: { userId: adminId }
+  });
+
+  if (!company) {
+    throw new NotFoundException('El administrador no tiene una compañía asignada');
+  }
+
+  // ==================== VERIFICAR SI YA EXISTE EL TRABAJADOR ====================
+  // Buscar si ya existe un trabajador con el mismo email
+  if (existingUserByEmail) {
+    // Si el usuario existe, verificar si ya es un trabajador
+    if (existingUserByEmail.userType !== 'wrk') {
+      throw new ConflictException('El email ya está registrado como otro tipo de usuario (no trabajador)');
     }
 
+    // Usuario existe y es trabajador (verificado o no)
+    user = existingUserByEmail;
+    isExistingWorker = true;
+
+    // Verificar si el usuario ya está verificado
+    if (existingUserByEmail.emailVerified === 0) {
+      // Si no está verificado, enviar nuevo código
+      await this.sendVerificationCode(registerDto.email);
+      // NO lanzamos excepción, continuamos con el flujo
+    }
+  } else {
+    // ==================== CREAR NUEVO TRABAJADOR ====================
     // Verificar si el username ya existe
     const existingUserByUsername = await this.userRepository.findOne({
       where: { username: registerDto.username }
@@ -196,23 +226,14 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
       throw new ConflictException('El nombre de usuario ya está en uso');
     }
 
-    // Verificar que el admin existe y es administrador
-    const admin = await this.userRepository.findOne({
-      where: { id: adminId, userType: 'adm' }
-    });
-
-    if (!admin) {
-      throw new UnauthorizedException('Solo los administradores pueden registrar trabajadores');
-    }
-
     // Generar contraseña automáticamente
-    const generatedPassword = this.generateRandomPassword(12);
+    generatedPassword = this.generateRandomPassword(12);
 
     // Encriptar contraseña generada
     const hashedPassword = await bcrypt.hash(generatedPassword, 10);
 
     // Crear usuario con la contraseña generada
-    const user = this.userRepository.create({
+    const newUser = this.userRepository.create({
       username: registerDto.username,
       email: registerDto.email,
       password: hashedPassword,
@@ -220,79 +241,153 @@ async registerAdmin(registerDto: RegisterBaseDto): Promise<{
       emailVerified: 0,
     });
 
-    const savedUser = await this.userRepository.save(user);
+    user = await this.userRepository.save(newUser);
 
-    // Crear perfil de worker
-    const worker = this.workerRepository.create({
-      name: registerDto.name,
-      lastName: registerDto.lastName,
-      address: registerDto.address,
-      birthdate: registerDto.birthdate,
-      picture: registerDto.picture,
-      description: registerDto.description,
-      userId: savedUser.id
-    });
-
-    const savedWorker = await this.workerRepository.save(worker);
-
-    // ==================== ASIGNAR A COMPAÑÍA DEL ADMIN ====================
-    // Buscar la compañía del administrador
-    const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
-    });
-
-    if (!company) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
-    }
-
-    // Crear registro en company_worker
-    const companyWorker = this.companyWorkerRepository.create({
-      workerId: savedWorker.id,
-      companyId: company.id,
-      userId: savedUser.id, // ID del usuario worker
-      isActive: 1, // Activo por defecto
-      startDate: new Date(),
-      // endDate se deja como null (sin fecha de finalización)
-      servicesDetail: {}, // JSON vacío por defecto
-    });
-
-    await this.companyWorkerRepository.save(companyWorker);
-
-    // Enviar credenciales por correo
+    // Enviar credenciales por correo solo si es nuevo
     const credentialsSent = await this.emailService.sendWorkerCredentials(
       user.email,
       user.username,
-      generatedPassword
+      generatedPassword,
+      company.name // Nombre de la compañía para el email
     );
 
     if (!credentialsSent) {
       console.warn('No se pudieron enviar las credenciales por correo, pero el usuario fue creado');
     }
 
-    // Enviar código de verificación
+    // Enviar código de verificación solo si es nuevo
     await this.sendVerificationCode(user.email);
+  }
 
-    // Generar token JWT para el worker
+  // ==================== VERIFICAR SI YA ESTÁ EN COMPANY_WORKER ====================
+  // Verificar si ya está asignado a esta compañía por userId
+  const existingAssignment = await this.companyWorkerRepository.findOne({
+    where: {
+      userId: user.id,
+      companyId: company.id
+    }
+  });
+
+  // Buscar el perfil de worker
+  worker = await this.workerRepository.findOne({
+    where: { userId: user.id }
+  });
+
+  let createdWorkerProfile = false;
+  let createdCompanyWorker = false;
+
+  // Si no existe perfil de worker, crearlo
+  if (!worker) {
+    console.log(`Creando perfil de trabajador para usuario: ${user.email}`);
+    
+    const newWorker = this.workerRepository.create({
+      name: registerDto.name,
+      lastName: registerDto.lastName,
+      phone: registerDto.phone,
+      address: registerDto.address,
+      birthdate: registerDto.birthdate,
+      picture: registerDto.picture,
+      description: registerDto.description,
+      userId: user.id
+    });
+
+    worker = await this.workerRepository.save(newWorker);
+    createdWorkerProfile = true;
+    
+    console.log(`Perfil de trabajador creado con ID: ${worker.id}`);
+  }
+
+  // Si no existe asignación en company_worker, crearla
+  if (!existingAssignment) {
+    // Asegurarse de que worker existe
+    if (!worker) {
+      throw new NotFoundException('No se encontró el perfil del trabajador');
+    }
+
+    // Crear registro en company_worker con el campo calendar
+    const companyWorker = this.companyWorkerRepository.create({
+      workerId: worker.id,
+      companyId: company.id,
+      userId: user.id,
+      isActive: 1,
+      startDate: new Date(),
+      servicesDetail: {},
+      calendar: registerDto.calendar || {}, // <-- AGREGAR CAMPO CALENDAR AQUÍ
+    });
+
+    await this.companyWorkerRepository.save(companyWorker);
+    createdCompanyWorker = true;
+  }
+
+  // Generar token JWT solo para nuevo trabajador (usuario nuevo)
+  let access_token: string | undefined;
+  if (!isExistingWorker) {
     const payload = {
       email: user.email,
       sub: user.id,
       userType: user.userType
     };
-
-    const access_token = this.jwtService.sign(payload);
-
-    // Eliminar password del objeto de respuesta
-    const { password, ...userWithoutPassword } = user;
-
-    // Construir objeto de respuesta
-    const response: any = {
-      message: `Trabajador registrado exitosamente y asignado a la compañía '${company.name}'. Las credenciales han sido enviadas al correo electrónico.`,
-      user: userWithoutPassword,
-
-    };
-
-    return response;
+    access_token = this.jwtService.sign(payload);
   }
+
+  // Eliminar password del objeto de respuesta
+  const { password, ...userWithoutPassword } = user;
+
+  // ==================== CONSTRUIR MENSAJE DE RESPUESTA MEJORADO ====================
+  let message: string;
+
+  if (isExistingWorker) {
+    // Usuario ya existente
+    const actionParts: string[] = []; // <-- DECLARAR EXPLÍCITAMENTE COMO STRING[]
+
+    // Determinar si hubo cambios
+    const isVerified = user.emailVerified === 1;
+
+    // Base del mensaje según estado de verificación
+    if (!isVerified) {
+      actionParts.push(`El trabajador ya estaba registrado en el sistema pero su correo no estaba verificado.`);
+      actionParts.push(`Se ha enviado un nuevo código de verificación para completar este proceso.`);
+    } else {
+      actionParts.push(`El trabajador ya estaba registrado y verificado en el sistema.`);
+    }
+
+    // Agregar detalles específicos
+    if (createdWorkerProfile) {
+      actionParts.push(`Se ha completado su perfil profesional con la información proporcionada.`);
+    }
+
+    if (createdCompanyWorker) {
+      actionParts.push(`Ha sido asignado exitosamente a la compañía '${company.name}'.`);
+    } else if (existingAssignment) {
+      actionParts.push(`Ya se encontraba asignado a la compañía '${company.name}'.`);
+    }
+
+    // Agregar recomendación si no está verificado
+    if (!isVerified) {
+      actionParts.push(`Una vez que verifique su correo electrónico, podrá acceder a todas las funcionalidades.`);
+    }
+
+    message = actionParts.join(' ');
+  } else {
+    // Usuario nuevo
+    const newUserParts = [
+      `Trabajador registrado exitosamente en el sistema CLYPS.`,
+      `Ha sido asignado a la compañía '${company.name}'.`,
+      `Las credenciales de acceso han sido enviadas a su correo electrónico.`,
+      `Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`
+    ];
+    message = newUserParts.join(' ');
+  }
+
+  // Construir objeto de respuesta
+  const response: any = {
+    message,
+    user: userWithoutPassword,
+  };
+
+ 
+  return response;
+}
 
   /**
    * Registro específico para clientes
