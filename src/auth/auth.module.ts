@@ -8,26 +8,30 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { User } from '../user/entities/user.entity';
-import { Worker } from '../worker/entities/worker.entity'; 
+import { Worker } from '../worker/entities/worker.entity';
 import { Client } from 'src/client/entities/client.entity';
-
+import { EmailModule } from '../email/email.module';
+import { VerificationModule } from '../verification/verification.module';
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User,Worker,Client]),
+    TypeOrmModule.forFeature([User, Worker, Client]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         secret: configService.get('JWT_SECRET') || 'clypsSecretKey',
-        signOptions: { 
-          expiresIn: configService.get('JWT_EXPIRES_IN') || '24h' 
+        signOptions: {
+          expiresIn: configService.get('JWT_EXPIRES_IN') || '24h'
         },
       }),
       inject: [ConfigService],
     }),
+
+    EmailModule,
+    VerificationModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
   exports: [AuthService, JwtStrategy, PassportModule],
 })
-export class AuthModule {}
+export class AuthModule { }

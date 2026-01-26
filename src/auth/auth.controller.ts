@@ -5,7 +5,8 @@ import {
   HttpCode, 
   HttpStatus, 
   Get, 
-  Param 
+  Param,
+  Query 
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterAdminDto } from './dto/register-admin.dto';
@@ -16,6 +17,8 @@ import { LoginDto } from './dto/login.dto';
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  // ========== ENDPOINTS DE REGISTRO  ==========
 
   /**
    * Registro para administradores
@@ -39,10 +42,12 @@ export class AuthController {
    * Registro para clientes
    * POST /auth/register/client
    */
-@Post('register/client')
-async registerClient(@Body() registerDto: RegisterClientDto) {
-  return this.authService.registerClient(registerDto);
-}
+  @Post('register/client')
+  async registerClient(@Body() registerDto: RegisterClientDto) {
+    return this.authService.registerClient(registerDto);
+  }
+
+  // ========== ENDPOINT DE LOGIN  ==========
 
   /**
    * Login para todos los tipos de usuarios
@@ -53,6 +58,40 @@ async registerClient(@Body() registerDto: RegisterClientDto) {
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
   }
+
+  // ========== ENDPOINTS DE VERIFICACIÓN  ==========
+
+  /**
+   * Verificar email con código
+   * POST /auth/verify-email
+   */
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  async verifyEmail(@Body() body: { email: string; code: string }) {
+    return this.authService.verifyEmail(body.email, body.code);
+  }
+
+  /**
+   * Reenviar código de verificación
+   * POST /auth/resend-verification-code
+   */
+  @Post('resend-verification-code')
+  @HttpCode(HttpStatus.OK)
+  async resendVerificationCode(@Body() body: { email: string }) {
+    return this.authService.resendVerificationCode(body.email);
+  }
+
+  /**
+   * Enviar código de verificación (para casos especiales)
+   * POST /auth/send-verification-code
+   */
+  @Post('send-verification-code')
+  @HttpCode(HttpStatus.OK)
+  async sendVerificationCode(@Body() body: { email: string }) {
+    return this.authService.sendVerificationCode(body.email);
+  }
+
+  // ========== ENDPOINTS DE VERIFICACIÓN DE DISPONIBILIDAD  ==========
 
   /**
    * Verificar si email existe
@@ -70,5 +109,31 @@ async registerClient(@Body() registerDto: RegisterClientDto) {
   @Get('check-username/:username')
   async checkUsernameExists(@Param('username') username: string) {
     return this.authService.checkUsernameExists(username);
+  }
+
+  // ========== ENDPOINTS ADICIONALES  ==========
+
+  /**
+   * Verificar estado del usuario (si existe y si está verificado)
+   * GET /auth/user-status
+   */
+  @Get('user-status')
+  async checkUserStatus(@Query('email') email: string) {
+    return this.authService.checkUserStatus(email);
+  }
+
+  /**
+   * Verificar si un email existe y está verificado (versión mejorada)
+   * GET /auth/check-email-verified/:email
+   */
+  @Get('check-email-verified/:email')
+  async checkEmailVerified(@Param('email') email: string) {
+    const result = await this.authService.checkUserStatus(email);
+    return {
+      email,
+      exists: result.exists,
+      verified: result.verified,
+      userId: result.userId
+    };
   }
 }
