@@ -23,4 +23,16 @@ export class Company {
 
   @Column({ name: 'user_id', nullable: true })
   userId: number;
+
+  @Column({ name: 'manager_name', length: 145, nullable: true })
+  managerName: string;
+
+  @Column({ name: 'instagram_url', length: 245, nullable: true })
+  instagramUrl: string;
+
+  @Column({ name: 'tiktok_url', length: 245, nullable: true })
+  tiktokUrl: string;
+
+  @Column({ name: 'facebook_url', length: 245, nullable: true })
+  facebookUrl: string;
 }
