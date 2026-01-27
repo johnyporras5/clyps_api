@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Session } from './entities/session.entity';
@@ -30,13 +30,13 @@ export class SessionService {
     private serviceRepository: Repository<Service>,
     @InjectRepository(CompanyWorker)
     private companyWorkerRepository: Repository<CompanyWorker>,
-  ) {}
+  ) { }
 
   // Método simplificado - ya no verifica si es administrador
   async create(createSessionDto: CreateSessionDto, adminId: number): Promise<Session> {
     // Verificar si ya existe una sesión con los mismos datos
     const existingSession = await this.checkExistingSession(createSessionDto);
-    
+
     if (existingSession) {
       throw new BadRequestException({
         message: 'Ya existe una sesión con los mismos datos',
@@ -62,83 +62,113 @@ export class SessionService {
   }
 
   /**
-   * Calcular porcentajes para trabajador y compañía basados en el servicio
-   */
+  * Calcular porcentajes para trabajador y compañía basados en el servicio
+  * REGLAS:
+  * 1. El campo `percentage` en Service es el % que se paga AL TRABAJADOR
+  * 2. Si hay workers específicos asignados, usar ese porcentaje para el trabajador
+  * 3. Si no hay workers específicos, usar el `percentage` general del servicio
+  * 4. La compañía recibe el resto (100% - porcentaje_trabajador)
+  */
   private calculatePercentages(
     service: Service,
     companyWorkerId: number
-  ): { 
-    workerPercentage: number; 
+  ): {
+    workerPercentage: number;
     companyPercentage: number;
     workerAssigned: boolean;
   } {
     let workerPercentage = 0;
-    let companyPercentage = service.percentage || 0;
+    let companyPercentage = 0;
     let workerAssigned = false;
 
-    // Buscar si el trabajador está asignado a este servicio
-    if (service.workers && Array.isArray(service.workers)) {
+    // 1. Verificar si el trabajador está asignado específicamente a este servicio
+    if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
       const workerAssignment = service.workers.find(
         (worker: any) => worker.id === companyWorkerId
       );
-      
+
       if (workerAssignment) {
         workerPercentage = workerAssignment.percentage;
         workerAssigned = true;
-      } else {
-        console.warn(`⚠️ El trabajador ${companyWorkerId} no está asignado al servicio ${service.id}`);
+        console.log(`✅ Trabajador asignado específicamente: ${workerPercentage}% para trabajador`);
       }
     }
 
-    // Si no se encontró asignación específica, usar lógica alternativa
+    // 2. Si el trabajador NO está asignado específicamente, usar el porcentaje general del servicio
     if (!workerAssigned) {
-      // Si el servicio tiene porcentaje de compañía, el trabajador recibe el resto
-      if (companyPercentage > 0 && companyPercentage <= 100) {
-        workerPercentage = 100 - companyPercentage;
-        console.log(`ℹ️ Usando cálculo automático: Trabajador ${workerPercentage}%, Compañía ${companyPercentage}%`);
+      if (service.percentage !== undefined && service.percentage !== null) {
+        workerPercentage = Number(service.percentage);
+        console.log(`ℹ️ Usando porcentaje general del servicio: ${workerPercentage}% para trabajador`);
       } else {
-        // Por defecto: 60% compañía, 40% trabajador
-        companyPercentage = 60;
-        workerPercentage = 40;
-        console.log(`ℹ️ Usando valores por defecto: Trabajador 40%, Compañía 60%`);
+        // 3. Si no hay workers específicos NI porcentaje general, ERROR
+        throw new BadRequestException(
+          `El servicio ${service.id} no tiene configurado el porcentaje para el trabajador. ` +
+          `Debe tener un porcentaje general o el trabajador debe estar asignado específicamente.`
+        );
       }
+    }
+
+    // 4. La compañía recibe el resto
+    companyPercentage = 100 - workerPercentage;
+
+    console.log(`📊 Resultado: Trabajador ${workerPercentage}%, Compañía ${companyPercentage}%`);
+
+    // Validar que los porcentajes sean válidos
+    if (workerPercentage < 0 || workerPercentage > 100) {
+      throw new BadRequestException(`El porcentaje del trabajador (${workerPercentage}%) debe estar entre 0 y 100`);
+    }
+
+    if (companyPercentage < 0 || companyPercentage > 100) {
+      throw new BadRequestException(`El porcentaje de la compañía (${companyPercentage}%) debe estar entre 0 y 100`);
+    }
+
+    // Validar que la suma sea 100%
+    const total = workerPercentage + companyPercentage;
+    if (Math.abs(total - 100) > 0.01) {
+      throw new BadRequestException(`La suma de porcentajes (${total}%) debe ser 100%`);
     }
 
     return { workerPercentage, companyPercentage, workerAssigned };
   }
 
   /**
-   * Calcular montos basados en el costo total
-   */
+ * Calcular montos basados en el costo total
+ */
   private calculateAmounts(
     totalCost: number,
     workerPercentage: number,
     companyPercentage: number
-  ): { 
-    cost: number; 
-    totalWorker: number; 
+  ): {
+    cost: number;
+    totalWorker: number;
     totalCompany: number;
     calculationDetails: string;
   } {
-    // Calcular montos
-    const totalWorker = (totalCost * workerPercentage) / 100;
-    const totalCompany = (totalCost * companyPercentage) / 100;
+    // Calcular montos con alta precisión
+    const workerAmount = (totalCost * workerPercentage) / 100;
+    const companyAmount = (totalCost * companyPercentage) / 100;
 
-    // Verificar que la suma sea aproximadamente igual al costo total (por redondeos)
+    // Redondear a 2 decimales
+    const totalWorker = Number(workerAmount.toFixed(2));
+    const totalCompany = Number(companyAmount.toFixed(2));
+
+    // Ajustar para asegurar que la suma sea exactamente el totalCost
     const totalCalculated = totalWorker + totalCompany;
-    const difference = Math.abs(totalCost - totalCalculated);
-    
-    let calculationDetails = `Cálculo: ${totalCost} × (${workerPercentage}% trabajador + ${companyPercentage}% compañía) = ${totalWorker.toFixed(2)} + ${totalCompany.toFixed(2)}`;
-    
-    if (difference > 0.01) {
-      console.warn(`⚠️ Diferencia en cálculo: ${totalCost} vs ${totalCalculated} (diferencia: ${difference.toFixed(2)})`);
-      calculationDetails += ` | Diferencia: ${difference.toFixed(2)}`;
+    let adjustedTotalWorker = totalWorker;
+    let adjustedTotalCompany = totalCompany;
+
+    if (Math.abs(totalCost - totalCalculated) > 0.01) {
+      // Ajustar el monto de la compañía para que la suma sea exacta
+      adjustedTotalCompany = Number((totalCost - totalWorker).toFixed(2));
+      console.log(`⚖️ Ajustando montos: Trabajador=${totalWorker}, Compañía=${adjustedTotalCompany} (ajustado)`);
     }
+
+    const calculationDetails = `Cálculo: ${totalCost} × (${workerPercentage}% trabajador + ${companyPercentage}% compañía) = ${adjustedTotalWorker} + ${adjustedTotalCompany}`;
 
     return {
       cost: totalCost,
-      totalWorker: Number(totalWorker.toFixed(2)),
-      totalCompany: Number(totalCompany.toFixed(2)),
+      totalWorker: adjustedTotalWorker,
+      totalCompany: adjustedTotalCompany,
       calculationDetails
     };
   }
@@ -163,15 +193,15 @@ export class SessionService {
   }
 
   /**
-   * Crear sesión y session_detail juntos (CON VALORES POR DEFECTO)
-   * NO CREA NADA si ya existe una sesión con los mismos datos
-   */
+ * Crear sesión y session_detail juntos (CON VALORES POR DEFECTO)
+ * NO CREA NADA si ya existe una sesión con los mismos datos
+ */
   async createSessionWithDetail(
     createSessionWithDetailDto: CreateSessionWithDetailDto,
     adminId: number
-  ): Promise<{ 
-    message: string; 
-    isNew: boolean; 
+  ): Promise<{
+    message: string;
+    isNew: boolean;
     wasAlreadyAssociated: boolean;
     clientId: number;
     companyId: number | null;
@@ -179,6 +209,7 @@ export class SessionService {
     companiesAfter: number[];
     calculations?: {
       totalCost: number;
+      totalTime: number;
       workerPercentage: number;
       companyPercentage: number;
       totalWorker: number;
@@ -208,9 +239,9 @@ export class SessionService {
 
     // 3. Verificar que el servicio existe y pertenece a la compañía del admin
     const service = await this.serviceRepository.findOne({
-      where: { 
+      where: {
         id: createSessionWithDetailDto.serviceId,
-        companyId: adminCompany.id 
+        companyId: adminCompany.id
       }
     });
 
@@ -218,11 +249,14 @@ export class SessionService {
       throw new NotFoundException(`Servicio con ID ${createSessionWithDetailDto.serviceId} no encontrado o no pertenece a tu compañía`);
     }
 
+    // Validar que el servicio tenga configuración de porcentajes
+    this.validateServicePercentages(service);
+
     // 4. Verificar que el companyWorker existe y pertenece a la compañía del admin
     const companyWorker = await this.companyWorkerRepository.findOne({
-      where: { 
+      where: {
         id: createSessionWithDetailDto.companyWorkerId,
-        companyId: adminCompany.id 
+        companyId: adminCompany.id
       }
     });
 
@@ -240,19 +274,20 @@ export class SessionService {
       clientId: createSessionWithDetailDto.clientId,
       sessionDatetime: createSessionWithDetailDto.sessionDatetime,
       sessionStatus: createSessionWithDetailDto.sessionStatus !== undefined ? createSessionWithDetailDto.sessionStatus : 1,
-      totalCost: createSessionWithDetailDto.totalCost,
-      totalTime: createSessionWithDetailDto.totalTime,
+      // TOMAR VALORES DEL SERVICIO, NO DEL DTO
+      totalCost: service.cost || 0,
+      totalTime: service.standardTime || 0,
       iaResponse: createSessionWithDetailDto.iaResponse,
       startDatetime: createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime || new Date(),
       status: createSessionWithDetailDto.status !== undefined ? createSessionWithDetailDto.status : 1,
     };
 
     const existingSession = await this.checkExistingSession(sessionData);
-    
+
     // 7. SI YA EXISTE UNA SESIÓN CON LOS MISMOS DATOS
     if (existingSession) {
       console.log(`🚫 SESIÓN DUPLICADA: Ya existe una sesión ID: ${existingSession.id} con los mismos datos`);
-      
+
       // Verificar si ya existe un detalle con el mismo servicio y trabajador para esta sesión
       const existingDetail = await this.checkExistingSessionDetail(
         existingSession.id,
@@ -262,10 +297,10 @@ export class SessionService {
 
       if (existingDetail) {
         console.log(`🚫 DETALLE DUPLICADO: Ya existe un detalle ID: ${existingDetail.id} para esta sesión`);
-        
+
         // Obtener información del trabajador para el mensaje
-        const workerInfo = companyWorker.worker ? 
-          `${companyWorker.worker.name} ${companyWorker.worker.lastName}` : 
+        const workerInfo = companyWorker.worker ?
+          `${companyWorker.worker.name} ${companyWorker.worker.lastName}` :
           `Trabajador ID: ${companyWorker.id}`;
 
         throw new BadRequestException({
@@ -278,9 +313,9 @@ export class SessionService {
 
       // Si existe la sesión pero NO existe el detalle, tampoco creamos nada nuevo
       console.log(`ℹ️ Sesión existente ID: ${existingSession.id}, pero no se creará un nuevo detalle para evitar duplicados`);
-      
-      const workerInfo = companyWorker.worker ? 
-        `${companyWorker.worker.name} ${companyWorker.worker.lastName}` : 
+
+      const workerInfo = companyWorker.worker ?
+        `${companyWorker.worker.name} ${companyWorker.worker.lastName}` :
         `Trabajador ID: ${companyWorker.id}`;
 
       return {
@@ -302,27 +337,20 @@ export class SessionService {
       createSessionWithDetailDto.companyWorkerId
     );
 
-    // DETERMINAR COSTO TOTAL
-    let totalCost: number;
-    
-    // Prioridad: detailCost > totalCost > service.cost
-    if (createSessionWithDetailDto.detailCost !== undefined) {
-      totalCost = createSessionWithDetailDto.detailCost;
-      console.log(`💰 Usando detailCost del DTO: ${totalCost}`);
-    } else if (createSessionWithDetailDto.totalCost !== undefined) {
-      totalCost = createSessionWithDetailDto.totalCost;
-      console.log(`💰 Usando totalCost de la sesión: ${totalCost}`);
-    } else {
-      totalCost = service.cost || 0;
-      console.log(`💰 Usando costo del servicio: ${totalCost}`);
+    // TOMAR EL COSTO TOTAL DEL SERVICIO, NO DEL DTO
+    let totalCost = service.cost || 0;
+
+    // Validar que el costo sea mayor que 0
+    if (totalCost <= 0) {
+      throw new BadRequestException('El costo del servicio debe ser mayor a 0');
     }
 
     // CALCULAR MONTOS
     const calculatedAmounts = this.calculateAmounts(totalCost, workerPercentage, companyPercentage);
-    
+
     console.log(`📊 Cálculos: Costo=${calculatedAmounts.cost}, Trabajador=${calculatedAmounts.totalWorker} (${workerPercentage}%), Compañía=${calculatedAmounts.totalCompany} (${companyPercentage}%)`);
 
-    // 9. Crear la sesión (nueva)
+    // 9. Crear la sesión (nueva) con los valores del servicio
     const session = await this.create(sessionData, adminId);
     const isNew = true;
     let wasAlreadyAssociated = false;
@@ -345,18 +373,18 @@ export class SessionService {
 
     // Verificar si el cliente ya está asociado a esta compañía
     const currentCompanies = companiesBefore;
-    
+
     // Convertir todos a números para comparación segura
     const companyIds = currentCompanies.map(id => Number(id));
     const targetCompanyId = Number(companyId);
-    
+
     if (!companyIds.includes(targetCompanyId)) {
       console.log(`✅ ${targetCompanyId} NO está en el array. Agregando...`);
-      
+
       // Agregar la compañía al array de compañías del cliente
       const updatedCompanies = [...currentCompanies, targetCompanyId];
       companiesAfter = updatedCompanies;
-      
+
       await this.clientRepository.update(client.id, {
         companies: updatedCompanies
       });
@@ -378,7 +406,8 @@ export class SessionService {
       sessionId: session.id,
       // startDatetime por defecto usa el de la sesión
       startDatetime: createSessionWithDetailDto.detailStartDatetime || session.startDatetime,
-      totalTime: createSessionWithDetailDto.detailTotalTime || createSessionWithDetailDto.totalTime || service.standardTime || 0,
+      // TOMAR EL TIEMPO DEL SERVICIO, NO DEL DTO
+      totalTime: service.standardTime || 0,
       totalWorker: calculatedAmounts.totalWorker,
       totalCompany: calculatedAmounts.totalCompany,
       // status por defecto es 1
@@ -392,20 +421,20 @@ export class SessionService {
 
     // 12. Construir mensaje
     let message: string;
-    
+
     if (wasAlreadyAssociated) {
       message = `Sesión y detalle creados exitosamente. El cliente YA estaba asociado a ${companyName}.`;
     } else {
-      message = `Sesión y detalle creados exitosamente. Cliente ASOCIADO NUEVAMENTE a ${companyName}.`;
+      message = `Sesión y detalle creados exitosamente.`;
     }
 
     // 13. Obtener información del trabajador para el mensaje
-    const workerInfo = companyWorker.worker ? 
-      `${companyWorker.worker.name} ${companyWorker.worker.lastName}` : 
+    const workerInfo = companyWorker.worker ?
+      `${companyWorker.worker.name} ${companyWorker.worker.lastName}` :
       `Trabajador ID: ${companyWorker.id}`;
 
     return {
-      message: `${message} Trabajador asignado: ${workerInfo}.`,
+      message: `${message} Trabajador asignado: ${workerInfo}. `,
       isNew,
       wasAlreadyAssociated,
       clientId: createSessionWithDetailDto.clientId,
@@ -414,6 +443,7 @@ export class SessionService {
       companiesAfter,
       calculations: {
         totalCost: calculatedAmounts.cost,
+        totalTime: service.standardTime || 0,
         workerPercentage,
         companyPercentage,
         totalWorker: calculatedAmounts.totalWorker,
@@ -469,194 +499,8 @@ export class SessionService {
     return existingSession;
   }
 
-  /**
-   * Crear sesión y asociar compañía del administrador al cliente
-   * Con validación de duplicados
-   */
-  async createSessionWithCompany(
-    createSessionDto: CreateSessionDto,
-    adminId: number
-  ): Promise<{ 
-    session: Session; 
-    message: string; 
-    isNew: boolean; 
-    wasAlreadyAssociated: boolean;
-    clientId: number;
-    companyId: number | null;
-    companiesBefore: number[];
-    companiesAfter: number[];
-  }> {
-    // 1. Verificar que la sesión tiene un cliente
-    if (!createSessionDto.clientId) {
-      throw new BadRequestException('La sesión debe tener un cliente asociado');
-    }
-
-    // 2. Verificar si ya existe una sesión con los mismos datos
-    const existingSession = await this.checkExistingSession(createSessionDto);
-    let session: Session;
-    let isNew = false;
-    let wasAlreadyAssociated = false;
-    let adminCompany: Company | null = null;
-    let companiesBefore: number[] = [];
-    let companiesAfter: number[] = [];
-
-    if (existingSession) {
-      // Usar la sesión existente
-      session = existingSession;
-      console.log(`⚠️ Usando sesión existente ID: ${session.id} para cliente ID: ${createSessionDto.clientId}`);
-      
-      return {
-        session,
-        message: `El cliente ya tiene una sesión con los mismos datos (ID: ${existingSession.id}).`,
-        isNew: false,
-        wasAlreadyAssociated: false,
-        clientId: createSessionDto.clientId,
-        companyId: null,
-        companiesBefore: [],
-        companiesAfter: []
-      };
-    } else {
-      // 3. Obtener la compañía del administrador
-      adminCompany = await this.companyRepository.findOne({
-        where: { userId: adminId }
-      });
-
-      if (!adminCompany) {
-        throw new NotFoundException('El administrador no tiene una compañía asignada');
-      }
-
-      // 4. Crear la sesión (con valores por defecto)
-      const sessionDataWithDefaults = {
-        ...createSessionDto,
-        sessionStatus: createSessionDto.sessionStatus !== undefined ? createSessionDto.sessionStatus : 1,
-        status: createSessionDto.status !== undefined ? createSessionDto.status : 1,
-        startDatetime: createSessionDto.startDatetime || createSessionDto.sessionDatetime || new Date(),
-      };
-
-      session = await this.create(sessionDataWithDefaults, adminId);
-      isNew = true;
-
-      // 5. Asociar la compañía del administrador al cliente
-      const client = await this.clientRepository.findOne({
-        where: { id: createSessionDto.clientId }
-      });
-
-      if (!client) {
-        throw new NotFoundException(`Cliente con ID ${createSessionDto.clientId} no encontrado`);
-      }
-
-      // Obtener las compañías actuales del cliente
-      companiesBefore = client.companies || [];
-      const currentCompanies = companiesBefore;
-      const companyId = adminCompany.id;
-      
-      // Convertir todos a números para comparación segura
-      const companyIds = currentCompanies.map(id => Number(id));
-      const targetCompanyId = Number(companyId);
-      
-      if (!companyIds.includes(targetCompanyId)) {
-        // Agregar la compañía al array de compañías del cliente
-        const updatedCompanies = [...currentCompanies, targetCompanyId];
-        companiesAfter = updatedCompanies;
-        
-        await this.clientRepository.update(client.id, {
-          companies: updatedCompanies
-        });
-        wasAlreadyAssociated = false;
-      } else {
-        companiesAfter = currentCompanies;
-        wasAlreadyAssociated = true;
-      }
-    }
-
-    // Construir mensaje personalizado
-    let message: string;
-    
-    const companyName = adminCompany ? adminCompany.name : 'la compañía';
-    if (wasAlreadyAssociated) {
-      message = `Sesión creada exitosamente. El cliente ya estaba asociado a ${companyName}.`;
-    } else {
-      message = `Sesión creada exitosamente. Cliente asociado a ${companyName}.`;
-    }
-
-    return {
-      session,
-      message,
-      isNew,
-      wasAlreadyAssociated,
-      clientId: createSessionDto.clientId,
-      companyId: adminCompany ? adminCompany.id : null,
-      companiesBefore,
-      companiesAfter
-    };
-  }
-
-  /**
-   * Asociar compañía del administrador a cliente después de crear una sesión
-   */
-  async associateCompanyToClient(
-    sessionId: number,
-    adminId: number
-  ): Promise<{ message: string; client: Client }> {
-    // 1. Obtener la sesión
-    const session = await this.sessionRepository.findOne({
-      where: { id: sessionId }
-    });
-
-    if (!session) {
-      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
-    }
-
-    // 2. Obtener el cliente asociado a la sesión
-    const clientId = session.clientId;
-    let client = await this.clientRepository.findOne({
-      where: { id: clientId }
-    });
-
-    if (!client) {
-      throw new NotFoundException(`Cliente asociado a la sesión no encontrado`);
-    }
-
-    // 3. Obtener la compañía del administrador
-    const adminCompany = await this.companyRepository.findOne({
-      where: { userId: adminId }
-    });
-
-    if (!adminCompany) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
-    }
-
-    const companyId = adminCompany.id;
-
-    // 4. Verificar si el cliente ya está asociado a esta compañía
-    const currentCompanies = client.companies || [];
-    
-    if (currentCompanies.includes(companyId)) {
-      throw new BadRequestException(`El cliente ya está asociado a su compañía`);
-    }
-
-    // 5. Agregar la compañía al array de compañías del cliente
-    const updatedCompanies = [...currentCompanies, companyId];
-    
-    await this.clientRepository.update(client.id, {
-      companies: updatedCompanies
-    });
-
-    // 6. Obtener el cliente actualizado
-    const updatedClient = await this.clientRepository.findOne({
-      where: { id: clientId }
-    });
-
-    if (!updatedClient) {
-      throw new NotFoundException('Error al obtener el cliente actualizado');
-    }
-
-    return {
-      message: `Compañía "${adminCompany.name}" asociada exitosamente al cliente "${client.name || client.email}". Total de compañías: ${updatedCompanies.length}`,
-      client: updatedClient
-    };
-  }
-
+ 
+  
   /**
    * Buscar sesiones por cliente y fecha (para verificar duplicados)
    */
@@ -666,7 +510,7 @@ export class SessionService {
   ): Promise<Session[]> {
     const startOfDay = new Date(sessionDatetime);
     startOfDay.setHours(0, 0, 0, 0);
-    
+
     const endOfDay = new Date(sessionDatetime);
     endOfDay.setHours(23, 59, 59, 999);
 
@@ -698,7 +542,7 @@ export class SessionService {
     if (!session) {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
-    
+
     Object.assign(session, updateSessionDto);
     return await this.sessionRepository.save(session);
   }
@@ -718,7 +562,7 @@ export class SessionService {
       where: { id: clientId },
       select: ['id', 'name', 'lastName', 'email', 'companies']
     });
-    
+
     if (!client) {
       throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
     }
@@ -731,5 +575,42 @@ export class SessionService {
       companiesArray: Array.isArray(client.companies),
       companiesJSON: JSON.stringify(client.companies)
     };
+  }
+
+  /**
+  * Validar que el servicio tiene configuración correcta de porcentajes
+  */
+  private validateServicePercentages(service: Service): void {
+    // Validar porcentaje general (si existe)
+    if (service.percentage !== undefined && service.percentage !== null) {
+      const percentage = Number(service.percentage);
+      if (percentage < 0 || percentage > 100) {
+        throw new BadRequestException(
+          `El porcentaje general del servicio ${service.id} no es válido (${percentage}%). Debe estar entre 0 y 100`
+        );
+      }
+    }
+
+    // Si tiene workers asignados, verificar que cada uno tenga porcentaje válido
+    if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
+      service.workers.forEach((worker, index) => {
+        if (worker.percentage < 0 || worker.percentage > 100) {
+          throw new BadRequestException(
+            `El porcentaje del worker ${worker.id} en el servicio ${service.id} no es válido (${worker.percentage}%). Debe estar entre 0 y 100`
+          );
+        }
+      });
+    }
+
+    // Validar que el servicio tenga al menos una forma de determinar el porcentaje
+    const hasGeneralPercentage = service.percentage !== undefined && service.percentage !== null;
+    const hasSpecificWorkers = service.workers && Array.isArray(service.workers) && service.workers.length > 0;
+
+    if (!hasGeneralPercentage && !hasSpecificWorkers) {
+      throw new BadRequestException(
+        `El servicio ${service.id} no tiene configurado el porcentaje. ` +
+        `Debe tener un porcentaje general o workers asignados con porcentajes específicos.`
+      );
+    }
   }
 }

@@ -19,18 +19,6 @@ export class SessionController {
     return this.sessionService.create(createSessionDto, adminId);
   }
 
-  @Post('create-with-company')
-  @Roles('adm')
-  async createSessionWithCompany(
-    @Request() req,
-    @Body() createSessionDto: CreateSessionDto
-  ) {
-    const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.createSessionWithCompany(
-      createSessionDto,
-      adminId
-    );
-  }
 
   @Post('create-with-detail')
   @Roles('adm')
@@ -43,16 +31,6 @@ export class SessionController {
       createSessionWithDetailDto,
       adminId
     );
-  }
-
-  @Post(':sessionId/associate-company')
-  @Roles('adm')
-  async associateCompanyToClient(
-    @Request() req,
-    @Param('sessionId') sessionId: number
-  ) {
-    const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.associateCompanyToClient(sessionId, adminId);
   }
 
   @Get()

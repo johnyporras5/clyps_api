@@ -14,13 +14,13 @@ export class CreateSessionWithDetailDto {
   @IsNumber()
   sessionStatus?: number;
 
-  @IsOptional()
+ /* @IsOptional()
   @IsNumber()
   totalCost?: number;
 
   @IsOptional()
   @IsNumber()
-  totalTime?: number;
+  totalTime?: number;*/
 
   @IsOptional()
   iaResponse?: any;
