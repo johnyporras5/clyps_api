@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Session } from './entities/session.entity';
@@ -12,9 +12,12 @@ import { SessionDetail } from '../session_detail/entities/session_detail.entity'
 import { Service } from '../service/entities/service.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Between } from 'typeorm';
-
+import { EmailService } from '../email/email.service';
+import { Worker } from '../worker/entities/worker.entity';
 @Injectable()
 export class SessionService {
+  private readonly logger = new Logger(SessionService.name);
+
   constructor(
     @InjectRepository(Session)
     private sessionRepository: Repository<Session>,
@@ -30,6 +33,9 @@ export class SessionService {
     private serviceRepository: Repository<Service>,
     @InjectRepository(CompanyWorker)
     private companyWorkerRepository: Repository<CompanyWorker>,
+    @InjectRepository(Worker)
+    private workerRepository: Repository<Worker>,
+    private emailService: EmailService,
   ) { }
 
   // Método simplificado - ya no verifica si es administrador
@@ -419,7 +425,17 @@ export class SessionService {
     const sessionDetail = this.sessionDetailRepository.create(sessionDetailData);
     const savedSessionDetail = await this.sessionDetailRepository.save(sessionDetail);
 
-    // 12. Construir mensaje
+    // 12. Enviar correos de confirmación (después de crear todo exitosamente)
+    await this.sendConfirmationEmails(
+      session,
+      savedSessionDetail,
+      createSessionWithDetailDto.clientId,
+      createSessionWithDetailDto.companyWorkerId,
+      createSessionWithDetailDto.serviceId,
+      companyId
+    );
+
+    // 13. Construir mensaje
     let message: string;
 
     if (wasAlreadyAssociated) {
@@ -499,8 +515,8 @@ export class SessionService {
     return existingSession;
   }
 
- 
-  
+
+
   /**
    * Buscar sesiones por cliente y fecha (para verificar duplicados)
    */
@@ -612,5 +628,158 @@ export class SessionService {
         `Debe tener un porcentaje general o workers asignados con porcentajes específicos.`
       );
     }
+  }
+
+
+  private async sendConfirmationEmails(
+    session: Session,
+    sessionDetail: SessionDetail,
+    clientId: number,
+    companyWorkerId: number,
+    serviceId: number,
+    companyId: number
+  ): Promise<void> {
+    try {
+      // Obtener información del cliente
+      const clientInfo = await this.getClientInfo(clientId);
+
+      // Obtener información del trabajador
+      const workerInfo = await this.getWorkerInfo(companyWorkerId);
+
+      // Obtener información del servicio
+      const service = await this.serviceRepository.findOne({
+        where: { id: serviceId }
+      });
+
+      // Obtener información de la compañía
+      const company = await this.companyRepository.findOne({
+        where: { id: companyId }
+      });
+
+      // Formatear fecha y hora usando el EmailService
+      const formattedDate = this.emailService.formatSessionDate(session.sessionDatetime);
+
+      // CONVERTIR EL COSTO A NÚMERO 
+      const sessionCost = parseFloat(String(session.totalCost)) || 0;
+      const serviceCost = parseFloat(String(service?.cost)) || 0;
+      const finalCost = sessionCost || serviceCost;
+
+      // Si el cliente tiene email, enviar correo de confirmación
+      if (clientInfo.email) {
+        await this.emailService.sendSessionConfirmationToClient(
+          clientInfo.email,
+          clientInfo.name,
+          {
+            date: formattedDate.date,
+            time: formattedDate.time,
+            serviceName: service?.name || 'Servicio',
+            serviceCost: finalCost,
+            serviceDuration: Number(session.totalTime) || Number(service?.standardTime) || 0
+          },
+          {
+            name: workerInfo.name,
+            phone: workerInfo.phone
+          },
+          {
+            name: company?.name || '',
+            address: company?.location || '',
+            email: company?.email || ''
+          }
+        );
+        this.logger.log(`✅ Correo de confirmación enviado al cliente: ${clientInfo.email}`);
+      } else {
+        this.logger.warn(`⚠️ Cliente sin email, no se envió correo de confirmación`);
+      }
+
+      // Si el trabajador tiene email, enviar correo de notificación
+      if (workerInfo.email) {
+        await this.emailService.sendSessionNotificationToWorker(
+          workerInfo.email,
+          workerInfo.name,
+          {
+            date: formattedDate.date,
+            time: formattedDate.time,
+            serviceName: service?.name || 'Servicio',
+            clientName: clientInfo.name,
+            clientPhone: clientInfo.phone,
+            serviceCost: finalCost,
+            serviceDuration: Number(session.totalTime) || Number(service?.standardTime) || 0
+          },
+          {
+            name: clientInfo.name,
+            phone: clientInfo.phone
+          },
+          {
+            name: company?.name || '',
+            address: company?.location || '',
+            email: company?.email || ''
+          }
+        );
+        this.logger.log(`✅ Correo de notificación enviado al trabajador: ${workerInfo.email}`);
+      } else {
+        this.logger.warn(`⚠️ Trabajador sin email, no se envió correo de notificación`);
+      }
+
+    } catch (error) {
+      this.logger.error(`❌ Error enviando correos de confirmación: ${error.message}`, error.stack);
+    }
+  }
+
+  /**
+   * Obtener información del trabajador para el correo
+   */
+  private async getWorkerInfo(companyWorkerId: number): Promise<{
+    email: string;
+    name: string;
+    phone: string;
+  }> {
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: { id: companyWorkerId },
+      relations: ['worker', 'worker.user']
+    });
+
+    if (!companyWorker || !companyWorker.worker) {
+      throw new NotFoundException(`Trabajador con ID ${companyWorkerId} no encontrado`);
+    }
+
+    const worker = companyWorker.worker;
+    const user = await this.userRepository.findOne({
+      where: { id: worker.userId }
+    });
+
+    return {
+      email: user?.email || '',
+      name: `${worker.name || ''} ${worker.lastName || ''}`.trim() || user?.username || 'Trabajador',
+      phone: worker.phone || ''
+    };
+  }
+
+  /**
+   * Obtener información del cliente para el correo
+   */
+  private async getClientInfo(clientId: number): Promise<{
+    email: string;
+    name: string;
+    phone: string;
+  }> {
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+      relations: ['user']
+    });
+
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    // Obtener el usuario asociado al cliente
+    const user = await this.userRepository.findOne({
+      where: { id: client.userId }
+    });
+
+    return {
+      email: client.email || user?.email || '',
+      name: `${client.name || ''} ${client.lastName || ''}`.trim() || user?.username || 'Cliente',
+      phone: client.phone || ''
+    };
   }
 }

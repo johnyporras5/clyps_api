@@ -118,7 +118,7 @@ export class AuthService {
 
     // ==================== CREAR COMPANY PARA EL ADMIN ====================
     const companyData: CreateCompanyDto = {
-      name: `Empresa de ${registerDto.username}`,
+      name: registerDto.companyName,
       email: registerDto.email,
       userId: savedUser.id,
       logo: logoFileName,
