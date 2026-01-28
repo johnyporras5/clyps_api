@@ -1,19 +1,22 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger ,} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Not, Between } from 'typeorm';
 import { Session } from './entities/session.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { CreateSessionWithDetailDto } from './dto/create-session-with-detail.dto';
-import { UpdateSessionDto } from './dto/update-session.dto';
 import { Client } from '../client/entities/client.entity';
 import { Company } from '../company/entities/company.entity';
 import { User } from '../user/entities/user.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 import { Service } from '../service/entities/service.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
-import { Between } from 'typeorm';
 import { EmailService } from '../email/email.service';
 import { Worker } from '../worker/entities/worker.entity';
+import { PaginationResult } from '../common/dto/pagination.dto';
+import { UpdateSessionDto } from './dto/update-session-and-detail.dto';
+import { GetSessionsDto } from './dto/get-sessions.dto';
+import { SessionResponse } from './types/session-response.type';
+
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
@@ -553,21 +556,437 @@ export class SessionService {
     return session;
   }
 
-  async update(id: number, updateSessionDto: UpdateSessionDto): Promise<Session> {
-    const session = await this.sessionRepository.findOne({ where: { id } });
+  async findOneWithDetails(id: number): Promise<SessionResponse> {
+    // Buscar la sesión por ID
+    const session = await this.sessionRepository.findOne({
+      where: { id }
+    });
+
     if (!session) {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
 
-    Object.assign(session, updateSessionDto);
-    return await this.sessionRepository.save(session);
+    // Obtener información del cliente
+    const client = await this.clientRepository.findOne({
+      where: { id: session.clientId }
+    });
+
+    if (!client) {
+      throw new NotFoundException(`Client with id ${session.clientId} not found`);
+    }
+
+    // Obtener detalles de la sesión
+    const sessionDetails = await this.sessionDetailRepository.find({
+      where: { sessionId: session.id }
+    });
+
+    // Variables para almacenar información adicional - INICIALIZADAS CON VALORES POR DEFECTO
+    let companyId = 0; // VALOR POR DEFECTO
+    let companyName = 'Compañía no encontrada'; // VALOR POR DEFECTO
+    let workerName = '';
+    let workerLastName = '';
+    let serviceName = '';
+
+    // Si hay detalles de sesión, obtener información adicional
+    if (sessionDetails.length > 0) {
+      const firstDetail = sessionDetails[0];
+
+      // Obtener el companyWorker con sus relaciones
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { id: firstDetail.companyWorkerId },
+        relations: ['worker', 'company']
+      });
+
+      // Obtener el servicio
+      const service = await this.serviceRepository.findOne({
+        where: { id: firstDetail.serviceId }
+      });
+
+      if (companyWorker) {
+        if (companyWorker.company) {
+          companyId = companyWorker.company.id;
+          companyName = companyWorker.company.name;
+        }
+
+        if (companyWorker.worker) {
+          workerName = companyWorker.worker.name || '';
+          workerLastName = companyWorker.worker.lastName || '';
+        }
+      }
+
+      if (service) {
+        serviceName = service.name || '';
+      }
+    }
+
+    // Si no se encontró información de compañía en los detalles, buscar la compañía del administrador
+    // Solo intentar buscar si aún tenemos el valor por defecto
+    if (companyName === 'Compañía no encontrada') {
+      // Buscar alguna compañía asociada al cliente
+      if (client.companies && client.companies.length > 0) {
+        const firstCompanyId = client.companies[0];
+        const company = await this.companyRepository.findOne({
+          where: { id: firstCompanyId }
+        });
+
+        if (company) {
+          companyId = company.id;
+          companyName = company.name;
+        }
+      }
+    }
+
+    // Formatear el totalCost si es necesario (convertir Decimal a número)
+    let totalCost: number;
+
+    // Acceder a la propiedad de forma segura
+    const sessionTotalCost = (session as any).totalCost;
+
+    if (typeof sessionTotalCost === 'string') {
+      totalCost = parseFloat(sessionTotalCost);
+    } else if (sessionTotalCost && typeof sessionTotalCost === 'object') {
+      // Si es un objeto Decimal de TypeORM o similar
+      try {
+        totalCost = parseFloat(String(sessionTotalCost));
+      } catch {
+        totalCost = 0;
+      }
+    } else if (typeof sessionTotalCost === 'number') {
+      totalCost = sessionTotalCost;
+    } else {
+      totalCost = 0;
+    }
+
+    // Construir la respuesta
+    const response: SessionResponse = {
+      id: session.id,
+      clientId: session.clientId,
+      clientName: client.name || '',
+      clientLastName: client.lastName || '',
+      companyId: companyId,
+      companyName: companyName,
+      sessionDatetime: session.sessionDatetime,
+      sessionStatus: session.sessionStatus,
+      sessionStatusText: this.getSessionStatusText(session.sessionStatus),
+      totalCost: totalCost,
+      totalTime: session.totalTime || 0,
+      startDatetime: session.startDatetime || session.sessionDatetime,
+      status: session.status || 1,
+      iaResponse: session.iaResponse,
+      workerName: workerName,
+      workerLastName: workerLastName,
+      serviceName: serviceName,
+      createdAt: (session as any).createdAt || null,
+      updatedAt: (session as any).updatedAt || null
+    };
+
+    return response;
   }
 
-  async remove(id: number): Promise<void> {
+
+async updateSessionWithDetail(
+  sessionId: number,
+  updateSessionDto: UpdateSessionDto,
+  adminId: number
+): Promise<{
+  session: Session;
+  sessionDetail: SessionDetail;
+  calculations?: any;
+  message: string;
+}> {
+  console.log(`🔄 Iniciando actualización de sesión ${sessionId} con datos:`, updateSessionDto);
+  
+  // 1. Verificar que el administrador tiene una compañía
+  const adminCompany = await this.companyRepository.findOne({
+    where: { userId: adminId }
+  });
+
+  if (!adminCompany) {
+    throw new NotFoundException('El administrador no tiene una compañía asignada');
+  }
+
+  // 2. Buscar la sesión
+  const session = await this.sessionRepository.findOne({
+    where: { id: sessionId }
+  });
+
+  if (!session) {
+    throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+  }
+
+  console.log(`✅ Sesión encontrada: ${session.id}, Cliente: ${session.clientId}`);
+
+  // 3. BUSCAR EL DETALLE ESPECÍFICO POR detailId (REQUERIDO)
+  console.log(`🔍 Buscando detalle ID: ${updateSessionDto.detailId} para sesión ${sessionId}`);
+  
+  const detailToUpdate = await this.sessionDetailRepository.findOne({
+    where: {
+      id: updateSessionDto.detailId,
+      sessionId: sessionId
+    }
+  });
+
+  if (!detailToUpdate) {
+    throw new NotFoundException(
+      `Detalle con ID ${updateSessionDto.detailId} no encontrado para la sesión ${sessionId}`
+    );
+  }
+
+  console.log(`✅ Detalle encontrado: ID ${detailToUpdate.id}, Servicio: ${detailToUpdate.serviceId}, Trabajador: ${detailToUpdate.companyWorkerId}`);
+
+  // 4. Variables para recálculos
+  let recalculations: any = null;
+  let needRecalculate = false;
+
+  // 5. Determinar si se está cambiando el servicio o trabajador
+  const changingService = updateSessionDto.serviceId !== undefined &&
+    updateSessionDto.serviceId !== detailToUpdate.serviceId;
+
+  const changingWorker = updateSessionDto.companyWorkerId !== undefined &&
+    updateSessionDto.companyWorkerId !== detailToUpdate.companyWorkerId;
+
+  console.log(`🔄 Cambios detectados: Servicio=${changingService} (${detailToUpdate.serviceId} → ${updateSessionDto.serviceId}), Trabajador=${changingWorker}`);
+
+  // 6. Si se cambia el servicio o trabajador, recalculamos todo
+  if (changingService || changingWorker) {
+    needRecalculate = true;
+    console.log(`📊 Recalculando costos por cambio de servicio/trabajador`);
+
+    // Obtener el servicio (nuevo si se especifica, o mantener el actual)
+    const serviceId = updateSessionDto.serviceId !== undefined ? updateSessionDto.serviceId : detailToUpdate.serviceId;
+    const service = await this.serviceRepository.findOne({
+      where: {
+        id: serviceId,
+        companyId: adminCompany.id
+      }
+    });
+
+    if (!service) {
+      throw new NotFoundException(
+        `Servicio con ID ${serviceId} no encontrado o no pertenece a tu compañía`
+      );
+    }
+
+    // Obtener el trabajador (nuevo si se especifica, o mantener el actual)
+    const companyWorkerId = updateSessionDto.companyWorkerId !== undefined ? updateSessionDto.companyWorkerId : detailToUpdate.companyWorkerId;
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        id: companyWorkerId,
+        companyId: adminCompany.id
+      }
+    });
+
+    if (!companyWorker) {
+      throw new NotFoundException(
+        `Trabajador con ID ${companyWorkerId} no encontrado o no pertenece a tu compañía`
+      );
+    }
+
+    // Verificar que el trabajador esté activo
+    if (companyWorker.isActive !== 1) {
+      throw new BadRequestException(`El trabajador con ID ${companyWorkerId} no está activo`);
+    }
+
+    // Verificar si ya existe OTRO detalle con la misma combinación
+    // Solo si estamos cambiando a un servicio o trabajador nuevo
+    if (changingService || changingWorker) {
+      const existingDuplicateDetail = await this.sessionDetailRepository.findOne({
+        where: {
+          sessionId: sessionId,
+          serviceId: serviceId,
+          companyWorkerId: companyWorkerId,
+          id: Not(detailToUpdate.id) // Excluir el detalle actual
+        }
+      });
+
+      if (existingDuplicateDetail) {
+        throw new BadRequestException({
+          message: 'Ya existe otro detalle en esta sesión con la misma combinación de servicio y trabajador',
+          existingDetailId: existingDuplicateDetail.id,
+          recommendation: 'Si deseas modificar este detalle existente, usa su ID directamente'
+        });
+      }
+    }
+
+    // Calcular porcentajes
+    const { workerPercentage, companyPercentage, workerAssigned } = this.calculatePercentages(
+      service,
+      companyWorkerId
+    );
+
+    // Tomar el costo del servicio
+    const totalCost = service.cost || 0;
+
+    if (totalCost <= 0) {
+      throw new BadRequestException('El costo del servicio debe ser mayor a 0');
+    }
+
+    // Calcular montos
+    const calculatedAmounts = this.calculateAmounts(totalCost, workerPercentage, companyPercentage);
+
+    console.log(`💰 Nuevos cálculos: Costo=${totalCost}, Trabajador=${calculatedAmounts.totalWorker} (${workerPercentage}%), Compañía=${calculatedAmounts.totalCompany} (${companyPercentage}%)`);
+
+    // ACTUALIZAR EL DETALLE EXISTENTE con los nuevos valores
+    detailToUpdate.cost = totalCost;
+    if (updateSessionDto.serviceId !== undefined) {
+      detailToUpdate.serviceId = service.id;
+    }
+    if (updateSessionDto.companyWorkerId !== undefined) {
+      detailToUpdate.companyWorkerId = companyWorker.id;
+    }
+    detailToUpdate.totalWorker = calculatedAmounts.totalWorker;
+    detailToUpdate.totalCompany = calculatedAmounts.totalCompany;
+    detailToUpdate.totalTime = service.standardTime || 0;
+
+    // Actualizar valores en la sesión
+    session.totalCost = totalCost;
+    session.totalTime = service.standardTime || 0;
+
+    recalculations = {
+      totalCost,
+      totalTime: service.standardTime || 0,
+      workerPercentage,
+      companyPercentage,
+      totalWorker: calculatedAmounts.totalWorker,
+      totalCompany: calculatedAmounts.totalCompany,
+      calculationDetails: calculatedAmounts.calculationDetails,
+      workerAssigned
+    };
+  }
+
+  // 7. Actualizar campos básicos de la sesión
+  if (updateSessionDto.clientId !== undefined) {
+    session.clientId = updateSessionDto.clientId;
+  }
+
+  if (updateSessionDto.sessionDatetime !== undefined) {
+    const newDatetime = new Date(updateSessionDto.sessionDatetime);
+    session.sessionDatetime = newDatetime;
+
+    // También actualizar el startDatetime
+    session.startDatetime = newDatetime;
+    detailToUpdate.startDatetime = newDatetime;
+  }
+
+  if (updateSessionDto.sessionStatus !== undefined) {
+    session.sessionStatus = updateSessionDto.sessionStatus;
+  }
+
+  // 8. Actualizar status del detalle si se proporciona
+  if (updateSessionDto.detailStatus !== undefined) {
+    detailToUpdate.status = updateSessionDto.detailStatus;
+  }
+
+  // 9. Guardar todos los cambios
+  console.log(`💾 Guardando cambios de sesión ID: ${session.id}`);
+  const updatedSession = await this.sessionRepository.save(session);
+  
+  console.log(`💾 Guardando cambios de detalle ID: ${detailToUpdate.id}`);
+  const updatedSessionDetail = await this.sessionDetailRepository.save(detailToUpdate);
+
+  console.log(`✅ Actualización completada: Sesión ${sessionId}, Detalle ${detailToUpdate.id}`);
+
+  return {
+    session: updatedSession,
+    sessionDetail: updatedSessionDetail,
+    calculations: recalculations,
+    message: needRecalculate
+      ? `Sesión ${sessionId} y su detalle (ID: ${detailToUpdate.id}) actualizados con recálculo de costos`
+      : `Sesión ${sessionId} y su detalle (ID: ${detailToUpdate.id}) actualizados exitosamente`
+  };
+}
+
+  async removeSessionWithDetails(sessionId: number): Promise<{ message: string }> {
+    // 1. Buscar la sesión
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+    }
+
+    // 2. Buscar y eliminar todos los session_details relacionados
+    const sessionDetails = await this.sessionDetailRepository.find({
+      where: { sessionId: sessionId }
+    });
+
+    // 3. Eliminar los session_details
+    if (sessionDetails.length > 0) {
+      await this.sessionDetailRepository.remove(sessionDetails);
+      console.log(`✅ Eliminados ${sessionDetails.length} detalles de sesión`);
+    }
+
+    // 4. Eliminar la sesión
+    await this.sessionRepository.remove(session);
+
+    return {
+      message: `Sesión eliminada Exitosamente`
+    };
+  }
+
+  async remove(id: number, adminId?: number): Promise<{ message: string; deletedSession: SessionResponse }> {
+    // Buscar la sesión con detalles
+    const session = await this.sessionRepository.findOne({
+      where: { id }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+
+    // Verificar permisos si se proporciona adminId
+    if (adminId) {
+      // Verificar que el administrador tiene una compañía
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId: adminId }
+      });
+
+      if (!adminCompany) {
+        throw new NotFoundException('El administrador no tiene una compañía asignada');
+      }
+
+      // Verificar que la sesión pertenece a una compañía del admin
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId: id }
+      });
+
+      let sessionBelongsToAdmin = false;
+
+      for (const detail of sessionDetails) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: detail.companyWorkerId },
+          relations: ['company']
+        });
+
+        if (companyWorker?.company?.id === adminCompany.id) {
+          sessionBelongsToAdmin = true;
+          break;
+        }
+      }
+
+      if (!sessionBelongsToAdmin) {
+        throw new BadRequestException('No tienes permiso para eliminar esta sesión');
+      }
+    }
+
+    // Obtener información antes de eliminar para la respuesta
+    const sessionInfo = await this.findOneWithDetails(id);
+
+    // Eliminar primero los detalles de la sesión
+    await this.sessionDetailRepository.delete({ sessionId: id });
+
+    // Eliminar la sesión
     const result = await this.sessionRepository.delete(id);
+
     if (result.affected === 0) {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
+
+    return {
+      message: `Sesión ${id} eliminada exitosamente`,
+      deletedSession: sessionInfo
+    };
   }
 
   /**
@@ -782,4 +1201,163 @@ export class SessionService {
       phone: client.phone || ''
     };
   }
+  //------------------------------------------
+  //                      LISTAS
+  //------------------------------------------- 
+
+  /**
+   * Método alternativo más simple sin joins complejos
+   */
+
+  async findAllSessionsSimple(
+    adminId: number,
+    getSessionsDto: GetSessionsDto
+  ): Promise<PaginationResult<any>> {
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!adminCompany) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
+    }
+
+    // Construir condiciones where
+    const whereConditions: any = {};
+
+    // Filtrar por fechas si se proporcionan
+    if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      whereConditions.sessionDatetime = Between(
+        new Date(getSessionsDto.startDate),
+        new Date(getSessionsDto.endDate)
+      );
+    }
+
+    if (getSessionsDto.clientId) {
+      whereConditions.clientId = getSessionsDto.clientId;
+    }
+
+    if (getSessionsDto.sessionStatus !== undefined) {
+      whereConditions.sessionStatus = getSessionsDto.sessionStatus;
+    }
+
+    // Determinar ordenamiento
+    let order: any = {};
+    switch (getSessionsDto.orderBy) {
+      case 'recent':
+        order = { sessionDatetime: 'DESC' };
+        break;
+      case 'oldest':
+        order = { sessionDatetime: 'ASC' };
+        break;
+      case 'priority':
+        order = { sessionStatus: 'ASC', sessionDatetime: 'ASC' };
+        break;
+      default:
+        order = { sessionDatetime: 'DESC' };
+    }
+
+    // Obtener las sesiones directamente
+    const [sessions, total] = await this.sessionRepository.findAndCount({
+      where: whereConditions,
+      order: order,
+      skip: (getSessionsDto.page - 1) * getSessionsDto.limit,
+      take: getSessionsDto.limit,
+    });
+
+    // Enriquecer los datos con información de clientes, compañías y detalles
+    const enrichedSessions = await Promise.all(
+      sessions.map(async (session) => {
+        // Obtener cliente
+        const client = await this.clientRepository.findOne({
+          where: { id: session.clientId }
+        });
+
+        // Obtener detalles de la sesión
+        const sessionDetails = await this.sessionDetailRepository.find({
+          where: { sessionId: session.id }
+        });
+
+        let companyId = adminCompany.id;
+        let companyName = adminCompany.name;
+        let workerName = '';
+        let workerLastName = '';
+        let serviceName = '';
+
+        if (sessionDetails.length > 0) {
+          const firstDetail = sessionDetails[0];
+
+          // Obtener companyWorker
+          const companyWorker = await this.companyWorkerRepository.findOne({
+            where: { id: firstDetail.companyWorkerId },
+            relations: ['worker', 'company']
+          });
+
+          // Obtener servicio
+          const service = await this.serviceRepository.findOne({
+            where: { id: firstDetail.serviceId }
+          });
+
+          if (companyWorker?.company) {
+            companyId = companyWorker.company.id;
+            companyName = companyWorker.company.name;
+          }
+
+          if (companyWorker?.worker) {
+            workerName = companyWorker.worker.name || '';
+            workerLastName = companyWorker.worker.lastName || '';
+          }
+
+          if (service) {
+            serviceName = service.name || '';
+          }
+        }
+
+        return {
+          id: session.id,
+          clientId: session.clientId,
+          clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
+          clientLastName: client?.lastName || '',
+          companyId: companyId,
+          companyName: companyName,
+          sessionDatetime: session.sessionDatetime,
+          sessionStatus: session.sessionStatus,
+          sessionStatusText: this.getSessionStatusText(session.sessionStatus),
+          totalCost: session.totalCost,
+          totalTime: session.totalTime,
+          startDatetime: session.startDatetime,
+          status: session.status,
+          workerName: workerName,
+          workerLastName: workerLastName,
+          serviceName: serviceName,
+          createdAt: session['createdAt'] || null,
+          updatedAt: session['updatedAt'] || null
+        };
+      })
+    );
+
+    return {
+      data: enrichedSessions,
+      meta: {
+        page: getSessionsDto.page,
+        limit: getSessionsDto.limit,
+        total: total,
+        totalPages: Math.ceil(total / getSessionsDto.limit),
+        hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
+        hasPrev: getSessionsDto.page > 1,
+      }
+    };
+  }
+  //SE ESTABLE EL ESTATUS DE LA CITA
+  private getSessionStatusText(status: number): string {
+    const statusMap: Record<number, string> = {
+      1: 'Pendiente',
+      2: 'Confirmada',
+      3: 'En proceso',
+      4: 'Completada',
+      5: 'Cancelada',
+      6: 'No asistió'
+    };
+    return statusMap[status] || 'Desconocido';
+  }
+
 }

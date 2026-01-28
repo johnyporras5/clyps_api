@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, JoinColumn, ManyToOne } from 'typeorm';
 import { Worker } from '../../worker/entities/worker.entity'; 
+import { Company } from '../../company/entities/company.entity'; 
 
 @Entity('company_worker')
 export class CompanyWorker {
@@ -34,4 +35,8 @@ export class CompanyWorker {
   @ManyToOne(() => Worker, { eager: true })
   @JoinColumn({ name: 'worker_id' })
   worker: Worker;
+
+  @ManyToOne(() => Company, { eager: true })
+  @JoinColumn({ name: 'company_id' })
+  company: Company;
 }
