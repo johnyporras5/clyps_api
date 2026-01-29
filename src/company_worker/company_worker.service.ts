@@ -240,4 +240,69 @@ export class CompanyWorkerService {
       message: `Trabajador desactivado exitosamente de la compañía '${company.name}'.`
     };
   }
+
+
+
+  /**
+ * Método simple usando QueryBuilder de TypeORM correctamente
+ */
+async getCompanyWorkersWithNameFilter(
+  adminId: number, 
+  name?: string
+): Promise<any[]> {
+  // 1. Obtener la compañía del administrador
+  const company = await this.companyRepository.findOne({
+    where: { userId: adminId }
+  });
+
+  if (!company) {
+    throw new UnauthorizedException('No tienes una compañía asignada');
+  }
+
+  // 2. Crear QueryBuilder con alias correctos
+  const queryBuilder = this.workerRepository
+    .createQueryBuilder('worker')
+    .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id')
+    .leftJoin('worker_feedback', 'wf', 'wf.worker_id = worker.id')
+    .select([
+      'cw.id AS companyWorkerId',
+      'worker.id AS workerId',
+      'CONCAT(worker.name, " ", worker.last_name) AS fullName',
+      'worker.picture AS picture',
+      'cw.start_date AS startDate',
+      'cw.end_date AS endDate',
+      'cw.is_active AS isActive',
+      'COALESCE(AVG(wf.stars), 0) AS averageRating',
+      'COUNT(wf.id) AS totalReviews'
+    ])
+    .where('cw.company_id = :companyId', { companyId: company.id })
+    .andWhere('cw.is_active = 1')
+    .groupBy('worker.id')
+    .addGroupBy('cw.id')
+    .orderBy('worker.name', 'ASC');
+
+  // 3. Aplicar filtro por nombre si se proporciona
+  if (name && name.trim() !== '') {
+    const searchTerm = `%${name.trim()}%`;
+    queryBuilder.andWhere(
+      '(worker.name LIKE :search OR worker.last_name LIKE :search OR CONCAT(worker.name, " ", worker.last_name) LIKE :search)',
+      { search: searchTerm }
+    );
+  }
+
+  // 4. Ejecutar y formatear resultados
+  const results = await queryBuilder.getRawMany();
+
+  return results.map(result => ({
+    companyWorkerId: result.companyWorkerId,
+    workerId: result.workerId,
+    fullName: result.fullName,
+    picture: result.picture,
+    averageRating: parseFloat(result.averageRating).toFixed(1),
+    totalReviews: parseInt(result.totalReviews) || 0,
+    startDate: result.startDate,
+    endDate: result.endDate,
+    isActive: result.isActive
+  }));
+}
 }

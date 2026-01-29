@@ -27,7 +27,6 @@ import { TokenBlacklistService } from './services/token_blacklist.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RequestPasswordResetDto, ResetPasswordDto, VerifyResetCodeDto } from './dto/reset-password.dto';
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
-import { RegisterAdminWithLogoDto } from './dto/register-admin-with-logo.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('auth')

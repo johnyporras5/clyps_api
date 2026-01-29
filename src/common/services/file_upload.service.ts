@@ -4,11 +4,7 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfigService } from '@nestjs/config';
 
-export type AllowedFolder = 
-  | 'user_photo' 
-  | 'training_plan_photo' 
-  | 'exercise_photo' 
-  | 'profile_photos'
+export type AllowedFolder =
   | 'client_photo'
   | 'company_logo';
 
@@ -26,10 +22,6 @@ export class FileUploadService {
 
   // Tipos de carpetas permitidas
   private readonly allowedFolders: AllowedFolder[] = [
-    'user_photo',
-    'training_plan_photo',
-    'exercise_photo',
-    'profile_photos',
     'client_photo',
     'company_logo',
   ];
@@ -39,7 +31,7 @@ export class FileUploadService {
     private readonly configService: ConfigService
   ) {
     this.assetsPath = path.join(process.cwd(), 'assets');
-    
+
     // Obtener la URL base desde las variables de entorno con valor por defecto
     this.assetsBaseUrl = this.configService.get<string>('ASSETS_BASE_URL') || 'http://localhost:4000/assets';
 
@@ -103,11 +95,11 @@ export class FileUploadService {
       };
     } catch (error) {
       this.logger.error(`❌ Error al guardar el archivo: ${error.message}`);
-      
+
       if (error instanceof BadRequestException) {
         throw error;
       }
-      
+
       throw new BadRequestException(`Error al guardar el archivo: ${error.message}`);
     }
   }
@@ -116,20 +108,20 @@ export class FileUploadService {
     // Validar que el folder sea seguro
     const safeFolder = folder.replace(/\.\./g, '').replace(/\//g, '');
     const safeFileName = fileName.replace(/\.\./g, '').replace(/\//g, '');
-    
+
     return `${this.assetsBaseUrl}/${safeFolder}/${safeFileName}`;
   }
 
   deleteFile(folder: string, fileName: string): boolean {
     try {
       const filePath = path.join(this.assetsPath, folder, fileName);
-      
+
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
         this.logger.log(`🗑️  Archivo eliminado: ${filePath}`);
         return true;
       }
-      
+
       this.logger.warn(`⚠️  Archivo no encontrado para eliminar: ${filePath}`);
       return false;
     } catch (error) {

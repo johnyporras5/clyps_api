@@ -4,92 +4,211 @@ import { Resend } from 'resend';
 
 @Injectable()
 export class EmailService {
-  private readonly logger = new Logger(EmailService.name);
-  private resend: Resend;
-  private readonly fromEmail: string;
+    private readonly logger = new Logger(EmailService.name);
+    private resend: Resend;
+    private readonly fromEmail: string;
 
-  constructor(private configService: ConfigService) {
-    const apiKey = this.configService.get('RESEND_API_KEY');
-    const domain = this.configService.get('RESEND_DOMAIN', 'example.com');
-    
-    if (!apiKey) {
-      this.logger.error('RESEND_API_KEY no está configurada en las variables de entorno');
-      return;
+    constructor(private configService: ConfigService) {
+        const apiKey = this.configService.get('RESEND_API_KEY');
+        const domain = this.configService.get('RESEND_DOMAIN', 'example.com');
+
+        if (!apiKey) {
+            this.logger.error('RESEND_API_KEY no está configurada en las variables de entorno');
+            return;
+        }
+
+        this.resend = new Resend(apiKey);
+        this.fromEmail = this.configService.get('RESEND_FROM_EMAIL', `Your App <no-reply@${domain}>`);
+        this.logger.log(`Resend inicializado correctamente con dominio: ${domain}`);
     }
 
-    this.resend = new Resend(apiKey);
-    this.fromEmail = this.configService.get('RESEND_FROM_EMAIL', `Your App <no-reply@${domain}>`);
-    this.logger.log(`Resend inicializado correctamente con dominio: ${domain}`);
-  }
-
-  async sendVerificationCode(email: string, code: string, username: string): Promise<boolean> {
-    return this.sendCodeEmail(email, code, username, 'Verifica tu cuenta', this.getVerificationEmailTemplate(username, code));
-  }
-
-  async sendPasswordResetCode(email: string, code: string, username: string): Promise<boolean> {
-    return this.sendCodeEmail(email, code, username, 'Restablecer contraseña', this.getPasswordResetEmailTemplate(username, code));
-  }
-
-  private async sendCodeEmail(email: string, code: string, username: string, subject: string, html: string): Promise<boolean> {
-    try {
-      if (!this.resend) {
-        this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
-        return false;
-      }
-
-      this.logger.log(`Enviando código ${code} a ${email}`);
-
-      const { data, error } = await this.resend.emails.send({
-        from: this.fromEmail,
-        to: email,
-        subject,
-        html,
-      });
-
-      if (error) {
-        this.logger.error('Error de Resend:', error);
-        return false;
-      }
-
-      this.logger.log(`✅ Email (${subject}) enviado exitosamente`);
-      return true;
-    } catch (error) {
-      this.logger.error('Error inesperado enviando email:', error);
-      return false;
+    async sendVerificationCode(email: string, code: string, username: string): Promise<boolean> {
+        return this.sendCodeEmail(email, code, username, 'Verifica tu cuenta', this.getVerificationEmailTemplate(username, code));
     }
-  }
 
-  async sendPasswordChangedNotification(email: string, username: string): Promise<boolean> {
-    try {
-      if (!this.resend) {
-        this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
-        return false;
-      }
-
-      this.logger.log(`Enviando notificación de cambio de contraseña a ${email}`);
-
-      const { data, error } = await this.resend.emails.send({
-        from: this.fromEmail,
-        to: email,
-        subject: 'Contraseña cambiada',
-        html: this.getPasswordChangedEmailTemplate(username),
-      });
-
-      if (error) {
-        this.logger.error('Error de Resend al enviar notificación:', error);
-        return false;
-      }
-
-      this.logger.log('✅ Notificación de cambio de contraseña enviada');
-      return true;
-    } catch (error) {
-      this.logger.error('Error inesperado enviando notificación:', error);
-      return false;
+    async sendPasswordResetCode(email: string, code: string, username: string): Promise<boolean> {
+        return this.sendCodeEmail(email, code, username, 'Restablecer contraseña', this.getPasswordResetEmailTemplate(username, code));
     }
-  }
 
-  private getVerificationEmailTemplate(username: string, code: string): string {
-    return `
+    private async sendCodeEmail(email: string, code: string, username: string, subject: string, html: string): Promise<boolean> {
+        try {
+            if (!this.resend) {
+                this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
+                return false;
+            }
+
+            this.logger.log(`Enviando código ${code} a ${email}`);
+
+            const { data, error } = await this.resend.emails.send({
+                from: this.fromEmail,
+                to: email,
+                subject,
+                html,
+            });
+
+            if (error) {
+                this.logger.error('Error de Resend:', error);
+                return false;
+            }
+
+            this.logger.log(`✅ Email (${subject}) enviado exitosamente`);
+            return true;
+        } catch (error) {
+            this.logger.error('Error inesperado enviando email:', error);
+            return false;
+        }
+    }
+
+    async sendPasswordChangedNotification(email: string, username: string): Promise<boolean> {
+        try {
+            if (!this.resend) {
+                this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
+                return false;
+            }
+
+            this.logger.log(`Enviando notificación de cambio de contraseña a ${email}`);
+
+            const { data, error } = await this.resend.emails.send({
+                from: this.fromEmail,
+                to: email,
+                subject: 'Contraseña cambiada',
+                html: this.getPasswordChangedEmailTemplate(username),
+            });
+
+            if (error) {
+                this.logger.error('Error de Resend al enviar notificación:', error);
+                return false;
+            }
+
+            this.logger.log('✅ Notificación de cambio de contraseña enviada');
+            return true;
+        } catch (error) {
+            this.logger.error('Error inesperado enviando notificación:', error);
+            return false;
+        }
+    }
+    async sendEmail(to: string, subject: string, html: string): Promise<boolean> {
+        try {
+            if (!this.resend) {
+                this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
+                return false;
+            }
+
+            this.logger.log(`Enviando email a ${to} con asunto: ${subject}`);
+
+            const { data, error } = await this.resend.emails.send({
+                from: this.fromEmail,
+                to: to,
+                subject: subject,
+                html: html,
+            });
+
+            if (error) {
+                this.logger.error('Error de Resend:', error);
+                return false;
+            }
+
+            this.logger.log(`✅ Email enviado exitosamente a ${to}`);
+            return true;
+        } catch (error) {
+            this.logger.error('Error inesperado enviando email:', error);
+            return false;
+        }
+    }
+
+    async sendSessionConfirmationToClient(
+        clientEmail: string,
+        clientName: string,
+        sessionData: {
+            date: string;
+            time: string;
+            serviceName: string;
+            serviceCost: number;
+            serviceDuration: number;
+        },
+        workerInfo: {
+            name: string;
+            phone?: string;
+        },
+        companyInfo: {
+            name: string;
+            address?: string;
+            email?: string;
+        }
+    ): Promise<boolean> {
+        const html = this.getSessionConfirmationTemplate(
+            clientName,
+            sessionData,
+            workerInfo,
+            companyInfo
+        );
+
+        return this.sendEmail(
+            clientEmail,
+            `Confirmación de cita - ${sessionData.date}`,
+            html
+        );
+    }
+
+    async sendSessionNotificationToWorker(
+        workerEmail: string,
+        workerName: string,
+        sessionData: {
+            date: string;
+            time: string;
+            serviceName: string;
+            clientName: string;
+            clientPhone?: string;
+            serviceCost: number;
+            serviceDuration: number;
+        },
+        clientInfo: {
+            name: string;
+            phone?: string;
+        },
+        companyInfo: {
+            name: string;
+            address?: string;
+            email?: string;
+        }
+    ): Promise<boolean> {
+        const html = this.getSessionNotificationTemplate(
+            workerName,
+            sessionData,
+            clientInfo,
+            companyInfo
+        );
+
+        return this.sendEmail(
+            workerEmail,
+            `Nueva cita asignada - ${sessionData.date}`,
+            html
+        );
+    }
+
+    formatSessionDate(date: Date): { date: string; time: string } {
+        const sessionDate = new Date(date);
+
+        const dateStr = sessionDate.toLocaleDateString('es-ES', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        const timeStr = sessionDate.toLocaleTimeString('es-ES', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        return {
+            date: dateStr.charAt(0).toUpperCase() + dateStr.slice(1),
+            time: timeStr
+        };
+    }
+
+    private getVerificationEmailTemplate(username: string, code: string): string {
+        return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -472,10 +591,10 @@ export class EmailService {
       </body>
       </html>
     `;
-  }
+    }
 
-  private getPasswordResetEmailTemplate(username: string, code: string): string {
-    return `
+    private getPasswordResetEmailTemplate(username: string, code: string): string {
+        return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -924,10 +1043,10 @@ export class EmailService {
       </body>
       </html>
     `;
-  }
+    }
 
-  private getPasswordChangedEmailTemplate(username: string): string {
-    return `
+    private getPasswordChangedEmailTemplate(username: string): string {
+        return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -1292,13 +1411,13 @@ export class EmailService {
                   <div class="timestamp" style="background-color: #f8fafc; border-radius: 8px; padding: 18px; text-align: center; margin: 25px 0; font-size: 14.5px; color: #475569; border: 1px solid #e2e8f0; line-height: 1.5;">
                       <strong>Fecha y Hora del Cambio:</strong><br>
                       ${new Date().toLocaleString('es-ES', {
-                          weekday: 'long',
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                      })}
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        })}
                   </div>
                   
                   <!-- SECCIÓN DE DESCARGA DE APP -->
@@ -1366,62 +1485,62 @@ export class EmailService {
       </body>
       </html>
     `;
-  }
-
-  async sendWorkerCredentials(
-    email: string, 
-    username: string, 
-    password: string, 
-    companyName: string
-  ): Promise<boolean> {
-    return this.sendCredentialsEmail(
-      email, 
-      username, 
-      password, 
-      companyName,
-      'Bienvenido a CLYPS - Tus Credenciales de Acceso', 
-      this.getWorkerCredentialsTemplate(username, password, companyName)
-    );
-  }
-
-  private async sendCredentialsEmail(
-    email: string, 
-    username: string, 
-    password: string, 
-    companyName: string,
-    subject: string, 
-    html: string
-  ): Promise<boolean> {
-    try {
-      if (!this.resend) {
-        this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
-        return false;
-      }
-
-      this.logger.log(`Enviando credenciales a ${email} para la compañía ${companyName}`);
-
-      const { data, error } = await this.resend.emails.send({
-        from: this.fromEmail,
-        to: email,
-        subject,
-        html,
-      });
-
-      if (error) {
-        this.logger.error('Error de Resend:', error);
-        return false;
-      }
-
-      this.logger.log(`✅ Credenciales enviadas exitosamente a ${email} para la compañía ${companyName}`);
-      return true;
-    } catch (error) {
-      this.logger.error('Error inesperado enviando credenciales:', error);
-      return false;
     }
-  }
 
-  private getWorkerCredentialsTemplate(username: string, password: string, companyName: string): string {
-    return `
+    async sendWorkerCredentials(
+        email: string,
+        username: string,
+        password: string,
+        companyName: string
+    ): Promise<boolean> {
+        return this.sendCredentialsEmail(
+            email,
+            username,
+            password,
+            companyName,
+            'Bienvenido a CLYPS - Tus Credenciales de Acceso',
+            this.getWorkerCredentialsTemplate(username, password, companyName)
+        );
+    }
+
+    private async sendCredentialsEmail(
+        email: string,
+        username: string,
+        password: string,
+        companyName: string,
+        subject: string,
+        html: string
+    ): Promise<boolean> {
+        try {
+            if (!this.resend) {
+                this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
+                return false;
+            }
+
+            this.logger.log(`Enviando credenciales a ${email} para la compañía ${companyName}`);
+
+            const { data, error } = await this.resend.emails.send({
+                from: this.fromEmail,
+                to: email,
+                subject,
+                html,
+            });
+
+            if (error) {
+                this.logger.error('Error de Resend:', error);
+                return false;
+            }
+
+            this.logger.log(`✅ Credenciales enviadas exitosamente a ${email} para la compañía ${companyName}`);
+            return true;
+        } catch (error) {
+            this.logger.error('Error inesperado enviando credenciales:', error);
+            return false;
+        }
+    }
+
+    private getWorkerCredentialsTemplate(username: string, password: string, companyName: string): string {
+        return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -2115,21 +2234,21 @@ export class EmailService {
       </body>
       </html>
     `;
-  }
+    }
 
-  async sendClientCredentials(email: string, username: string, password: string): Promise<boolean> {
-    return this.sendCredentialsEmail(
-      email, 
-      username, 
-      password, 
-      'CLYPS',
-      'Bienvenido a CLYPS - Tus Credenciales de Acceso', 
-      this.getClientCredentialsTemplate(username, password)
-    );
-  }
+    async sendClientCredentials(email: string, username: string, password: string): Promise<boolean> {
+        return this.sendCredentialsEmail(
+            email,
+            username,
+            password,
+            'CLYPS',
+            'Bienvenido a CLYPS - Tus Credenciales de Acceso',
+            this.getClientCredentialsTemplate(username, password)
+        );
+    }
 
-  private getClientCredentialsTemplate(username: string, password: string): string {
-    return `
+    private getClientCredentialsTemplate(username: string, password: string): string {
+        return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -2471,5 +2590,1142 @@ export class EmailService {
       </body>
       </html>
     `;
-  }
+    }
+
+    private getSessionConfirmationTemplate(
+        clientName: string,
+        sessionData: {
+            date: string;
+            time: string;
+            serviceName: string;
+            serviceCost: number;
+            serviceDuration: number;
+        },
+        workerInfo: {
+            name: string;
+            phone?: string;
+        },
+        companyInfo: {
+            name: string;
+            address?: string;
+            email?: string;
+        }
+    ): string {
+        return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Confirmación de Cita - CLYPS</title>
+        <style type="text/css">
+            /* RESET */
+            body, table, td, div, p, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+            table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse !important; }
+            img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+            table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+            
+            /* MOBILE STYLES */
+            @media screen and (max-width: 630px) {
+                .container {
+                    width: 94% !important;
+                    margin: 0 auto !important;
+                    padding: 10px !important;
+                }
+                .header {
+                    padding: 25px 20px !important;
+                    text-align: center !important;
+                }
+                .content {
+                    padding: 25px 20px !important;
+                }
+                .logo {
+                    font-size: 28px !important;
+                    line-height: 32px !important;
+                }
+                .tagline {
+                    font-size: 14px !important;
+                    line-height: 18px !important;
+                }
+                .greeting {
+                    font-size: 20px !important;
+                    line-height: 24px !important;
+                    margin-bottom: 15px !important;
+                }
+                .message {
+                    font-size: 15px !important;
+                    line-height: 22px !important;
+                }
+                .appointment-card {
+                    padding: 25px 20px !important;
+                    margin: 20px 0 !important;
+                }
+                .appointment-title {
+                    font-size: 20px !important;
+                    line-height: 24px !important;
+                }
+                .appointment-grid {
+                    grid-template-columns: 1fr !important;
+                    gap: 15px !important;
+                }
+                .detail-card {
+                    padding: 20px !important;
+                }
+                .detail-label {
+                    font-size: 12px !important;
+                    margin-bottom: 8px !important;
+                }
+                .detail-value {
+                    font-size: 16px !important;
+                    line-height: 20px !important;
+                }
+                .section-title {
+                    font-size: 18px !important;
+                    line-height: 22px !important;
+                }
+                .info-card, .reminder-card {
+                    padding: 18px !important;
+                    margin: 15px 0 !important;
+                }
+                .app-download-section {
+                    padding: 20px !important;
+                    margin: 20px 0 !important;
+                }
+                .app-buttons {
+                    flex-direction: column !important;
+                    gap: 10px !important;
+                }
+                .app-btn {
+                    padding: 10px 15px !important;
+                    font-size: 13px !important;
+                }
+                .footer {
+                    padding: 20px !important;
+                }
+                .footer p {
+                    font-size: 12px !important;
+                    line-height: 16px !important;
+                }
+                .divider {
+                    margin: 20px 0 !important;
+                }
+            }
+            
+            /* DESKTOP STYLES */
+            body {
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 100% !important;
+                background-color: #f8fafc !important;
+                font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
+                line-height: 1.6 !important;
+                color: #334155 !important;
+                -webkit-font-smoothing: antialiased !important;
+                -moz-osx-font-smoothing: grayscale !important;
+            }
+            .container {
+                max-width: 580px !important;
+                width: 100% !important;
+                margin: 30px auto !important;
+                background-color: #ffffff !important;
+                border-radius: 12px !important;
+                overflow: hidden !important;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
+                border: 1px solid #e2e8f0 !important;
+            }
+            .header {
+                background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+                color: #ffffff !important;
+                padding: 35px 40px !important;
+                text-align: center !important;
+                position: relative !important;
+            }
+            .header:before {
+                content: '' !important;
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                height: 4px !important;
+                background: linear-gradient(90deg, #3b82f6, #8b5cf6) !important;
+            }
+            .logo {
+                font-size: 36px !important;
+                font-weight: 700 !important;
+                letter-spacing: 0.5px !important;
+                margin: 0 0 8px 0 !important;
+                font-family: 'Arial Black', 'Segoe UI', sans-serif !important;
+                line-height: 1.2 !important;
+            }
+            .tagline {
+                font-size: 15px !important;
+                font-weight: 300 !important;
+                opacity: 0.9 !important;
+                margin: 0 !important;
+                line-height: 1.4 !important;
+            }
+            .content {
+                padding: 40px !important;
+            }
+            .greeting {
+                font-size: 22px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                margin: 0 0 20px 0 !important;
+                border-bottom: 2px solid #f1f5f9 !important;
+                padding-bottom: 15px !important;
+                line-height: 1.3 !important;
+            }
+            .message {
+                color: #475569 !important;
+                margin: 0 0 30px 0 !important;
+                font-size: 15.5px !important;
+                line-height: 1.7 !important;
+            }
+            .appointment-card {
+                background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
+                border-radius: 10px !important;
+                padding: 35px !important;
+                margin: 35px 0 !important;
+                border: 1px solid #e2e8f0 !important;
+                position: relative !important;
+            }
+            .appointment-title {
+                font-size: 22px !important;
+                font-weight: 600 !important;
+                color: #4f46e5 !important;
+                text-align: center !important;
+                margin: 0 0 25px 0 !important;
+                line-height: 1.2 !important;
+            }
+            .appointment-grid {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr !important;
+                gap: 20px !important;
+                margin: 0 0 25px 0 !important;
+            }
+            .detail-card {
+                background-color: #ffffff !important;
+                border-radius: 8px !important;
+                padding: 20px !important;
+                border: 1px solid #e2e8f0 !important;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+            }
+            .detail-icon {
+                font-size: 20px !important;
+                margin-bottom: 12px !important;
+                color: #4f46e5 !important;
+                line-height: 1 !important;
+            }
+            .detail-label {
+                font-size: 13px !important;
+                color: #64748b !important;
+                margin: 0 0 8px 0 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 1px !important;
+                font-weight: 600 !important;
+                line-height: 1.2 !important;
+            }
+            .detail-value {
+                font-size: 18px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                margin: 0 !important;
+                line-height: 1.3 !important;
+            }
+            .section-title {
+                font-size: 18px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                margin: 0 0 15px 0 !important;
+                border-bottom: 2px solid #f1f5f9 !important;
+                padding-bottom: 10px !important;
+                line-height: 1.3 !important;
+            }
+            .info-card {
+                background-color: #f0f9ff !important;
+                border-radius: 8px !important;
+                padding: 25px !important;
+                margin: 25px 0 !important;
+                border: 1px solid #bae6fd !important;
+            }
+            .info-item {
+                margin-bottom: 12px !important;
+                line-height: 1.5 !important;
+            }
+            .info-item:last-child {
+                margin-bottom: 0 !important;
+            }
+            .info-label {
+                font-weight: 600 !important;
+                color: #0369a1 !important;
+                display: inline-block !important;
+                width: 120px !important;
+            }
+            .info-value {
+                color: #475569 !important;
+            }
+            .reminder-card {
+                background-color: #fff7ed !important;
+                border-radius: 8px !important;
+                padding: 25px !important;
+                margin: 25px 0 !important;
+                border: 1px solid #fdba74 !important;
+            }
+            .reminder-title {
+                font-size: 16px !important;
+                font-weight: 600 !important;
+                color: #92400e !important;
+                margin: 0 0 15px 0 !important;
+                display: flex !important;
+                align-items: center !important;
+            }
+            .reminder-icon {
+                margin-right: 10px !important;
+                font-size: 18px !important;
+            }
+            .reminder-list {
+                list-style: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            .reminder-list li {
+                padding: 8px 0 !important;
+                color: #92400e !important;
+                font-size: 14.5px !important;
+                border-bottom: 1px solid #fed7aa !important;
+                display: flex !important;
+                align-items: flex-start !important;
+                line-height: 1.5 !important;
+            }
+            .reminder-list li:last-child {
+                border-bottom: none !important;
+            }
+            .reminder-list li:before {
+                content: "✓" !important;
+                color: #ea580c !important;
+                font-weight: bold !important;
+                display: inline-block !important;
+                width: 20px !important;
+                margin-left: -20px !important;
+            }
+            .app-download-section {
+                background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%) !important;
+                border-radius: 10px !important;
+                padding: 30px !important;
+                margin: 35px 0 !important;
+                text-align: center !important;
+                border: 2px solid #fbbf24 !important;
+            }
+            .app-title {
+                font-size: 18px !important;
+                font-weight: 700 !important;
+                color: #92400e !important;
+                margin: 0 0 15px 0 !important;
+            }
+            .app-description {
+                color: #78350f !important;
+                margin: 0 0 20px 0 !important;
+                font-size: 15px !important;
+                line-height: 1.6 !important;
+            }
+            .app-buttons {
+                display: flex !important;
+                justify-content: center !important;
+                gap: 15px !important;
+                flex-wrap: wrap !important;
+                margin-bottom: 20px !important;
+            }
+            .app-btn {
+                display: inline-block !important;
+                padding: 12px 25px !important;
+                text-decoration: none !important;
+                border-radius: 8px !important;
+                font-weight: 600 !important;
+                font-size: 14px !important;
+                transition: transform 0.2s !important;
+            }
+            .app-btn:hover {
+                transform: translateY(-2px) !important;
+            }
+            .android-btn {
+                background-color: #34d399 !important;
+                color: white !important;
+            }
+            .ios-btn {
+                background-color: #000000 !important;
+                color: white !important;
+            }
+            .web-link {
+                color: #92400e !important;
+                font-weight: 600 !important;
+                text-decoration: underline !important;
+            }
+            .footer {
+                background-color: #f8fafc !important;
+                padding: 25px 40px !important;
+                text-align: center !important;
+                border-top: 1px solid #e2e8f0 !important;
+                color: #64748b !important;
+                font-size: 13px !important;
+            }
+            .footer p {
+                margin: 5px 0 !important;
+                line-height: 1.5 !important;
+            }
+            .divider {
+                height: 1px !important;
+                background: linear-gradient(to right, transparent, #e2e8f0, transparent) !important;
+                margin: 30px 0 !important;
+            }
+            /* FALLBACK FOR OUTLOOK */
+            .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div {
+                line-height: 100% !important;
+            }
+            /* IOS FIX */
+            a[x-apple-data-detectors] {
+                color: inherit !important;
+                text-decoration: none !important;
+                font-size: inherit !important;
+                font-family: inherit !important;
+                font-weight: inherit !important;
+                line-height: inherit !important;
+            }
+        </style>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+        <!--[if (gte mso 9)|(IE)]>
+        <table width="600" align="center" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+        <td>
+        <![endif]-->
+        
+        <div class="container" style="max-width: 580px; margin: 30px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0;">
+            <div class="header" style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #ffffff; padding: 35px 40px; text-align: center; position: relative;">
+                <h1 class="logo" style="font-size: 36px; font-weight: 700; letter-spacing: 0.5px; margin: 0 0 8px 0; font-family: 'Arial Black', 'Segoe UI', sans-serif;">CLYPS</h1>
+                <p class="tagline" style="font-size: 15px; font-weight: 300; opacity: 0.9; margin: 0;">Confirmación de Cita</p>
+            </div>
+            
+            <div class="content" style="padding: 40px;">
+                <h2 class="greeting" style="font-size: 22px; font-weight: 600; color: #1e293b; margin: 0 0 20px 0; border-bottom: 2px solid #f1f5f9; padding-bottom: 15px;">Estimado/a ${clientName},</h2>
+                
+                <p class="message" style="color: #475569; margin: 0 0 30px 0; font-size: 15.5px; line-height: 1.7;">
+                    Tu cita ha sido programada exitosamente. A continuación encontrarás todos los detalles 
+                    importantes para que estés completamente preparado/a.
+                </p>
+                
+                <div class="appointment-card" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 10px; padding: 35px; margin: 35px 0; border: 1px solid #e2e8f0;">
+                    <h3 class="appointment-title" style="font-size: 22px; font-weight: 600; color: #4f46e5; text-align: center; margin: 0 0 25px 0;">📅 Detalles de tu cita</h3>
+                    
+                    <div class="appointment-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 0 0 25px 0;">
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">📅</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Fecha</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.date}</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">🕐</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Hora</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.time}</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">💼</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Servicio</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.serviceName}</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">⏱️</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Duración</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.serviceDuration} minutos</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">💰</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Costo</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">$${sessionData.serviceCost.toFixed(2)}</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">👤</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Profesional</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${workerInfo.name}</div>
+                        </div>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 15px;">
+                        <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">
+                            📍 Ubicación: <strong>${companyInfo.address}</strong>
+                        </p>
+                    </div>
+                </div>
+                
+                <h4 class="section-title" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0 0 15px 0; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px;">📋 Información de contacto</h4>
+                
+                <div class="info-card" style="background-color: #f0f9ff; border-radius: 8px; padding: 25px; margin: 25px 0; border: 1px solid #bae6fd;">
+                    <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
+                        <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Compañía:</span>
+                        <span class="info-value" style="color: #475569;">${companyInfo.name}</span>
+                    </div>
+                    ${companyInfo.address ? `
+                    <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
+                        <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Dirección:</span>
+                        <span class="info-value" style="color: #475569;">${companyInfo.address}</span>
+                    </div>
+                    ` : ''}
+                    ${companyInfo.email ? `
+                    <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
+                        <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Email de la compañia:</span>
+                        <span class="info-value" style="color: #475569;">${companyInfo.email}</span>
+                    </div>
+                    ` : ''}
+                    <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
+                        <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Profesional:</span>
+                        <span class="info-value" style="color: #475569;">${workerInfo.name}</span>
+                    </div>
+                    ${workerInfo.phone ? `
+                    <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
+                        <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Teléfono:</span>
+                        <span class="info-value" style="color: #475569;">${workerInfo.phone}</span>
+                    </div>
+                    ` : ''}
+                </div>
+                
+                <div class="reminder-card" style="background-color: #fff7ed; border-radius: 8px; padding: 25px; margin: 25px 0; border: 1px solid #fdba74;">
+                    <h4 class="reminder-title" style="font-size: 16px; font-weight: 600; color: #92400e; margin: 0 0 15px 0; display: flex; align-items: center;">
+                        <span class="reminder-icon" style="margin-right: 10px; font-size: 18px;">📌</span>
+                        Recordatorios importantes
+                    </h4>
+                    <ul class="reminder-list" style="list-style: none; padding: 0; margin: 0;">
+                        <li style="padding: 8px 0; color: #92400e; font-size: 14.5px; border-bottom: 1px solid #fed7aa; display: flex; align-items: flex-start; line-height: 1.5;">Llega 10-15 minutos antes de tu cita</li>
+                        <li style="padding: 8px 0; color: #92400e; font-size: 14.5px; border-bottom: 1px solid #fed7aa; display: flex; align-items: flex-start; line-height: 1.5;">Trae cualquier documento o material necesario</li>
+                        <li style="padding: 8px 0; color: #92400e; font-size: 14.5px; border-bottom: 1px solid #fed7aa; display: flex; align-items: flex-start; line-height: 1.5;">En caso de cancelación, hazlo con al menos 24 horas de anticipación</li>
+                        <li style="padding: 8px 0; color: #92400e; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">Contacta directamente con ${companyInfo.name} si tienes alguna pregunta</li>
+                    </ul>
+                </div>
+                
+                <!-- SECCIÓN DE DESCARGA DE APP -->
+                <div class="app-download-section" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 10px; padding: 30px; margin: 35px 0; text-align: center; border: 2px solid #fbbf24;">
+                    <h3 class="app-title" style="font-size: 18px; font-weight: 700; color: #92400e; margin: 0 0 15px 0;">
+                        📱 ¡Gestiona tus citas desde tu teléfono!
+                    </h3>
+                    <p class="app-description" style="color: #78350f; margin: 0 0 20px 0; font-size: 15px; line-height: 1.6;">
+                        Descarga la app de CLYPS para ver, modificar o cancelar tus citas desde cualquier lugar. 
+                        ¡Es mucho más conveniente!
+                    </p>
+                    <div class="app-buttons" style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; margin-bottom: 20px;">
+                        <a href="https://play.google.com/store/apps/details?id=com.clyps.app" 
+                           class="app-btn android-btn" 
+                           style="display: inline-block; background-color: #34d399; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
+                            🟢 Google Play
+                        </a>
+                        <a href="https://apps.apple.com/app/id1645438827" 
+                           class="app-btn ios-btn" 
+                           style="display: inline-block; background-color: #000000; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
+                            ⚫ App Store
+                        </a>
+                    </div>
+                    <p style="color: #78350f; font-size: 14px; margin-top: 15px; line-height: 1.5;">
+                        O accede desde tu navegador: 
+                        <a href="https://app.clyps.com" class="web-link" style="color: #92400e; font-weight: 600; text-decoration: underline;">app.clyps.com</a>
+                    </p>
+                </div>
+                <!-- FIN SECCIÓN DE DESCARGA DE APP -->
+                
+                <div class="divider" style="height: 1px; background: linear-gradient(to right, transparent, #e2e8f0, transparent); margin: 30px 0;"></div>
+                
+                <p style="text-align: center; color: #64748b; font-size: 14px; line-height: 1.6;">
+                    Si tienes alguna pregunta sobre tu cita, no dudes en contactar directamente con 
+                    <strong>${companyInfo.name}</strong>.
+                </p>
+            </div>
+            
+            <div class="footer" style="background-color: #f8fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 13px;">
+                <p style="margin: 5px 0;">© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
+                <p style="margin: 5px 0;">Sistema de Gestión de Citas Profesional</p>
+                <p style="font-size: 12px; margin-top: 8px; opacity: 0.8;">
+                    Este es un mensaje automático de confirmación, por favor no responder a este correo.
+                </p>
+            </div>
+        </div>
+        
+        <!--[if (gte mso 9)|(IE)]>
+        </td>
+        </tr>
+        </table>
+        <![endif]-->
+    </body>
+    </html>
+  `;
+    }
+
+
+    private getSessionNotificationTemplate(
+        workerName: string,
+        sessionData: {
+            date: string;
+            time: string;
+            serviceName: string;
+            clientName: string;
+            clientPhone?: string;
+            serviceCost: number;
+            serviceDuration: number;
+        },
+        clientInfo: {
+            name: string;
+            phone?: string;
+        },
+        companyInfo: {
+            name: string;
+            address?: string;
+            email?: string;
+        }
+    ): string {
+        return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Nueva Cita Asignada - CLYPS</title>
+        <style type="text/css">
+            /* RESET */
+            body, table, td, div, p, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+            table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse !important; }
+            img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+            table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+            
+            /* MOBILE STYLES */
+            @media screen and (max-width: 630px) {
+                .container {
+                    width: 94% !important;
+                    margin: 0 auto !important;
+                    padding: 10px !important;
+                }
+                .header {
+                    padding: 25px 20px !important;
+                    text-align: center !important;
+                }
+                .content {
+                    padding: 25px 20px !important;
+                }
+                .logo {
+                    font-size: 28px !important;
+                    line-height: 32px !important;
+                }
+                .tagline {
+                    font-size: 14px !important;
+                    line-height: 18px !important;
+                }
+                .greeting {
+                    font-size: 20px !important;
+                    line-height: 24px !important;
+                    margin-bottom: 15px !important;
+                }
+                .message {
+                    font-size: 15px !important;
+                    line-height: 22px !important;
+                }
+                .appointment-card {
+                    padding: 25px 20px !important;
+                    margin: 20px 0 !important;
+                }
+                .appointment-title {
+                    font-size: 20px !important;
+                    line-height: 24px !important;
+                }
+                .appointment-grid {
+                    grid-template-columns: 1fr !important;
+                    gap: 15px !important;
+                }
+                .detail-card {
+                    padding: 20px !important;
+                }
+                .detail-label {
+                    font-size: 12px !important;
+                    margin-bottom: 8px !important;
+                }
+                .detail-value {
+                    font-size: 16px !important;
+                    line-height: 20px !important;
+                }
+                .section-title {
+                    font-size: 18px !important;
+                    line-height: 22px !important;
+                }
+                .info-card, .reminder-card {
+                    padding: 18px !important;
+                    margin: 15px 0 !important;
+                }
+                .app-download-section {
+                    padding: 20px !important;
+                    margin: 20px 0 !important;
+                }
+                .app-buttons {
+                    flex-direction: column !important;
+                    gap: 10px !important;
+                }
+                .app-btn {
+                    padding: 10px 15px !important;
+                    font-size: 13px !important;
+                }
+                .footer {
+                    padding: 20px !important;
+                }
+                .footer p {
+                    font-size: 12px !important;
+                    line-height: 16px !important;
+                }
+                .divider {
+                    margin: 20px 0 !important;
+                }
+            }
+            
+            /* DESKTOP STYLES */
+            body {
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 100% !important;
+                background-color: #f8fafc !important;
+                font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
+                line-height: 1.6 !important;
+                color: #334155 !important;
+                -webkit-font-smoothing: antialiased !important;
+                -moz-osx-font-smoothing: grayscale !important;
+            }
+            .container {
+                max-width: 580px !important;
+                width: 100% !important;
+                margin: 30px auto !important;
+                background-color: #ffffff !important;
+                border-radius: 12px !important;
+                overflow: hidden !important;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
+                border: 1px solid #e2e8f0 !important;
+            }
+            .header {
+                background: linear-gradient(135deg, #059669 0%, #10b981 100%) !important;
+                color: #ffffff !important;
+                padding: 35px 40px !important;
+                text-align: center !important;
+                position: relative !important;
+            }
+            .header:before {
+                content: '' !important;
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                height: 4px !important;
+                background: linear-gradient(90deg, #047857, #34d399) !important;
+            }
+            .logo {
+                font-size: 36px !important;
+                font-weight: 700 !important;
+                letter-spacing: 0.5px !important;
+                margin: 0 0 8px 0 !important;
+                font-family: 'Arial Black', 'Segoe UI', sans-serif !important;
+                line-height: 1.2 !important;
+            }
+            .tagline {
+                font-size: 15px !important;
+                font-weight: 300 !important;
+                opacity: 0.9 !important;
+                margin: 0 !important;
+                line-height: 1.4 !important;
+            }
+            .content {
+                padding: 40px !important;
+            }
+            .greeting {
+                font-size: 22px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                margin: 0 0 20px 0 !important;
+                border-bottom: 2px solid #f1f5f9 !important;
+                padding-bottom: 15px !important;
+                line-height: 1.3 !important;
+            }
+            .message {
+                color: #475569 !important;
+                margin: 0 0 30px 0 !important;
+                font-size: 15.5px !important;
+                line-height: 1.7 !important;
+            }
+            .appointment-card {
+                background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
+                border-radius: 10px !important;
+                padding: 35px !important;
+                margin: 35px 0 !important;
+                border: 1px solid #e2e8f0 !important;
+                position: relative !important;
+            }
+            .appointment-title {
+                font-size: 22px !important;
+                font-weight: 600 !important;
+                color: #059669 !important;
+                text-align: center !important;
+                margin: 0 0 25px 0 !important;
+                line-height: 1.2 !important;
+            }
+            .appointment-grid {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr !important;
+                gap: 20px !important;
+                margin: 0 0 25px 0 !important;
+            }
+            .detail-card {
+                background-color: #ffffff !important;
+                border-radius: 8px !important;
+                padding: 20px !important;
+                border: 1px solid #e2e8f0 !important;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+            }
+            .detail-icon {
+                font-size: 20px !important;
+                margin-bottom: 12px !important;
+                color: #059669 !important;
+                line-height: 1 !important;
+            }
+            .detail-label {
+                font-size: 13px !important;
+                color: #64748b !important;
+                margin: 0 0 8px 0 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 1px !important;
+                font-weight: 600 !important;
+                line-height: 1.2 !important;
+            }
+            .detail-value {
+                font-size: 18px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                margin: 0 !important;
+                line-height: 1.3 !important;
+            }
+            .section-title {
+                font-size: 18px !important;
+                font-weight: 600 !important;
+                color: #1e293b !important;
+                margin: 0 0 15px 0 !important;
+                border-bottom: 2px solid #f1f5f9 !important;
+                padding-bottom: 10px !important;
+                line-height: 1.3 !important;
+            }
+            .info-card {
+                background-color: #f0f9ff !important;
+                border-radius: 8px !important;
+                padding: 25px !important;
+                margin: 25px 0 !important;
+                border: 1px solid #bae6fd !important;
+            }
+            .info-item {
+                margin-bottom: 12px !important;
+                line-height: 1.5 !important;
+            }
+            .info-item:last-child {
+                margin-bottom: 0 !important;
+            }
+            .info-label {
+                font-weight: 600 !important;
+                color: #0369a1 !important;
+                display: inline-block !important;
+                width: 120px !important;
+            }
+            .info-value {
+                color: #475569 !important;
+            }
+            .reminder-card {
+                background-color: #fff7ed !important;
+                border-radius: 8px !important;
+                padding: 25px !important;
+                margin: 25px 0 !important;
+                border: 1px solid #fdba74 !important;
+            }
+            .reminder-title {
+                font-size: 16px !important;
+                font-weight: 600 !important;
+                color: #92400e !important;
+                margin: 0 0 15px 0 !important;
+                display: flex !important;
+                align-items: center !important;
+            }
+            .reminder-icon {
+                margin-right: 10px !important;
+                font-size: 18px !important;
+            }
+            .reminder-list {
+                list-style: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            .reminder-list li {
+                padding: 8px 0 !important;
+                color: #92400e !important;
+                font-size: 14.5px !important;
+                border-bottom: 1px solid #fed7aa !important;
+                display: flex !important;
+                align-items: flex-start !important;
+                line-height: 1.5 !important;
+            }
+            .reminder-list li:last-child {
+                border-bottom: none !important;
+            }
+            .reminder-list li:before {
+                content: "✓" !important;
+                color: #ea580c !important;
+                font-weight: bold !important;
+                display: inline-block !important;
+                width: 20px !important;
+                margin-left: -20px !important;
+            }
+            .app-download-section {
+                background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%) !important;
+                border-radius: 10px !important;
+                padding: 30px !important;
+                margin: 35px 0 !important;
+                text-align: center !important;
+                border: 2px solid #fbbf24 !important;
+            }
+            .app-title {
+                font-size: 18px !important;
+                font-weight: 700 !important;
+                color: #92400e !important;
+                margin: 0 0 15px 0 !important;
+            }
+            .app-description {
+                color: #78350f !important;
+                margin: 0 0 20px 0 !important;
+                font-size: 15px !important;
+                line-height: 1.6 !important;
+            }
+            .app-buttons {
+                display: flex !important;
+                justify-content: center !important;
+                gap: 15px !important;
+                flex-wrap: wrap !important;
+                margin-bottom: 20px !important;
+            }
+            .app-btn {
+                display: inline-block !important;
+                padding: 12px 25px !important;
+                text-decoration: none !important;
+                border-radius: 8px !important;
+                font-weight: 600 !important;
+                font-size: 14px !important;
+                transition: transform 0.2s !important;
+            }
+            .app-btn:hover {
+                transform: translateY(-2px) !important;
+            }
+            .android-btn {
+                background-color: #34d399 !important;
+                color: white !important;
+            }
+            .ios-btn {
+                background-color: #000000 !important;
+                color: white !important;
+            }
+            .web-link {
+                color: #92400e !important;
+                font-weight: 600 !important;
+                text-decoration: underline !important;
+            }
+            .footer {
+                background-color: #f8fafc !important;
+                padding: 25px 40px !important;
+                text-align: center !important;
+                border-top: 1px solid #e2e8f0 !important;
+                color: #64748b !important;
+                font-size: 13px !important;
+            }
+            .footer p {
+                margin: 5px 0 !important;
+                line-height: 1.5 !important;
+            }
+            .divider {
+                height: 1px !important;
+                background: linear-gradient(to right, transparent, #e2e8f0, transparent) !important;
+                margin: 30px 0 !important;
+            }
+            /* FALLBACK FOR OUTLOOK */
+            .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div {
+                line-height: 100% !important;
+            }
+            /* IOS FIX */
+            a[x-apple-data-detectors] {
+                color: inherit !important;
+                text-decoration: none !important;
+                font-size: inherit !important;
+                font-family: inherit !important;
+                font-weight: inherit !important;
+                line-height: inherit !important;
+            }
+        </style>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+        <!--[if (gte mso 9)|(IE)]>
+        <table width="600" align="center" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+        <td>
+        <![endif]-->
+        
+        <div class="container" style="max-width: 580px; margin: 30px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0;">
+            <div class="header" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); color: #ffffff; padding: 35px 40px; text-align: center; position: relative;">
+                <h1 class="logo" style="font-size: 36px; font-weight: 700; letter-spacing: 0.5px; margin: 0 0 8px 0; font-family: 'Arial Black', 'Segoe UI', sans-serif;">CLYPS</h1>
+                <p class="tagline" style="font-size: 15px; font-weight: 300; opacity: 0.9; margin: 0;">Nueva Cita Asignada</p>
+            </div>
+            
+            <div class="content" style="padding: 40px;">
+                <h2 class="greeting" style="font-size: 22px; font-weight: 600; color: #1e293b; margin: 0 0 20px 0; border-bottom: 2px solid #f1f5f9; padding-bottom: 15px;">Hola ${workerName},</h2>
+                
+                <p class="message" style="color: #475569; margin: 0 0 30px 0; font-size: 15.5px; line-height: 1.7;">
+                    Se te ha asignado una nueva cita. A continuación encontrarás todos los detalles 
+                    para que puedas prepararte adecuadamente.
+                </p>
+                
+                <div class="appointment-card" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 10px; padding: 35px; margin: 35px 0; border: 1px solid #e2e8f0;">
+                    <h3 class="appointment-title" style="font-size: 22px; font-weight: 600; color: #059669; text-align: center; margin: 0 0 25px 0;">📅 Detalles de la cita</h3>
+                    
+                    <div class="appointment-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 0 0 25px 0;">
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">📅</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Fecha</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.date}</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">🕐</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Hora</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.time}</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">💼</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Servicio</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.serviceName}</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">⏱️</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Duración</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.serviceDuration} minutos</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">💰</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Costo</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">$${sessionData.serviceCost.toFixed(2)}</div>
+                        </div>
+                        
+                        <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                            <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">👤</div>
+                            <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Cliente</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.clientName}</div>
+                        </div>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 15px;">
+                        <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">
+                            📍 Ubicación: <strong>${companyInfo.name}</strong>
+                        </p>
+                    </div>
+                </div>
+                
+                <h4 class="section-title" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0 0 15px 0; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px;">📋 Información del cliente</h4>
+                
+                <div class="info-card" style="background-color: #f0f9ff; border-radius: 8px; padding: 25px; margin: 25px 0; border: 1px solid #bae6fd;">
+                    <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
+                        <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Cliente:</span>
+                        <span class="info-value" style="color: #475569;">${clientInfo.name}</span>
+                    </div>
+                    ${clientInfo.phone ? `
+                    <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
+                        <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Teléfono:</span>
+                        <span class="info-value" style="color: #475569;">${clientInfo.phone}</span>
+                    </div>
+                    ` : ''}
+                    <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
+                        <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Compañía:</span>
+                        <span class="info-value" style="color: #475569;">${companyInfo.name}</span>
+                    </div>
+                    ${companyInfo.address ? `
+                    <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
+                        <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Dirección:</span>
+                        <span class="info-value" style="color: #475569;">${companyInfo.address}</span>
+                    </div>
+                    ` : ''}
+                </div>
+                
+                <div class="reminder-card" style="background-color: #fff7ed; border-radius: 8px; padding: 25px; margin: 25px 0; border: 1px solid #fdba74;">
+                    <h4 class="reminder-title" style="font-size: 16px; font-weight: 600; color: #92400e; margin: 0 0 15px 0; display: flex; align-items: center;">
+                        <span class="reminder-icon" style="margin-right: 10px; font-size: 18px;">📌</span>
+                        Recordatorios importantes
+                    </h4>
+                    <ul class="reminder-list" style="list-style: none; padding: 0; margin: 0;">
+                        <li style="padding: 8px 0; color: #92400e; font-size: 14.5px; border-bottom: 1px solid #fed7aa; display: flex; align-items: flex-start; line-height: 1.5;">Confirma tu disponibilidad para esta cita</li>
+                        <li style="padding: 8px 0; color: #92400e; font-size: 14.5px; border-bottom: 1px solid #fed7aa; display: flex; align-items: flex-start; line-height: 1.5;">Prepara todo lo necesario para el servicio</li>
+                        <li style="padding: 8px 0; color: #92400e; font-size: 14.5px; border-bottom: 1px solid #fed7aa; display: flex; align-items: flex-start; line-height: 1.5;">Llega con anticipación a la ubicación</li>
+                        <li style="padding: 8px 0; color: #92400e; font-size: 14.5px; display: flex; align-items: flex-start; line-height: 1.5;">Actualiza el estado de la cita en el sistema después del servicio</li>
+                    </ul>
+                </div>
+                
+                <!-- SECCIÓN DE DESCARGA DE APP -->
+                <div class="app-download-section" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 10px; padding: 30px; margin: 35px 0; text-align: center; border: 2px solid #fbbf24;">
+                    <h3 class="app-title" style="font-size: 18px; font-weight: 700; color: #92400e; margin: 0 0 15px 0;">
+                        📱 ¡Gestiona tus citas desde tu teléfono!
+                    </h3>
+                    <p class="app-description" style="color: #78350f; margin: 0 0 20px 0; font-size: 15px; line-height: 1.6;">
+                        Descarga la app de CLYPS para ver, modificar o gestionar tus citas desde cualquier lugar. 
+                        ¡Es mucho más conveniente!
+                    </p>
+                    <div class="app-buttons" style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; margin-bottom: 20px;">
+                        <a href="https://play.google.com/store/apps/details?id=com.clyps.app" 
+                           class="app-btn android-btn" 
+                           style="display: inline-block; background-color: #34d399; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
+                            🟢 Google Play
+                        </a>
+                        <a href="https://apps.apple.com/app/id1645438827" 
+                           class="app-btn ios-btn" 
+                           style="display: inline-block; background-color: #000000; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
+                            ⚫ App Store
+                        </a>
+                    </div>
+                    <p style="color: #78350f; font-size: 14px; margin-top: 15px; line-height: 1.5;">
+                        O accede desde tu navegador: 
+                        <a href="https://app.clyps.com" class="web-link" style="color: #92400e; font-weight: 600; text-decoration: underline;">app.clyps.com</a>
+                    </p>
+                </div>
+                <!-- FIN SECCIÓN DE DESCARGA DE APP -->
+                
+                <div class="divider" style="height: 1px; background: linear-gradient(to right, transparent, #e2e8f0, transparent); margin: 30px 0;"></div>
+                
+                <p style="text-align: center; color: #64748b; font-size: 14px; line-height: 1.6;">
+                    Para cualquier modificación en la cita, contacta con el administrador de 
+                    <strong>${companyInfo.name}</strong>.
+                </p>
+            </div>
+            
+            <div class="footer" style="background-color: #f8fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 13px;">
+                <p style="margin: 5px 0;">© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
+                <p style="margin: 5px 0;">Sistema de Gestión de Citas Profesional</p>
+                <p style="font-size: 12px; margin-top: 8px; opacity: 0.8;">
+                    Este es un mensaje automático de notificación, por favor no responder a este correo.
+                </p>
+            </div>
+        </div>
+        
+        <!--[if (gte mso 9)|(IE)]>
+        </td>
+        </tr>
+        </table>
+        <![endif]-->
+    </body>
+    </html>
+  `;
+    }
 }
