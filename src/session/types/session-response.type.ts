@@ -16,6 +16,7 @@ export interface SessionResponse {
   workerName?: string;
   workerLastName?: string;
   serviceName?: string;
+  serviceDescription?: string;  
   createdAt?: Date;
   updatedAt?: Date;
 }

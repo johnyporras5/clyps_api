@@ -586,6 +586,8 @@ export class SessionService {
     let workerName = '';
     let workerLastName = '';
     let serviceName = '';
+    let serviceDescription = ''; 
+
 
     // Si hay detalles de sesión, obtener información adicional
     if (sessionDetails.length > 0) {
@@ -616,6 +618,8 @@ export class SessionService {
 
       if (service) {
         serviceName = service.name || '';
+        serviceDescription = service.description || ''; 
+
       }
     }
 
@@ -676,6 +680,7 @@ export class SessionService {
       workerName: workerName,
       workerLastName: workerLastName,
       serviceName: serviceName,
+      serviceDescription: serviceDescription, 
       createdAt: (session as any).createdAt || null,
       updatedAt: (session as any).updatedAt || null
     };
