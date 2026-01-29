@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger ,} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Not, Between } from 'typeorm';
 import { Session } from './entities/session.entity';
@@ -586,7 +586,7 @@ export class SessionService {
     let workerName = '';
     let workerLastName = '';
     let serviceName = '';
-    let serviceDescription = ''; 
+    let serviceDescription = '';
 
 
     // Si hay detalles de sesión, obtener información adicional
@@ -618,7 +618,7 @@ export class SessionService {
 
       if (service) {
         serviceName = service.name || '';
-        serviceDescription = service.description || ''; 
+        serviceDescription = service.description || '';
 
       }
     }
@@ -680,7 +680,7 @@ export class SessionService {
       workerName: workerName,
       workerLastName: workerLastName,
       serviceName: serviceName,
-      serviceDescription: serviceDescription, 
+      serviceDescription: serviceDescription,
       createdAt: (session as any).createdAt || null,
       updatedAt: (session as any).updatedAt || null
     };
@@ -699,8 +699,8 @@ async updateSessionWithDetail(
   calculations?: any;
   message: string;
 }> {
-  console.log(`🔄 Iniciando actualización de sesión ${sessionId} con datos:`, updateSessionDto);
-  
+  console.log(`🔄 Actualizando sesión ${sessionId} y detalle existente`);
+
   // 1. Verificar que el administrador tiene una compañía
   const adminCompany = await this.companyRepository.findOne({
     where: { userId: adminId }
@@ -710,7 +710,7 @@ async updateSessionWithDetail(
     throw new NotFoundException('El administrador no tiene una compañía asignada');
   }
 
-  // 2. Buscar la sesión
+  // 2. Buscar la sesión EXISTENTE
   const session = await this.sessionRepository.findOne({
     where: { id: sessionId }
   });
@@ -719,10 +719,10 @@ async updateSessionWithDetail(
     throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
   }
 
-  console.log(`✅ Sesión encontrada: ${session.id}, Cliente: ${session.clientId}`);
+  console.log(`✅ Sesión encontrada para MODIFICAR: ${session.id}`);
 
-  // 3. BUSCAR EL DETALLE ESPECÍFICO POR detailId (REQUERIDO)
-  console.log(`🔍 Buscando detalle ID: ${updateSessionDto.detailId} para sesión ${sessionId}`);
+  // 3. Buscar el detalle EXISTENTE
+  console.log(`🔍 Buscando detalle ID: ${updateSessionDto.detailId} para MODIFICAR`);
   
   const detailToUpdate = await this.sessionDetailRepository.findOne({
     where: {
@@ -737,115 +737,91 @@ async updateSessionWithDetail(
     );
   }
 
-  console.log(`✅ Detalle encontrado: ID ${detailToUpdate.id}, Servicio: ${detailToUpdate.serviceId}, Trabajador: ${detailToUpdate.companyWorkerId}`);
+  console.log(`✅ Detalle encontrado para MODIFICAR: ID ${detailToUpdate.id}`);
 
-  // 4. Variables para recálculos
+  // 4. Variables para almacenar los cambios
+  const sessionUpdateData: Partial<Session> = {};
+  const detailUpdateData: Partial<SessionDetail> = {};
+
+  // 5. Actualizar campos de la sesión
+  if (updateSessionDto.clientId !== undefined && updateSessionDto.clientId !== session.clientId) {
+    sessionUpdateData.clientId = updateSessionDto.clientId;
+    console.log(`📝 Cambiando cliente de ${session.clientId} a ${updateSessionDto.clientId}`);
+  }
+
+  if (updateSessionDto.sessionDatetime !== undefined) {
+    const newDatetime = new Date(updateSessionDto.sessionDatetime);
+    sessionUpdateData.sessionDatetime = newDatetime;
+    sessionUpdateData.startDatetime = newDatetime;
+    detailUpdateData.startDatetime = newDatetime;
+    console.log(`📝 Cambiando fecha de sesión a ${newDatetime}`);
+  }
+
+  if (updateSessionDto.sessionStatus !== undefined) {
+    sessionUpdateData.sessionStatus = updateSessionDto.sessionStatus;
+  }
+
+  // 6. Variables para recálculos SI SE CAMBIA SERVICIO O TRABAJADOR
   let recalculations: any = null;
-  let needRecalculate = false;
+  
+  if (updateSessionDto.serviceId !== undefined || updateSessionDto.companyWorkerId !== undefined) {
+    const serviceId = updateSessionDto.serviceId !== undefined 
+      ? updateSessionDto.serviceId 
+      : detailToUpdate.serviceId;
+      
+    const companyWorkerId = updateSessionDto.companyWorkerId !== undefined 
+      ? updateSessionDto.companyWorkerId 
+      : detailToUpdate.companyWorkerId;
 
-  // 5. Determinar si se está cambiando el servicio o trabajador
-  const changingService = updateSessionDto.serviceId !== undefined &&
-    updateSessionDto.serviceId !== detailToUpdate.serviceId;
+    console.log(`📊 Recalculando con servicio: ${serviceId}, trabajador: ${companyWorkerId}`);
 
-  const changingWorker = updateSessionDto.companyWorkerId !== undefined &&
-    updateSessionDto.companyWorkerId !== detailToUpdate.companyWorkerId;
-
-  console.log(`🔄 Cambios detectados: Servicio=${changingService} (${detailToUpdate.serviceId} → ${updateSessionDto.serviceId}), Trabajador=${changingWorker}`);
-
-  // 6. Si se cambia el servicio o trabajador, recalculamos todo
-  if (changingService || changingWorker) {
-    needRecalculate = true;
-    console.log(`📊 Recalculando costos por cambio de servicio/trabajador`);
-
-    // Obtener el servicio (nuevo si se especifica, o mantener el actual)
-    const serviceId = updateSessionDto.serviceId !== undefined ? updateSessionDto.serviceId : detailToUpdate.serviceId;
     const service = await this.serviceRepository.findOne({
-      where: {
-        id: serviceId,
-        companyId: adminCompany.id
-      }
+      where: { id: serviceId, companyId: adminCompany.id }
     });
 
     if (!service) {
-      throw new NotFoundException(
-        `Servicio con ID ${serviceId} no encontrado o no pertenece a tu compañía`
-      );
+      throw new NotFoundException(`Servicio con ID ${serviceId} no encontrado`);
     }
 
-    // Obtener el trabajador (nuevo si se especifica, o mantener el actual)
-    const companyWorkerId = updateSessionDto.companyWorkerId !== undefined ? updateSessionDto.companyWorkerId : detailToUpdate.companyWorkerId;
     const companyWorker = await this.companyWorkerRepository.findOne({
-      where: {
-        id: companyWorkerId,
-        companyId: adminCompany.id
-      }
+      where: { id: companyWorkerId, companyId: adminCompany.id }
     });
 
     if (!companyWorker) {
-      throw new NotFoundException(
-        `Trabajador con ID ${companyWorkerId} no encontrado o no pertenece a tu compañía`
-      );
+      throw new NotFoundException(`Trabajador con ID ${companyWorkerId} no encontrado`);
     }
 
-    // Verificar que el trabajador esté activo
     if (companyWorker.isActive !== 1) {
       throw new BadRequestException(`El trabajador con ID ${companyWorkerId} no está activo`);
     }
 
-    // Verificar si ya existe OTRO detalle con la misma combinación
-    // Solo si estamos cambiando a un servicio o trabajador nuevo
-    if (changingService || changingWorker) {
-      const existingDuplicateDetail = await this.sessionDetailRepository.findOne({
-        where: {
-          sessionId: sessionId,
-          serviceId: serviceId,
-          companyWorkerId: companyWorkerId,
-          id: Not(detailToUpdate.id) // Excluir el detalle actual
-        }
-      });
-
-      if (existingDuplicateDetail) {
-        throw new BadRequestException({
-          message: 'Ya existe otro detalle en esta sesión con la misma combinación de servicio y trabajador',
-          existingDetailId: existingDuplicateDetail.id,
-          recommendation: 'Si deseas modificar este detalle existente, usa su ID directamente'
-        });
-      }
-    }
-
-    // Calcular porcentajes
     const { workerPercentage, companyPercentage, workerAssigned } = this.calculatePercentages(
       service,
       companyWorkerId
     );
 
-    // Tomar el costo del servicio
     const totalCost = service.cost || 0;
-
     if (totalCost <= 0) {
       throw new BadRequestException('El costo del servicio debe ser mayor a 0');
     }
 
-    // Calcular montos
     const calculatedAmounts = this.calculateAmounts(totalCost, workerPercentage, companyPercentage);
 
-    console.log(`💰 Nuevos cálculos: Costo=${totalCost}, Trabajador=${calculatedAmounts.totalWorker} (${workerPercentage}%), Compañía=${calculatedAmounts.totalCompany} (${companyPercentage}%)`);
+    console.log(`💰 Nuevos cálculos: Costo=${totalCost}, Trabajador=${calculatedAmounts.totalWorker}, Compañía=${calculatedAmounts.totalCompany}`);
 
-    // ACTUALIZAR EL DETALLE EXISTENTE con los nuevos valores
-    detailToUpdate.cost = totalCost;
     if (updateSessionDto.serviceId !== undefined) {
-      detailToUpdate.serviceId = service.id;
+      detailUpdateData.serviceId = service.id;
     }
     if (updateSessionDto.companyWorkerId !== undefined) {
-      detailToUpdate.companyWorkerId = companyWorker.id;
+      detailUpdateData.companyWorkerId = companyWorker.id;
     }
-    detailToUpdate.totalWorker = calculatedAmounts.totalWorker;
-    detailToUpdate.totalCompany = calculatedAmounts.totalCompany;
-    detailToUpdate.totalTime = service.standardTime || 0;
+    detailUpdateData.cost = totalCost;
+    detailUpdateData.totalWorker = calculatedAmounts.totalWorker;
+    detailUpdateData.totalCompany = calculatedAmounts.totalCompany;
+    detailUpdateData.totalTime = service.standardTime || 0;
 
-    // Actualizar valores en la sesión
-    session.totalCost = totalCost;
-    session.totalTime = service.standardTime || 0;
+    sessionUpdateData.totalCost = totalCost;
+    sessionUpdateData.totalTime = service.standardTime || 0;
 
     recalculations = {
       totalCost,
@@ -859,46 +835,122 @@ async updateSessionWithDetail(
     };
   }
 
-  // 7. Actualizar campos básicos de la sesión
-  if (updateSessionDto.clientId !== undefined) {
-    session.clientId = updateSessionDto.clientId;
-  }
-
-  if (updateSessionDto.sessionDatetime !== undefined) {
-    const newDatetime = new Date(updateSessionDto.sessionDatetime);
-    session.sessionDatetime = newDatetime;
-
-    // También actualizar el startDatetime
-    session.startDatetime = newDatetime;
-    detailToUpdate.startDatetime = newDatetime;
-  }
-
-  if (updateSessionDto.sessionStatus !== undefined) {
-    session.sessionStatus = updateSessionDto.sessionStatus;
-  }
-
-  // 8. Actualizar status del detalle si se proporciona
+  // 7. Actualizar status del detalle
   if (updateSessionDto.detailStatus !== undefined) {
-    detailToUpdate.status = updateSessionDto.detailStatus;
+    detailUpdateData.status = updateSessionDto.detailStatus;
   }
 
-  // 9. Guardar todos los cambios
-  console.log(`💾 Guardando cambios de sesión ID: ${session.id}`);
-  const updatedSession = await this.sessionRepository.save(session);
-  
-  console.log(`💾 Guardando cambios de detalle ID: ${detailToUpdate.id}`);
-  const updatedSessionDetail = await this.sessionDetailRepository.save(detailToUpdate);
+  // 8. TRANSACCIÓN
+  const queryRunner = this.sessionRepository.manager.connection.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
 
-  console.log(`✅ Actualización completada: Sesión ${sessionId}, Detalle ${detailToUpdate.id}`);
+  try {
+    console.log(`💾 Iniciando transacción de actualización...`);
 
-  return {
-    session: updatedSession,
-    sessionDetail: updatedSessionDetail,
-    calculations: recalculations,
-    message: needRecalculate
-      ? `Sesión ${sessionId} y su detalle (ID: ${detailToUpdate.id}) actualizados con recálculo de costos`
-      : `Sesión ${sessionId} y su detalle (ID: ${detailToUpdate.id}) actualizados exitosamente`
-  };
+    // 9. ACTUALIZAR SESIÓN EXISTENTE
+    let updatedSession: Session;
+    if (Object.keys(sessionUpdateData).length > 0) {
+      console.log(`📝 Actualizando sesión ${sessionId} con:`, sessionUpdateData);
+      
+      // ACTUALIZAR usando update() - esto NO crea nuevo registro
+      await queryRunner.manager.update(
+        Session,
+        { id: sessionId }, // WHERE
+        sessionUpdateData   // SET
+      );
+      
+      // Obtener la sesión actualizada
+      const foundSession = await queryRunner.manager.findOne(Session, {
+        where: { id: sessionId }
+      });
+      
+      if (!foundSession) {
+        throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada después de actualizar`);
+      }
+      
+      updatedSession = foundSession;
+      console.log(`✅ Sesión actualizada: ${updatedSession.id}`);
+    } else {
+      updatedSession = session;
+      console.log(`ℹ️ No hay cambios en la sesión`);
+    }
+
+    // 10. ACTUALIZAR DETALLE EXISTENTE
+    let updatedSessionDetail: SessionDetail;
+    if (Object.keys(detailUpdateData).length > 0) {
+      console.log(`📝 Actualizando detalle ${detailToUpdate.id} con:`, detailUpdateData);
+      
+      // ACTUALIZAR usando update() - esto NO crea nuevo registro
+      await queryRunner.manager.update(
+        SessionDetail,
+        { 
+          id: detailToUpdate.id,
+          sessionId: sessionId 
+        }, // WHERE
+        detailUpdateData   // SET
+      );
+      
+      // Obtener el detalle actualizado
+      const foundDetail = await queryRunner.manager.findOne(SessionDetail, {
+        where: { id: detailToUpdate.id }
+      });
+      
+      if (!foundDetail) {
+        throw new NotFoundException(`Detalle con ID ${detailToUpdate.id} no encontrado después de actualizar`);
+      }
+      
+      updatedSessionDetail = foundDetail;
+      console.log(`✅ Detalle actualizado: ${updatedSessionDetail.id}`);
+    } else {
+      updatedSessionDetail = detailToUpdate;
+      console.log(`ℹ️ No hay cambios en el detalle`);
+    }
+
+    // 11. VERIFICACIÓN - Contar registros
+    const sessionCount = await queryRunner.manager.count(Session, {
+      where: { clientId: updatedSession.clientId }
+    });
+    
+    const detailCount = await queryRunner.manager.count(SessionDetail, {
+      where: { sessionId: sessionId }
+    });
+    
+    console.log(`📊 Verificación: ${sessionCount} sesiones para cliente ${updatedSession.clientId}`);
+    console.log(`📊 Verificación: ${detailCount} detalles para sesión ${sessionId}`);
+
+    if (detailCount > 1) {
+      const allDetails = await queryRunner.manager.find(SessionDetail, {
+        where: { sessionId: sessionId }
+      });
+      console.warn(`⚠️ ADVERTENCIA: Hay ${detailCount} detalles para esta sesión`);
+      
+      // Si hay más de un detalle, eliminar los extras (excepto el actual)
+      const detailsToDelete = allDetails.filter(d => d.id !== detailToUpdate.id);
+      for (const detail of detailsToDelete) {
+        console.log(`🗑️ Eliminando detalle duplicado ID: ${detail.id}`);
+        await queryRunner.manager.delete(SessionDetail, { id: detail.id });
+      }
+    }
+
+    // 12. Commit
+    await queryRunner.commitTransaction();
+    console.log(`✅ Transacción completada exitosamente`);
+
+    return {
+      session: updatedSession,
+      sessionDetail: updatedSessionDetail,
+      calculations: recalculations,
+      message: `Sesión ${sessionId} y su detalle (ID: ${detailToUpdate.id}) ACTUALIZADOS exitosamente. No se crearon nuevos registros.`
+    };
+
+  } catch (error) {
+    await queryRunner.rollbackTransaction();
+    console.error(`❌ Error en transacción: ${error.message}`);
+    throw new BadRequestException(`Error al actualizar: ${error.message}`);
+  } finally {
+    await queryRunner.release();
+  }
 }
 
   async removeSessionWithDetails(sessionId: number): Promise<{ message: string }> {
@@ -1355,12 +1407,11 @@ async updateSessionWithDetail(
   //SE ESTABLE EL ESTATUS DE LA CITA
   private getSessionStatusText(status: number): string {
     const statusMap: Record<number, string> = {
-      1: 'Pendiente',
-      2: 'Confirmada',
-      3: 'En proceso',
-      4: 'Completada',
-      5: 'Cancelada',
-      6: 'No asistió'
+      1: 'Agendado',
+      2: 'En proceso',
+      3: 'Completada',
+      4: 'Pagado',
+
     };
     return statusMap[status] || 'Desconocido';
   }
