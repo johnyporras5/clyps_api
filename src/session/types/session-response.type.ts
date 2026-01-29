@@ -1,3 +1,22 @@
+// En types/session-response.type.ts
+export interface SessionDetailResponse {
+  id: number;
+  cost: number;
+  serviceId: number;
+  serviceName: string;
+  serviceDescription: string;
+  companyWorkerId: number;
+  workerName: string;
+  workerLastName: string;
+  startDatetime: Date;
+  totalTime: number;
+  totalWorker: number;
+  totalCompany: number;
+  status: number;
+  workerPercentage: number;
+  companyPercentage: number;
+}
+
 export interface SessionResponse {
   id: number;
   clientId: number;
@@ -13,10 +32,7 @@ export interface SessionResponse {
   startDatetime: Date;
   status: number;
   iaResponse: any;
-  workerName?: string;
-  workerLastName?: string;
-  serviceName?: string;
-  serviceDescription?: string;  
   createdAt?: Date;
   updatedAt?: Date;
+  details: SessionDetailResponse[]; 
 }

@@ -1,31 +1,15 @@
-import { IsOptional, IsNumber, IsDateString, IsNotEmpty } from 'class-validator';
+import { IsOptional, IsDateString, IsNotEmpty, IsNumber } from 'class-validator';
 
 export class UpdateSessionDto {
-  @IsOptional()
-  @IsNumber()
-  clientId?: number;
-
   @IsOptional()
   @IsDateString()
   sessionDatetime?: string;
 
   @IsOptional()
-  @IsNumber()
-  sessionStatus?: number;
+  @IsDateString()
+  detailStartDatetime?: string;
 
   @IsNotEmpty()
   @IsNumber()
-  serviceId?: number; 
-
-  @IsNotEmpty()
-  @IsNumber()
-  companyWorkerId?: number; 
-
-  @IsOptional()
-  @IsNumber()
-  detailStatus?: number;
-
-  @IsNotEmpty()
-  @IsNumber()
-  detailId: number; 
+  detailId: number;
 }

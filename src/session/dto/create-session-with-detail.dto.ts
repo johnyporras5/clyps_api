@@ -1,5 +1,22 @@
-import { IsOptional, IsNumber, IsNotEmpty } from 'class-validator';
+import { IsOptional, IsNumber, IsNotEmpty, IsArray, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export class SessionDetailItemDto {
+  @IsNotEmpty()
+  @IsNumber()
+  serviceId: number;
+
+  @IsNotEmpty()
+  @IsNumber()
+  companyWorkerId: number;
+
+  @IsOptional()
+  detailStartDatetime?: Date;
+
+  @IsOptional()
+  @IsNumber()
+  detailStatus?: number;
+}
 
 export class CreateSessionWithDetailDto {
   // Campos de Session
@@ -14,14 +31,6 @@ export class CreateSessionWithDetailDto {
   @IsNumber()
   sessionStatus?: number;
 
- /* @IsOptional()
-  @IsNumber()
-  totalCost?: number;
-
-  @IsOptional()
-  @IsNumber()
-  totalTime?: number;*/
-
   @IsOptional()
   iaResponse?: any;
 
@@ -32,27 +41,9 @@ export class CreateSessionWithDetailDto {
   @IsNumber()
   status?: number;
 
-  // Campos para SessionDetail
-  @IsOptional()
-  @IsNumber()
-  detailCost?: number; 
-  @IsNotEmpty()
-  @IsNumber()
-  serviceId: number;
-
-  @IsNotEmpty()
-  @IsNumber()
-  companyWorkerId: number;
-
-  @IsOptional()
-  detailStartDatetime?: Date;
-
-  @IsOptional()
-  @IsNumber()
-  detailTotalTime?: number;
-
-  @IsOptional()
-  @IsNumber()
-  detailStatus?: number;
-
+  // Array de detalles de servicios
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SessionDetailItemDto)
+  details: SessionDetailItemDto[];
 }

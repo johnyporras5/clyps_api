@@ -29,4 +29,7 @@ export class Session {
 
   @Column({ name: 'status', nullable: true })
   status: number;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
 }
