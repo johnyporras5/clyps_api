@@ -25,6 +25,7 @@ export class Service {
   workers: Array<{
     id: number;
     percentage: number;
+  time?: number;
   }>;
 
   @Column({ name: 'currency', length: 10, nullable: true, default: 'VES' })
@@ -37,7 +38,7 @@ export class Service {
   percentage: number;
 
 
-   constructor() {
+  constructor() {
     this.workers = [];
   }
 }

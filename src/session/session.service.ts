@@ -69,57 +69,123 @@ export class SessionService {
     return await this.sessionRepository.save(session);
   }
 
-  private calculatePercentages(
-    service: Service,
-    companyWorkerId: number
-  ): {
-    workerPercentage: number;
-    companyPercentage: number;
-    workerAssigned: boolean;
-  } {
-    let workerPercentage = 0;
-    let companyPercentage = 0;
-    let workerAssigned = false;
+  /* private calculatePercentages(
+     service: Service,
+     companyWorkerId: number
+   ): {
+     workerPercentage: number;
+     companyPercentage: number;
+     workerAssigned: boolean;
+   } {
+     let workerPercentage = 0;
+     let companyPercentage = 0;
+     let workerAssigned = false;
+ 
+     if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
+       const workerAssignment = service.workers.find(
+         (worker: any) => worker.id === companyWorkerId
+       );
+ 
+       if (workerAssignment) {
+         workerPercentage = workerAssignment.percentage;
+         workerAssigned = true;
+       }
+     }
+ 
+     if (!workerAssigned) {
+       if (service.percentage !== undefined && service.percentage !== null) {
+         workerPercentage = Number(service.percentage);
+       } else {
+         throw new BadRequestException(
+           `El servicio ${service.id} no tiene configurado el porcentaje para el trabajador.`
+         );
+       }
+     }
+ 
+     companyPercentage = 100 - workerPercentage;
+ 
+     if (workerPercentage < 0 || workerPercentage > 100) {
+       throw new BadRequestException(`El porcentaje del trabajador (${workerPercentage}%) debe estar entre 0 y 100`);
+     }
+ 
+     if (companyPercentage < 0 || companyPercentage > 100) {
+       throw new BadRequestException(`El porcentaje de la compañía (${companyPercentage}%) debe estar entre 0 y 100`);
+     }
+ 
+     const total = workerPercentage + companyPercentage;
+     if (Math.abs(total - 100) > 0.01) {
+       throw new BadRequestException(`La suma de porcentajes (${total}%) debe ser 100%`);
+     }
+ 
+     return { workerPercentage, companyPercentage, workerAssigned };
+   }*/
 
-    if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
-      const workerAssignment = service.workers.find(
-        (worker: any) => worker.id === companyWorkerId
-      );
 
-      if (workerAssignment) {
+
+private calculatePercentagesAndTime(
+  service: Service,
+  companyWorkerId: number
+): {
+  workerPercentage: number;
+  companyPercentage: number;
+  workerAssigned: boolean;
+  time: number;
+} {
+  let workerPercentage = 0;
+  let companyPercentage = 0;
+  let workerAssigned = false;
+  let time = service.standardTime || 0;
+
+  // Primero buscar si el trabajador específico tiene configuraciones en el array workers
+  if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
+    const workerAssignment = service.workers.find(
+      (worker: any) => worker.id === companyWorkerId
+    );
+
+    if (workerAssignment) {
+      // Si el trabajador tiene porcentaje específico, usarlo
+      if (workerAssignment.percentage !== undefined && workerAssignment.percentage !== null) {
         workerPercentage = workerAssignment.percentage;
         workerAssigned = true;
       }
-    }
-
-    if (!workerAssigned) {
-      if (service.percentage !== undefined && service.percentage !== null) {
-        workerPercentage = Number(service.percentage);
-      } else {
-        throw new BadRequestException(
-          `El servicio ${service.id} no tiene configurado el porcentaje para el trabajador.`
-        );
+      
+      // Si el trabajador tiene tiempo específico, usarlo
+      if (workerAssignment.time !== undefined && workerAssignment.time !== null) {
+        time = workerAssignment.time;
       }
     }
-
-    companyPercentage = 100 - workerPercentage;
-
-    if (workerPercentage < 0 || workerPercentage > 100) {
-      throw new BadRequestException(`El porcentaje del trabajador (${workerPercentage}%) debe estar entre 0 y 100`);
-    }
-
-    if (companyPercentage < 0 || companyPercentage > 100) {
-      throw new BadRequestException(`El porcentaje de la compañía (${companyPercentage}%) debe estar entre 0 y 100`);
-    }
-
-    const total = workerPercentage + companyPercentage;
-    if (Math.abs(total - 100) > 0.01) {
-      throw new BadRequestException(`La suma de porcentajes (${total}%) debe ser 100%`);
-    }
-
-    return { workerPercentage, companyPercentage, workerAssigned };
   }
 
+  // Si no se encontró asignación específica del trabajador o no tenía porcentaje,
+  // usar el porcentaje general del servicio
+  if (!workerAssigned) {
+    if (service.percentage !== undefined && service.percentage !== null) {
+      workerPercentage = Number(service.percentage);
+    } else {
+      throw new BadRequestException(
+        `El servicio ${service.id} no tiene configurado el porcentaje para el trabajador.`
+      );
+    }
+  }
+
+  companyPercentage = 100 - workerPercentage;
+
+  // Validaciones de porcentajes
+  if (workerPercentage < 0 || workerPercentage > 100) {
+    throw new BadRequestException(`El porcentaje del trabajador (${workerPercentage}%) debe estar entre 0 y 100`);
+  }
+
+  if (companyPercentage < 0 || companyPercentage > 100) {
+    throw new BadRequestException(`El porcentaje de la compañía (${companyPercentage}%) debe estar entre 0 y 100`);
+  }
+
+  const total = workerPercentage + companyPercentage;
+  if (Math.abs(total - 100) > 0.01) {
+    throw new BadRequestException(`La suma de porcentajes (${total}%) debe ser 100%`);
+  }
+
+  return { workerPercentage, companyPercentage, workerAssigned, time };
+}
   private calculateAmounts(
     totalCost: number,
     workerPercentage: number,
@@ -326,9 +392,8 @@ export class SessionService {
       }
 
       // Validar porcentajes del servicio
-      this.validateServicePercentages(service);
-
-      const { workerPercentage, companyPercentage, workerAssigned } = this.calculatePercentages(
+      this.validateServicePercentagesAndTime(service);
+      const { workerPercentage, companyPercentage, workerAssigned, time: detailTime } = this.calculatePercentagesAndTime(
         service,
         detail.companyWorkerId
       );
@@ -355,7 +420,7 @@ export class SessionService {
 
       // Acumular totales - asegurando que sean números
       const detailCost = calculatedAmounts.cost;
-      const detailTime = service.standardTime || 0;
+      // const detailTime = service.standardTime || 0;
 
       totalSessionCost += detailCost;
       totalSessionTime += detailTime;
@@ -385,7 +450,7 @@ export class SessionService {
         companyWorkerId: detail.companyWorkerId,
         workerName: workerName,
         totalCost: detailCost,
-        totalTime: detailTime,
+        totalTime: detailTime, 
         workerPercentage,
         companyPercentage,
         totalWorker: calculatedAmounts.totalWorker,
@@ -1137,7 +1202,7 @@ export class SessionService {
     };
   }
 
-  private validateServicePercentages(service: Service): void {
+  /*private validateServicePercentages(service: Service): void {
     if (service.percentage !== undefined && service.percentage !== null) {
       const percentage = Number(service.percentage);
       if (percentage < 0 || percentage > 100) {
@@ -1155,6 +1220,56 @@ export class SessionService {
           );
         }
       });
+    }
+
+    const hasGeneralPercentage = service.percentage !== undefined && service.percentage !== null;
+    const hasSpecificWorkers = service.workers && Array.isArray(service.workers) && service.workers.length > 0;
+
+    if (!hasGeneralPercentage && !hasSpecificWorkers) {
+      throw new BadRequestException(
+        `El servicio ${service.id} no tiene configurado el porcentaje.`
+      );
+    }
+  }*/
+
+  private validateServicePercentagesAndTime(service: Service): void {
+    if (service.percentage !== undefined && service.percentage !== null) {
+      const percentage = Number(service.percentage);
+      if (percentage < 0 || percentage > 100) {
+        throw new BadRequestException(
+          `El porcentaje general del servicio ${service.id} no es válido (${percentage}%). Debe estar entre 0 y 100`
+        );
+      }
+    }
+
+    if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
+      service.workers.forEach((worker, index) => {
+        if (worker.percentage < 0 || worker.percentage > 100) {
+          throw new BadRequestException(
+            `El porcentaje del worker ${worker.id} en el servicio ${service.id} no es válido (${worker.percentage}%). Debe estar entre 0 y 100`
+          );
+        }
+
+        // Validar tiempo si existe (debe ser un número positivo)
+        if (worker.time !== undefined && worker.time !== null) {
+          const time = Number(worker.time);
+          if (time < 0) {
+            throw new BadRequestException(
+              `El tiempo del worker ${worker.id} en el servicio ${service.id} no es válido (${time} minutos). Debe ser un número positivo`
+            );
+          }
+        }
+      });
+    }
+
+    // Validar tiempo general del servicio
+    if (service.standardTime !== undefined && service.standardTime !== null) {
+      const standardTime = Number(service.standardTime);
+      if (standardTime < 0) {
+        throw new BadRequestException(
+          `El tiempo general del servicio ${service.id} no es válido (${standardTime} minutos). Debe ser un número positivo`
+        );
+      }
     }
 
     const hasGeneralPercentage = service.percentage !== undefined && service.percentage !== null;
@@ -1465,305 +1580,305 @@ export class SessionService {
   }
 
 
-async updateSessionStatus(
-  sessionId: number,
-  updateSessionStatusDto: UpdateSessionStatusDto,
-  adminId: number
-): Promise<{
-  message: string;
-  session: Session;
-  updated: boolean;
-  validationDetails: {
-    canUpdate: boolean;
-    totalDetails: number;
-    completedDetails: number;
-    pendingDetails: number;
-    allDetailsCompleted: boolean;
-    errorMessage?: string;
-  };
-}> {
-  console.log(`🔄 Actualizando estado de sesión ${sessionId} a ${updateSessionStatusDto.sessionStatus}`);
+  async updateSessionStatus(
+    sessionId: number,
+    updateSessionStatusDto: UpdateSessionStatusDto,
+    adminId: number
+  ): Promise<{
+    message: string;
+    session: Session;
+    updated: boolean;
+    validationDetails: {
+      canUpdate: boolean;
+      totalDetails: number;
+      completedDetails: number;
+      pendingDetails: number;
+      allDetailsCompleted: boolean;
+      errorMessage?: string;
+    };
+  }> {
+    console.log(`🔄 Actualizando estado de sesión ${sessionId} a ${updateSessionStatusDto.sessionStatus}`);
 
-  // 1. Verificar permisos
-  const adminCompany = await this.companyRepository.findOne({
-    where: { userId: adminId }
-  });
+    // 1. Verificar permisos
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
 
-  if (!adminCompany) {
-    throw new NotFoundException('El administrador no tiene una compañía asignada');
+    if (!adminCompany) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
+    }
+
+    // 2. Buscar la sesión
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+    }
+
+    // 3. Verificar que la sesión pertenezca a la compañía del administrador
+    const sessionDetails = await this.sessionDetailRepository.find({
+      where: { sessionId: sessionId }
+    });
+
+    if (sessionDetails.length === 0) {
+      throw new NotFoundException(`No se encontraron detalles para la sesión ${sessionId}`);
+    }
+
+    let sessionBelongsToAdmin = false;
+    for (const detail of sessionDetails) {
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['company']
+      });
+
+      if (companyWorker?.company?.id === adminCompany.id) {
+        sessionBelongsToAdmin = true;
+        break;
+      }
+    }
+
+    if (!sessionBelongsToAdmin) {
+      throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+    }
+
+    // 4. Validar si se puede actualizar el estado de la sesión
+    const validationResult = await this.validateSessionStatusUpdate(
+      sessionId,
+      updateSessionStatusDto.sessionStatus
+    );
+
+    if (!validationResult.canUpdate) {
+      throw new BadRequestException({
+        message: 'No se puede actualizar el estado de la sesión',
+        details: validationResult,
+        suggestion: validationResult.errorMessage || 'Revise las reglas de validación.'
+      });
+    }
+
+    // 5. Actualizar el estado de la sesión
+    const previousStatus = session.sessionStatus;
+    session.sessionStatus = updateSessionStatusDto.sessionStatus;
+
+    const updatedSession = await this.sessionRepository.save(session);
+
+    console.log(`✅ Estado de sesión ${sessionId} actualizado de ${previousStatus} a ${updateSessionStatusDto.sessionStatus}`);
+
+    return {
+      message: `Estado de sesión actualizado exitosamente de ${this.getSessionStatusText(previousStatus)} a ${this.getSessionStatusText(updateSessionStatusDto.sessionStatus)}`,
+      session: updatedSession,
+      updated: true,
+      validationDetails: validationResult
+    };
   }
 
-  // 2. Buscar la sesión
-  const session = await this.sessionRepository.findOne({
-    where: { id: sessionId }
-  });
+  async updateDetailStatus(
+    detailId: number,
+    updateDetailStatusDto: UpdateDetailStatusDto,
+    adminId: number
+  ): Promise<{
+    message: string;
+    detail: SessionDetail;
+    sessionUpdated: boolean;
+    newSessionStatus: number | null;
+    validation: {
+      canUpdateDetail: boolean;
+      detailPreviousStatus: number;
+      sessionId: number;
+    };
+  }> {
+    console.log(`🔄 Actualizando estado del detalle ${detailId} a ${updateDetailStatusDto.status}`);
 
-  if (!session) {
-    throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
-  }
+    // 1. Verificar permisos
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
 
-  // 3. Verificar que la sesión pertenezca a la compañía del administrador
-  const sessionDetails = await this.sessionDetailRepository.find({
-    where: { sessionId: sessionId }
-  });
+    if (!adminCompany) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
+    }
 
-  if (sessionDetails.length === 0) {
-    throw new NotFoundException(`No se encontraron detalles para la sesión ${sessionId}`);
-  }
+    // 2. Buscar el detalle
+    const detail = await this.sessionDetailRepository.findOne({
+      where: { id: detailId }
+    });
 
-  let sessionBelongsToAdmin = false;
-  for (const detail of sessionDetails) {
+    if (!detail) {
+      throw new NotFoundException(`Detalle de sesión con ID ${detailId} no encontrado`);
+    }
+
+    // 3. Verificar que el detalle pertenezca a la compañía del administrador
     const companyWorker = await this.companyWorkerRepository.findOne({
       where: { id: detail.companyWorkerId },
       relations: ['company']
     });
 
-    if (companyWorker?.company?.id === adminCompany.id) {
-      sessionBelongsToAdmin = true;
-      break;
+    if (!companyWorker || companyWorker.company.id !== adminCompany.id) {
+      throw new ForbiddenException('No tienes permiso para modificar este detalle');
     }
-  }
 
-  if (!sessionBelongsToAdmin) {
-    throw new ForbiddenException('No tienes permiso para modificar esta sesión');
-  }
+    // 4. Guardar estado anterior
+    const previousStatus = detail.status;
 
-  // 4. Validar si se puede actualizar el estado de la sesión
-  const validationResult = await this.validateSessionStatusUpdate(
-    sessionId,
-    updateSessionStatusDto.sessionStatus
-  );
+    // 5. Validar que el nuevo estado sea válido (1-3 para detalles)
+    if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 3) {
+      throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso) o 3 (Completado)');
+    }
 
-  if (!validationResult.canUpdate) {
-    throw new BadRequestException({
-      message: 'No se puede actualizar el estado de la sesión',
-      details: validationResult,
-      suggestion: validationResult.errorMessage || 'Revise las reglas de validación.'
+    // 6. Actualizar el detalle
+    detail.status = updateDetailStatusDto.status;
+
+    const updatedDetail = await this.sessionDetailRepository.save(detail);
+
+    // 7. Verificar si todos los detalles de la sesión están completados
+    const sessionDetails = await this.sessionDetailRepository.find({
+      where: { sessionId: detail.sessionId }
     });
-  }
 
-  // 5. Actualizar el estado de la sesión
-  const previousStatus = session.sessionStatus;
-  session.sessionStatus = updateSessionStatusDto.sessionStatus;
+    const allDetailsCompleted = sessionDetails.every(d => d.status === 3);
+    let sessionUpdated = false;
+    let newSessionStatus: number | null = null;
 
-  const updatedSession = await this.sessionRepository.save(session);
+    const session = await this.sessionRepository.findOne({
+      where: { id: detail.sessionId }
+    });
 
-  console.log(`✅ Estado de sesión ${sessionId} actualizado de ${previousStatus} a ${updateSessionStatusDto.sessionStatus}`);
-
-  return {
-    message: `Estado de sesión actualizado exitosamente de ${this.getSessionStatusText(previousStatus)} a ${this.getSessionStatusText(updateSessionStatusDto.sessionStatus)}`,
-    session: updatedSession,
-    updated: true,
-    validationDetails: validationResult
-  };
-}
-
-async updateDetailStatus(
-  detailId: number,
-  updateDetailStatusDto: UpdateDetailStatusDto,
-  adminId: number
-): Promise<{
-  message: string;
-  detail: SessionDetail;
-  sessionUpdated: boolean;
-  newSessionStatus: number | null;
-  validation: {
-    canUpdateDetail: boolean;
-    detailPreviousStatus: number;
-    sessionId: number;
-  };
-}> {
-  console.log(`🔄 Actualizando estado del detalle ${detailId} a ${updateDetailStatusDto.status}`);
-
-  // 1. Verificar permisos
-  const adminCompany = await this.companyRepository.findOne({
-    where: { userId: adminId }
-  });
-
-  if (!adminCompany) {
-    throw new NotFoundException('El administrador no tiene una compañía asignada');
-  }
-
-  // 2. Buscar el detalle
-  const detail = await this.sessionDetailRepository.findOne({
-    where: { id: detailId }
-  });
-
-  if (!detail) {
-    throw new NotFoundException(`Detalle de sesión con ID ${detailId} no encontrado`);
-  }
-
-  // 3. Verificar que el detalle pertenezca a la compañía del administrador
-  const companyWorker = await this.companyWorkerRepository.findOne({
-    where: { id: detail.companyWorkerId },
-    relations: ['company']
-  });
-
-  if (!companyWorker || companyWorker.company.id !== adminCompany.id) {
-    throw new ForbiddenException('No tienes permiso para modificar este detalle');
-  }
-
-  // 4. Guardar estado anterior
-  const previousStatus = detail.status;
-
-  // 5. Validar que el nuevo estado sea válido (1-3 para detalles)
-  if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 3) {
-    throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso) o 3 (Completado)');
-  }
-
-  // 6. Actualizar el detalle
-  detail.status = updateDetailStatusDto.status;
-
-  const updatedDetail = await this.sessionDetailRepository.save(detail);
-
-  // 7. Verificar si todos los detalles de la sesión están completados
-  const sessionDetails = await this.sessionDetailRepository.find({
-    where: { sessionId: detail.sessionId }
-  });
-
-  const allDetailsCompleted = sessionDetails.every(d => d.status === 3);
-  let sessionUpdated = false;
-  let newSessionStatus: number | null = null;
-
-  const session = await this.sessionRepository.findOne({
-    where: { id: detail.sessionId }
-  });
-
-  // 8. Si la sesión existe, actualizar su estado según corresponda
-  if (session) {
-    // Si todos los detalles están completados, actualizar la sesión a completada (3)
-    if (allDetailsCompleted) {
-      if (session.sessionStatus !== 3) {
-        session.sessionStatus = 3; // Completada
-        await this.sessionRepository.save(session);
-        sessionUpdated = true;
-        newSessionStatus = 3;
-        console.log(`✅ Sesión ${session.id} actualizada a COMPLETADA automáticamente`);
+    // 8. Si la sesión existe, actualizar su estado según corresponda
+    if (session) {
+      // Si todos los detalles están completados, actualizar la sesión a completada (3)
+      if (allDetailsCompleted) {
+        if (session.sessionStatus !== 3) {
+          session.sessionStatus = 3; // Completada
+          await this.sessionRepository.save(session);
+          sessionUpdated = true;
+          newSessionStatus = 3;
+          console.log(`✅ Sesión ${session.id} actualizada a COMPLETADA automáticamente`);
+        }
+      } else {
+        // Si no todos están completados, asegurarse de que la sesión no esté como completada o pagada
+        if (session.sessionStatus === 3 || session.sessionStatus === 4) {
+          // Solo revertir a "en proceso" si estaba como completada o pagada
+          session.sessionStatus = 2;
+          await this.sessionRepository.save(session);
+          sessionUpdated = true;
+          newSessionStatus = 2;
+          console.log(`⚠️ Sesión ${session.id} revertida a "EN PROCESO" porque no todos los detalles están completados`);
+        }
       }
     } else {
-      // Si no todos están completados, asegurarse de que la sesión no esté como completada o pagada
-      if (session.sessionStatus === 3 || session.sessionStatus === 4) {
-        // Solo revertir a "en proceso" si estaba como completada o pagada
-        session.sessionStatus = 2;
-        await this.sessionRepository.save(session);
-        sessionUpdated = true;
-        newSessionStatus = 2;
-        console.log(`⚠️ Sesión ${session.id} revertida a "EN PROCESO" porque no todos los detalles están completados`);
-      }
+      console.warn(`⚠️ Sesión con ID ${detail.sessionId} no encontrada al actualizar el detalle`);
     }
-  } else {
-    console.warn(`⚠️ Sesión con ID ${detail.sessionId} no encontrada al actualizar el detalle`);
+
+    console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status}`);
+
+    return {
+      message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
+      detail: updatedDetail,
+      sessionUpdated,
+      newSessionStatus,
+      validation: {
+        canUpdateDetail: true,
+        detailPreviousStatus: previousStatus,
+        sessionId: detail.sessionId
+      }
+    };
   }
 
-  console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status}`);
+  private async validateSessionStatusUpdate(
+    sessionId: number,
+    newSessionStatus: number
+  ): Promise<{
+    canUpdate: boolean;
+    totalDetails: number;
+    completedDetails: number;
+    pendingDetails: number;
+    allDetailsCompleted: boolean;
+    detailsStatus: Array<{
+      id: number;
+      serviceId: number;
+      status: number;
+      statusText: string;
+    }>;
+    errorMessage?: string;
+  }> {
+    // Obtener todos los detalles de la sesión
+    const sessionDetails = await this.sessionDetailRepository.find({
+      where: { sessionId: sessionId }
+    });
 
-  return {
-    message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
-    detail: updatedDetail,
-    sessionUpdated,
-    newSessionStatus,
-    validation: {
-      canUpdateDetail: true,
-      detailPreviousStatus: previousStatus,
-      sessionId: detail.sessionId
+    const totalDetails = sessionDetails.length;
+    const completedDetails = sessionDetails.filter(d => d.status === 3).length;
+    const pendingDetails = totalDetails - completedDetails;
+    const allDetailsCompleted = completedDetails === totalDetails;
+
+    // Obtener la sesión para ver su estado actual
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId }
+    });
+
+    // Verificar que la sesión exista
+    if (!session) {
+      return {
+        canUpdate: false,
+        totalDetails,
+        completedDetails,
+        pendingDetails,
+        allDetailsCompleted,
+        detailsStatus: [],
+        errorMessage: 'Sesión no encontrada'
+      };
     }
-  };
-}
 
-private async validateSessionStatusUpdate(
-  sessionId: number,
-  newSessionStatus: number
-): Promise<{
-  canUpdate: boolean;
-  totalDetails: number;
-  completedDetails: number;
-  pendingDetails: number;
-  allDetailsCompleted: boolean;
-  detailsStatus: Array<{
-    id: number;
-    serviceId: number;
-    status: number;
-    statusText: string;
-  }>;
-  errorMessage?: string;
-}> {
-  // Obtener todos los detalles de la sesión
-  const sessionDetails = await this.sessionDetailRepository.find({
-    where: { sessionId: sessionId }
-  });
+    // Regla: Solo se puede marcar como completada (3) si todos los detalles están completados
+    let canUpdate = true;
+    let errorMessage = '';
 
-  const totalDetails = sessionDetails.length;
-  const completedDetails = sessionDetails.filter(d => d.status === 3).length;
-  const pendingDetails = totalDetails - completedDetails;
-  const allDetailsCompleted = completedDetails === totalDetails;
+    if (newSessionStatus === 3 && !allDetailsCompleted) {
+      canUpdate = false;
+      errorMessage = 'Todos los detalles de la sesión deben estar completados antes de marcar la sesión como completada.';
+    }
 
-  // Obtener la sesión para ver su estado actual
-  const session = await this.sessionRepository.findOne({
-    where: { id: sessionId }
-  });
+    // NUEVA REGLA: Solo se puede marcar como pagada (4) si la sesión está completada (3)
+    if (newSessionStatus === 4) {
+      if (session.sessionStatus !== 3) {
+        canUpdate = false;
+        errorMessage = 'La sesión debe estar en estado "Completado" antes de marcarla como "Pagada".';
+      } else if (!allDetailsCompleted) {
+        canUpdate = false;
+        errorMessage = 'Todos los detalles deben estar completados para marcar la sesión como pagada.';
+      }
+    }
 
-  // Verificar que la sesión exista
-  if (!session) {
+    // Obtener información detallada de cada detalle
+    const detailsStatus = await Promise.all(
+      sessionDetails.map(async (detail) => {
+        const service = await this.serviceRepository.findOne({
+          where: { id: detail.serviceId }
+        });
+
+        return {
+          id: detail.id,
+          serviceId: detail.serviceId,
+          serviceName: service?.name || 'Desconocido',
+          status: detail.status,
+          statusText: this.getDetailStatusText(detail.status),
+          cost: detail.cost,
+          totalTime: detail.totalTime
+        };
+      })
+    );
+
     return {
-      canUpdate: false,
+      canUpdate,
       totalDetails,
       completedDetails,
       pendingDetails,
       allDetailsCompleted,
-      detailsStatus: [],
-      errorMessage: 'Sesión no encontrada'
+      detailsStatus,
+      ...(errorMessage ? { errorMessage } : {})
     };
   }
-
-  // Regla: Solo se puede marcar como completada (3) si todos los detalles están completados
-  let canUpdate = true;
-  let errorMessage = '';
-
-  if (newSessionStatus === 3 && !allDetailsCompleted) {
-    canUpdate = false;
-    errorMessage = 'Todos los detalles de la sesión deben estar completados antes de marcar la sesión como completada.';
-  }
-
-  // NUEVA REGLA: Solo se puede marcar como pagada (4) si la sesión está completada (3)
-  if (newSessionStatus === 4) {
-    if (session.sessionStatus !== 3) {
-      canUpdate = false;
-      errorMessage = 'La sesión debe estar en estado "Completado" antes de marcarla como "Pagada".';
-    } else if (!allDetailsCompleted) {
-      canUpdate = false;
-      errorMessage = 'Todos los detalles deben estar completados para marcar la sesión como pagada.';
-    }
-  }
-
-  // Obtener información detallada de cada detalle
-  const detailsStatus = await Promise.all(
-    sessionDetails.map(async (detail) => {
-      const service = await this.serviceRepository.findOne({
-        where: { id: detail.serviceId }
-      });
-
-      return {
-        id: detail.id,
-        serviceId: detail.serviceId,
-        serviceName: service?.name || 'Desconocido',
-        status: detail.status,
-        statusText: this.getDetailStatusText(detail.status),
-        cost: detail.cost,
-        totalTime: detail.totalTime
-      };
-    })
-  );
-
-  return {
-    canUpdate,
-    totalDetails,
-    completedDetails,
-    pendingDetails,
-    allDetailsCompleted,
-    detailsStatus,
-    ...(errorMessage ? { errorMessage } : {})
-  };
-}
 
   // Actualizar estado de un detalle específico (privado)
   private async updateSpecificDetailStatus(
@@ -1790,114 +1905,114 @@ private async validateSessionStatusUpdate(
       1: 'Agendado',
       2: 'En proceso',
       3: 'Completado',
-   };
+    };
     return statusMap[status] || `Estado ${status}`;
   }
 
-async getSessionDetailsWithValidation(
-  sessionId: number,
-  adminId: number
-): Promise<{
-  session: any;
-  details: any[];
-  statusSummary: {
-    totalDetails: number;
-    completedDetails: number;
-    pendingDetails: number;
-    allDetailsCompleted: boolean;
-    canCompleteSession: boolean;
-    currentSessionStatus: number;
-    currentSessionStatusText: string;
-  };
-}> {
-  // Verificar permisos
-  const adminCompany = await this.companyRepository.findOne({
-    where: { userId: adminId }
-  });
-
-  if (!adminCompany) {
-    throw new NotFoundException('El administrador no tiene una compañía asignada');
-  }
-
-  // Buscar la sesión
-  const session = await this.sessionRepository.findOne({
-    where: { id: sessionId }
-  });
-
-  if (!session) {
-    throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
-  }
-
-  // Obtener detalles con información relacionada
-  const sessionDetails = await this.sessionDetailRepository.find({
-    where: { sessionId: sessionId }
-  });
-
-  // Obtener información del cliente para enriquecer la respuesta
-  const client = await this.clientRepository.findOne({
-    where: { id: session.clientId }
-  });
-
-  // Enriquecer los detalles
-  const enrichedDetails = await Promise.all(
-    sessionDetails.map(async (detail) => {
-      const companyWorker = await this.companyWorkerRepository.findOne({
-        where: { id: detail.companyWorkerId },
-        relations: ['worker', 'company']
-      });
-
-      const service = await this.serviceRepository.findOne({
-        where: { id: detail.serviceId }
-      });
-
-      return {
-        id: detail.id,
-        serviceId: detail.serviceId,
-        serviceName: service?.name || 'Desconocido',
-        serviceDescription: service?.description || '',
-        companyWorkerId: detail.companyWorkerId,
-        workerName: companyWorker?.worker 
-          ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
-          : 'Trabajador no encontrado',
-        cost: detail.cost,
-        totalTime: detail.totalTime,
-        totalWorker: detail.totalWorker,
-        totalCompany: detail.totalCompany,
-        status: detail.status,
-        statusText: this.getDetailStatusText(detail.status),
-        startDatetime: detail.startDatetime,
-        updatedAt: detail.updatedAt
-      };
-    })
-  );
-
-  // Calcular resumen de estados
-  const totalDetails = enrichedDetails.length;
-  const completedDetails = enrichedDetails.filter(d => d.status === 3).length;
-  const pendingDetails = totalDetails - completedDetails;
-  const allDetailsCompleted = completedDetails === totalDetails;
-  const canCompleteSession = allDetailsCompleted;
-
-  // Crear un objeto session enriquecido con información adicional
-  const enrichedSession = {
-    ...session,
-    clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
-    clientLastName: client?.lastName || '',
-    sessionStatusText: this.getSessionStatusText(session.sessionStatus)
-  };
-
-  return {
-    session: enrichedSession,
-    details: enrichedDetails,
+  async getSessionDetailsWithValidation(
+    sessionId: number,
+    adminId: number
+  ): Promise<{
+    session: any;
+    details: any[];
     statusSummary: {
-      totalDetails,
-      completedDetails,
-      pendingDetails,
-      allDetailsCompleted,
-      canCompleteSession,
-      currentSessionStatus: session.sessionStatus,
-      currentSessionStatusText: this.getSessionStatusText(session.sessionStatus)
+      totalDetails: number;
+      completedDetails: number;
+      pendingDetails: number;
+      allDetailsCompleted: boolean;
+      canCompleteSession: boolean;
+      currentSessionStatus: number;
+      currentSessionStatusText: string;
+    };
+  }> {
+    // Verificar permisos
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!adminCompany) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
     }
-  };
-}
+
+    // Buscar la sesión
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+    }
+
+    // Obtener detalles con información relacionada
+    const sessionDetails = await this.sessionDetailRepository.find({
+      where: { sessionId: sessionId }
+    });
+
+    // Obtener información del cliente para enriquecer la respuesta
+    const client = await this.clientRepository.findOne({
+      where: { id: session.clientId }
+    });
+
+    // Enriquecer los detalles
+    const enrichedDetails = await Promise.all(
+      sessionDetails.map(async (detail) => {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: detail.companyWorkerId },
+          relations: ['worker', 'company']
+        });
+
+        const service = await this.serviceRepository.findOne({
+          where: { id: detail.serviceId }
+        });
+
+        return {
+          id: detail.id,
+          serviceId: detail.serviceId,
+          serviceName: service?.name || 'Desconocido',
+          serviceDescription: service?.description || '',
+          companyWorkerId: detail.companyWorkerId,
+          workerName: companyWorker?.worker
+            ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+            : 'Trabajador no encontrado',
+          cost: detail.cost,
+          totalTime: detail.totalTime,
+          totalWorker: detail.totalWorker,
+          totalCompany: detail.totalCompany,
+          status: detail.status,
+          statusText: this.getDetailStatusText(detail.status),
+          startDatetime: detail.startDatetime,
+          updatedAt: detail.updatedAt
+        };
+      })
+    );
+
+    // Calcular resumen de estados
+    const totalDetails = enrichedDetails.length;
+    const completedDetails = enrichedDetails.filter(d => d.status === 3).length;
+    const pendingDetails = totalDetails - completedDetails;
+    const allDetailsCompleted = completedDetails === totalDetails;
+    const canCompleteSession = allDetailsCompleted;
+
+    // Crear un objeto session enriquecido con información adicional
+    const enrichedSession = {
+      ...session,
+      clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
+      clientLastName: client?.lastName || '',
+      sessionStatusText: this.getSessionStatusText(session.sessionStatus)
+    };
+
+    return {
+      session: enrichedSession,
+      details: enrichedDetails,
+      statusSummary: {
+        totalDetails,
+        completedDetails,
+        pendingDetails,
+        allDetailsCompleted,
+        canCompleteSession,
+        currentSessionStatus: session.sessionStatus,
+        currentSessionStatusText: this.getSessionStatusText(session.sessionStatus)
+      }
+    };
+  }
 }
