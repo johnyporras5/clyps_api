@@ -30,7 +30,6 @@ export class CreateServiceDto {
   @IsNumber()
   cost?: number;
 
-  @IsOptional()
   @IsNumber()
   standardTime?: number;
 
@@ -48,9 +47,8 @@ export class CreateServiceDto {
   @IsString()
   description?: string;
 
-  @IsOptional()
   @IsNumber()
   @Min(0)
   @Max(100)
-  percentage?: number; // Porcentaje general del servicio
+  percentage: number; // Porcentaje general del servicio
 }
