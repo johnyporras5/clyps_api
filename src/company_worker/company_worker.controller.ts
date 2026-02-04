@@ -21,6 +21,8 @@ import { UpdateCompanyWorkerDto } from './dto/update-company_worker.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { PaginatedWorkerListResult } from './interface/worker-list.interface';
+import { CompanyWorkersPaginationDto } from './dto/company-workers-pagination.dto';
 
 @Controller('company-workers')
 export class CompanyWorkerController {
@@ -175,10 +177,15 @@ export class CompanyWorkerController {
   @HttpCode(HttpStatus.OK)
   async getMyCompanyWorkers(
     @Req() req: any,
-    @Query('name') name?: string
-  ): Promise<any[]> {
+    @Query() paginationDto: CompanyWorkersPaginationDto,
+  ): Promise<PaginatedWorkerListResult> {
     const adminId = req.user.sub;
 
-    return this.companyWorkerService.getCompanyWorkersWithNameFilter(adminId, name);
+    return await this.companyWorkerService.getCompanyWorkersWithNameFilterPaginated(
+      adminId,
+      paginationDto
+    );
   }
+
 }
+

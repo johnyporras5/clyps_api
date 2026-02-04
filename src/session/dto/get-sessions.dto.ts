@@ -41,4 +41,10 @@ export class GetSessionsDto {
   @Type(() => Number)
   @IsNumber()
   sessionStatus?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(3)
+  detailStatus?: number; 
 }

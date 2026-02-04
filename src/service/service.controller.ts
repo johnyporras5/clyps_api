@@ -109,21 +109,4 @@ export class ServiceController {
     return this.serviceService.remove(id, adminId);
   }
 
-  // ==================== ENDPOINTS PARA TRABAJADORES ====================
-
-  /**
-   * Obtener servicios asignados a mí como trabajador
-   * GET /services/assigned-to-me
-   * Solo trabajadores
-   */
-  @Get('assigned-to-me')
-  @UseGuards(RolesGuard)
-  @Roles('wrk')
-  @HttpCode(HttpStatus.OK)
-  async findServicesAssignedToMe(@Req() req: any): Promise<any[]> {
-    const userId = req.user.sub;
-    return this.serviceService.findServicesByWorker(userId);
-  }
-
-
 }
