@@ -32,4 +32,5 @@ export class Session {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+  
 }

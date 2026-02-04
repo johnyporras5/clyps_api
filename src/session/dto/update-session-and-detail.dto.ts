@@ -8,6 +8,7 @@ export class UpdateSessionDto {
   @IsOptional()
   @IsDateString()
   detailStartDatetime?: string;
+  
 
   @IsNotEmpty()
   @IsNumber()

@@ -124,5 +124,14 @@ export class SessionController {
     const userId = req.user?.id || req.user?.sub;
     return this.sessionService.createSessionByClient(createSessionWithDetailDto, userId);
   }
-
+  
+  @Post(':id/sync-status')
+  @Roles('adm')
+  async syncSessionStatus(
+    @Request() req,
+    @Param('id') id: string
+  ) {
+    const adminId = req.user?.id || req.user?.sub;
+    return this.sessionService.syncSessionStatusFromDetails(+id, adminId);
+  }
 }
