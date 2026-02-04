@@ -7,7 +7,9 @@ import { CreateCompanyWorkerDto } from './dto/create-company_worker.dto';
 import { UpdateCompanyWorkerDto } from './dto/update-company_worker.dto';
 import { Worker } from '../worker/entities/worker.entity';
 import { WorkerFeedback } from '../worker_feedback/entities/worker_feedback.entity';
-
+import { WorkerList, PaginatedWorkerListResult } from './interface/worker-list.interface';
+import { CompanyWorkersPaginationDto } from './dto/company-workers-pagination.dto';
+import { PaginationOptions } from '../common/utils/pagination.util';
 
 @Injectable()
 export class CompanyWorkerService {
@@ -241,15 +243,14 @@ export class CompanyWorkerService {
     };
   }
 
-
-
-  /**
- * Método simple usando QueryBuilder de TypeORM correctamente
- */
-async getCompanyWorkersWithNameFilter(
+ /**
+   * Método paginado usando la función de utilidad paginate
+   */
+// En el servicio CompanyWorkerService
+async getCompanyWorkersWithNameFilterPaginated(
   adminId: number, 
-  name?: string
-): Promise<any[]> {
+  paginationDto: CompanyWorkersPaginationDto, // Cambiar de PaginationDto a CompanyWorkersPaginationDto
+): Promise<PaginatedWorkerListResult> {
   // 1. Obtener la compañía del administrador
   const company = await this.companyRepository.findOne({
     where: { userId: adminId }
@@ -259,7 +260,10 @@ async getCompanyWorkersWithNameFilter(
     throw new UnauthorizedException('No tienes una compañía asignada');
   }
 
-  // 2. Crear QueryBuilder con alias correctos
+  // 2. Extraer page, limit y name del DTO
+  const { page, limit, name } = paginationDto;
+
+  // 3. Crear QueryBuilder con alias correctos
   const queryBuilder = this.workerRepository
     .createQueryBuilder('worker')
     .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id')
@@ -281,7 +285,7 @@ async getCompanyWorkersWithNameFilter(
     .addGroupBy('cw.id')
     .orderBy('worker.name', 'ASC');
 
-  // 3. Aplicar filtro por nombre si se proporciona
+  // 4. Aplicar filtro por nombre si se proporciona
   if (name && name.trim() !== '') {
     const searchTerm = `%${name.trim()}%`;
     queryBuilder.andWhere(
@@ -290,10 +294,17 @@ async getCompanyWorkersWithNameFilter(
     );
   }
 
-  // 4. Ejecutar y formatear resultados
-  const results = await queryBuilder.getRawMany();
+  // 5. Usar la función paginate (necesitas importar la función de utils)
+  const paginationOptions: PaginationOptions = {
+    page: page,
+    limit: limit
+  };
 
-  return results.map(result => ({
+  // 6. Usar una función auxiliar para paginar con QueryBuilder
+  const paginatedResult = await this.paginateQueryBuilder<WorkerList>(queryBuilder, paginationOptions);
+
+  // 7. Formatear los datos
+  const formattedData: WorkerList[] = paginatedResult.data.map((result: any) => ({
     companyWorkerId: result.companyWorkerId,
     workerId: result.workerId,
     fullName: result.fullName,
@@ -304,5 +315,63 @@ async getCompanyWorkersWithNameFilter(
     endDate: result.endDate,
     isActive: result.isActive
   }));
+
+  return {
+    data: formattedData,
+    meta: paginatedResult.meta
+  };
 }
+
+  /**
+   * Función auxiliar para paginar un QueryBuilder
+   */
+private async paginateQueryBuilder<T>(
+  queryBuilder: any,
+  options: PaginationOptions
+): Promise<{ data: T[]; meta: any }> {
+  const { page, limit } = options;
+  const skip = (page - 1) * limit;
+
+  // 1. Primero obtenemos los datos con paginación
+  const data = await queryBuilder
+    .skip(skip)
+    .take(limit)
+    .getRawMany();
+
+  // 2. Para obtener el total, necesitamos una consulta separada sin GROUP BY
+  // Clonamos el queryBuilder pero quitamos los selects, skip, take y groupBy
+  const countQueryBuilder = queryBuilder.clone();
+  
+  // Limpiamos los selects, ordenamiento, skip y take
+  countQueryBuilder.select([]); // Elimina todos los selects
+  countQueryBuilder.orderBy(); // Elimina el ORDER BY
+  countQueryBuilder.groupBy(); // Elimina el GROUP BY
+  countQueryBuilder.skip(undefined); // Elimina el SKIP
+  countQueryBuilder.take(undefined); // Elimina el TAKE
+  
+  // Contamos solo los trabajadores únicos
+  // IMPORTANTE: Usamos DISTINCT porque puede haber múltiples registros por trabajador
+  const totalResult = await countQueryBuilder
+    .select('COUNT(DISTINCT worker.id)', 'count')
+    .getRawOne();
+
+  const total = totalResult ? parseInt(totalResult.count, 10) : 0;
+
+  const totalPages = Math.ceil(total / limit);
+  const hasNext = page < totalPages;
+  const hasPrev = page > 1;
+
+  return {
+    data: data as T[],
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNext,
+      hasPrev,
+    },
+  };
+}
+
 }
