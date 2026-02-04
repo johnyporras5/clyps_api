@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException,Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CompanyWorker } from './entities/company_worker.entity';
@@ -10,9 +10,12 @@ import { WorkerFeedback } from '../worker_feedback/entities/worker_feedback.enti
 import { WorkerList, PaginatedWorkerListResult } from './interface/worker-list.interface';
 import { CompanyWorkersPaginationDto } from './dto/company-workers-pagination.dto';
 import { PaginationOptions } from '../common/utils/pagination.util';
+import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
 
 @Injectable()
 export class CompanyWorkerService {
+  private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'client_photo';
+
   constructor(
     @InjectRepository(CompanyWorker)
     private companyWorkerRepository: Repository<CompanyWorker>,
@@ -22,6 +25,8 @@ export class CompanyWorkerService {
     private workerRepository: Repository<Worker>,
     @InjectRepository(WorkerFeedback)
     private workerFeedbackRepository: Repository<WorkerFeedback>,
+    @Inject(FileUploadService)
+    private fileUploadService: FileUploadService,
   ) { }
 
   async findAll(): Promise<CompanyWorker[]> {
@@ -246,132 +251,150 @@ export class CompanyWorkerService {
  /**
    * Método paginado usando la función de utilidad paginate
    */
-// En el servicio CompanyWorkerService
-async getCompanyWorkersWithNameFilterPaginated(
-  adminId: number, 
-  paginationDto: CompanyWorkersPaginationDto, // Cambiar de PaginationDto a CompanyWorkersPaginationDto
-): Promise<PaginatedWorkerListResult> {
-  // 1. Obtener la compañía del administrador
-  const company = await this.companyRepository.findOne({
-    where: { userId: adminId }
-  });
+ async getCompanyWorkersWithNameFilterPaginated(
+    adminId: number, 
+    paginationDto: CompanyWorkersPaginationDto,
+  ): Promise<PaginatedWorkerListResult> {
+    // 1. Obtener la compañía del administrador
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
 
-  if (!company) {
-    throw new UnauthorizedException('No tienes una compañía asignada');
-  }
+    if (!company) {
+      throw new UnauthorizedException('No tienes una compañía asignada');
+    }
 
-  // 2. Extraer page, limit y name del DTO
-  const { page, limit, name } = paginationDto;
+    // 2. Extraer page, limit y name del DTO
+    const { page, limit, name } = paginationDto;
 
-  // 3. Crear QueryBuilder con alias correctos
-  const queryBuilder = this.workerRepository
-    .createQueryBuilder('worker')
-    .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id')
-    .leftJoin('worker_feedback', 'wf', 'wf.worker_id = worker.id')
-    .select([
-      'cw.id AS companyWorkerId',
-      'worker.id AS workerId',
-      'CONCAT(worker.name, " ", worker.last_name) AS fullName',
-      'worker.picture AS picture',
-      'cw.start_date AS startDate',
-      'cw.end_date AS endDate',
-      'cw.is_active AS isActive',
-      'COALESCE(AVG(wf.stars), 0) AS averageRating',
-      'COUNT(wf.id) AS totalReviews'
-    ])
-    .where('cw.company_id = :companyId', { companyId: company.id })
-    .andWhere('cw.is_active = 1')
-    .groupBy('worker.id')
-    .addGroupBy('cw.id')
-    .orderBy('worker.name', 'ASC');
+    // 3. Crear QueryBuilder con alias correctos
+    const queryBuilder = this.workerRepository
+      .createQueryBuilder('worker')
+      .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id')
+      .leftJoin('worker_feedback', 'wf', 'wf.worker_id = worker.id')
+      .select([
+        'cw.id AS companyWorkerId',
+        'worker.id AS workerId',
+        'CONCAT(worker.name, " ", worker.last_name) AS fullName',
+        'worker.picture AS picture',
+        'cw.start_date AS startDate',
+        'cw.end_date AS endDate',
+        'cw.is_active AS isActive',
+        'COALESCE(AVG(wf.stars), 0) AS averageRating',
+        'COUNT(wf.id) AS totalReviews'
+      ])
+      .where('cw.company_id = :companyId', { companyId: company.id })
+      .andWhere('cw.is_active = 1')
+      .groupBy('worker.id')
+      .addGroupBy('cw.id')
+      .orderBy('worker.name', 'ASC');
 
-  // 4. Aplicar filtro por nombre si se proporciona
-  if (name && name.trim() !== '') {
-    const searchTerm = `%${name.trim()}%`;
-    queryBuilder.andWhere(
-      '(worker.name LIKE :search OR worker.last_name LIKE :search OR CONCAT(worker.name, " ", worker.last_name) LIKE :search)',
-      { search: searchTerm }
+    // 4. Aplicar filtro por nombre si se proporciona
+    if (name && name.trim() !== '') {
+      const searchTerm = `%${name.trim()}%`;
+      queryBuilder.andWhere(
+        '(worker.name LIKE :search OR worker.last_name LIKE :search OR CONCAT(worker.name, " ", worker.last_name) LIKE :search)',
+        { search: searchTerm }
+      );
+    }
+
+    // 5. Usar la función paginate
+    const paginationOptions: PaginationOptions = {
+      page: page,
+      limit: limit
+    };
+
+    // 6. Paginar los resultados
+    const paginatedResult = await this.paginateQueryBuilder<WorkerList>(
+      queryBuilder, 
+      paginationOptions,
+      company.id,
+      name
     );
+
+    // 7. Formatear los datos y construir las URLs completas
+    const formattedData: WorkerList[] = paginatedResult.data.map((result: any) => {
+      // Obtener la URL completa de la imagen
+      let pictureURL = '';
+      if (result.picture) {
+        pictureURL = this.fileUploadService.getFileUrl(this.WORKER_PHOTO_FOLDER, result.picture);
+      }
+
+      return {
+        companyWorkerId: result.companyWorkerId,
+        workerId: result.workerId,
+        fullName: result.fullName,
+        picture: result.picture, // Nombre original del archivo
+        pictureURL: pictureURL, // URL completa
+        averageRating: parseFloat(result.averageRating).toFixed(1),
+        totalReviews: parseInt(result.totalReviews) || 0,
+        startDate: result.startDate,
+        endDate: result.endDate,
+        isActive: result.isActive
+      };
+    });
+
+    return {
+      data: formattedData,
+      meta: paginatedResult.meta
+    };
   }
-
-  // 5. Usar la función paginate (necesitas importar la función de utils)
-  const paginationOptions: PaginationOptions = {
-    page: page,
-    limit: limit
-  };
-
-  // 6. Usar una función auxiliar para paginar con QueryBuilder
-  const paginatedResult = await this.paginateQueryBuilder<WorkerList>(queryBuilder, paginationOptions);
-
-  // 7. Formatear los datos
-  const formattedData: WorkerList[] = paginatedResult.data.map((result: any) => ({
-    companyWorkerId: result.companyWorkerId,
-    workerId: result.workerId,
-    fullName: result.fullName,
-    picture: result.picture,
-    averageRating: parseFloat(result.averageRating).toFixed(1),
-    totalReviews: parseInt(result.totalReviews) || 0,
-    startDate: result.startDate,
-    endDate: result.endDate,
-    isActive: result.isActive
-  }));
-
-  return {
-    data: formattedData,
-    meta: paginatedResult.meta
-  };
-}
 
   /**
-   * Función auxiliar para paginar un QueryBuilder
+   * Función auxiliar para paginar un QueryBuilder (corregida)
    */
-private async paginateQueryBuilder<T>(
-  queryBuilder: any,
-  options: PaginationOptions
-): Promise<{ data: T[]; meta: any }> {
-  const { page, limit } = options;
-  const skip = (page - 1) * limit;
+  private async paginateQueryBuilder<T>(
+    queryBuilder: any,
+    options: PaginationOptions,
+    companyId: number,
+    name?: string
+  ): Promise<{ data: T[]; meta: any }> {
+    const { page, limit } = options;
+    const skip = (page - 1) * limit;
 
-  // 1. Primero obtenemos los datos con paginación
-  const data = await queryBuilder
-    .skip(skip)
-    .take(limit)
-    .getRawMany();
+    // 1. Obtener los datos paginados
+    const data = await queryBuilder
+      .skip(skip)
+      .take(limit)
+      .getRawMany();
 
-  // 2. Para obtener el total, necesitamos una consulta separada sin GROUP BY
-  // Clonamos el queryBuilder pero quitamos los selects, skip, take y groupBy
-  const countQueryBuilder = queryBuilder.clone();
-  
-  // Limpiamos los selects, ordenamiento, skip y take
-  countQueryBuilder.select([]); // Elimina todos los selects
-  countQueryBuilder.orderBy(); // Elimina el ORDER BY
-  countQueryBuilder.groupBy(); // Elimina el GROUP BY
-  countQueryBuilder.skip(undefined); // Elimina el SKIP
-  countQueryBuilder.take(undefined); // Elimina el TAKE
-  
-  // Contamos solo los trabajadores únicos
-  // IMPORTANTE: Usamos DISTINCT porque puede haber múltiples registros por trabajador
-  const totalResult = await countQueryBuilder
-    .select('COUNT(DISTINCT worker.id)', 'count')
-    .getRawOne();
+    // 2. Crear una consulta de conteo separada
+    const countQueryBuilder = this.workerRepository
+      .createQueryBuilder('worker')
+      .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id')
+      .where('cw.company_id = :companyId', { companyId })
+      .andWhere('cw.is_active = 1');
 
-  const total = totalResult ? parseInt(totalResult.count, 10) : 0;
+    // Aplicar filtro por nombre si existe
+    if (name && name.trim() !== '') {
+      const searchTerm = `%${name.trim()}%`;
+      countQueryBuilder.andWhere(
+        '(worker.name LIKE :search OR worker.last_name LIKE :search OR CONCAT(worker.name, " ", worker.last_name) LIKE :search)',
+        { search: searchTerm }
+      );
+    }
 
-  const totalPages = Math.ceil(total / limit);
-  const hasNext = page < totalPages;
-  const hasPrev = page > 1;
+    // Contar trabajadores únicos
+    const totalResult = await countQueryBuilder
+      .select('COUNT(DISTINCT worker.id)', 'count')
+      .getRawOne();
 
-  return {
-    data: data as T[],
-    meta: {
-      page,
-      limit,
-      total,
-      totalPages,
-      hasNext,
-      hasPrev,
-    },
-  };
-}
+    const total = totalResult ? parseInt(totalResult.count, 10) : 0;
 
+    const totalPages = Math.ceil(total / limit);
+    const hasNext = page < totalPages;
+    const hasPrev = page > 1;
+
+    return {
+      data: data as T[],
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext,
+        hasPrev,
+      },
+    };
+  }
 }
