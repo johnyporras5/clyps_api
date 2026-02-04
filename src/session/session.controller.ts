@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Query, Put } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Query, Put, } from '@nestjs/common';
 import { SessionService } from './session.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { CreateSessionWithDetailDto } from './dto/create-session-with-detail.dto';
@@ -95,5 +95,22 @@ export class SessionController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.sessionService.removeSessionWithDetails(+id);
+  }
+
+
+  @Get('worker/my-sessions')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('wrk')
+
+  async getMySessions(
+    @Request() req,
+    @Query() getSessionsDto: GetSessionsDto
+  ) {
+    // req.user contiene la información del usuario autenticado
+    const userId = req.user.sub;
+    return await this.sessionService.getSessionsForAuthenticatedWorker(
+      userId,
+      getSessionsDto
+    );
   }
 }

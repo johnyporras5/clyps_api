@@ -122,70 +122,70 @@ export class SessionService {
 
 
 
-private calculatePercentagesAndTime(
-  service: Service,
-  companyWorkerId: number
-): {
-  workerPercentage: number;
-  companyPercentage: number;
-  workerAssigned: boolean;
-  time: number;
-} {
-  let workerPercentage = 0;
-  let companyPercentage = 0;
-  let workerAssigned = false;
-  let time = service.standardTime || 0;
+  private calculatePercentagesAndTime(
+    service: Service,
+    companyWorkerId: number
+  ): {
+    workerPercentage: number;
+    companyPercentage: number;
+    workerAssigned: boolean;
+    time: number;
+  } {
+    let workerPercentage = 0;
+    let companyPercentage = 0;
+    let workerAssigned = false;
+    let time = service.standardTime || 0;
 
-  // Primero buscar si el trabajador específico tiene configuraciones en el array workers
-  if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
-    const workerAssignment = service.workers.find(
-      (worker: any) => worker.id === companyWorkerId
-    );
-
-    if (workerAssignment) {
-      // Si el trabajador tiene porcentaje específico, usarlo
-      if (workerAssignment.percentage !== undefined && workerAssignment.percentage !== null) {
-        workerPercentage = workerAssignment.percentage;
-        workerAssigned = true;
-      }
-      
-      // Si el trabajador tiene tiempo específico, usarlo
-      if (workerAssignment.time !== undefined && workerAssignment.time !== null) {
-        time = workerAssignment.time;
-      }
-    }
-  }
-
-  // Si no se encontró asignación específica del trabajador o no tenía porcentaje,
-  // usar el porcentaje general del servicio
-  if (!workerAssigned) {
-    if (service.percentage !== undefined && service.percentage !== null) {
-      workerPercentage = Number(service.percentage);
-    } else {
-      throw new BadRequestException(
-        `El servicio ${service.id} no tiene configurado el porcentaje para el trabajador.`
+    // Primero buscar si el trabajador específico tiene configuraciones en el array workers
+    if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
+      const workerAssignment = service.workers.find(
+        (worker: any) => worker.id === companyWorkerId
       );
+
+      if (workerAssignment) {
+        // Si el trabajador tiene porcentaje específico, usarlo
+        if (workerAssignment.percentage !== undefined && workerAssignment.percentage !== null) {
+          workerPercentage = workerAssignment.percentage;
+          workerAssigned = true;
+        }
+
+        // Si el trabajador tiene tiempo específico, usarlo
+        if (workerAssignment.time !== undefined && workerAssignment.time !== null) {
+          time = workerAssignment.time;
+        }
+      }
     }
+
+    // Si no se encontró asignación específica del trabajador o no tenía porcentaje,
+    // usar el porcentaje general del servicio
+    if (!workerAssigned) {
+      if (service.percentage !== undefined && service.percentage !== null) {
+        workerPercentage = Number(service.percentage);
+      } else {
+        throw new BadRequestException(
+          `El servicio ${service.id} no tiene configurado el porcentaje para el trabajador.`
+        );
+      }
+    }
+
+    companyPercentage = 100 - workerPercentage;
+
+    // Validaciones de porcentajes
+    if (workerPercentage < 0 || workerPercentage > 100) {
+      throw new BadRequestException(`El porcentaje del trabajador (${workerPercentage}%) debe estar entre 0 y 100`);
+    }
+
+    if (companyPercentage < 0 || companyPercentage > 100) {
+      throw new BadRequestException(`El porcentaje de la compañía (${companyPercentage}%) debe estar entre 0 y 100`);
+    }
+
+    const total = workerPercentage + companyPercentage;
+    if (Math.abs(total - 100) > 0.01) {
+      throw new BadRequestException(`La suma de porcentajes (${total}%) debe ser 100%`);
+    }
+
+    return { workerPercentage, companyPercentage, workerAssigned, time };
   }
-
-  companyPercentage = 100 - workerPercentage;
-
-  // Validaciones de porcentajes
-  if (workerPercentage < 0 || workerPercentage > 100) {
-    throw new BadRequestException(`El porcentaje del trabajador (${workerPercentage}%) debe estar entre 0 y 100`);
-  }
-
-  if (companyPercentage < 0 || companyPercentage > 100) {
-    throw new BadRequestException(`El porcentaje de la compañía (${companyPercentage}%) debe estar entre 0 y 100`);
-  }
-
-  const total = workerPercentage + companyPercentage;
-  if (Math.abs(total - 100) > 0.01) {
-    throw new BadRequestException(`La suma de porcentajes (${total}%) debe ser 100%`);
-  }
-
-  return { workerPercentage, companyPercentage, workerAssigned, time };
-}
   private calculateAmounts(
     totalCost: number,
     workerPercentage: number,
@@ -450,7 +450,7 @@ private calculatePercentagesAndTime(
         companyWorkerId: detail.companyWorkerId,
         workerName: workerName,
         totalCost: detailCost,
-        totalTime: detailTime, 
+        totalTime: detailTime,
         workerPercentage,
         companyPercentage,
         totalWorker: calculatedAmounts.totalWorker,
@@ -2014,5 +2014,257 @@ private calculatePercentagesAndTime(
         currentSessionStatusText: this.getSessionStatusText(session.sessionStatus)
       }
     };
+  }
+
+
+  /**
+ * Obtener todas las sesiones asignadas al trabajador autenticado
+ * @param userId ID del usuario trabajador autenticado
+ * @param getSessionsDto DTO con parámetros de filtro y paginación
+ * @returns Lista paginada de sesiones asignadas al trabajador
+ */
+  async getSessionsForAuthenticatedWorker(
+    userId: number,
+    getSessionsDto: GetSessionsDto
+  ): Promise<PaginationResult<any>> {
+    console.log(`📋 Obteniendo sesiones para trabajador autenticado (userId: ${userId})`);
+
+    // 1. Buscar al trabajador por userId
+    const worker = await this.workerRepository.findOne({
+      where: { userId: userId }
+    });
+
+    if (!worker) {
+      throw new NotFoundException('Trabajador no encontrado');
+    }
+
+    // 2. Buscar las asignaciones activas del trabajador en company_worker
+    const companyWorkers = await this.companyWorkerRepository.find({
+      where: {
+        workerId: worker.id,
+        isActive: 1
+      },
+      relations: ['company']
+    });
+
+    if (companyWorkers.length === 0) {
+      throw new NotFoundException('No tienes asignaciones activas en ninguna compañía');
+    }
+
+    // 3. Obtener los IDs de las asignaciones de compañía
+    const companyWorkerIds = companyWorkers.map(cw => cw.id);
+
+    // 4. Crear query usando joins con las tablas relacionadas
+    const query = this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .innerJoin('session', 'session', 'session.id = detail.session_id')
+      .leftJoin('client', 'client', 'client.id = session.client_id')
+      .leftJoin('service', 'service', 'service.id = detail.service_id')
+      .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
+      .leftJoin('worker', 'worker', 'worker.id = companyWorker.worker_id')
+      .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
+      .select([
+        'detail.id AS detailId',
+        'detail.cost AS cost',
+        'detail.total_time AS totalTime',
+        'detail.total_worker AS totalWorker',
+        'detail.total_company AS totalCompany',
+        'detail.status AS detailStatus',
+        'detail.start_datetime AS detailStartDatetime',
+        'session.id AS sessionId',
+        'session.client_id AS clientId',
+        'session.session_datetime AS sessionDatetime',
+        'session.session_status AS sessionStatus',
+        'session.total_cost AS sessionTotalCost',
+        'session.total_time AS sessionTotalTime',
+        'session.start_datetime AS sessionStartDatetime',
+        'session.status AS sessionStatusFlag',
+        'session.ia_response AS iaResponse',
+        'session.updated_at AS sessionUpdatedAt',
+        'client.name AS clientName',
+        'client.last_name AS clientLastName',
+        'service.id AS serviceId',
+        'service.name AS serviceName',
+        'service.description AS serviceDescription',
+        'companyWorker.id AS companyWorkerId',
+        'company.id AS companyId',
+        'company.name AS companyName',
+        'worker.id AS workerId',
+        'worker.name AS workerName',
+        'worker.last_name AS workerLastName'
+      ])
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds })
+      .orderBy('session.session_datetime', getSessionsDto.orderBy === 'oldest' ? 'ASC' : 'DESC');
+
+    // 5. Aplicar filtros adicionales si existen
+    if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      query.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
+        startDate: new Date(getSessionsDto.startDate),
+        endDate: new Date(getSessionsDto.endDate)
+      });
+    }
+
+    if (getSessionsDto.sessionStatus !== undefined) {
+      query.andWhere('session.session_status = :sessionStatus', {
+        sessionStatus: getSessionsDto.sessionStatus
+      });
+    }
+
+    if (getSessionsDto.detailStatus !== undefined) {
+      query.andWhere('detail.status = :detailStatus', {
+        detailStatus: getSessionsDto.detailStatus
+      });
+    }
+
+    // 6. Aplicar paginación y obtener datos
+    const details = await query
+      .skip((getSessionsDto.page - 1) * getSessionsDto.limit)
+      .take(getSessionsDto.limit)
+      .getRawMany();
+
+    // 7. Obtener el total (sin paginación)
+    // Primero necesitamos contar sin los filtros de paginación (skip y take)
+    const countQuery = this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .innerJoin('session', 'session', 'session.id = detail.session_id')
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
+
+    // Aplicar los mismos filtros a la query de conteo
+    if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      countQuery.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
+        startDate: new Date(getSessionsDto.startDate),
+        endDate: new Date(getSessionsDto.endDate)
+      });
+    }
+
+    if (getSessionsDto.sessionStatus !== undefined) {
+      countQuery.andWhere('session.session_status = :sessionStatus', {
+        sessionStatus: getSessionsDto.sessionStatus
+      });
+    }
+
+    if (getSessionsDto.detailStatus !== undefined) {
+      countQuery.andWhere('detail.status = :detailStatus', {
+        detailStatus: getSessionsDto.detailStatus
+      });
+    }
+
+    const total = await countQuery.getCount();
+
+    const sessionMap = new Map<number, any>();
+
+    for (const detail of details) {
+      const sessionId = detail.sessionId;
+
+      if (!sessionMap.has(sessionId)) {
+        sessionMap.set(sessionId, {
+          id: sessionId,
+          clientId: detail.clientId,
+          clientName: detail.clientName ? `${detail.clientName || ''} ${detail.clientLastName || ''}`.trim() : 'Cliente no encontrado',
+          clientLastName: detail.clientLastName || '',
+          sessionDatetime: detail.sessionDatetime,
+          sessionStatus: detail.sessionStatus,
+          sessionStatusText: this.getSessionStatusText(detail.sessionStatus),
+          totalCost: parseFloat(detail.sessionTotalCost) || 0, // Convertir a número
+          totalTime: parseFloat(detail.sessionTotalTime) || 0, // Convertir a número
+          startDatetime: detail.sessionStartDatetime,
+          status: detail.sessionStatusFlag,
+          iaResponse: detail.iaResponse,
+          createdAt: detail.sessionUpdatedAt,
+          workerServices: []
+        });
+      }
+
+      // Convertir todos los valores numéricos de string a número
+      const cost = parseFloat(detail.cost) || 0;
+      const totalTime = parseFloat(detail.totalTime) || 0;
+      const totalWorker = parseFloat(detail.totalWorker) || 0;
+      const totalCompany = parseFloat(detail.totalCompany) || 0;
+
+      // Calcular porcentajes
+      let workerPercentage = 0;
+      let companyPercentage = 0;
+
+      if (cost > 0) {
+        workerPercentage = parseFloat(((totalWorker / cost) * 100).toFixed(2));
+        companyPercentage = parseFloat(((totalCompany / cost) * 100).toFixed(2));
+      }
+
+      // Agregar el servicio específico del trabajador
+      const sessionData = sessionMap.get(sessionId);
+      sessionData.workerServices.push({
+        detailId: detail.detailId,
+        serviceId: detail.serviceId,
+        serviceName: detail.serviceName || 'Servicio no encontrado',
+        serviceDescription: detail.serviceDescription || '',
+        cost: cost,
+        totalTime: totalTime,
+        totalWorker: totalWorker,
+        totalCompany: totalCompany,
+        detailStatus: detail.detailStatus || 1,
+        detailStatusText: this.getDetailStatusText(detail.detailStatus || 1),
+        startDatetime: detail.detailStartDatetime,
+        companyId: detail.companyId,
+        companyName: detail.companyName || 'Compañía no encontrada',
+        workerPercentage: workerPercentage,
+        companyPercentage: companyPercentage
+      });
+    }
+
+    // 9. Convertir el mapa a array y calcular estadísticas
+    const sessions = Array.from(sessionMap.values()).map(session => {
+      // Asegurarse de que los valores sean números
+      const workerTotalCost = session.workerServices.reduce((sum, service) => {
+        return sum + (typeof service.cost === 'number' ? service.cost : parseFloat(service.cost) || 0);
+      }, 0);
+
+      const workerTotalTime = session.workerServices.reduce((sum, service) => {
+        return sum + (typeof service.totalTime === 'number' ? service.totalTime : parseFloat(service.totalTime) || 0);
+      }, 0);
+
+      return {
+        ...session,
+        workerTotalCost: parseFloat(workerTotalCost.toFixed(2)),
+        workerTotalTime: parseFloat(workerTotalTime.toFixed(2)),
+        workerTotalServices: session.workerServices.length,
+        workerOverallStatus: this.calculateWorkerOverallStatus(session.workerServices)
+      };
+    });
+
+    // 10. Ordenar sesiones según el criterio
+    if (getSessionsDto.orderBy === 'oldest') {
+      sessions.sort((a, b) => new Date(a.sessionDatetime).getTime() - new Date(b.sessionDatetime).getTime());
+    } else {
+      sessions.sort((a, b) => new Date(b.sessionDatetime).getTime() - new Date(a.sessionDatetime).getTime());
+    }
+
+    return {
+      data: sessions,
+      meta: {
+        page: getSessionsDto.page,
+        limit: getSessionsDto.limit,
+        total: total,
+        totalPages: Math.ceil(total / getSessionsDto.limit),
+        hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
+        hasPrev: getSessionsDto.page > 1,
+      }
+    };
+  }
+
+  /**
+   * Calcular el estado general del trabajador para una sesión basado en sus detalles
+   */
+  private calculateWorkerOverallStatus(workerServices: any[]): string {
+    if (workerServices.length === 0) return 'Sin servicios';
+
+    const allCompleted = workerServices.every(service => service.detailStatus === 3);
+    const anyInProgress = workerServices.some(service => service.detailStatus === 2);
+    const anyScheduled = workerServices.some(service => service.detailStatus === 1);
+
+    if (allCompleted) return 'Completado';
+    if (anyInProgress) return 'En proceso';
+    if (anyScheduled) return 'Agendado';
+
+    return 'Desconocido';
   }
 }

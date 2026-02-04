@@ -296,54 +296,6 @@ export class ServiceService {
   }
 
   /**
-   * Obtener servicios asignados a un trabajador específico (para trabajadores)
-   */
-  async findServicesByWorker(userId: number): Promise<any[]> {
-    // 1. Buscar el worker asociado al usuario
-    const worker = await this.workerRepository.findOne({
-      where: { userId: userId },
-      relations: ['user']
-    });
-
-    if (!worker) {
-      throw new NotFoundException('Worker not found for this user');
-    }
-
-    // 2. Buscar el company_worker activo para este trabajador
-    const companyWorker = await this.companyWorkerRepository.findOne({
-      where: { 
-        workerId: worker.id,
-        isActive: 1 
-      }
-    });
-
-    if (!companyWorker) {
-      throw new UnauthorizedException('No estás asignado a una compañía activa');
-    }
-
-    // 3. Buscar servicios que tengan asignado a este worker (company_worker.id)
-    // Usamos JSON_SEARCH para buscar en el array de objetos
-    const services = await this.serviceRepository
-      .createQueryBuilder('service')
-      .where('service.companyId = :companyId', { companyId: companyWorker.companyId })
-      .andWhere('JSON_SEARCH(service.workers, "one", :workerId, NULL, "$[*].id") IS NOT NULL', {
-        workerId: companyWorker.id.toString()
-      })
-      .getMany();
-
-    // 4. Enriquecer con información de los services
-    return await Promise.all(
-      services.map(async (service) => {
-        const workersInfo = await this.getWorkersInfoForService(service.workers, companyWorker.companyId);
-        return {
-          ...service,
-          workersInfo
-        };
-      })
-    );
-  }
-
-  /**
    * Métodos auxiliares (opcional, para compatibilidad)
    */
   async findAll(): Promise<Service[]> {
