@@ -113,4 +113,16 @@ export class SessionController {
       getSessionsDto
     );
   }
+
+
+  @Post('client/create')
+  @Roles('cli')
+  async createSessionByClient(
+    @Request() req,
+    @Body() createSessionWithDetailDto: CreateSessionWithDetailDto
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    return this.sessionService.createSessionByClient(createSessionWithDetailDto, userId);
+  }
+
 }

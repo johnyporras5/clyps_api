@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, Between } from 'typeorm';
+import { Repository, In, Between } from 'typeorm';
 import { Session } from './entities/session.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { CreateSessionWithDetailDto, SessionDetailItemDto } from './dto/create-session-with-detail.dto';
@@ -18,7 +18,6 @@ import { GetSessionsDto } from './dto/get-sessions.dto';
 import { SessionResponse, SessionDetailResponse } from './types/session-response.type';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
-
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
@@ -2267,4 +2266,458 @@ export class SessionService {
 
     return 'Desconocido';
   }
+
+/**
+ * Crear una sesión con detalles para un cliente autenticado
+ * @param createSessionWithDetailDto Datos de la sesión y servicios
+ * @param clientUserId ID del usuario cliente autenticado
+ * @returns Resultado de la creación de la sesión
+ */
+async createSessionByClient(
+  createSessionWithDetailDto: CreateSessionWithDetailDto,
+  clientUserId: number
+): Promise<{
+  message: string;
+  isNew: boolean;
+  wasAlreadyAssociated: boolean;
+  clientId: number;
+  companyId: number | null;
+  companiesBefore: number[];
+  companiesAfter: number[];
+  calculations?: Array<{
+    serviceId: number;
+    serviceName: string;
+    companyWorkerId: number;
+    workerName: string;
+    totalCost: number;
+    totalTime: number;
+    workerPercentage: number;
+    companyPercentage: number;
+    totalWorker: number;
+    totalCompany: number;
+    calculationDetails: string;
+    workerAssigned: boolean;
+  }>;
+  createdDetails?: SessionDetail[];
+  existingSession?: Session;
+}> {
+  console.log(`👤 Cliente creando sesión (userId: ${clientUserId})`);
+
+  // 1. Obtener el cliente a partir del userId
+  const client = await this.clientRepository.findOne({
+    where: { userId: clientUserId }
+  });
+
+  if (!client) {
+    throw new NotFoundException('Cliente no encontrado');
+  }
+
+  // 2. Validaciones iniciales - El cliente no debe enviar clientId, se usa el suyo
+  if (createSessionWithDetailDto.clientId) {
+    console.warn(`⚠️ Cliente intentó especificar clientId: ${createSessionWithDetailDto.clientId}. Se usará su propio ID: ${client.id}`);
+  }
+
+  // Usar el ID del cliente autenticado
+  const clientId = client.id;
+
+  if (!createSessionWithDetailDto.details || createSessionWithDetailDto.details.length === 0) {
+    throw new BadRequestException('Debe proporcionar al menos un servicio');
+  }
+
+  // 3. Validar que todos los servicios sean de la misma compañía (por simplicidad)
+  const companyWorkerIds = createSessionWithDetailDto.details.map(d => d.companyWorkerId);
+  const uniqueCompanyWorkerIds = [...new Set(companyWorkerIds)];
+  
+  // Obtener información de los companyWorkers para validar compañías
+  const companyWorkers = await this.companyWorkerRepository.find({
+    where: { id: In(uniqueCompanyWorkerIds) },
+    relations: ['company']
+  });
+
+  if (companyWorkers.length === 0) {
+    throw new NotFoundException('No se encontraron los trabajadores especificados');
+  }
+
+  // Verificar que todos los trabajadores sean de la misma compañía
+  const companyIds = companyWorkers.map(cw => cw.company?.id).filter(id => id !== undefined);
+  const uniqueCompanyIds = [...new Set(companyIds)];
+
+  if (uniqueCompanyIds.length === 0) {
+    throw new BadRequestException('No se pudo determinar la compañía de los trabajadores');
+  }
+
+  if (uniqueCompanyIds.length > 1) {
+    throw new BadRequestException('Todos los servicios deben ser de la misma compañía');
+  }
+
+  const companyId = uniqueCompanyIds[0];
+  const company = companyWorkers[0]?.company;
+
+  if (!company) {
+    throw new NotFoundException('Compañía no encontrada');
+  }
+
+  const companyName = company.name;
+
+  // 4. Verificar si el cliente ya tiene una cita en la misma fecha y hora
+  if (createSessionWithDetailDto.sessionDatetime) {
+    const existingAppointment = await this.checkIfClientHasAppointmentAtSameTime(
+      clientId,
+      createSessionWithDetailDto.sessionDatetime,
+      companyId
+    );
+
+    if (existingAppointment) {
+      const appointmentDate = new Date(existingAppointment.sessionDatetime);
+      const formattedDate = appointmentDate.toLocaleDateString('es-ES', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+      const formattedTime = appointmentDate.toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      throw new BadRequestException({
+        message: `Ya tienes una cita agendada para la misma fecha y hora.`,
+        details: {
+          existingAppointmentId: existingAppointment.id,
+          appointmentDateTime: existingAppointment.sessionDatetime,
+          formattedDate: formattedDate,
+          formattedTime: formattedTime,
+          sessionStatus: existingAppointment.sessionStatus,
+          statusText: this.getSessionStatusText(existingAppointment.sessionStatus)
+        },
+        suggestion: 'Por favor, seleccione una fecha y hora diferente para esta cita.'
+      });
+    }
+  }
+
+  // 5. Definir tipo para las validaciones de servicio
+  type ServiceValidationType = {
+    detail: SessionDetailItemDto;
+    service: Service;
+    companyWorker: CompanyWorker;
+    workerPercentage: number;
+    companyPercentage: number;
+    workerAssigned: boolean;
+    serviceCostNumber: number;
+    calculatedAmounts: {
+      cost: number;
+      totalWorker: number;
+      totalCompany: number;
+      calculationDetails: string;
+    };
+    workerName: string;
+    detailCost: number;
+    detailTime: number;
+  };
+
+  // 6. Calcular todos los totales y validar ANTES de crear la sesión
+  let totalSessionCost = 0;
+  let totalSessionTime = 0;
+  const calculations: Array<{
+    serviceId: number;
+    serviceName: string;
+    companyWorkerId: number;
+    workerName: string;
+    totalCost: number;
+    totalTime: number;
+    workerPercentage: number;
+    companyPercentage: number;
+    totalWorker: number;
+    totalCompany: number;
+    calculationDetails: string;
+    workerAssigned: boolean;
+  }> = [];
+
+  const serviceValidations: ServiceValidationType[] = [];
+
+  // Pre-validar todos los servicios
+  for (const detail of createSessionWithDetailDto.details) {
+    // Los clientes pueden agendar servicios de cualquier compañía
+    const service = await this.serviceRepository.findOne({
+      where: { id: detail.serviceId }
+    });
+
+    if (!service) {
+      throw new NotFoundException(`Servicio con ID ${detail.serviceId} no encontrado`);
+    }
+
+    // Verificar que el servicio pertenezca a la misma compañía que el trabajador
+    if (service.companyId !== companyId) {
+      throw new BadRequestException(
+        `El servicio ${service.name} no pertenece a la compañía del trabajador seleccionado`
+      );
+    }
+
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        id: detail.companyWorkerId,
+        companyId: companyId
+      },
+      relations: ['worker']
+    });
+
+    if (!companyWorker) {
+      throw new NotFoundException(`Trabajador de compañía con ID ${detail.companyWorkerId} no encontrado`);
+    }
+
+    if (companyWorker.isActive !== 1) {
+      throw new BadRequestException(`El trabajador de compañía con ID ${detail.companyWorkerId} no está activo`);
+    }
+
+    // Validar porcentajes del servicio
+    this.validateServicePercentagesAndTime(service);
+    const { workerPercentage, companyPercentage, workerAssigned, time: detailTime } = this.calculatePercentagesAndTime(
+      service,
+      detail.companyWorkerId
+    );
+
+    let serviceCost = service.cost || 0;
+
+    // Convertir a número decimal de forma segura
+    let serviceCostNumber: number;
+    if (typeof serviceCost === 'string') {
+      serviceCostNumber = parseFloat(serviceCost);
+    } else if (typeof serviceCost === 'number') {
+      serviceCostNumber = serviceCost;
+    } else if (serviceCost && typeof serviceCost === 'object') {
+      serviceCostNumber = parseFloat(String(serviceCost));
+    } else {
+      serviceCostNumber = 0;
+    }
+
+    if (serviceCostNumber <= 0) {
+      throw new BadRequestException(`El costo del servicio "${service.name}" debe ser mayor a 0`);
+    }
+
+    const calculatedAmounts = this.calculateAmounts(serviceCostNumber, workerPercentage, companyPercentage);
+
+    const detailCost = calculatedAmounts.cost;
+    totalSessionCost += detailCost;
+    totalSessionTime += detailTime;
+
+    const workerName = companyWorker.worker
+      ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+      : `Trabajador ID: ${companyWorker.id}`;
+
+    serviceValidations.push({
+      detail,
+      service,
+      companyWorker,
+      workerPercentage,
+      companyPercentage,
+      workerAssigned,
+      serviceCostNumber,
+      calculatedAmounts,
+      workerName,
+      detailCost,
+      detailTime
+    });
+
+    calculations.push({
+      serviceId: detail.serviceId,
+      serviceName: service.name || '',
+      companyWorkerId: detail.companyWorkerId,
+      workerName: workerName,
+      totalCost: detailCost,
+      totalTime: detailTime,
+      workerPercentage,
+      companyPercentage,
+      totalWorker: calculatedAmounts.totalWorker,
+      totalCompany: calculatedAmounts.totalCompany,
+      calculationDetails: calculatedAmounts.calculationDetails,
+      workerAssigned
+    });
+  }
+
+  // 7. Crear datos de la sesión con los totales calculados
+  const sessionData: CreateSessionDto = {
+    clientId: clientId, // Usar el ID del cliente autenticado
+    sessionDatetime: createSessionWithDetailDto.sessionDatetime,
+    sessionStatus: createSessionWithDetailDto.sessionStatus !== undefined ? createSessionWithDetailDto.sessionStatus : 1,
+    totalCost: totalSessionCost,
+    totalTime: totalSessionTime,
+    iaResponse: createSessionWithDetailDto.iaResponse,
+    startDatetime: createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime || new Date(),
+    status: createSessionWithDetailDto.status !== undefined ? createSessionWithDetailDto.status : 1,
+  };
+
+  // 8. Verificar si ya existe una sesión con los mismos datos
+  const existingSession = await this.checkExistingSession(sessionData);
+
+  if (existingSession) {
+    const existingDetails: SessionDetail[] = [];
+
+    for (const validation of serviceValidations) {
+      const existingDetail = await this.checkExistingSessionDetail(
+        existingSession.id,
+        validation.detail.serviceId,
+        validation.detail.companyWorkerId
+      );
+
+      if (existingDetail) {
+        existingDetails.push(existingDetail);
+      }
+    }
+
+    if (existingDetails.length === createSessionWithDetailDto.details.length) {
+      throw new BadRequestException({
+        message: `Ya tienes una sesión con los mismos datos y todos los servicios ya están asignados.`,
+        existingSession,
+        existingDetails,
+        recommendation: 'Si desea modificar la sesión existente, use el endpoint de actualización.'
+      });
+    }
+
+    return {
+      message: `Ya tienes una sesión con los mismos datos (ID: ${existingSession.id}). Para agregar nuevos servicios, debe crear una nueva sesión con datos diferentes.`,
+      isNew: false,
+      wasAlreadyAssociated: false,
+      clientId: clientId,
+      companyId: companyId,
+      companiesBefore: [],
+      companiesAfter: [],
+      existingSession: existingSession
+    };
+  }
+
+  // 9. Crear la sesión - usar el método create sin adminId para clientes
+  const session = await this.createSessionForClient(sessionData);
+  const isNew = true;
+  const createdDetails: SessionDetail[] = [];
+
+  // 10. Crear los detalles de sesión
+  for (const validation of serviceValidations) {
+    const { detail, service, companyWorker, calculatedAmounts, detailTime } = validation;
+
+    const sessionDetailData = {
+      cost: calculatedAmounts.cost,
+      serviceId: detail.serviceId,
+      companyWorkerId: detail.companyWorkerId,
+      sessionId: session.id,
+      startDatetime: detail.detailStartDatetime || session.startDatetime,
+      totalTime: detailTime,
+      totalWorker: calculatedAmounts.totalWorker,
+      totalCompany: calculatedAmounts.totalCompany,
+      status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
+    };
+
+    try {
+      const sessionDetail = this.sessionDetailRepository.create(sessionDetailData);
+      const savedSessionDetail = await this.sessionDetailRepository.save(sessionDetail);
+      createdDetails.push(savedSessionDetail);
+
+      // Enviar correos de confirmación para este servicio
+      await this.sendConfirmationEmails(
+        session,
+        savedSessionDetail,
+        clientId,
+        detail.companyWorkerId,
+        detail.serviceId,
+        companyId
+      );
+    } catch (error) {
+      // Si falla algún detalle, eliminar todo lo creado
+      if (createdDetails.length > 0) {
+        await this.sessionDetailRepository.remove(createdDetails);
+      }
+
+      await this.sessionRepository.delete({
+        id: session.id,
+        clientId: session.clientId
+      });
+
+      throw new BadRequestException(`Error al crear el detalle para el servicio ${service.name}: ${error.message}`);
+    }
+  }
+
+  // 11. Verificar y actualizar las compañías del cliente
+  let wasAlreadyAssociated = false;
+  let companiesBefore: number[] = [];
+  let companiesAfter: number[] = [];
+
+  companiesBefore = client.companies || [];
+  const targetCompanyId = Number(companyId);
+
+  if (!companiesBefore.includes(targetCompanyId)) {
+    const updatedCompanies = [...companiesBefore, targetCompanyId];
+    companiesAfter = updatedCompanies;
+
+    await this.clientRepository.update(client.id, {
+      companies: updatedCompanies
+    });
+
+    wasAlreadyAssociated = false;
+    console.log(`✅ Cliente ${client.id} asociado a compañía ${companyId}`);
+  } else {
+    companiesAfter = companiesBefore;
+    wasAlreadyAssociated = true;
+    console.log(`ℹ️ Cliente ${client.id} ya estaba asociado a compañía ${companyId}`);
+  }
+
+  // 12. Construir mensaje de éxito
+  let message: string;
+
+  if (wasAlreadyAssociated) {
+    message = `Cita creada exitosamente con ${createdDetails.length} servicio(s). Ya estabas asociado a ${companyName}.`;
+  } else {
+    message = `Cita creada exitosamente con ${createdDetails.length} servicio(s). Has sido asociado a ${companyName}.`;
+  }
+
+  // 13. Mostrar resumen en consola
+  console.log('📊 RESUMEN DE CREACIÓN DE CITA POR CLIENTE:');
+  console.log(`- Sesión ID: ${session.id}`);
+  console.log(`- Cliente ID: ${clientId}`);
+  console.log(`- Total Costo: $${totalSessionCost}`);
+  console.log(`- Total Tiempo: ${totalSessionTime} minutos`);
+  console.log(`- Servicios creados: ${createdDetails.length}`);
+  console.log(`- Compañía: ${companyName} (ID: ${companyId})`);
+  console.log(`- Trabajadores: ${uniqueCompanyWorkerIds.length}`);
+
+  return {
+    message,
+    isNew,
+    wasAlreadyAssociated,
+    clientId,
+    companyId,
+    companiesBefore,
+    companiesAfter,
+    calculations,
+    createdDetails
+  };
+}
+
+/**
+ * Método para crear sesión sin validación de administrador (para clientes)
+ */
+async createSessionForClient(createSessionDto: CreateSessionDto): Promise<Session> {
+  const existingSession = await this.checkExistingSession(createSessionDto);
+
+  if (existingSession) {
+    throw new BadRequestException({
+      message: 'Ya existe una cita con los mismos datos',
+      existingSession: existingSession,
+      duplicateData: {
+        clientId: createSessionDto.clientId,
+        sessionDatetime: createSessionDto.sessionDatetime,
+        sessionStatus: createSessionDto.sessionStatus
+      }
+    });
+  }
+
+  const sessionData = {
+    ...createSessionDto,
+    sessionStatus: createSessionDto.sessionStatus !== undefined ? createSessionDto.sessionStatus : 1,
+    status: createSessionDto.status !== undefined ? createSessionDto.status : 1,
+    startDatetime: createSessionDto.startDatetime || createSessionDto.sessionDatetime || new Date(),
+  };
+
+  const session = this.sessionRepository.create(sessionData);
+  return await this.sessionRepository.save(session);
+}
+  
 }
