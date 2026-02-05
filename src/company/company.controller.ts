@@ -1,15 +1,17 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Body, 
-  Param, 
-  Put, 
-  Delete, 
-  ParseIntPipe, 
-  UseGuards, 
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Put,
+  Delete,
+  ParseIntPipe,
+  UseGuards,
   Req,
-  Query
+  Query,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import { CompanyService } from './company.service';
 import { Company } from './entities/company.entity';
@@ -19,10 +21,12 @@ import { CompanyWithLogoUrl } from './types/company-with-logo-url.type';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginationResult } from '../common/utils/pagination.util';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 
 @Controller('companys')
 export class CompanyController {
-  constructor(private readonly companyService: CompanyService) {}
+  constructor(private readonly companyService: CompanyService) { }
 
   @Get()
   async findAll(
@@ -70,5 +74,22 @@ export class CompanyController {
     @Param('id', ParseIntPipe) id: number
   ): Promise<void> {
     return this.companyService.remove(id);
+  }
+
+
+  @Put('admin/profile')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('logo'))
+  async updateAdminProfile(
+    @Req() req,
+    @Body() updateAdminProfileDto: UpdateAdminProfileDto,
+    @UploadedFile() logoFile?: Express.Multer.File
+  ): Promise<CompanyWithLogoUrl> {
+    const userId = req.user.sub;
+    return this.companyService.updateAdminProfile(
+      userId,
+      updateAdminProfileDto,
+      logoFile
+    );
   }
 }

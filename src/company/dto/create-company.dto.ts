@@ -25,4 +25,8 @@ export class CreateCompanyDto {
   @IsOptional()
   @IsNumber()
   userId?: number;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
 }

@@ -6,14 +6,14 @@ export class GetSessionsDto {
   @Type(() => Number)
   @IsNumber()
   @Min(1)
-  page: number = 1; 
+  page: number = 1;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(1)
   @Max(100)
-  limit: number = 10; 
+  limit: number = 10;
 
   @IsOptional()
   @IsIn(['recent', 'oldest', 'priority'])
@@ -46,5 +46,13 @@ export class GetSessionsDto {
   @IsNumber()
   @Min(1)
   @Max(3)
-  detailStatus?: number; 
+  detailStatus?: number;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  onlyScheduled?: boolean; // Filtrar solo citas agendadas (sessionStatus = 1)
+
+  @IsOptional()
+  @Type(() => Boolean)
+  today?: boolean;
 }

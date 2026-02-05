@@ -1437,161 +1437,176 @@ export class SessionService {
     };
   }
 
-  async findAllSessionsSimple(
-    adminId: number,
-    getSessionsDto: GetSessionsDto
-  ): Promise<PaginationResult<any>> {
-    const adminCompany = await this.companyRepository.findOne({
-      where: { userId: adminId }
-    });
+async findAllSessionsSimple(
+  adminId: number,
+  getSessionsDto: GetSessionsDto
+): Promise<PaginationResult<any>> {
+  const adminCompany = await this.companyRepository.findOne({
+    where: { userId: adminId }
+  });
 
-    if (!adminCompany) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
-    }
-
-    // Construir condiciones where
-    const whereConditions: any = {};
-
-    // Filtrar por fechas si se proporcionan
-    if (getSessionsDto.startDate && getSessionsDto.endDate) {
-      whereConditions.sessionDatetime = Between(
-        new Date(getSessionsDto.startDate),
-        new Date(getSessionsDto.endDate)
-      );
-    }
-
-    if (getSessionsDto.clientId) {
-      whereConditions.clientId = getSessionsDto.clientId;
-    }
-
-    if (getSessionsDto.sessionStatus !== undefined) {
-      whereConditions.sessionStatus = getSessionsDto.sessionStatus;
-    }
-
-    // Determinar ordenamiento
-    let order: any = {};
-    switch (getSessionsDto.orderBy) {
-      case 'recent':
-        order = { sessionDatetime: 'DESC' };
-        break;
-      case 'oldest':
-        order = { sessionDatetime: 'ASC' };
-        break;
-      case 'priority':
-        order = { sessionStatus: 'ASC', sessionDatetime: 'ASC' };
-        break;
-      default:
-        order = { sessionDatetime: 'DESC' };
-    }
-
-    // Obtener las sesiones
-    const [sessions, total] = await this.sessionRepository.findAndCount({
-      where: whereConditions,
-      order: order,
-      skip: (getSessionsDto.page - 1) * getSessionsDto.limit,
-      take: getSessionsDto.limit,
-    });
-
-    // Enriquecer los datos con información completa
-    const enrichedSessions = await Promise.all(
-      sessions.map(async (session) => {
-        // Obtener cliente
-        const client = await this.clientRepository.findOne({
-          where: { id: session.clientId }
-        });
-
-        // Obtener TODOS los detalles de la sesión
-        const sessionDetails = await this.sessionDetailRepository.find({
-          where: { sessionId: session.id }
-        });
-
-        let companyId = adminCompany.id;
-        let companyName = adminCompany.name;
-
-        // Array para servicios
-        const services: any[] = [];
-
-        // Calcular totales sumando los detalles
-        let totalCost = 0;
-        let totalTime = 0;
-
-        if (sessionDetails.length > 0) {
-          // Procesar cada detalle
-          for (const detail of sessionDetails) {
-            // Obtener companyWorker
-            const companyWorker = await this.companyWorkerRepository.findOne({
-              where: { id: detail.companyWorkerId },
-              relations: ['worker', 'company']
-            });
-
-            // Obtener servicio
-            const service = await this.serviceRepository.findOne({
-              where: { id: detail.serviceId }
-            });
-
-            // Si es el primer detalle y tiene compañía, usar esa
-            if (companyId === adminCompany.id && companyWorker?.company) {
-              companyId = companyWorker.company.id;
-              companyName = companyWorker.company.name;
-            }
-
-            // Agregar servicio al array
-            services.push({
-              serviceId: detail.serviceId,
-              serviceName: service?.name || '',
-              serviceDescription: service?.description || '',
-              serviceCost: Number(detail.cost || 0),
-              serviceTime: detail.totalTime || 0,
-              companyWorkerId: detail.companyWorkerId,
-              workerName: companyWorker?.worker ?
-                `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim() : '',
-              workerLastName: companyWorker?.worker?.lastName || '',
-              totalWorker: Number(detail.totalWorker || 0),
-              totalCompany: Number(detail.totalCompany || 0),
-              detailStatus: detail.status || 1
-            });
-
-            // Acumular totales
-            totalCost += Number(detail.cost || 0);
-            totalTime += Number(detail.totalTime || 0);
-          }
-        }
-
-        return {
-          id: session.id,
-          clientId: session.clientId,
-          clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
-          clientLastName: client?.lastName || '',
-          companyId: companyId,
-          companyName: companyName,
-          sessionDatetime: session.sessionDatetime,
-          sessionStatus: session.sessionStatus,
-          sessionStatusText: this.getSessionStatusText(session.sessionStatus),
-          totalCost: totalCost, // Usar total calculado de los detalles
-          totalTime: totalTime, // Usar total calculado de los detalles
-          startDatetime: session.startDatetime,
-          status: session.status,
-          iaResponse: session.iaResponse,
-          servicesCount: sessionDetails.length, // Número de servicios
-          services: services, // Array con todos los servicios
-          createdAt: session['createdAt'] || null,
-          updatedAt: session['updatedAt'] || null
-        };
-      })
-    );
-
-    return {
-      data: enrichedSessions,
-      meta: {
-        page: getSessionsDto.page,
-        limit: getSessionsDto.limit,
-        total: total,
-        totalPages: Math.ceil(total / getSessionsDto.limit),
-        hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
-        hasPrev: getSessionsDto.page > 1,
-      }
-    };
+  if (!adminCompany) {
+    throw new NotFoundException('El administrador no tiene una compañía asignada');
   }
+
+  // Construir condiciones where
+  const whereConditions: any = {};
+
+  // FILTRO: Si today es true, filtramos por el día actual
+  if (getSessionsDto.today) {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+
+    whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
+    console.log(`📅 Filtrando por día actual: ${startOfDay} a ${endOfDay}`);
+  }
+  // Si no se usa el filtro today, usar los filtros de fecha normales
+  else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+    whereConditions.sessionDatetime = Between(
+      new Date(getSessionsDto.startDate),
+      new Date(getSessionsDto.endDate)
+    );
+  }
+
+  // FILTRO: Si onlyScheduled es true, filtramos solo por citas agendadas (sessionStatus = 1)
+  if (getSessionsDto.onlyScheduled) {
+    whereConditions.sessionStatus = 1;
+    console.log(`📋 Filtrando solo citas agendadas (sessionStatus = 1)`);
+  } else if (getSessionsDto.sessionStatus !== undefined) {
+    // Si no se usa onlyScheduled pero se proporciona sessionStatus, usar ese
+    whereConditions.sessionStatus = getSessionsDto.sessionStatus;
+  }
+
+  // Resto de filtros existentes
+  if (getSessionsDto.clientId) {
+    whereConditions.clientId = getSessionsDto.clientId;
+  }
+
+  // Determinar ordenamiento
+  let order: any = {};
+  switch (getSessionsDto.orderBy) {
+    case 'recent':
+      order = { sessionDatetime: 'DESC' };
+      break;
+    case 'oldest':
+      order = { sessionDatetime: 'ASC' };
+      break;
+    case 'priority':
+      order = { sessionStatus: 'ASC', sessionDatetime: 'ASC' };
+      break;
+    default:
+      order = { sessionDatetime: 'DESC' };
+  }
+
+  // Obtener las sesiones con los filtros aplicados
+  const [sessions, total] = await this.sessionRepository.findAndCount({
+    where: whereConditions,
+    order: order,
+    skip: (getSessionsDto.page - 1) * getSessionsDto.limit,
+    take: getSessionsDto.limit,
+  });
+
+  // Enriquecer los datos con información completa (el resto del código permanece igual)
+  const enrichedSessions = await Promise.all(
+    sessions.map(async (session) => {
+      // Obtener cliente
+      const client = await this.clientRepository.findOne({
+        where: { id: session.clientId }
+      });
+
+      // Obtener TODOS los detalles de la sesión
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId: session.id }
+      });
+
+      let companyId = adminCompany.id;
+      let companyName = adminCompany.name;
+
+      // Array para servicios
+      const services: any[] = [];
+
+      // Calcular totales sumando los detalles
+      let totalCost = 0;
+      let totalTime = 0;
+
+      if (sessionDetails.length > 0) {
+        // Procesar cada detalle
+        for (const detail of sessionDetails) {
+          // Obtener companyWorker
+          const companyWorker = await this.companyWorkerRepository.findOne({
+            where: { id: detail.companyWorkerId },
+            relations: ['worker', 'company']
+          });
+
+          // Obtener servicio
+          const service = await this.serviceRepository.findOne({
+            where: { id: detail.serviceId }
+          });
+
+          // Si es el primer detalle y tiene compañía, usar esa
+          if (companyId === adminCompany.id && companyWorker?.company) {
+            companyId = companyWorker.company.id;
+            companyName = companyWorker.company.name;
+          }
+
+          // Agregar servicio al array
+          services.push({
+            serviceId: detail.serviceId,
+            serviceName: service?.name || '',
+            serviceDescription: service?.description || '',
+            serviceCost: Number(detail.cost || 0),
+            serviceTime: detail.totalTime || 0,
+            companyWorkerId: detail.companyWorkerId,
+            workerName: companyWorker?.worker ?
+              `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim() : '',
+            workerLastName: companyWorker?.worker?.lastName || '',
+            totalWorker: Number(detail.totalWorker || 0),
+            totalCompany: Number(detail.totalCompany || 0),
+            detailStatus: detail.status || 1
+          });
+
+          // Acumular totales
+          totalCost += Number(detail.cost || 0);
+          totalTime += Number(detail.totalTime || 0);
+        }
+      }
+
+      return {
+        id: session.id,
+        clientId: session.clientId,
+        clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
+        clientLastName: client?.lastName || '',
+        companyId: companyId,
+        companyName: companyName,
+        sessionDatetime: session.sessionDatetime,
+        sessionStatus: session.sessionStatus,
+        sessionStatusText: this.getSessionStatusText(session.sessionStatus),
+        totalCost: totalCost,
+        totalTime: totalTime,
+        startDatetime: session.startDatetime,
+        status: session.status,
+        iaResponse: session.iaResponse,
+        servicesCount: sessionDetails.length,
+        services: services,
+        createdAt: session['createdAt'] || null,
+        updatedAt: session['updatedAt'] || null
+      };
+    })
+  );
+
+  return {
+    data: enrichedSessions,
+    meta: {
+      page: getSessionsDto.page,
+      limit: getSessionsDto.limit,
+      total: total,
+      totalPages: Math.ceil(total / getSessionsDto.limit),
+      hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
+      hasPrev: getSessionsDto.page > 1,
+    }
+  };
+}
 
   private getSessionStatusText(status: number): string {
     const statusMap: Record<number, string> = {
@@ -2217,250 +2232,375 @@ export class SessionService {
  * @param getSessionsDto DTO con parámetros de filtro y paginación
  * @returns Lista paginada de sesiones asignadas al trabajador
  */
-  async getSessionsForAuthenticatedWorker(
-    userId: number,
-    getSessionsDto: GetSessionsDto
-  ): Promise<PaginationResult<any>> {
-    console.log(`📋 Obteniendo sesiones para trabajador autenticado (userId: ${userId})`);
+async getSessionsForAuthenticatedWorker(
+  userId: number,
+  getSessionsDto: GetSessionsDto
+): Promise<PaginationResult<any>> {
+  console.log(`📋 Obteniendo sesiones para trabajador autenticado (userId: ${userId})`);
 
-    // 1. Buscar al trabajador por userId
-    const worker = await this.workerRepository.findOne({
-      where: { userId: userId }
+  // 1. Buscar al trabajador por userId
+  const worker = await this.workerRepository.findOne({
+    where: { userId: userId }
+  });
+
+  if (!worker) {
+    throw new NotFoundException('Trabajador no encontrado');
+  }
+
+  // 2. Buscar las asignaciones activas del trabajador en company_worker
+  const companyWorkers = await this.companyWorkerRepository.find({
+    where: {
+      workerId: worker.id,
+      isActive: 1
+    },
+    relations: ['company']
+  });
+
+  if (companyWorkers.length === 0) {
+    throw new NotFoundException('No tienes asignaciones activas en ninguna compañía');
+  }
+
+  // 3. Obtener los IDs de las asignaciones de compañía
+  const companyWorkerIds = companyWorkers.map(cw => cw.id);
+
+  // 4. Crear query usando joins con las tablas relacionadas
+  const query = this.sessionDetailRepository
+    .createQueryBuilder('detail')
+    .innerJoin('session', 'session', 'session.id = detail.session_id')
+    .leftJoin('client', 'client', 'client.id = session.client_id')
+    .leftJoin('service', 'service', 'service.id = detail.service_id')
+    .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
+    .leftJoin('worker', 'worker', 'worker.id = companyWorker.worker_id')
+    .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
+    .select([
+      'detail.id AS detailId',
+      'detail.cost AS cost',
+      'detail.total_time AS totalTime',
+      'detail.total_worker AS totalWorker',
+      'detail.total_company AS totalCompany',
+      'detail.status AS detailStatus',
+      'detail.start_datetime AS detailStartDatetime',
+      'session.id AS sessionId',
+      'session.client_id AS clientId',
+      'session.session_datetime AS sessionDatetime',
+      'session.session_status AS sessionStatus',
+      'session.total_cost AS sessionTotalCost',
+      'session.total_time AS sessionTotalTime',
+      'session.start_datetime AS sessionStartDatetime',
+      'session.status AS sessionStatusFlag',
+      'session.ia_response AS iaResponse',
+      'session.updated_at AS sessionUpdatedAt',
+      'client.name AS clientName',
+      'client.last_name AS clientLastName',
+      'service.id AS serviceId',
+      'service.name AS serviceName',
+      'service.description AS serviceDescription',
+      'companyWorker.id AS companyWorkerId',
+      'company.id AS companyId',
+      'company.name AS companyName',
+      'worker.id AS workerId',
+      'worker.name AS workerName',
+      'worker.last_name AS workerLastName'
+    ])
+    .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
+
+  // 5. Aplicar filtros adicionales - CORRECCIÓN: Usar detail.start_datetime para filtro today
+  // FILTRO: Solo citas del día actual - usando detail.start_datetime
+  if (getSessionsDto.today) {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    
+    query.andWhere('detail.start_datetime BETWEEN :startOfDay AND :endOfDay', {
+      startOfDay,
+      endOfDay
     });
-
-    if (!worker) {
-      throw new NotFoundException('Trabajador no encontrado');
-    }
-
-    // 2. Buscar las asignaciones activas del trabajador en company_worker
-    const companyWorkers = await this.companyWorkerRepository.find({
-      where: {
-        workerId: worker.id,
-        isActive: 1
-      },
-      relations: ['company']
+    console.log(`📅 Trabajador: Filtrando por día actual en detail.start_datetime (${today.toLocaleDateString()})`);
+  }
+  // FILTRO: Por rango de fechas (si no se usa today) - usando detail.start_datetime
+  else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+    query.andWhere('detail.start_datetime BETWEEN :startDate AND :endDate', {
+      startDate: new Date(getSessionsDto.startDate),
+      endDate: new Date(getSessionsDto.endDate)
     });
+  }
 
-    if (companyWorkers.length === 0) {
-      throw new NotFoundException('No tienes asignaciones activas en ninguna compañía');
-    }
-
-    // 3. Obtener los IDs de las asignaciones de compañía
-    const companyWorkerIds = companyWorkers.map(cw => cw.id);
-
-    // 4. Crear query usando joins con las tablas relacionadas
-    const query = this.sessionDetailRepository
-      .createQueryBuilder('detail')
-      .innerJoin('session', 'session', 'session.id = detail.session_id')
-      .leftJoin('client', 'client', 'client.id = session.client_id')
-      .leftJoin('service', 'service', 'service.id = detail.service_id')
-      .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
-      .leftJoin('worker', 'worker', 'worker.id = companyWorker.worker_id')
-      .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
-      .select([
-        'detail.id AS detailId',
-        'detail.cost AS cost',
-        'detail.total_time AS totalTime',
-        'detail.total_worker AS totalWorker',
-        'detail.total_company AS totalCompany',
-        'detail.status AS detailStatus',
-        'detail.start_datetime AS detailStartDatetime',
-        'session.id AS sessionId',
-        'session.client_id AS clientId',
-        'session.session_datetime AS sessionDatetime',
-        'session.session_status AS sessionStatus',
-        'session.total_cost AS sessionTotalCost',
-        'session.total_time AS sessionTotalTime',
-        'session.start_datetime AS sessionStartDatetime',
-        'session.status AS sessionStatusFlag',
-        'session.ia_response AS iaResponse',
-        'session.updated_at AS sessionUpdatedAt',
-        'client.name AS clientName',
-        'client.last_name AS clientLastName',
-        'service.id AS serviceId',
-        'service.name AS serviceName',
-        'service.description AS serviceDescription',
-        'companyWorker.id AS companyWorkerId',
-        'company.id AS companyId',
-        'company.name AS companyName',
-        'worker.id AS workerId',
-        'worker.name AS workerName',
-        'worker.last_name AS workerLastName'
-      ])
-      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds })
-      .orderBy('session.session_datetime', getSessionsDto.orderBy === 'oldest' ? 'ASC' : 'DESC');
-
-    // 5. Aplicar filtros adicionales si existen
-    if (getSessionsDto.startDate && getSessionsDto.endDate) {
-      query.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
-        startDate: new Date(getSessionsDto.startDate),
-        endDate: new Date(getSessionsDto.endDate)
-      });
-    }
-
-    if (getSessionsDto.sessionStatus !== undefined) {
-      query.andWhere('session.session_status = :sessionStatus', {
-        sessionStatus: getSessionsDto.sessionStatus
-      });
-    }
-
-    if (getSessionsDto.detailStatus !== undefined) {
-      query.andWhere('detail.status = :detailStatus', {
-        detailStatus: getSessionsDto.detailStatus
-      });
-    }
-
-    // 6. Aplicar paginación y obtener datos
-    const details = await query
-      .skip((getSessionsDto.page - 1) * getSessionsDto.limit)
-      .take(getSessionsDto.limit)
-      .getRawMany();
-
-    // 7. Obtener el total (sin paginación)
-    // Primero necesitamos contar sin los filtros de paginación (skip y take)
-    const countQuery = this.sessionDetailRepository
-      .createQueryBuilder('detail')
-      .innerJoin('session', 'session', 'session.id = detail.session_id')
-      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
-
-    // Aplicar los mismos filtros a la query de conteo
-    if (getSessionsDto.startDate && getSessionsDto.endDate) {
-      countQuery.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
-        startDate: new Date(getSessionsDto.startDate),
-        endDate: new Date(getSessionsDto.endDate)
-      });
-    }
-
-    if (getSessionsDto.sessionStatus !== undefined) {
-      countQuery.andWhere('session.session_status = :sessionStatus', {
-        sessionStatus: getSessionsDto.sessionStatus
-      });
-    }
-
-    if (getSessionsDto.detailStatus !== undefined) {
-      countQuery.andWhere('detail.status = :detailStatus', {
-        detailStatus: getSessionsDto.detailStatus
-      });
-    }
-
-    const total = await countQuery.getCount();
-
-    const sessionMap = new Map<number, any>();
-
-    for (const detail of details) {
-      const sessionId = detail.sessionId;
-
-      if (!sessionMap.has(sessionId)) {
-        sessionMap.set(sessionId, {
-          id: sessionId,
-          clientId: detail.clientId,
-          clientName: detail.clientName ? `${detail.clientName || ''} ${detail.clientLastName || ''}`.trim() : 'Cliente no encontrado',
-          clientLastName: detail.clientLastName || '',
-          sessionDatetime: detail.sessionDatetime,
-          sessionStatus: detail.sessionStatus,
-          sessionStatusText: this.getSessionStatusText(detail.sessionStatus),
-          totalCost: parseFloat(detail.sessionTotalCost) || 0, // Convertir a número
-          totalTime: parseFloat(detail.sessionTotalTime) || 0, // Convertir a número
-          startDatetime: detail.sessionStartDatetime,
-          status: detail.sessionStatusFlag,
-          iaResponse: detail.iaResponse,
-          createdAt: detail.sessionUpdatedAt,
-          workerServices: []
-        });
-      }
-
-      // Convertir todos los valores numéricos de string a número
-      const cost = parseFloat(detail.cost) || 0;
-      const totalTime = parseFloat(detail.totalTime) || 0;
-      const totalWorker = parseFloat(detail.totalWorker) || 0;
-      const totalCompany = parseFloat(detail.totalCompany) || 0;
-
-      // Calcular porcentajes
-      let workerPercentage = 0;
-      let companyPercentage = 0;
-
-      if (cost > 0) {
-        workerPercentage = parseFloat(((totalWorker / cost) * 100).toFixed(2));
-        companyPercentage = parseFloat(((totalCompany / cost) * 100).toFixed(2));
-      }
-
-      // Agregar el servicio específico del trabajador
-      const sessionData = sessionMap.get(sessionId);
-      sessionData.workerServices.push({
-        detailId: detail.detailId,
-        serviceId: detail.serviceId,
-        serviceName: detail.serviceName || 'Servicio no encontrado',
-        serviceDescription: detail.serviceDescription || '',
-        cost: cost,
-        totalTime: totalTime,
-        totalWorker: totalWorker,
-        totalCompany: totalCompany,
-        detailStatus: detail.detailStatus || 1,
-        detailStatusText: this.getDetailStatusText(detail.detailStatus || 1),
-        startDatetime: detail.detailStartDatetime,
-        companyId: detail.companyId,
-        companyName: detail.companyName || 'Compañía no encontrada',
-        workerPercentage: workerPercentage,
-        companyPercentage: companyPercentage
-      });
-    }
-
-    // 9. Convertir el mapa a array y calcular estadísticas
-    const sessions = Array.from(sessionMap.values()).map(session => {
-      // Asegurarse de que los valores sean números
-      const workerTotalCost = session.workerServices.reduce((sum, service) => {
-        return sum + (typeof service.cost === 'number' ? service.cost : parseFloat(service.cost) || 0);
-      }, 0);
-
-      const workerTotalTime = session.workerServices.reduce((sum, service) => {
-        return sum + (typeof service.totalTime === 'number' ? service.totalTime : parseFloat(service.totalTime) || 0);
-      }, 0);
-
-      return {
-        ...session,
-        workerTotalCost: parseFloat(workerTotalCost.toFixed(2)),
-        workerTotalTime: parseFloat(workerTotalTime.toFixed(2)),
-        workerTotalServices: session.workerServices.length,
-        workerOverallStatus: this.calculateWorkerOverallStatus(session.workerServices)
-      };
+  // FILTRO: Solo citas agendadas - CORRECCIÓN: Usar detail.status en lugar de session.session_status
+  if (getSessionsDto.onlyScheduled) {
+    query.andWhere('detail.status = :onlyScheduledStatus', {
+      onlyScheduledStatus: 1
     });
+    console.log(`📋 Trabajador: Filtrando solo detalles agendados (detail.status = 1)`);
+  }
+  // FILTRO: Por estado de sesión (si no se usa onlyScheduled)
+  else if (getSessionsDto.sessionStatus !== undefined) {
+    query.andWhere('session.session_status = :sessionStatus', {
+      sessionStatus: getSessionsDto.sessionStatus
+    });
+  }
 
-    // 10. Ordenar sesiones según el criterio
-    if (getSessionsDto.orderBy === 'oldest') {
-      sessions.sort((a, b) => new Date(a.sessionDatetime).getTime() - new Date(b.sessionDatetime).getTime());
-    } else {
-      sessions.sort((a, b) => new Date(b.sessionDatetime).getTime() - new Date(a.sessionDatetime).getTime());
+  // FILTRO: Por estado del detalle (puede usarse junto con onlyScheduled)
+  if (getSessionsDto.detailStatus !== undefined) {
+    query.andWhere('detail.status = :detailStatus', {
+      detailStatus: getSessionsDto.detailStatus
+    });
+  }
+
+  // FILTRO: Por ID de cliente
+  if (getSessionsDto.clientId) {
+    query.andWhere('session.client_id = :clientId', {
+      clientId: getSessionsDto.clientId
+    });
+  }
+
+  // FILTRO: Por ID de compañía
+  if (getSessionsDto.companyId) {
+    query.andWhere('company.id = :companyId', {
+      companyId: getSessionsDto.companyId
+    });
+  }
+
+  // Ordenar por fecha del detalle (detail.start_datetime) en lugar de la sesión
+  query.orderBy('detail.start_datetime', getSessionsDto.orderBy === 'oldest' ? 'ASC' : 'DESC');
+
+  // 6. Aplicar paginación y obtener datos
+  const details = await query
+    .skip((getSessionsDto.page - 1) * getSessionsDto.limit)
+    .take(getSessionsDto.limit)
+    .getRawMany();
+
+  // 7. Obtener el total (sin paginación)
+  const countQuery = this.sessionDetailRepository
+    .createQueryBuilder('detail')
+    .innerJoin('session', 'session', 'session.id = detail.session_id')
+    .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
+    .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
+    .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
+
+  // Aplicar los mismos filtros a la query de conteo
+  if (getSessionsDto.today) {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    
+    countQuery.andWhere('detail.start_datetime BETWEEN :startOfDay AND :endOfDay', {
+      startOfDay,
+      endOfDay
+    });
+  } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+    countQuery.andWhere('detail.start_datetime BETWEEN :startDate AND :endDate', {
+      startDate: new Date(getSessionsDto.startDate),
+      endDate: new Date(getSessionsDto.endDate)
+    });
+  }
+
+  // CORRECCIÓN: Para onlyScheduled, usar detail.status
+  if (getSessionsDto.onlyScheduled) {
+    countQuery.andWhere('detail.status = :onlyScheduledStatus', {
+      onlyScheduledStatus: 1
+    });
+  } else if (getSessionsDto.sessionStatus !== undefined) {
+    countQuery.andWhere('session.session_status = :sessionStatus', {
+      sessionStatus: getSessionsDto.sessionStatus
+    });
+  }
+
+  if (getSessionsDto.detailStatus !== undefined) {
+    countQuery.andWhere('detail.status = :detailStatus', {
+      detailStatus: getSessionsDto.detailStatus
+    });
+  }
+
+  if (getSessionsDto.clientId) {
+    countQuery.andWhere('session.client_id = :clientId', {
+      clientId: getSessionsDto.clientId
+    });
+  }
+
+  if (getSessionsDto.companyId) {
+    countQuery.andWhere('company.id = :companyId', {
+      companyId: getSessionsDto.companyId
+    });
+  }
+
+  const total = await countQuery.getCount();
+
+  // 8. Procesar resultados y agrupar por sesión
+  const sessionMap = new Map<number, any>();
+
+  for (const detail of details) {
+    const sessionId = detail.sessionId;
+
+    if (!sessionMap.has(sessionId)) {
+      sessionMap.set(sessionId, {
+        id: sessionId,
+        clientId: detail.clientId,
+        clientName: detail.clientName ? `${detail.clientName || ''} ${detail.clientLastName || ''}`.trim() : 'Cliente no encontrado',
+        clientLastName: detail.clientLastName || '',
+        sessionDatetime: detail.sessionDatetime,
+        sessionStatus: detail.sessionStatus,
+        sessionStatusText: this.getSessionStatusText(detail.sessionStatus),
+        totalCost: parseFloat(detail.sessionTotalCost) || 0,
+        totalTime: parseFloat(detail.sessionTotalTime) || 0,
+        startDatetime: detail.sessionStartDatetime,
+        status: detail.sessionStatusFlag,
+        iaResponse: detail.iaResponse,
+        createdAt: detail.sessionUpdatedAt,
+        workerServices: []
+      });
+    }
+
+    // Convertir todos los valores numéricos de string a número
+    const cost = parseFloat(detail.cost) || 0;
+    const totalTime = parseFloat(detail.totalTime) || 0;
+    const totalWorker = parseFloat(detail.totalWorker) || 0;
+    const totalCompany = parseFloat(detail.totalCompany) || 0;
+
+    // Calcular porcentajes
+    let workerPercentage = 0;
+    let companyPercentage = 0;
+
+    if (cost > 0) {
+      workerPercentage = parseFloat(((totalWorker / cost) * 100).toFixed(2));
+      companyPercentage = parseFloat(((totalCompany / cost) * 100).toFixed(2));
+    }
+
+    // Agregar el servicio específico del trabajador
+    const sessionData = sessionMap.get(sessionId);
+    sessionData.workerServices.push({
+      detailId: detail.detailId,
+      serviceId: detail.serviceId,
+      serviceName: detail.serviceName || 'Servicio no encontrado',
+      serviceDescription: detail.serviceDescription || '',
+      cost: cost,
+      totalTime: totalTime,
+      totalWorker: totalWorker,
+      totalCompany: totalCompany,
+      detailStatus: detail.detailStatus || 1,
+      detailStatusText: this.getDetailStatusText(detail.detailStatus || 1),
+      startDatetime: detail.detailStartDatetime,
+      companyId: detail.companyId,
+      companyName: detail.companyName || 'Compañía no encontrada',
+      workerPercentage: workerPercentage,
+      companyPercentage: companyPercentage,
+      workerName: detail.workerName,
+      workerLastName: detail.workerLastName
+    });
+  }
+
+  // 9. Convertir el mapa a array y calcular estadísticas
+  const sessions = Array.from(sessionMap.values()).map(session => {
+    // Asegurarse de que los valores sean números
+    const workerTotalCost = session.workerServices.reduce((sum, service) => {
+      return sum + (typeof service.cost === 'number' ? service.cost : parseFloat(service.cost) || 0);
+    }, 0);
+
+    const workerTotalTime = session.workerServices.reduce((sum, service) => {
+      return sum + (typeof service.totalTime === 'number' ? service.totalTime : parseFloat(service.totalTime) || 0);
+    }, 0);
+
+    // Verificar si la sesión tiene detalles hoy
+    const hasTodayDetail = session.workerServices.some(service => 
+      this.isToday(service.startDatetime)
+    );
+
+    // Calcular el estado general basado en los detalles
+    const allDetailsScheduled = session.workerServices.every(service => service.detailStatus === 1);
+    const anyDetailInProcess = session.workerServices.some(service => service.detailStatus === 2);
+    const allDetailsCompleted = session.workerServices.every(service => service.detailStatus === 3);
+
+    let workerOverallStatus = 'Desconocido';
+    if (allDetailsCompleted) {
+      workerOverallStatus = 'Completado';
+    } else if (anyDetailInProcess) {
+      workerOverallStatus = 'En proceso';
+    } else if (allDetailsScheduled) {
+      workerOverallStatus = 'Agendado';
+    } else if (session.workerServices.some(s => s.detailStatus === 3) && session.workerServices.some(s => s.detailStatus !== 3)) {
+      workerOverallStatus = 'Parcialmente completado';
     }
 
     return {
-      data: sessions,
-      meta: {
-        page: getSessionsDto.page,
-        limit: getSessionsDto.limit,
-        total: total,
-        totalPages: Math.ceil(total / getSessionsDto.limit),
-        hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
-        hasPrev: getSessionsDto.page > 1,
-      }
+      ...session,
+      workerTotalCost: parseFloat(workerTotalCost.toFixed(2)),
+      workerTotalTime: parseFloat(workerTotalTime.toFixed(2)),
+      workerTotalServices: session.workerServices.length,
+      workerOverallStatus: workerOverallStatus,
+      hasTodayDetail: hasTodayDetail,
+      isToday: hasTodayDetail // Para compatibilidad
     };
+  });
+
+  // 10. Si el filtro today está activo, mostrar solo sesiones con detalles hoy
+  let filteredSessions = sessions;
+  if (getSessionsDto.today) {
+    filteredSessions = sessions.filter(session => session.hasTodayDetail);
   }
 
-  /**
-   * Calcular el estado general del trabajador para una sesión basado en sus detalles
-   */
-  private calculateWorkerOverallStatus(workerServices: any[]): string {
-    if (workerServices.length === 0) return 'Sin servicios';
-
-    const allCompleted = workerServices.every(service => service.detailStatus === 3);
-    const anyInProgress = workerServices.some(service => service.detailStatus === 2);
-    const anyScheduled = workerServices.some(service => service.detailStatus === 1);
-
-    if (allCompleted) return 'Completado';
-    if (anyInProgress) return 'En proceso';
-    if (anyScheduled) return 'Agendado';
-
-    return 'Desconocido';
+  // 11. Ordenar sesiones según el criterio
+  if (getSessionsDto.orderBy === 'oldest') {
+    filteredSessions.sort((a, b) => {
+      // Ordenar por la fecha del primer detalle
+      const aDate = a.workerServices.length > 0 ? 
+        new Date(a.workerServices[0].startDatetime).getTime() : 
+        new Date(a.sessionDatetime).getTime();
+      const bDate = b.workerServices.length > 0 ? 
+        new Date(b.workerServices[0].startDatetime).getTime() : 
+        new Date(b.sessionDatetime).getTime();
+      return aDate - bDate;
+    });
+  } else {
+    filteredSessions.sort((a, b) => {
+      const aDate = a.workerServices.length > 0 ? 
+        new Date(a.workerServices[0].startDatetime).getTime() : 
+        new Date(a.sessionDatetime).getTime();
+      const bDate = b.workerServices.length > 0 ? 
+        new Date(b.workerServices[0].startDatetime).getTime() : 
+        new Date(b.sessionDatetime).getTime();
+      return bDate - aDate;
+    });
   }
+  return {
+    data: filteredSessions,
+    meta: {
+      page: getSessionsDto.page,
+      limit: getSessionsDto.limit,
+      total: total,
+      totalPages: Math.ceil(total / getSessionsDto.limit),
+      hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
+      hasPrev: getSessionsDto.page > 1,
+    }
+  };
+}
+
+/**
+ * Método auxiliar para verificar si una fecha es hoy
+ */
+private isToday(date: Date): boolean {
+  const inputDate = new Date(date);
+  const today = new Date();
+  
+  return inputDate.getDate() === today.getDate() &&
+         inputDate.getMonth() === today.getMonth() &&
+         inputDate.getFullYear() === today.getFullYear();
+}
+
+/**
+ * Calcular el estado general del trabajador para una sesión basado en sus detalles
+ */
+private calculateWorkerOverallStatus(workerServices: any[]): string {
+  if (workerServices.length === 0) return 'Sin servicios';
+
+  const allCompleted = workerServices.every(service => service.detailStatus === 3);
+  const anyInProgress = workerServices.some(service => service.detailStatus === 2);
+  const anyScheduled = workerServices.some(service => service.detailStatus === 1);
+
+  if (allCompleted) return 'Completado';
+  if (anyInProgress) return 'En proceso';
+  if (anyScheduled) return 'Agendado';
+
+  return 'Desconocido';
+}
 
   /**
    * Crear una sesión con detalles para un cliente autenticado

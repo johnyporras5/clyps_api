@@ -35,4 +35,7 @@ export class Company {
 
   @Column({ name: 'facebook_url', length: 245, nullable: true })
   facebookUrl: string;
+
+  @Column({ name: 'phone', length: 20, nullable: true })
+  phone: string;
 }
