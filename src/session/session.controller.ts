@@ -51,6 +51,7 @@ export class SessionController {
   }
 
   @Get()
+  @Roles('adm')
   async findAll(
     @Request() req,
     @Query() getSessionsDto: GetSessionsDto
@@ -82,14 +83,15 @@ export class SessionController {
   }
 
   @Put('details/:detailId/status')
-  @Roles('adm')
+  @Roles('adm', 'wrk')
   async updateDetailStatus(
     @Request() req,
     @Param('detailId') detailId: string,
     @Body() updateDetailStatusDto: UpdateDetailStatusDto
   ) {
-    const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.updateDetailStatus(+detailId, updateDetailStatusDto, adminId);
+    const userId = req.user?.id || req.user?.sub;
+    const userRole = req.user?.userType; 
+    return this.sessionService.updateDetailStatus(+detailId, updateDetailStatusDto, userId, userRole);
   }
 
   @Delete(':id')
@@ -124,7 +126,7 @@ export class SessionController {
     const userId = req.user?.id || req.user?.sub;
     return this.sessionService.createSessionByClient(createSessionWithDetailDto, userId);
   }
-  
+
   @Post(':id/sync-status')
   @Roles('adm')
   async syncSessionStatus(

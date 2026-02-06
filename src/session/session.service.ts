@@ -1449,8 +1449,76 @@ async findAllSessionsSimple(
     throw new NotFoundException('El administrador no tiene una compañía asignada');
   }
 
-  // Construir condiciones where
-  const whereConditions: any = {};
+  // 1. Primero, obtener los company_worker_ids de la compañía del administrador
+  const companyWorkers = await this.companyWorkerRepository.find({
+    where: { 
+      companyId: adminCompany.id,
+      isActive: 1
+    },
+    select: ['id']
+  });
+
+  const companyWorkerIds = companyWorkers.map(cw => cw.id);
+
+  if (companyWorkerIds.length === 0) {
+    // Si la compañía no tiene trabajadores activos, retornar lista vacía
+    return {
+      data: [],
+      meta: {
+        page: getSessionsDto.page,
+        limit: getSessionsDto.limit,
+        total: 0,
+        totalPages: 0,
+        hasNext: false,
+        hasPrev: false,
+      }
+    };
+  }
+
+  // 2. Buscar las sesiones que tienen detalles con company_worker_id de la compañía del admin
+  const sessionIdsQuery = this.sessionDetailRepository
+    .createQueryBuilder('detail')
+    .select('DISTINCT detail.session_id', 'sessionId')
+    .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
+
+  // Aplicar filtros de fecha a los detalles si es necesario
+  if (getSessionsDto.today) {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    
+    sessionIdsQuery.andWhere('detail.start_datetime BETWEEN :startOfDay AND :endOfDay', {
+      startOfDay,
+      endOfDay
+    });
+  } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+    sessionIdsQuery.andWhere('detail.start_datetime BETWEEN :startDate AND :endDate', {
+      startDate: new Date(getSessionsDto.startDate),
+      endDate: new Date(getSessionsDto.endDate)
+    });
+  }
+
+  const sessionIdsResult = await sessionIdsQuery.getRawMany();
+  const sessionIds = sessionIdsResult.map(result => result.sessionId);
+
+  if (sessionIds.length === 0) {
+    return {
+      data: [],
+      meta: {
+        page: getSessionsDto.page,
+        limit: getSessionsDto.limit,
+        total: 0,
+        totalPages: 0,
+        hasNext: false,
+        hasPrev: false,
+      }
+    };
+  }
+
+  // 3. Construir condiciones where para las sesiones
+  const whereConditions: any = {
+    id: In(sessionIds)
+  };
 
   // FILTRO: Si today es true, filtramos por el día actual
   if (getSessionsDto.today) {
@@ -1499,7 +1567,7 @@ async findAllSessionsSimple(
       order = { sessionDatetime: 'DESC' };
   }
 
-  // Obtener las sesiones con los filtros aplicados
+  // 4. Obtener las sesiones con los filtros aplicados
   const [sessions, total] = await this.sessionRepository.findAndCount({
     where: whereConditions,
     order: order,
@@ -1507,7 +1575,7 @@ async findAllSessionsSimple(
     take: getSessionsDto.limit,
   });
 
-  // Enriquecer los datos con información completa (el resto del código permanece igual)
+  // 5. Enriquecer los datos con información completa
   const enrichedSessions = await Promise.all(
     sessions.map(async (session) => {
       // Obtener cliente
@@ -1515,18 +1583,18 @@ async findAllSessionsSimple(
         where: { id: session.clientId }
       });
 
-      // Obtener TODOS los detalles de la sesión
+      // Obtener los detalles de la sesión que pertenecen a la compañía del admin
       const sessionDetails = await this.sessionDetailRepository.find({
-        where: { sessionId: session.id }
+        where: { 
+          sessionId: session.id,
+          companyWorkerId: In(companyWorkerIds)
+        }
       });
-
-      let companyId = adminCompany.id;
-      let companyName = adminCompany.name;
 
       // Array para servicios
       const services: any[] = [];
 
-      // Calcular totales sumando los detalles
+      // Calcular totales sumando los detalles de la compañía del admin
       let totalCost = 0;
       let totalTime = 0;
 
@@ -1543,12 +1611,6 @@ async findAllSessionsSimple(
           const service = await this.serviceRepository.findOne({
             where: { id: detail.serviceId }
           });
-
-          // Si es el primer detalle y tiene compañía, usar esa
-          if (companyId === adminCompany.id && companyWorker?.company) {
-            companyId = companyWorker.company.id;
-            companyName = companyWorker.company.name;
-          }
 
           // Agregar servicio al array
           services.push({
@@ -1577,8 +1639,8 @@ async findAllSessionsSimple(
         clientId: session.clientId,
         clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
         clientLastName: client?.lastName || '',
-        companyId: companyId,
-        companyName: companyName,
+        companyId: adminCompany.id,
+        companyName: adminCompany.name,
         sessionDatetime: session.sessionDatetime,
         sessionStatus: session.sessionStatus,
         sessionStatusText: this.getSessionStatusText(session.sessionStatus),
@@ -1712,48 +1774,50 @@ async findAllSessionsSimple(
     };
   }
 
-  async updateDetailStatus(
-    detailId: number,
-    updateDetailStatusDto: UpdateDetailStatusDto,
-    adminId: number
-  ): Promise<{
-    message: string;
-    detail: SessionDetail;
-    sessionUpdated: boolean;
-    newSessionStatus: number | null;
-    validation: {
-      canUpdateDetail: boolean;
-      detailPreviousStatus: number;
-      sessionId: number;
-    };
-    autoUpdateResult?: {
-      previousStatus: number;
-      newStatus: number;
-      updated: boolean;
-      reason: string;
-    };
-  }> {
-    console.log(`🔄 Actualizando estado del detalle ${detailId} a ${updateDetailStatusDto.status}`);
+async updateDetailStatus(
+  detailId: number,
+  updateDetailStatusDto: UpdateDetailStatusDto,
+  userId: number,
+  userRole?: string // Agrega el parámetro para el rol
+): Promise<{
+  message: string;
+  detail: SessionDetail;
+  sessionUpdated: boolean;
+  newSessionStatus: number | null;
+  validation: {
+    canUpdateDetail: boolean;
+    detailPreviousStatus: number;
+    sessionId: number;
+  };
+  autoUpdateResult?: {
+    previousStatus: number;
+    newStatus: number;
+    updated: boolean;
+    reason: string;
+  };
+}> {
+  console.log(`🔄 Actualizando estado del detalle ${detailId} a ${updateDetailStatusDto.status}. Usuario: ${userId}, Rol: ${userRole}`);
 
-    // 1. Verificar permisos
+  // 1. Buscar el detalle
+  const detail = await this.sessionDetailRepository.findOne({
+    where: { id: detailId }
+  });
+
+  if (!detail) {
+    throw new NotFoundException(`Detalle de sesión con ID ${detailId} no encontrado`);
+  }
+
+  // 2. Validar permisos según el rol
+  if (userRole === 'adm') {
+    // Para administradores: validación original
     const adminCompany = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: userId }
     });
 
     if (!adminCompany) {
       throw new NotFoundException('El administrador no tiene una compañía asignada');
     }
 
-    // 2. Buscar el detalle
-    const detail = await this.sessionDetailRepository.findOne({
-      where: { id: detailId }
-    });
-
-    if (!detail) {
-      throw new NotFoundException(`Detalle de sesión con ID ${detailId} no encontrado`);
-    }
-
-    // 3. Verificar que el detalle pertenezca a la compañía del administrador
     const companyWorker = await this.companyWorkerRepository.findOne({
       where: { id: detail.companyWorkerId },
       relations: ['company']
@@ -1762,52 +1826,87 @@ async findAllSessionsSimple(
     if (!companyWorker || companyWorker.company.id !== adminCompany.id) {
       throw new ForbiddenException('No tienes permiso para modificar este detalle');
     }
-
-    // 4. Guardar estado anterior
-    const previousStatus = detail.status;
-
-    // 5. Validar que el nuevo estado sea válido (1-3 para detalles)
-    if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 3) {
-      throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso) o 3 (Completado)');
-    }
-
-    // 6. Actualizar el detalle
-    detail.status = updateDetailStatusDto.status;
-
-    const updatedDetail = await this.sessionDetailRepository.save(detail);
-
-    // 7. Actualizar automáticamente el estado de la sesión
-    const autoUpdateResult = await this.updateSessionStatusBasedOnDetails(detail.sessionId);
-
-    // 8. Obtener la sesión actualizada
-    const session = await this.sessionRepository.findOne({
-      where: { id: detail.sessionId }
+  } 
+  else if (userRole === 'wrk') {
+    // Para trabajadores: verificar que el detalle esté asignado a este trabajador
+    const worker = await this.workerRepository.findOne({
+      where: { userId: userId }
     });
 
-    let sessionUpdated = false;
-    let newSessionStatus: number | null = null;
-
-    if (session && autoUpdateResult.updated) {
-      sessionUpdated = true;
-      newSessionStatus = autoUpdateResult.newStatus;
+    if (!worker) {
+      throw new NotFoundException('Trabajador no encontrado');
     }
 
-    console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status}`);
+    // Buscar el companyWorker del trabajador
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: { 
+        id: detail.companyWorkerId,
+        workerId: worker.id 
+      }
+    });
 
-    return {
-      message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
-      detail: updatedDetail,
-      sessionUpdated,
-      newSessionStatus,
-      validation: {
-        canUpdateDetail: true,
-        detailPreviousStatus: previousStatus,
-        sessionId: detail.sessionId
-      },
-      autoUpdateResult
-    };
+    if (!companyWorker) {
+      throw new ForbiddenException('No tienes permiso para modificar este detalle');
+    }
+
+    // Validar que el trabajador esté activo en la compañía
+    if (companyWorker.isActive !== 1) {
+      throw new BadRequestException('No estás activo en esta compañía');
+    }
+  }
+  else {
+    // Si no es ni admin ni worker
+    throw new ForbiddenException('No tienes permisos para realizar esta acción');
   }
 
+  // 3. Guardar estado anterior
+  const previousStatus = detail.status;
+
+  // 4. Validar que el nuevo estado sea válido (1-3 para detalles)
+  if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 3) {
+    throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso) o 3 (Completado)');
+  }
+
+  // 5. Validar transiciones de estado (opcional pero recomendado)
+  if (previousStatus === 3 && updateDetailStatusDto.status !== 3) {
+    throw new BadRequestException('No se puede revertir un detalle completado');
+  }
+
+  // 6. Actualizar el detalle
+  detail.status = updateDetailStatusDto.status;
+  const updatedDetail = await this.sessionDetailRepository.save(detail);
+
+  // 7. Actualizar automáticamente el estado de la sesión
+  const autoUpdateResult = await this.updateSessionStatusBasedOnDetails(detail.sessionId);
+
+  // 8. Obtener la sesión actualizada
+  const session = await this.sessionRepository.findOne({
+    where: { id: detail.sessionId }
+  });
+
+  let sessionUpdated = false;
+  let newSessionStatus: number | null = null;
+
+  if (session && autoUpdateResult.updated) {
+    sessionUpdated = true;
+    newSessionStatus = autoUpdateResult.newStatus;
+  }
+
+  console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status} por ${userRole}`);
+
+  return {
+    message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
+    detail: updatedDetail,
+    sessionUpdated,
+    newSessionStatus,
+    validation: {
+      canUpdateDetail: true,
+      detailPreviousStatus: previousStatus,
+      sessionId: detail.sessionId
+    },
+    autoUpdateResult
+  };
+}
   /**
  * Método para actualizar automáticamente el estado de la sesión basado en los estados de sus detalles
  */

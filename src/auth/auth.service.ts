@@ -499,7 +499,6 @@ export class AuthService {
         picture: registerDto.picture,
         isActive: registerDto.isActive !== undefined ? registerDto.isActive : 1,
         companies: [],
-        isPublic: registerDto.isPublic !== undefined ? registerDto.isPublic : 0,
         location: registerDto.location,
         userId: user.id
       });
@@ -569,12 +568,7 @@ export class AuthService {
         console.log(`Cambio detectado en ubicación: ${client.location} -> ${registerDto.location}`);
       }
 
-      if (registerDto.isPublic !== undefined && registerDto.isPublic !== client.isPublic) {
-        updateData.isPublic = registerDto.isPublic;
-        hasChanges = true;
-        console.log(`Cambio detectado en visibilidad: ${client.isPublic} -> ${registerDto.isPublic}`);
-      }
-
+   
       // Solo actualizar si hay cambios reales
       if (hasChanges) {
         console.log(`Detectados cambios reales. Actualizando perfil del cliente...`);
@@ -594,17 +588,7 @@ export class AuthService {
       }
     }
 
-    // Generar token JWT solo para nuevo cliente
-    let access_token: string | undefined;
-    if (!isExistingUser) {
-      const payload = {
-        email: user.email,
-        sub: user.id,
-        userType: user.userType
-      };
-      access_token = this.jwtService.sign(payload);
-    }
-
+ 
     // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
 

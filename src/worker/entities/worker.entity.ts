@@ -21,7 +21,7 @@ export class Worker {
   @Column({ name: 'birthdate', type: 'date', nullable: true })
   birthdate: Date;
 
-  @Column({ name: 'picture', length: 45, nullable: true })
+  @Column({ name: 'picture', length: 255, nullable: true })
   picture: string;
 
   @Column({ name: 'description', type: 'text', nullable: true })

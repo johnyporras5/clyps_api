@@ -6,7 +6,8 @@ import { ConfigService } from '@nestjs/config';
 
 export type AllowedFolder =
   | 'client_photo'
-  | 'company_logo';
+  | 'company_logo'
+  | 'worker_photo';
 
 export interface FileInfo {
   fileName: string;
@@ -24,6 +25,7 @@ export class FileUploadService {
   private readonly allowedFolders: AllowedFolder[] = [
     'client_photo',
     'company_logo',
+    'worker_photo',
   ];
 
   constructor(

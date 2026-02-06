@@ -13,6 +13,9 @@ import {
   PaginationResult 
 } from '../common/utils/pagination.util';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
+import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+import { Client } from '../client/entities/client.entity';
+
 
 @Injectable()
 export class CompanyService {
@@ -21,6 +24,10 @@ export class CompanyService {
     private companyRepository: Repository<Company>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(CompanyWorker)
+    private companyWorkerRepository: Repository<CompanyWorker>,
+    @InjectRepository(Client)
+    private clientRepository: Repository<Client>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
   ) { }
@@ -198,5 +205,331 @@ export class CompanyService {
     };
 
     return companyWithLogo;
+  }
+
+
+
+    /**
+  * Eliminación temporal de trabajador - para poder reconectarlo después
+  * Solo marca el registro como temporalmente eliminado, manteniendo los datos
+  */
+  async temporarilyRemoveWorkerFromCompany(
+    adminId: number,
+    workerId: number
+  ): Promise<{ message: string; canRestore: boolean }> {
+    // 1. Verificar que el administrador tiene una compañía
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+
+    // 2. Buscar la asignación específica del trabajador en la compañía
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        workerId: workerId,
+        companyId: company.id,
+        permanentlyDeleted: false // No incluir los permanentemente eliminados
+      }
+    });
+
+    if (!companyWorker) {
+      throw new NotFoundException('Este trabajador no está asignado a tu compañía o ya fue eliminado');
+    }
+
+    // 3. Verificar si ya está temporalmente eliminado
+    if (companyWorker.temporarilyDeleted) {
+      throw new BadRequestException('Este trabajador ya está temporalmente eliminado');
+    }
+
+    // 4. Marcar como temporalmente eliminado
+    companyWorker.temporarilyDeleted = true;
+    companyWorker.isActive = 0; // Desactivar
+    companyWorker.endDate = new Date(); // Establecer fecha de fin
+
+    await this.companyWorkerRepository.save(companyWorker);
+
+    return {
+      message: 'Trabajador eliminado temporalmente de la compañía. Puedes restaurarlo cuando lo necesites.',
+      canRestore: true
+    };
+  }
+
+  /**
+   * Restaurar trabajador temporalmente eliminado
+   */
+  // En CompanyService, corrige el método restoreTemporarilyRemovedWorker:
+
+  async restoreTemporarilyRemovedWorker(
+    adminId: number,
+    workerId: number
+  ): Promise<{ message: string }> {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        workerId: workerId,
+        companyId: company.id,
+        temporarilyDeleted: true,
+        permanentlyDeleted: false
+      }
+    });
+
+    if (!companyWorker) {
+      throw new NotFoundException('No se encontró un trabajador temporalmente eliminado con estos datos');
+    }
+
+    // Restaurar el trabajador
+    companyWorker.temporarilyDeleted = false;
+    companyWorker.isActive = 1; // Reactivar
+    companyWorker.endDate = null as any; 
+
+    await this.companyWorkerRepository.save(companyWorker);
+
+    return {
+      message: 'Trabajador restaurado exitosamente en la compañía.'
+    };
+  }
+  /**
+   * Eliminación permanente de trabajador - no aparece más en ningún lado
+   * Marca el registro como permanentemente eliminado
+   */
+  async permanentlyRemoveWorkerFromCompany(
+    adminId: number,
+    workerId: number
+  ): Promise<{ message: string; canRestore: boolean }> {
+    // 1. Verificar que el administrador tiene una compañía
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+
+    // 2. Buscar la asignación específica del trabajador en la compañía
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        workerId: workerId,
+        companyId: company.id
+      }
+    });
+
+    if (!companyWorker) {
+      throw new NotFoundException('Este trabajador no está asignado a tu compañía');
+    }
+
+    // 3. Marcar como permanentemente eliminado
+    companyWorker.permanentlyDeleted = true;
+    companyWorker.temporarilyDeleted = false; // Asegurar que no esté marcado como temporal
+    companyWorker.isActive = 0; // Desactivar
+    companyWorker.endDate = new Date(); // Establecer fecha de fin
+
+    await this.companyWorkerRepository.save(companyWorker);
+
+    return {
+      message: 'Trabajador eliminado permanentemente de la compañía. No podrá ser restaurado.',
+      canRestore: false
+    };
+  }
+
+  /**
+   * Obtener lista de trabajadores temporalmente eliminados
+   */
+  async getTemporarilyRemovedWorkers(
+    adminId: number
+  ): Promise<CompanyWorker[]> {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+
+    return await this.companyWorkerRepository.find({
+      where: {
+        companyId: company.id,
+        temporarilyDeleted: true,
+        permanentlyDeleted: false
+      },
+      relations: ['worker']
+    });
+  }
+
+
+  /**
+   * Eliminación temporal de cliente - para poder reconectarlo después
+   * Solo marca el registro como temporalmente eliminado, manteniendo los datos
+   */
+  async temporarilyRemoveClientFromCompany(
+    adminId: number,
+    clientId: number
+  ): Promise<{ message: string; canRestore: boolean }> {
+    // 1. Verificar que el administrador tiene una compañía
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+
+    // 2. Buscar el cliente
+    const client = await this.clientRepository.findOne({
+      where: { 
+        id: clientId,
+        permanentlyDeleted: false // No incluir los permanentemente eliminados
+      }
+    });
+
+    if (!client) {
+      throw new NotFoundException('Cliente no encontrado o ya fue eliminado permanentemente');
+    }
+
+    // 3. Verificar que el cliente está asociado a la compañía del admin
+    // Los clientes se asocian a través del array 'companies'
+    if (!client.companies || !client.companies.includes(company.id)) {
+      throw new NotFoundException('Este cliente no está asociado a tu compañía');
+    }
+
+    // 4. Verificar si ya está temporalmente eliminado
+    if (client.temporarilyDeleted) {
+      throw new BadRequestException('Este cliente ya está temporalmente eliminado');
+    }
+
+    // 5. Marcar como temporalmente eliminado
+    client.temporarilyDeleted = true;
+    client.isActive = 0; // Desactivar
+    
+    await this.clientRepository.save(client);
+
+    return {
+      message: 'Cliente eliminado temporalmente. Puedes restaurarlo cuando lo necesites.',
+      canRestore: true
+    };
+  }
+
+  /**
+   * Restaurar cliente temporalmente eliminado
+   */
+  async restoreTemporarilyRemovedClient(
+    adminId: number,
+    clientId: number
+  ): Promise<{ message: string }> {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+
+    const client = await this.clientRepository.findOne({
+      where: {
+        id: clientId,
+        temporarilyDeleted: true,
+        permanentlyDeleted: false
+      }
+    });
+
+    if (!client) {
+      throw new NotFoundException('No se encontró un cliente temporalmente eliminado con estos datos');
+    }
+
+    // Verificar que el cliente está asociado a la compañía del admin
+    if (!client.companies || !client.companies.includes(company.id)) {
+      throw new NotFoundException('Este cliente no está asociado a tu compañía');
+    }
+
+    // Restaurar el cliente
+    client.temporarilyDeleted = false;
+    client.isActive = 1; // Reactivar
+    
+    await this.clientRepository.save(client);
+
+    return {
+      message: 'Cliente restaurado exitosamente.'
+    };
+  }
+
+  /**
+   * Eliminación permanente de cliente - no aparece más en ningún lado
+   * Marca el registro como permanentemente eliminado
+   */
+  async permanentlyRemoveClientFromCompany(
+    adminId: number,
+    clientId: number
+  ): Promise<{ message: string; canRestore: boolean }> {
+    // 1. Verificar que el administrador tiene una compañía
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+
+    // 2. Buscar el cliente
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId }
+    });
+
+    if (!client) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    // 3. Verificar que el cliente está asociado a la compañía del admin
+    if (!client.companies || !client.companies.includes(company.id)) {
+      throw new NotFoundException('Este cliente no está asociado a tu compañía');
+    }
+
+    // 4. Marcar como permanentemente eliminado
+    client.permanentlyDeleted = true;
+    client.temporarilyDeleted = false; // Asegurar que no esté marcado como temporal
+    client.isActive = 0; // Desactivar
+    
+    await this.clientRepository.save(client);
+
+    return {
+      message: 'Cliente eliminado permanentemente. No podrá ser restaurado.',
+      canRestore: false
+    };
+  }
+
+  /**
+   * Obtener lista de clientes temporalmente eliminados del admin
+   */
+  async getTemporarilyRemovedClients(
+    adminId: number
+  ): Promise<Client[]> {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+
+    // Buscar clientes temporalmente eliminados que estén asociados a la compañía del admin
+    const allTemporarilyDeletedClients = await this.clientRepository.find({
+      where: {
+        temporarilyDeleted: true,
+        permanentlyDeleted: false
+      }
+    });
+
+    // Filtrar solo los que están asociados a la compañía del admin
+    return allTemporarilyDeletedClients.filter(client => 
+      client.companies && client.companies.includes(company.id)
+    );
   }
 }
