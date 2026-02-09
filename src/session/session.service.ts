@@ -18,6 +18,7 @@ import { GetSessionsDto } from './dto/get-sessions.dto';
 import { SessionResponse, SessionDetailResponse } from './types/session-response.type';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
+import { AddExtraServicesDto, ExtraServiceItemDto } from './dto/add-extra-services.dto';
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
@@ -3270,5 +3271,521 @@ private calculateWorkerOverallStatus(workerServices: any[]): string {
       detailsSummary
     };
   }
+
+
+// VERSIÓN ACTUALIZADA DEL MÉTODO addExtraServicesToSession
+// Este método debe REEMPLAZAR el anterior en session.service.ts
+
+async addExtraServicesToSession(
+  sessionId: number,
+  addExtraServicesDto: AddExtraServicesDto,
+  adminId: number
+): Promise<{
+  message: string;
+  session: Session;
+  addedDetails: SessionDetail[];
+  calculations: Array<{
+    serviceId: number;
+    serviceName: string;
+    companyWorkerId: number;
+    workerName: string;
+    totalCost: number;
+    totalTime: number;
+    workerPercentage: number;
+    companyPercentage: number;
+    totalWorker: number;
+    totalCompany: number;
+    calculationDetails: string;
+    priceOption: string;
+    isExtra: boolean;
+    configSource: string; // NUEVO: Indica de dónde salió la configuración
+  }>;
+  previousTotals: {
+    totalCost: number;
+    totalTime: number;
+  };
+  newTotals: {
+    totalCost: number;
+    totalTime: number;
+  };
+}> {
+  console.log(`🎁 Agregando servicios extras a sesión ${sessionId}`);
+
+  // 1. Verificar permisos del administrador
+  const adminCompany = await this.companyRepository.findOne({
+    where: { userId: adminId }
+  });
+
+  if (!adminCompany) {
+    throw new NotFoundException('El administrador no tiene una compañía asignada');
+  }
+
+  // 2. Buscar la sesión
+  const session = await this.sessionRepository.findOne({
+    where: { id: sessionId }
+  });
+
+  if (!session) {
+    throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+  }
+
+  // 3. Verificar que la sesión pertenezca a la compañía del administrador
+  const sessionDetails = await this.sessionDetailRepository.find({
+    where: { sessionId: sessionId }
+  });
+
+  if (sessionDetails.length === 0) {
+    throw new NotFoundException(`La sesión ${sessionId} no tiene detalles`);
+  }
+
+  let sessionBelongsToAdmin = false;
+  for (const detail of sessionDetails) {
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: { id: detail.companyWorkerId },
+      relations: ['company']
+    });
+
+    if (companyWorker?.company?.id === adminCompany.id) {
+      sessionBelongsToAdmin = true;
+      break;
+    }
+  }
+
+  if (!sessionBelongsToAdmin) {
+    throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+  }
+
+  // 4. Validar que haya servicios extras para agregar
+  if (!addExtraServicesDto.extraServices || addExtraServicesDto.extraServices.length === 0) {
+    throw new BadRequestException('Debe proporcionar al menos un servicio extra');
+  }
+
+  // 5. Guardar totales anteriores
+  const previousTotalCost = Number(session.totalCost || 0);
+  const previousTotalTime = Number(session.totalTime || 0);
+
+  // 6. Preparar validaciones y cálculos
+  type ExtraServiceValidationType = {
+    extraService: ExtraServiceItemDto;
+    service: Service;
+    companyWorker: CompanyWorker;
+    workerPercentage: number;
+    companyPercentage: number;
+    workerAssigned: boolean;
+    finalPrice: number;
+    calculatedAmounts: {
+      cost: number;
+      totalWorker: number;
+      totalCompany: number;
+      calculationDetails: string;
+    };
+    workerName: string;
+    detailTime: number;
+    startDatetime: Date;
+    configSource: string; // De dónde viene la configuración
+  };
+
+  const validations: ExtraServiceValidationType[] = [];
+  const calculations: Array<{
+    serviceId: number;
+    serviceName: string;
+    companyWorkerId: number;
+    workerName: string;
+    totalCost: number;
+    totalTime: number;
+    workerPercentage: number;
+    companyPercentage: number;
+    totalWorker: number;
+    totalCompany: number;
+    calculationDetails: string;
+    priceOption: string;
+    isExtra: boolean;
+    configSource: string;
+  }> = [];
+
+  let extraTotalCost = 0;
+  let extraTotalTime = 0;
+
+  // 7. Pre-validar y calcular todos los servicios extras
+  for (const extraService of addExtraServicesDto.extraServices) {
+    // Validar que el servicio exista
+    const service = await this.serviceRepository.findOne({
+      where: {
+        id: extraService.serviceId,
+        companyId: adminCompany.id
+      }
+    });
+
+    if (!service) {
+      throw new NotFoundException(
+        `Servicio con ID ${extraService.serviceId} no encontrado o no pertenece a tu compañía`
+      );
+    }
+
+    // Validar que el trabajador (providerId = companyWorkerId) exista y esté activo
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        id: extraService.providerId,
+        companyId: adminCompany.id
+      },
+      relations: ['worker']
+    });
+
+    if (!companyWorker) {
+      throw new NotFoundException(
+        `Trabajador con ID ${extraService.providerId} no encontrado o no pertenece a tu compañía`
+      );
+    }
+
+    if (companyWorker.isActive !== 1) {
+      throw new BadRequestException(
+        `El trabajador con ID ${extraService.providerId} no está activo`
+      );
+    }
+
+    // ========================================================================
+    // PRIORIDAD 1: Buscar configuración específica en service.workers[]
+    // ========================================================================
+    console.log(`🔍 Buscando configuración para trabajador ${extraService.providerId} en servicio ${service.id}`);
+    console.log(`📋 Array workers del servicio:`, service.workers);
+
+    let workerPercentage = 0;
+    let companyPercentage = 0;
+    let detailTime = service.standardTime || 0;
+    let configSource = '';
+    let workerAssigned = false;
+
+    // Buscar en el array workers del servicio
+    if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
+      const workerConfig = service.workers.find(
+        (w: any) => w.id === extraService.providerId
+      );
+
+      if (workerConfig) {
+        console.log(`✅ Encontrada configuración específica para trabajador ${extraService.providerId}:`, workerConfig);
+        
+        // PRIORIDAD: Usar porcentaje del worker si existe
+        if (workerConfig.percentage !== undefined && workerConfig.percentage !== null) {
+          workerPercentage = Number(workerConfig.percentage);
+          workerAssigned = true;
+          configSource = 'workers_array_percentage';
+          console.log(`📊 Usando porcentaje de workers[]: ${workerPercentage}%`);
+        }
+
+        // PRIORIDAD: Usar tiempo del worker si existe
+        if (workerConfig.time !== undefined && workerConfig.time !== null) {
+          detailTime = Number(workerConfig.time);
+          configSource = configSource ? `${configSource}, workers_array_time` : 'workers_array_time';
+          console.log(`⏱️  Usando tiempo de workers[]: ${detailTime} minutos`);
+        }
+      } else {
+        console.log(`⚠️  Trabajador ${extraService.providerId} NO encontrado en workers[], usando config general`);
+      }
+    } else {
+      console.log(`ℹ️  Servicio ${service.id} no tiene array workers[], usando config general`);
+    }
+
+    // ========================================================================
+    // PRIORIDAD 2: Si no hay configuración específica, usar valores generales
+    // ========================================================================
+    if (!workerAssigned) {
+      if (service.percentage !== undefined && service.percentage !== null) {
+        workerPercentage = Number(service.percentage);
+        configSource = 'service_general_percentage';
+        console.log(`📊 Usando porcentaje general del servicio: ${workerPercentage}%`);
+      } else {
+        throw new BadRequestException(
+          `El servicio "${service.name}" (ID: ${service.id}) no tiene configurado el porcentaje para el trabajador ${extraService.providerId}. ` +
+          `Debe estar en service.workers[] o en service.percentage`
+        );
+      }
+    }
+
+    // Si no se encontró tiempo específico, validar que exista tiempo estándar
+    if (!configSource.includes('workers_array_time')) {
+      if (service.standardTime !== undefined && service.standardTime !== null) {
+        detailTime = Number(service.standardTime);
+        configSource = configSource ? `${configSource}, service_standard_time` : 'service_standard_time';
+        console.log(`⏱️  Usando tiempo estándar del servicio: ${detailTime} minutos`);
+      } else {
+        console.warn(`⚠️  Servicio ${service.id} no tiene tiempo configurado, usando 0`);
+        detailTime = 0;
+      }
+    }
+
+    // Si el frontend envía durationMinutes, puede sobrescribir (opcional)
+    if (extraService.durationMinutes !== undefined && extraService.durationMinutes !== null) {
+      console.log(`🔧 Frontend especificó duración: ${extraService.durationMinutes} minutos (sobrescribiendo ${detailTime})`);
+      detailTime = extraService.durationMinutes;
+      configSource = configSource ? `${configSource}, frontend_override` : 'frontend_override';
+    }
+
+    companyPercentage = 100 - workerPercentage;
+
+    // Validar porcentajes
+    this.validateServicePercentagesAndTime(service);
+
+    if (workerPercentage < 0 || workerPercentage > 100) {
+      throw new BadRequestException(
+        `El porcentaje del trabajador (${workerPercentage}%) debe estar entre 0 y 100 para el servicio "${service.name}"`
+      );
+    }
+
+    if (companyPercentage < 0 || companyPercentage > 100) {
+      throw new BadRequestException(
+        `El porcentaje de la compañía (${companyPercentage}%) debe estar entre 0 y 100 para el servicio "${service.name}"`
+      );
+    }
+
+    console.log(`📋 Configuración final para ${service.name}:`);
+    console.log(`   - Porcentaje trabajador: ${workerPercentage}%`);
+    console.log(`   - Porcentaje compañía: ${companyPercentage}%`);
+    console.log(`   - Tiempo: ${detailTime} minutos`);
+    console.log(`   - Fuente: ${configSource}`);
+
+    // ========================================================================
+    // Determinar el precio final según priceOption
+    // ========================================================================
+    let finalPrice = 0;
+
+    switch (extraService.priceOption) {
+      case 'default':
+        const serviceCost = service.cost || 0;
+        if (typeof serviceCost === 'string') {
+          finalPrice = parseFloat(serviceCost);
+        } else if (typeof serviceCost === 'number') {
+          finalPrice = serviceCost;
+        } else {
+          finalPrice = parseFloat(String(serviceCost));
+        }
+        console.log(`💰 Precio: default (${finalPrice})`);
+        break;
+
+      case 'custom':
+        if (extraService.customPrice === undefined || extraService.customPrice === null) {
+          throw new BadRequestException(
+            `Debe proporcionar customPrice cuando priceOption es "custom" para el servicio ${service.name}`
+          );
+        }
+        finalPrice = extraService.customPrice;
+        console.log(`💰 Precio: custom (${finalPrice})`);
+        break;
+
+      case 'free':
+        finalPrice = 0;
+        console.log(`💰 Precio: free (0)`);
+        break;
+
+      default:
+        throw new BadRequestException(
+          `priceOption inválido: ${extraService.priceOption}. Debe ser "default", "custom" o "free"`
+        );
+    }
+
+    if (finalPrice < 0) {
+      throw new BadRequestException(
+        `El precio del servicio "${service.name}" no puede ser negativo`
+      );
+    }
+
+    // Calcular montos (trabajador/compañía)
+    const calculatedAmounts = this.calculateAmounts(finalPrice, workerPercentage, companyPercentage);
+
+    // Parsear la fecha y hora
+    let startDatetime: Date;
+    try {
+      const dateTimeParts = `${extraService.date} ${extraService.time}`;
+      startDatetime = new Date(dateTimeParts);
+
+      if (isNaN(startDatetime.getTime())) {
+        throw new Error('Fecha inválida');
+      }
+    } catch (error) {
+      throw new BadRequestException(
+        `Formato de fecha/hora inválido para el servicio ${service.name}: date="${extraService.date}", time="${extraService.time}"`
+      );
+    }
+
+    // Acumular totales
+    extraTotalCost += calculatedAmounts.cost;
+    extraTotalTime += detailTime;
+
+    const workerName = companyWorker.worker
+      ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+      : `Trabajador ID: ${companyWorker.id}`;
+
+    // Guardar validación
+    validations.push({
+      extraService,
+      service,
+      companyWorker,
+      workerPercentage,
+      companyPercentage,
+      workerAssigned,
+      finalPrice,
+      calculatedAmounts,
+      workerName,
+      detailTime,
+      startDatetime,
+      configSource
+    });
+
+    // Agregar a cálculos
+    calculations.push({
+      serviceId: extraService.serviceId,
+      serviceName: service.name || '',
+      companyWorkerId: extraService.providerId,
+      workerName: workerName,
+      totalCost: calculatedAmounts.cost,
+      totalTime: detailTime,
+      workerPercentage,
+      companyPercentage,
+      totalWorker: calculatedAmounts.totalWorker,
+      totalCompany: calculatedAmounts.totalCompany,
+      calculationDetails: calculatedAmounts.calculationDetails,
+      priceOption: extraService.priceOption,
+      isExtra: true,
+      configSource // NUEVO: indica de dónde salió la config
+    });
+  }
+
+  // 8. Iniciar transacción para crear detalles y actualizar sesión
+  const queryRunner = this.sessionRepository.manager.connection.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
+
+  const addedDetails: SessionDetail[] = [];
+
+  try {
+    // 9. Crear los SessionDetail con isExtra: true
+    for (const validation of validations) {
+      const { extraService, calculatedAmounts, detailTime, startDatetime } = validation;
+
+      const sessionDetailData = {
+        cost: calculatedAmounts.cost,
+        serviceId: extraService.serviceId,
+        companyWorkerId: extraService.providerId,
+        sessionId: session.id,
+        startDatetime: startDatetime,
+        totalTime: detailTime,
+        totalWorker: calculatedAmounts.totalWorker,
+        totalCompany: calculatedAmounts.totalCompany,
+        status: 1, // Agendado por defecto
+        isExtra: true // Marcar como servicio extra
+      };
+
+      const sessionDetail = this.sessionDetailRepository.create(sessionDetailData);
+      const savedDetail = await queryRunner.manager.save(sessionDetail);
+      addedDetails.push(savedDetail);
+    }
+
+    // 10. Actualizar los totales de la sesión
+    const newTotalCost = previousTotalCost + extraTotalCost;
+    const newTotalTime = previousTotalTime + extraTotalTime;
+
+    await queryRunner.manager.update(
+      Session,
+      { id: session.id, clientId: session.clientId },
+      {
+        totalCost: newTotalCost,
+        totalTime: newTotalTime
+      }
+    );
+
+    // 11. Actualizar el campo extra_services en la sesión
+    const existingExtraServices = session.extraServices || [];
+
+    const newExtraServices = addExtraServicesDto.extraServices.map((es, index) => {
+      const addedDetail = addedDetails[index];
+      return {
+        sessionDetailId: addedDetail.id,
+        serviceId: es.serviceId,
+        serviceName: es.serviceName,
+        providerId: es.providerId,
+        providerName: es.providerName,
+        date: es.date,
+        time: es.time,
+        durationMinutes: es.durationMinutes,
+        priceOption: es.priceOption,
+        price: es.price,
+        ...(es.customPrice !== undefined && { customPrice: es.customPrice }),
+        createdAt: es.createdAt || new Date().toISOString()
+      };
+    });
+
+    const updatedExtraServices = [...existingExtraServices, ...newExtraServices];
+
+    await queryRunner.manager.update(
+      Session,
+      { id: session.id, clientId: session.clientId },
+      {
+        extraServices: updatedExtraServices
+      }
+    );
+
+    // 12. Commit de la transacción
+    await queryRunner.commitTransaction();
+
+    console.log(`✅ ${addedDetails.length} servicio(s) extra(s) agregado(s) a la sesión ${sessionId}`);
+
+  } catch (error) {
+    await queryRunner.rollbackTransaction();
+    throw new BadRequestException(`Error al agregar servicios extras: ${error.message}`);
+  } finally {
+    await queryRunner.release();
+  }
+
+  // 13. Obtener la sesión actualizada
+  const updatedSession = await this.sessionRepository.findOne({
+    where: { id: sessionId }
+  });
+
+  if (!updatedSession) {
+    throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada después de actualizar`);
+  }
+
+  // 14. Enviar correos de confirmación
+  for (let i = 0; i < validations.length; i++) {
+    const validation = validations[i];
+    const addedDetail = addedDetails[i];
+
+    try {
+      await this.sendConfirmationEmails(
+        updatedSession,
+        addedDetail,
+        session.clientId,
+        validation.extraService.providerId,
+        validation.extraService.serviceId,
+        adminCompany.id
+      );
+    } catch (error) {
+      this.logger.warn(`⚠️ Error enviando correos para servicio extra: ${error.message}`);
+    }
+  }
+
+  // 15. Actualizar automáticamente el estado de la sesión
+  try {
+    await this.updateSessionStatusBasedOnDetails(sessionId);
+    console.log(`✅ Estado de sesión actualizado automáticamente después de agregar servicios extras`);
+  } catch (error) {
+    console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${error.message}`);
+  }
+
+  // 16. Retornar resultado
+  return {
+    message: `Se agregaron ${addedDetails.length} servicio(s) extra(s) a la sesión exitosamente`,
+    session: updatedSession,
+    addedDetails,
+    calculations,
+    previousTotals: {
+      totalCost: previousTotalCost,
+      totalTime: previousTotalTime
+    },
+    newTotals: {
+      totalCost: Number(updatedSession.totalCost),
+      totalTime: Number(updatedSession.totalTime)
+    }
+  };
+}
 
 }

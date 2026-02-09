@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { CalendarCompany } from '../../calendar_company/entities/calendar-company.entity';
+import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, OneToMany, UpdateDateColumn } from 'typeorm';
 
 @Entity('company')
 export class Company {
@@ -38,4 +39,8 @@ export class Company {
 
   @Column({ name: 'phone', length: 20, nullable: true })
   phone: string;
+
+
+  @OneToMany(() => CalendarCompany, (calendarCompany) => calendarCompany.company)
+  calendars: CalendarCompany[];
 }

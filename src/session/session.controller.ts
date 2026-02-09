@@ -9,6 +9,7 @@ import { GetSessionsDto } from './dto/get-sessions.dto';
 import { UpdateSessionDto } from './dto/update-session-and-detail.dto';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
+import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -136,4 +137,21 @@ export class SessionController {
     const adminId = req.user?.id || req.user?.sub;
     return this.sessionService.syncSessionStatusFromDetails(+id, adminId);
   }
+
+
+  @Post(':id/extra-services')
+@Roles('adm')
+async addExtraServices(
+  @Request() req,
+  @Param('id') id: string,
+  @Body() addExtraServicesDto: AddExtraServicesDto
+) {
+  const adminId = req.user?.id || req.user?.sub;
+  return this.sessionService.addExtraServicesToSession(
+    +id,
+    addExtraServicesDto,
+    adminId
+  );
+}
+
 }

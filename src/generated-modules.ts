@@ -11,6 +11,7 @@ import { SessionDetailModule } from './session_detail/session_detail.module';
 import { UserModule } from './user/user.module';
 import { WorkerModule } from './worker/worker.module';
 import { WorkerFeedbackModule } from './worker_feedback/worker_feedback.module';
+import { CalendarCompanyModule } from './calendar_company/calendar-company.module';
 
 @Module({
   imports: [
@@ -25,7 +26,8 @@ import { WorkerFeedbackModule } from './worker_feedback/worker_feedback.module';
     SessionDetailModule,
     UserModule,
     WorkerModule,
-    WorkerFeedbackModule
+    WorkerFeedbackModule,
+    CalendarCompanyModule
   ],
 })
 export class GeneratedModules {}
