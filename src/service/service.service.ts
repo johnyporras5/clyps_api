@@ -257,6 +257,39 @@ export class ServiceService {
   }
 
   /**
+   * Inactivar un servicio (solo administradores)
+   */
+  async inactivate(id: number, adminId: number): Promise<any> {
+    // 1. Verificar que el administrador tiene una compañía
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId }
+    });
+
+    if (!company) {
+      throw new UnauthorizedException('No tienes una compañía asignada');
+    }
+
+    // 2. Buscar el servicio que pertenezca a la compañía del admin
+    const service = await this.serviceRepository.findOne({
+      where: { 
+        id: id,
+        companyId: company.id 
+      }
+    });
+
+    if (!service) {
+      throw new NotFoundException(`Service with id ${id} not found or you don't have permission`);
+    }
+
+    // 3. Inactivar el servicio
+    service.status = 0; // INACTIVE
+    await this.serviceRepository.save(service);
+
+    // 4. Devolver el servicio actualizado con información de workers
+    return await this.findOneWithWorkers(id, adminId);
+  }
+
+  /**
    * Validar que los workers pertenecen a la compañía del administrador
    */
   private async validateWorkersBelongToCompany(

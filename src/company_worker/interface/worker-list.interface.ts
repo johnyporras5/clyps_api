@@ -5,7 +5,7 @@ export interface WorkerList {
   fullName: string;
   picture: string;
   pictureURL: string;
-  averageRating: string;
+  averageRating: string; 
   totalReviews: number;
   startDate: Date;
   endDate: Date;

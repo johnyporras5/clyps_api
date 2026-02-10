@@ -1,20 +1,34 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  CreateDateColumn,
+  JoinColumn,
+} from 'typeorm';
+import { Company } from '../../company/entities/company.entity';
 
 @Entity('company_feedback')
 export class CompanyFeedback {
-
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ name: 'stars', nullable: true })
-  stars: number;
+  @Column({ type: 'int', nullable: true })
+  stars?: number | null;
 
-  @Column({ name: 'datetime', nullable: true })
+  @Column({ type: 'text', nullable: true })
+  description?: string | null;
+
+  @CreateDateColumn({ name: 'datetime', type: 'timestamp' })
   datetime: Date;
 
-  @PrimaryColumn({ name: 'company_id' })
+  @ManyToOne(() => Company, (company) => (company.feedbacks ?? []), { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'company_id' })
+  company: Company;
+
+  @Column({ name: 'company_id', type: 'int' })
   companyId: number;
 
-  @Column({ name: 'client_id', nullable: true })
-  clientId: number;
+  @Column({ name: 'client_id', type: 'int', nullable: true })
+  clientId?: number | null;
 }

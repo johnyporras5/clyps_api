@@ -282,7 +282,7 @@ export class CompanyWorkerService {
         'cw.is_active AS isActive',
         'cw.temporarily_deleted AS temporarilyDeleted',
         'cw.permanently_deleted AS permanentlyDeleted',
-        'COALESCE(AVG(wf.stars), 0) AS averageRating',
+      'COALESCE(AVG(wf.stars), 0) AS averageRating',  
         'COUNT(wf.id) AS totalReviews'
       ])
       .where('cw.company_id = :companyId', { companyId: company.id })
@@ -330,8 +330,8 @@ export class CompanyWorkerService {
         fullName: result.fullName,
         picture: result.picture, // Nombre original del archivo
         pictureURL: pictureURL, // URL completa
-        averageRating: parseFloat(result.averageRating).toFixed(1),
-        totalReviews: parseInt(result.totalReviews) || 0,
+       averageRating: parseFloat(result.averageRating).toFixed(1), 
+      totalReviews: parseInt(result.totalReviews) || 0, 
         startDate: result.startDate,
         endDate: result.endDate,
         isActive: result.isActive,

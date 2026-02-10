@@ -36,4 +36,7 @@ export class UpdateAdminProfileDto {
   @IsOptional()
   @IsUrl()
   facebookUrl?: string;
+
+  @IsOptional()
+  calendarDetail?: any;
 }

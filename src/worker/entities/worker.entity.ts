@@ -1,5 +1,7 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, OneToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, OneToMany, OneToOne, JoinColumn } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
+import { WorkerFeedback } from '../../worker_feedback/entities/worker_feedback.entity';
+
 @Entity('worker')
 export class Worker {
 
@@ -40,4 +42,8 @@ export class Worker {
 
   @Column({ name: 'user_id', unique: true })
   userId: number;
+
+
+  @OneToMany(() => WorkerFeedback, (feedback) => feedback.worker)
+  feedbacks?: WorkerFeedback[];
 }

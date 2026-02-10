@@ -19,6 +19,8 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { Company } from '../company/entities/company.entity';
 import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
 import { PhotoWithUrl } from '../worker/types/photo_with_url.type';
+import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
+import { FeedbackSummary } from './types/feedback_summary.type';
 @Injectable()
 export class WorkerService {
   private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'worker_photo';
@@ -32,61 +34,61 @@ export class WorkerService {
     private companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
+    @InjectRepository(WorkerFeedback) // <<-- agregar
+  private workerFeedbackRepository: Repository<WorkerFeedback>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
   ) { }
 
 
-  async findOne(id: number, userId?: number, userType?: string): Promise<PhotoWithUrl> {
-    const worker = await this.workerRepository.findOne({
-      where: { id },
-      relations: ['user']
-    });
+async findOne(id: number, userId?: number, userType?: string): Promise<PhotoWithUrl & { feedbackSummary?: FeedbackSummary }> {
+  const worker = await this.workerRepository.findOne({
+    where: { id },
+    relations: ['user']
+  });
 
-    if (!worker) {
-      throw new NotFoundException(`Worker with id ${id} not found`);
-    }
-
-    // Si se proporciona userId y userType, verificar permisos
-    if (userId && userType) {
-      // Admin puede ver cualquier worker
-      if (userType !== 'adm' && worker.userId !== userId) {
-        throw new UnauthorizedException('No tienes permiso para ver este perfil');
-      }
-    }
-
-    const photoUrl = await this.getWorkerPhotoUrl(worker.id);
-
-    const userWithoutPassword = this.excludePasswordFromUser(worker.user);
-
-    return {
-      ...worker,
-      photoUrl,
-      user: userWithoutPassword
-    };
-
+  if (!worker) {
+    throw new NotFoundException(`Worker with id ${id} not found`);
   }
 
-  async findByUserId(userId: number): Promise<PhotoWithUrl> {
-    const worker = await this.workerRepository.findOne({
-      where: { userId },
-      relations: ['user']
-    });
-
-    if (!worker) {
-      throw new NotFoundException(`Worker profile for user ${userId} not found`);
+  if (userId && userType) {
+    if (userType !== 'adm' && worker.userId !== userId) {
+      throw new UnauthorizedException('No tienes permiso para ver este perfil');
     }
-    const photoUrl = await this.getWorkerPhotoUrl(worker.id);
-    const userWithoutPassword = this.excludePasswordFromUser(worker.user);
-
-
-    return {
-      ...worker,
-      photoUrl, 
-      user: userWithoutPassword,
-
-    };
   }
+
+  const photoUrl = await this.getWorkerPhotoUrl(worker.id);
+  const userWithoutPassword = this.excludePasswordFromUser(worker.user);
+  const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
+
+  return {
+    ...worker,
+    photoUrl,
+    user: userWithoutPassword,
+    feedbackSummary,
+  };
+}
+
+async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: FeedbackSummary }> {
+  const worker = await this.workerRepository.findOne({
+    where: { userId },
+    relations: ['user']
+  });
+
+  if (!worker) {
+    throw new NotFoundException(`Worker profile for user ${userId} not found`);
+  }
+  const photoUrl = await this.getWorkerPhotoUrl(worker.id);
+  const userWithoutPassword = this.excludePasswordFromUser(worker.user);
+  const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
+
+  return {
+    ...worker,
+    photoUrl, 
+    user: userWithoutPassword,
+    feedbackSummary,
+  };
+}
 
   async create(createWorkerDto: CreateWorkerDto): Promise<Worker> {
     // Verificar que el usuario existe y es de tipo 'wrk'
@@ -276,4 +278,29 @@ export class WorkerService {
 
     return userWithoutPassword;
   }
+
+
+  private async getFeedbackSummary(workerId: number, recentLimit = 5): Promise<FeedbackSummary> {
+  // total y últimos reviews
+  const [recentReviews, totalReviews] = await this.workerFeedbackRepository.findAndCount({
+    where: { workerId },
+    order: { datetime: 'DESC' },
+    take: recentLimit,
+  });
+
+  // average usando query builder (más preciso en SQL)
+  const raw = await this.workerFeedbackRepository
+    .createQueryBuilder('f')
+    .select('AVG(f.stars)', 'avg')
+    .where('f.worker_id = :workerId', { workerId })
+    .getRawOne();
+
+  const averageStars = raw && raw.avg ? parseFloat(raw.avg) : 0;
+
+  return {
+    averageStars: Math.round((averageStars + Number.EPSILON) * 100) / 100, // 2 decimales
+    totalReviews,
+    recentReviews,
+  };
+}
 }

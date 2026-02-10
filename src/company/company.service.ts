@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject ,BadRequestException} from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
@@ -7,14 +7,15 @@ import { CreateCompanyDto } from './dto/create-company.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyWithLogoUrl } from './types/company-with-logo-url.type';
-import { 
-  paginate, 
-  PaginationOptions, 
-  PaginationResult 
+import {
+  paginate,
+  PaginationOptions,
+  PaginationResult
 } from '../common/utils/pagination.util';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Client } from '../client/entities/client.entity';
+import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 
 
 @Injectable()
@@ -28,6 +29,8 @@ export class CompanyService {
     private companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Client)
     private clientRepository: Repository<Client>,
+    @InjectRepository(CalendarCompany)
+    private calendarCompanyRepository: Repository<CalendarCompany>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
   ) { }
@@ -60,44 +63,58 @@ export class CompanyService {
     if (!company) {
       throw new NotFoundException(`Company with id ${id} not found`);
     }
-    
+
     const companyWithLogo: CompanyWithLogoUrl = {
       ...company,
       logoUrl: company.logo ? this.fileUploadService.getFileUrl('company_logo', company.logo) : null
     };
-    
-    return companyWithLogo;
-  }
-
-  async findByUserId(userId: number): Promise<CompanyWithLogoUrl> {
-    const company = await this.companyRepository.findOne({
-      where: { userId }
-    });
-
-    if (!company) {
-      throw new NotFoundException(`Company for user with id ${userId} not found`);
-    }
-
-    // Obtener los datos del usuario
-    const user = await this.userRepository.findOne({
-      where: { id: userId }
-    });
-
-    if (!user) {
-      throw new NotFoundException(`User with id ${userId} not found`);
-    }
-
-    // Excluir el password del usuario por seguridad
-    const { password, ...userWithoutPassword } = user;
-
-    const companyWithLogo: CompanyWithLogoUrl = {
-      ...company,
-      logoUrl: company.logo ? this.fileUploadService.getFileUrl('company_logo', company.logo) : null,
-      user: userWithoutPassword
-    };
 
     return companyWithLogo;
   }
+
+async findByUserId(userId: number): Promise<CompanyWithLogoUrl> {
+  const company = await this.companyRepository.findOne({
+    where: { userId }
+  });
+
+  if (!company) {
+    throw new NotFoundException(`Company for user with id ${userId} not found`);
+  }
+
+  // Obtener los datos del usuario
+  const user = await this.userRepository.findOne({
+    where: { id: userId }
+  });
+
+  if (!user) {
+    throw new NotFoundException(`User with id ${userId} not found`);
+  }
+
+  // ✅ OBTENER EL CALENDARIO (ya parseado como objeto)
+  let calendarDetail = null;
+  try {
+    const calendar = await this.calendarCompanyRepository.findOne({
+      where: { companyId: company.id }
+    });
+    if (calendar) {
+      calendarDetail = calendar.calendarDetail; // TypeORM automáticamente parsea JSON
+    }
+  } catch (error) {
+    console.error('❌ Error al obtener el calendario:', error);
+  }
+
+  // Excluir el password del usuario por seguridad
+  const { password, ...userWithoutPassword } = user;
+
+  const companyWithLogo: CompanyWithLogoUrl = {
+    ...company,
+    logoUrl: company.logo ? this.fileUploadService.getFileUrl('company_logo', company.logo) : null,
+    calendarDetail: calendarDetail, // ✅ Objeto JSON, no string
+    user: userWithoutPassword
+  };
+
+  return companyWithLogo;
+}
 
   async create(createCompanyDto: CreateCompanyDto): Promise<Company> {
     const company = this.companyRepository.create(createCompanyDto);
@@ -115,7 +132,8 @@ export class CompanyService {
 
     const companyWithLogo: CompanyWithLogoUrl = {
       ...updatedCompany,
-      logoUrl: updatedCompany.logo ? this.fileUploadService.getFileUrl('company_logo', updatedCompany.logo) : null
+      logoUrl: updatedCompany.logo ? this.fileUploadService.getFileUrl('company_logo', updatedCompany.logo) : null,
+
     };
 
     return companyWithLogo;
@@ -126,12 +144,12 @@ export class CompanyService {
     if (!company) {
       throw new NotFoundException(`Company with id ${id} not found`);
     }
-    
+
     // Eliminar el archivo del logo si existe
     if (company.logo) {
       this.fileUploadService.deleteFile('company_logo', company.logo);
     }
-    
+
     const result = await this.companyRepository.delete(id);
     if (result.affected === 0) {
       throw new NotFoundException(`Company with id ${id} not found`);
@@ -139,80 +157,135 @@ export class CompanyService {
   }
 
 
-   /**
-   * Método único para actualizar el perfil del administrador
-   * Maneja tanto los datos como el logo en una sola operación
-   */
-  async updateAdminProfile(
-    userId: number,
-    updateAdminProfileDto: UpdateAdminProfileDto,
-    logoFile?: Express.Multer.File
-  ): Promise<CompanyWithLogoUrl> {
-    // Buscar la compañía del admin
-    const company = await this.companyRepository.findOne({
-      where: { userId }
-    });
+  /**
+  * Método único para actualizar el perfil del administrador
+  * Maneja tanto los datos como el logo en una sola operación
+  */
+/**
+ * Método único para actualizar el perfil del administrador
+ * Maneja tanto los datos como el logo y el calendario en una sola operación
+ */
+async updateAdminProfile(
+  userId: number,
+  updateAdminProfileDto: UpdateAdminProfileDto,
+  logoFile?: Express.Multer.File
+): Promise<CompanyWithLogoUrl> {
+  // Buscar la compañía del admin
+  const company = await this.companyRepository.findOne({
+    where: { userId }
+  });
 
-    if (!company) {
-      throw new NotFoundException('No se encontró la compañía para este administrador');
-    }
-
-    // Si se envía un logo, procesarlo
-    if (logoFile) {
-      try {
-        // Eliminar el logo anterior si existe
-        if (company.logo) {
-          await this.fileUploadService.deleteFile('company_logo', company.logo);
-        }
-
-        // Subir nuevo logo
-        const logoInfo = await this.fileUploadService.saveFile(
-          logoFile,
-          'company_logo',
-          'company',
-          userId
-        );
-
-        // Actualizar el nombre del logo en la compañía
-        company.logo = logoInfo.fileName;
-      } catch (error) {
-        console.error('❌ Error al procesar el logo:', error);
-        throw new BadRequestException('Error al procesar el logo. Asegúrate de que sea una imagen válida.');
-      }
-    }
-
-    // Actualizar campos del DTO
-    const updateData: Partial<Company> = {};
-    
-    // Solo actualizar los campos que vienen en el DTO (no undefined)
-    if (updateAdminProfileDto.name !== undefined) updateData.name = updateAdminProfileDto.name;
-    if (updateAdminProfileDto.location !== undefined) updateData.location = updateAdminProfileDto.location;
-    if (updateAdminProfileDto.email !== undefined) updateData.email = updateAdminProfileDto.email;
-    if (updateAdminProfileDto.phone !== undefined) updateData.phone = updateAdminProfileDto.phone;
-    if (updateAdminProfileDto.description !== undefined) updateData.description = updateAdminProfileDto.description;
-    if (updateAdminProfileDto.managerName !== undefined) updateData.managerName = updateAdminProfileDto.managerName;
-    if (updateAdminProfileDto.instagramUrl !== undefined) updateData.instagramUrl = updateAdminProfileDto.instagramUrl;
-    if (updateAdminProfileDto.tiktokUrl !== undefined) updateData.tiktokUrl = updateAdminProfileDto.tiktokUrl;
-    if (updateAdminProfileDto.facebookUrl !== undefined) updateData.facebookUrl = updateAdminProfileDto.facebookUrl;
-
-    // Aplicar actualizaciones
-    Object.assign(company, updateData);
-    const updatedCompany = await this.companyRepository.save(company);
-
-    const companyWithLogo: CompanyWithLogoUrl = {
-      ...updatedCompany,
-      logoUrl: updatedCompany.logo ? this.fileUploadService.getFileUrl('company_logo', updatedCompany.logo) : null
-    };
-
-    return companyWithLogo;
+  if (!company) {
+    throw new NotFoundException('No se encontró la compañía para este administrador');
   }
 
+  // Si se envía un logo, procesarlo
+  if (logoFile) {
+    try {
+      // Eliminar el logo anterior si existe
+      if (company.logo) {
+        await this.fileUploadService.deleteFile('company_logo', company.logo);
+      }
+
+      // Subir nuevo logo
+      const logoInfo = await this.fileUploadService.saveFile(
+        logoFile,
+        'company_logo',
+        'company',
+        userId
+      );
+
+      // Actualizar el nombre del logo en la compañía
+      company.logo = logoInfo.fileName;
+    } catch (error) {
+      console.error('❌ Error al procesar el logo:', error);
+      throw new BadRequestException('Error al procesar el logo. Asegúrate de que sea una imagen válida.');
+    }
+  }
+
+  // Actualizar campos del DTO
+  const updateData: Partial<Company> = {};
+  
+  // Solo actualizar los campos que vienen en el DTO (no undefined)
+  if (updateAdminProfileDto.name !== undefined) updateData.name = updateAdminProfileDto.name;
+  if (updateAdminProfileDto.location !== undefined) updateData.location = updateAdminProfileDto.location;
+  if (updateAdminProfileDto.email !== undefined) updateData.email = updateAdminProfileDto.email;
+  if (updateAdminProfileDto.phone !== undefined) updateData.phone = updateAdminProfileDto.phone;
+  if (updateAdminProfileDto.description !== undefined) updateData.description = updateAdminProfileDto.description;
+  if (updateAdminProfileDto.managerName !== undefined) updateData.managerName = updateAdminProfileDto.managerName;
+  if (updateAdminProfileDto.instagramUrl !== undefined) updateData.instagramUrl = updateAdminProfileDto.instagramUrl;
+  if (updateAdminProfileDto.tiktokUrl !== undefined) updateData.tiktokUrl = updateAdminProfileDto.tiktokUrl;
+  if (updateAdminProfileDto.facebookUrl !== undefined) updateData.facebookUrl = updateAdminProfileDto.facebookUrl;
+
+  // Aplicar actualizaciones
+  Object.assign(company, updateData);
+  const updatedCompany = await this.companyRepository.save(company);
+
+  //  MANEJAR ACTUALIZACIÓN DEL CALENDARIO
+  let calendarDetail = null;
+  
+  if (updateAdminProfileDto.calendarDetail !== undefined) {
+    try {
+      //  PARSEAR el JSON si viene como string desde form-data
+      let parsedCalendarDetail = updateAdminProfileDto.calendarDetail;
+      if (typeof updateAdminProfileDto.calendarDetail === 'string') {
+        parsedCalendarDetail = JSON.parse(updateAdminProfileDto.calendarDetail);
+      }
+
+      // Buscar si ya existe un calendario para esta compañía
+      let calendarCompany = await this.calendarCompanyRepository.findOne({
+        where: { companyId: company.id }
+      });
+
+      if (calendarCompany) {
+        // Si existe, actualizar solo el calendarDetail
+        calendarCompany.calendarDetail = parsedCalendarDetail;
+        await this.calendarCompanyRepository.save(calendarCompany);
+        calendarDetail = calendarCompany.calendarDetail;
+        console.log(`✅ Calendario actualizado para la compañía ${company.id}`);
+      } else {
+        // Si no existe, crear uno nuevo
+        const newCalendar = this.calendarCompanyRepository.create({
+          companyId: company.id,
+          calendarDetail: parsedCalendarDetail,
+        });
+        const savedCalendar = await this.calendarCompanyRepository.save(newCalendar);
+        calendarDetail = savedCalendar.calendarDetail;
+        console.log(`✅ Calendario creado para la compañía ${company.id}`);
+      }
+    } catch (error) {
+      console.error('❌ Error al actualizar el calendario:', error);
+      // No lanzamos excepción para no bloquear la actualización del perfil
+    }
+  } else {
+    // Si no se envió calendarDetail en el DTO, buscar el existente
+    try {
+      const existingCalendar = await this.calendarCompanyRepository.findOne({
+        where: { companyId: company.id }
+      });
+      if (existingCalendar) {
+        calendarDetail = existingCalendar.calendarDetail;
+      }
+    } catch (error) {
+      console.error('❌ Error al obtener el calendario existente:', error);
+    }
+  }
+
+  // ✅ INCLUIR calendarDetail EN LA RESPUESTA (ya parseado como objeto)
+  const companyWithLogo: CompanyWithLogoUrl = {
+    ...updatedCompany,
+    logoUrl: updatedCompany.logo ? this.fileUploadService.getFileUrl('company_logo', updatedCompany.logo) : null,
+    calendarDetail: calendarDetail, // ✅ Ya es un objeto, no un string
+  };
+
+  return companyWithLogo;
+}
 
 
-    /**
-  * Eliminación temporal de trabajador - para poder reconectarlo después
-  * Solo marca el registro como temporalmente eliminado, manteniendo los datos
-  */
+  /**
+* Eliminación temporal de trabajador - para poder reconectarlo después
+* Solo marca el registro como temporalmente eliminado, manteniendo los datos
+*/
   async temporarilyRemoveWorkerFromCompany(
     adminId: number,
     workerId: number
@@ -290,7 +363,7 @@ export class CompanyService {
     // Restaurar el trabajador
     companyWorker.temporarilyDeleted = false;
     companyWorker.isActive = 1; // Reactivar
-    companyWorker.endDate = null as any; 
+    companyWorker.endDate = null as any;
 
     await this.companyWorkerRepository.save(companyWorker);
 
@@ -385,7 +458,7 @@ export class CompanyService {
 
     // 2. Buscar el cliente
     const client = await this.clientRepository.findOne({
-      where: { 
+      where: {
         id: clientId,
         permanentlyDeleted: false // No incluir los permanentemente eliminados
       }
@@ -409,7 +482,7 @@ export class CompanyService {
     // 5. Marcar como temporalmente eliminado
     client.temporarilyDeleted = true;
     client.isActive = 0; // Desactivar
-    
+
     await this.clientRepository.save(client);
 
     return {
@@ -453,7 +526,7 @@ export class CompanyService {
     // Restaurar el cliente
     client.temporarilyDeleted = false;
     client.isActive = 1; // Reactivar
-    
+
     await this.clientRepository.save(client);
 
     return {
@@ -496,7 +569,7 @@ export class CompanyService {
     client.permanentlyDeleted = true;
     client.temporarilyDeleted = false; // Asegurar que no esté marcado como temporal
     client.isActive = 0; // Desactivar
-    
+
     await this.clientRepository.save(client);
 
     return {
@@ -528,7 +601,7 @@ export class CompanyService {
     });
 
     // Filtrar solo los que están asociados a la compañía del admin
-    return allTemporarilyDeletedClients.filter(client => 
+    return allTemporarilyDeletedClients.filter(client =>
       client.companies && client.companies.includes(company.id)
     );
   }

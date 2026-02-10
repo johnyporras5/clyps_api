@@ -1,3 +1,4 @@
+import { CompanyFeedback } from '../../company_feedback/entities/company_feedback.entity';
 import { CalendarCompany } from '../../calendar_company/entities/calendar-company.entity';
 import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, OneToMany, UpdateDateColumn } from 'typeorm';
 
@@ -41,6 +42,9 @@ export class Company {
   phone: string;
 
 
-  @OneToMany(() => CalendarCompany, (calendarCompany) => calendarCompany.company)
+  @OneToMany(() => CalendarCompany, (calendar) => calendar.company, { cascade: true })
   calendars: CalendarCompany[];
+
+  @OneToMany(() => CompanyFeedback, (f) => f.company)
+  feedbacks?: CompanyFeedback[];
 }
