@@ -1,4 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { ServiceStatus } from '../enum/service-status.enum';
 
 @Entity('service')
 export class Service {
@@ -25,7 +26,7 @@ export class Service {
   workers: Array<{
     id: number;
     percentage: number;
-  time?: number;
+    time?: number;
   }>;
 
   @Column({ name: 'currency', length: 10, nullable: true, default: 'VES' })
@@ -37,8 +38,12 @@ export class Service {
   @Column({ name: 'percentage', type: 'decimal', nullable: true })
   percentage: number;
 
+  @Column({ name: 'status', nullable: true, default: ServiceStatus.ACTIVE })
+  status: number;
 
   constructor() {
     this.workers = [];
+    this.status = ServiceStatus.ACTIVE;
   }
+
 }

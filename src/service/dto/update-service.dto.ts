@@ -51,4 +51,8 @@ export class UpdateServiceDto {
   @Min(0)
   @Max(100)
   percentage?: number;
+
+  @IsOptional()
+  @IsNumber()
+  status?: number;
 }

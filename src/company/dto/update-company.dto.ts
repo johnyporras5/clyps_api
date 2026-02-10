@@ -25,4 +25,8 @@ export class UpdateCompanyDto {
   @IsOptional()
   @IsNumber()
   userId?: number;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
 }

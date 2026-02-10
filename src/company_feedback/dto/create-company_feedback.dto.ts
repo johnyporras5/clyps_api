@@ -1,19 +1,13 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsString, Min, Max } from 'class-validator';
 
 export class CreateCompanyFeedbackDto {
-
-  @IsOptional()
+  @IsNotEmpty()
   @IsNumber()
-  stars?: number;
+  @Min(1)
+  @Max(5)
+  stars: number;
 
-  @IsOptional()
-  datetime?: Date;
-
-  @IsOptional()
-  @IsNumber()
-  companyId?: number;
-
-  @IsOptional()
-  @IsNumber()
-  clientId?: number;
+  @IsNotEmpty()
+  @IsString()
+  description: string;
 }

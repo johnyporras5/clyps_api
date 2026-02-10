@@ -42,15 +42,4 @@ export class RegisterClientDto {
   @IsString()
   location?: string;
 
-
-  //@IsOptional()
-  //@IsArray()
-  //@IsInt({ each: true })
-  //companies?: number[] = [];
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(1)
-  isPublic?: number = 0;
 }

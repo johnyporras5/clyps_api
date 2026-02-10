@@ -32,6 +32,12 @@ export class CompanyWorker {
   @Column({ name: 'calendar', type: 'json', nullable: true })
   calendar: any;
 
+   @Column({ name: 'temporarily_deleted', type: 'boolean', default: false })
+  temporarilyDeleted: boolean;
+
+  @Column({ name: 'permanently_deleted', type: 'boolean', default: false })
+  permanentlyDeleted: boolean;
+
   @ManyToOne(() => Worker, { eager: true })
   @JoinColumn({ name: 'worker_id' })
   worker: Worker;

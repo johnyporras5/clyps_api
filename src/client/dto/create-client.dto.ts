@@ -44,9 +44,5 @@ export class CreateClientDto {
   userId: number;
 
 
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(1)
-  isPublic?: number = 0;
+
 }

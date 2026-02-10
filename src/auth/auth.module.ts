@@ -11,17 +11,18 @@ import { Worker } from '../worker/entities/worker.entity';
 import { Client } from 'src/client/entities/client.entity';
 import { EmailModule } from '../email/email.module';
 import { VerificationModule } from '../verification/verification.module';
-import { BlacklistedToken } from './entities/blacklisted_token.entity'; 
-import { TokenBlacklistService } from './services/token_blacklist.service'; 
+import { BlacklistedToken } from './entities/blacklisted_token.entity';
+import { TokenBlacklistService } from './services/token_blacklist.service';
 import { Company } from 'src/company/entities/company.entity';
 import { CompanyService } from 'src/company/company.service';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { CommonModule } from '../common/common.module';
+import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Worker, Client,BlacklistedToken,Company,CompanyWorker]),
+    TypeOrmModule.forFeature([User, Worker, Client, BlacklistedToken, Company, CompanyWorker, CalendarCompany]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -39,7 +40,7 @@ import { CommonModule } from '../common/common.module';
     CommonModule
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy,TokenBlacklistService, CompanyService],
-  exports: [AuthService, JwtStrategy, PassportModule,TokenBlacklistService ],
+  providers: [AuthService, JwtStrategy, TokenBlacklistService, CompanyService],
+  exports: [AuthService, JwtStrategy, PassportModule, TokenBlacklistService],
 })
 export class AuthModule { }

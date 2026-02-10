@@ -51,4 +51,8 @@ export class CreateServiceDto {
   @Min(0)
   @Max(100)
   percentage: number; // Porcentaje general del servicio
+
+  @IsOptional()
+  @IsNumber()
+  status?: number;
 }

@@ -33,9 +33,5 @@ export class UpdateClientDto {
   @IsInt({ each: true })
   companies?: number[] = [];
 
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(1)
-  isPublic?: number = 0;
+
 }

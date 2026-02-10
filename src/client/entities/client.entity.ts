@@ -37,9 +37,12 @@ export class Client {
   @Column({ type: 'json', nullable: true })
   companies: number[];
 
-  @Column({ name: 'is_public', type: 'tinyint', default: 0 })
-  isPublic: number; // 0 = privado, 1 = público
 
+  @Column({ name: 'temporarily_deleted', type: 'boolean', default: false })
+  temporarilyDeleted: boolean;
+
+  @Column({ name: 'permanently_deleted', type: 'boolean', default: false })
+  permanentlyDeleted: boolean;
 
   // Relación uno a uno con User
   @OneToOne(() => User, { nullable: false, onDelete: 'CASCADE' })

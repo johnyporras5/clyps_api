@@ -1,4 +1,6 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { CompanyFeedback } from '../../company_feedback/entities/company_feedback.entity';
+import { CalendarCompany } from '../../calendar_company/entities/calendar-company.entity';
+import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, OneToMany, UpdateDateColumn } from 'typeorm';
 
 @Entity('company')
 export class Company {
@@ -35,4 +37,14 @@ export class Company {
 
   @Column({ name: 'facebook_url', length: 245, nullable: true })
   facebookUrl: string;
+
+  @Column({ name: 'phone', length: 20, nullable: true })
+  phone: string;
+
+
+  @OneToMany(() => CalendarCompany, (calendar) => calendar.company, { cascade: true })
+  calendars: CalendarCompany[];
+
+  @OneToMany(() => CompanyFeedback, (f) => f.company)
+  feedbacks?: CompanyFeedback[];
 }

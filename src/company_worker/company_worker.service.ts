@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException,Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CompanyWorker } from './entities/company_worker.entity';
@@ -82,12 +82,12 @@ export class CompanyWorkerService {
 
     // 3. Crear objeto solo con los campos permitidos (calendar e isActive)
     const allowedUpdates: Partial<CompanyWorker> = {};
-    
+
     // Solo actualizar calendar si viene en el updateData
     if (updateData.calendar !== undefined) {
       allowedUpdates.calendar = updateData.calendar;
     }
-    
+
     // Solo actualizar isActive si viene en el updateData
     if (updateData.isActive !== undefined) {
       allowedUpdates.isActive = updateData.isActive;
@@ -98,14 +98,14 @@ export class CompanyWorkerService {
     const attemptedRestrictedUpdates = Object.keys(updateData).filter(
       key => restrictedFields.includes(key) && updateData[key] !== undefined
     );
-    
+
     if (attemptedRestrictedUpdates.length > 0) {
       console.warn('Intento de modificación de campos restringidos ignorado:', attemptedRestrictedUpdates);
     }
 
     // 5. Actualizar solo los campos permitidos
     Object.assign(companyWorker, allowedUpdates);
-    
+
     return await this.companyWorkerRepository.save(companyWorker);
   }
 
@@ -144,12 +144,12 @@ export class CompanyWorkerService {
 
     // 3. Crear objeto solo con los campos permitidos (calendar e isActive)
     const allowedUpdates: Partial<CompanyWorker> = {};
-    
+
     // Solo actualizar calendar si viene en el updateData
     if (updateData.calendar !== undefined) {
       allowedUpdates.calendar = updateData.calendar;
     }
-    
+
     // Solo actualizar isActive si viene en el updateData
     if (updateData.isActive !== undefined) {
       allowedUpdates.isActive = updateData.isActive;
@@ -160,14 +160,14 @@ export class CompanyWorkerService {
     const attemptedRestrictedUpdates = Object.keys(updateData).filter(
       key => restrictedFields.includes(key) && updateData[key] !== undefined
     );
-    
+
     if (attemptedRestrictedUpdates.length > 0) {
       console.warn('Intento de modificación de campos restringidos ignorado:', attemptedRestrictedUpdates);
     }
 
     // 5. Actualizar
     Object.assign(companyWorker, allowedUpdates);
-    
+
     return await this.companyWorkerRepository.save(companyWorker);
   }
 
@@ -248,11 +248,11 @@ export class CompanyWorkerService {
     };
   }
 
- /**
-   * Método paginado usando la función de utilidad paginate
-   */
- async getCompanyWorkersWithNameFilterPaginated(
-    adminId: number, 
+  /**
+    * Método paginado usando la función de utilidad paginate
+    */
+  async getCompanyWorkersWithNameFilterPaginated(
+    adminId: number,
     paginationDto: CompanyWorkersPaginationDto,
   ): Promise<PaginatedWorkerListResult> {
     // 1. Obtener la compañía del administrador
@@ -280,11 +280,15 @@ export class CompanyWorkerService {
         'cw.start_date AS startDate',
         'cw.end_date AS endDate',
         'cw.is_active AS isActive',
-        'COALESCE(AVG(wf.stars), 0) AS averageRating',
+        'cw.temporarily_deleted AS temporarilyDeleted',
+        'cw.permanently_deleted AS permanentlyDeleted',
+      'COALESCE(AVG(wf.stars), 0) AS averageRating',  
         'COUNT(wf.id) AS totalReviews'
       ])
       .where('cw.company_id = :companyId', { companyId: company.id })
       .andWhere('cw.is_active = 1')
+      .andWhere('cw.temporarily_deleted = 0')
+      .andWhere('cw.permanently_deleted = 0')
       .groupBy('worker.id')
       .addGroupBy('cw.id')
       .orderBy('worker.name', 'ASC');
@@ -306,7 +310,7 @@ export class CompanyWorkerService {
 
     // 6. Paginar los resultados
     const paginatedResult = await this.paginateQueryBuilder<WorkerList>(
-      queryBuilder, 
+      queryBuilder,
       paginationOptions,
       company.id,
       name
@@ -326,11 +330,13 @@ export class CompanyWorkerService {
         fullName: result.fullName,
         picture: result.picture, // Nombre original del archivo
         pictureURL: pictureURL, // URL completa
-        averageRating: parseFloat(result.averageRating).toFixed(1),
-        totalReviews: parseInt(result.totalReviews) || 0,
+       averageRating: parseFloat(result.averageRating).toFixed(1), 
+      totalReviews: parseInt(result.totalReviews) || 0, 
         startDate: result.startDate,
         endDate: result.endDate,
-        isActive: result.isActive
+        isActive: result.isActive,
+        temporarilyDeleted: result.temporarilyDeleted,
+        permanentlyDeleted: result.permanentlyDeleted
       };
     });
 
@@ -363,7 +369,9 @@ export class CompanyWorkerService {
       .createQueryBuilder('worker')
       .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id')
       .where('cw.company_id = :companyId', { companyId })
-      .andWhere('cw.is_active = 1');
+      .andWhere('cw.is_active = 1')
+      .andWhere('cw.temporarily_deleted = 0')
+      .andWhere('cw.permanently_deleted = 0');
 
     // Aplicar filtro por nombre si existe
     if (name && name.trim() !== '') {

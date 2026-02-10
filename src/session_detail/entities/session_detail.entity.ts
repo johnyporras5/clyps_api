@@ -33,15 +33,16 @@ export class SessionDetail {
   @Column({ name: 'status', nullable: true })
   status: number;
 
+ // Nuevo campo para identificar servicios extras
+  @Column({ name: 'is_extra', default: false })
+  isExtra: boolean;
+
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
+
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-  @Column({ name: 'description_worker', type: 'text', nullable: true })
-  descriptionWorker: string;
 
-  @Column({ name: 'description_ia', type: 'text', nullable: true })
-  descriptionIA: string;
-
-  @Column({ name: 'description', type: 'text', nullable: true })
-  description: string;
 }

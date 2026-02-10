@@ -9,6 +9,7 @@ import { GetSessionsDto } from './dto/get-sessions.dto';
 import { UpdateSessionDto } from './dto/update-session-and-detail.dto';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
+import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -51,6 +52,7 @@ export class SessionController {
   }
 
   @Get()
+  @Roles('adm')
   async findAll(
     @Request() req,
     @Query() getSessionsDto: GetSessionsDto
@@ -82,14 +84,15 @@ export class SessionController {
   }
 
   @Put('details/:detailId/status')
-  @Roles('adm')
+  @Roles('adm', 'wrk')
   async updateDetailStatus(
     @Request() req,
     @Param('detailId') detailId: string,
     @Body() updateDetailStatusDto: UpdateDetailStatusDto
   ) {
-    const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.updateDetailStatus(+detailId, updateDetailStatusDto, adminId);
+    const userId = req.user?.id || req.user?.sub;
+    const userRole = req.user?.userType; 
+    return this.sessionService.updateDetailStatus(+detailId, updateDetailStatusDto, userId, userRole);
   }
 
   @Delete(':id')
@@ -124,7 +127,7 @@ export class SessionController {
     const userId = req.user?.id || req.user?.sub;
     return this.sessionService.createSessionByClient(createSessionWithDetailDto, userId);
   }
-  
+
   @Post(':id/sync-status')
   @Roles('adm')
   async syncSessionStatus(
@@ -134,4 +137,21 @@ export class SessionController {
     const adminId = req.user?.id || req.user?.sub;
     return this.sessionService.syncSessionStatusFromDetails(+id, adminId);
   }
+
+
+  @Post(':id/extra-services')
+@Roles('adm')
+async addExtraServices(
+  @Request() req,
+  @Param('id') id: string,
+  @Body() addExtraServicesDto: AddExtraServicesDto
+) {
+  const adminId = req.user?.id || req.user?.sub;
+  return this.sessionService.addExtraServicesToSession(
+    +id,
+    addExtraServicesDto,
+    adminId
+  );
+}
+
 }

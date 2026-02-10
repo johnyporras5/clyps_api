@@ -1,4 +1,19 @@
-// En types/session-response.type.ts
+
+export interface ExtraServiceResponse {
+  id: number;
+  serviceId: number;
+  serviceName: string;
+  providerId: number;
+  providerName: string;
+  date: string;
+  time: string;
+  durationMinutes: number;
+  priceOption: "default" | "custom" | "free";
+  price: number;
+  customPrice?: number;
+  createdAt: string;
+}
+
 export interface SessionDetailResponse {
   id: number;
   cost: number;
@@ -26,13 +41,16 @@ export interface SessionResponse {
   companyName: string;
   sessionDatetime: Date;
   sessionStatus: number;
-  sessionStatusText: string; 
+  sessionStatusText: string;
   totalCost: number;
   totalTime: number;
   startDatetime: Date;
   status: number;
   iaResponse: any;
-  createdAt?: Date;
+  descriptionWorker?: string;
+  descriptionIA?: string;
+  description?: string;
+  extraServices?: ExtraServiceResponse[]; createdAt?: Date;
   updatedAt?: Date;
-  details: SessionDetailResponse[]; 
+  details: SessionDetailResponse[];
 }

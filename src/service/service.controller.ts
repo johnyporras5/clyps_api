@@ -5,7 +5,8 @@ import {
   Body, 
   Param, 
   Put, 
-  Delete, 
+  Delete,
+  Patch,
   ParseIntPipe, 
   HttpCode, 
   HttpStatus, 
@@ -90,6 +91,23 @@ export class ServiceController {
   ): Promise<any> {
     const adminId = req.user.sub;
     return this.serviceService.update(id, updateServiceDto, adminId);
+  }
+
+  /**
+   * Inactivar un servicio de mi compañía
+   * PATCH /services/my-company/:id/inactive
+   * Solo administradores
+   */
+  @Patch('my-company/:id/inactive')
+  @UseGuards(RolesGuard)
+  @Roles('adm')
+  @HttpCode(HttpStatus.OK)
+  async inactivateMyCompany(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any
+  ): Promise<any> {
+    const adminId = req.user.sub;
+    return this.serviceService.inactivate(id, adminId);
   }
 
   /**

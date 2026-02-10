@@ -32,7 +32,7 @@ export class ClientService {
    * - Cliente PÚBLICO (isPublic = 1): Visible para CUALQUIER admin logueado
    * - Cliente PRIVADO (isPublic = 0): Solo visible para admins cuyas compañías están en el array companies del cliente
    */
-  async findAllByAdminCompanies(
+async findAllByAdminCompanies(
     adminId: number,
     options: PaginationDto
   ): Promise<PaginationResult<any>> {
@@ -48,39 +48,36 @@ export class ClientService {
     const adminCompanyIds = adminCompanies.map(company => company.id);
     this.logger.log(`[DEBUG] IDs de compañías del admin ${adminId}: ${adminCompanyIds}`);
 
-    // 2. Construir query con la nueva lógica
+    // 2. Construir query con la nueva lógica (SIN isPublic)
     const queryBuilder = this.clientRepository.createQueryBuilder('client')
       .leftJoinAndSelect('client.user', 'user')
       .where('client.isActive = :isActive', { isActive: 1 });
 
-    // 3. Aplicar condiciones según la visibilidad del cliente
+    // 3. Aplicar condiciones de visibilidad (SIN isPublic)
     if (adminCompanyIds.length === 0) {
-      // Admin SIN compañías: Solo puede ver clientes PÚBLICOS
-      queryBuilder.andWhere('client.isPublic = :isPublic', { isPublic: 1 });
+      // Admin SIN compañías: Solo puede ver clientes que él mismo creó
+      queryBuilder.andWhere('client.userId = :adminId', { adminId });
     } else {
       // Admin CON compañías: Puede ver:
-      // a) TODOS los clientes públicos (sin importar compañías)
-      // b) Clientes privados que compartan compañías con el admin
+      // a) Clientes que él creó
+      // b) Clientes que comparten compañías con el admin
       queryBuilder.andWhere(new Brackets(qb => {
-        // Condición para clientes PÚBLICOS (visible para todos)
-        qb.where('client.isPublic = :isPublic', { isPublic: 1 })
+        // Condición para clientes que el admin creó
+        qb.where('client.userId = :adminId', { adminId })
           
-          // O condición para clientes PRIVADOS que compartan compañías
-          .orWhere(new Brackets(privateQb => {
-            privateQb.where('client.isPublic = :isPrivate', { isPrivate: 0 });
-            
-            // Solo si hay intersección entre compañías del cliente y del admin
+          // O condición para clientes que comparten compañías
+          .orWhere(new Brackets(sharedQb => {
             const companyConditions = adminCompanyIds.map((companyId, index) => 
               `JSON_CONTAINS(client.companies, :companyId${index})`
             ).join(' OR ');
             
             if (companyConditions) {
-              privateQb.andWhere(`(${companyConditions})`);
+              sharedQb.where(`(${companyConditions})`);
             }
           }));
       }));
 
-      // Asignar parámetros para cada compañía (solo para la parte privada)
+      // Asignar parámetros para cada compañía
       adminCompanyIds.forEach((companyId, index) => {
         queryBuilder.setParameter(`companyId${index}`, JSON.stringify(companyId));
       });
@@ -94,17 +91,16 @@ export class ClientService {
 
     this.logger.log(`[DEBUG] Total de clientes encontrados: ${result.meta.total}`);
 
-    // 5. Enriquecer datos de respuesta
+    // 5. Enriquecer datos de respuesta (SIN referencias a isPublic)
     return {
       data: this.enrichClientData(result.data, adminCompanies, adminCompanyIds, adminId),
       meta: result.meta
     };
   }
-
   /**
    * Enriquecer datos del cliente para la respuesta
    */
-  private enrichClientData(
+private enrichClientData(
     clients: Client[], 
     adminCompanies: Company[], 
     adminCompanyIds: number[], 
@@ -114,29 +110,20 @@ export class ClientService {
       let sharedCompanies: Company[] = [];
       let visibilityReason = '';
 
-      if (client.isPublic === 1) {
-        // Cliente PÚBLICO: visible para todos
-        visibilityReason = 'Cliente público (visible para todos los administradores)';
-        
-        // Si el cliente tiene compañías, mostrar cuáles son
-        if (client.companies && client.companies.length > 0) {
-          sharedCompanies = adminCompanies.filter(company => 
-            client.companies.includes(company.id)
-          );
-        }
+      // Determinar compañías compartidas
+      if (client.companies && client.companies.length > 0) {
+        sharedCompanies = adminCompanies.filter(company => 
+          client.companies.includes(company.id)
+        );
+      }
+
+      // Determinar la razón de visibilidad (SIN lógica de isPublic)
+      if (client.userId === adminId) {
+        visibilityReason = 'Cliente propio (creado por ti)';
+      } else if (sharedCompanies.length > 0) {
+        visibilityReason = `Cliente afiliado a ${sharedCompanies.length} de tus compañías`;
       } else {
-        // Cliente PRIVADO: solo visible si comparte compañías
-        visibilityReason = 'Cliente privado';
-        
-        if (client.companies && client.companies.length > 0) {
-          sharedCompanies = adminCompanies.filter(company => 
-            client.companies.includes(company.id)
-          );
-          
-          if (sharedCompanies.length > 0) {
-            visibilityReason = `Cliente privado afiliado a ${sharedCompanies.length} de tus compañías`;
-          }
-        }
+        visibilityReason = 'Cliente visible por herencia de compañía';
       }
 
       return {
@@ -144,12 +131,12 @@ export class ClientService {
         pictureUrl: client.picture ? this.fileUploadService.getFileUrl('client_photo', client.picture) : null,
         sharedCompanies,
         isOwner: client.userId === adminId,
-        visibility: client.isPublic === 1 ? 'publico' : 'privado',
+        visibility: client.userId === adminId ? 'propio' : 'compartido',
         visibilityReason,
         sharedCompaniesCount: sharedCompanies.length,
         // Información adicional útil
-        hasAccess: client.isPublic === 1 || sharedCompanies.length > 0,
-        accessibleToAdmin: adminCompanyIds.length > 0 || client.isPublic === 1
+        hasAccess: client.userId === adminId || sharedCompanies.length > 0,
+        accessibleToAdmin: adminCompanyIds.length > 0 || client.userId === adminId
       };
     });
   }
