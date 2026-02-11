@@ -19,6 +19,7 @@ import { SessionResponse, SessionDetailResponse } from './types/session-response
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto, ExtraServiceItemDto } from './dto/add-extra-services.dto';
+import { CancelSessionDto } from './dto/cancel-session.dto';
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
@@ -1438,238 +1439,234 @@ export class SessionService {
     };
   }
 
-async findAllSessionsSimple(
-  adminId: number,
-  getSessionsDto: GetSessionsDto
-): Promise<PaginationResult<any>> {
-  const adminCompany = await this.companyRepository.findOne({
-    where: { userId: adminId }
-  });
-
-  if (!adminCompany) {
-    throw new NotFoundException('El administrador no tiene una compañía asignada');
-  }
-
-  // 1. Primero, obtener los company_worker_ids de la compañía del administrador
-  const companyWorkers = await this.companyWorkerRepository.find({
-    where: { 
-      companyId: adminCompany.id,
-      isActive: 1
-    },
-    select: ['id']
-  });
-
-  const companyWorkerIds = companyWorkers.map(cw => cw.id);
-
-  if (companyWorkerIds.length === 0) {
-    // Si la compañía no tiene trabajadores activos, retornar lista vacía
-    return {
-      data: [],
-      meta: {
-        page: getSessionsDto.page,
-        limit: getSessionsDto.limit,
-        total: 0,
-        totalPages: 0,
-        hasNext: false,
-        hasPrev: false,
-      }
-    };
-  }
-
-  // 2. Buscar las sesiones que tienen detalles con company_worker_id de la compañía del admin
-  const sessionIdsQuery = this.sessionDetailRepository
-    .createQueryBuilder('detail')
-    .select('DISTINCT detail.session_id', 'sessionId')
-    .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
-
-  // Aplicar filtros de fecha a los detalles si es necesario
-  if (getSessionsDto.today) {
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-    
-    sessionIdsQuery.andWhere('detail.start_datetime BETWEEN :startOfDay AND :endOfDay', {
-      startOfDay,
-      endOfDay
+  async findAllSessionsSimple(
+    adminId: number,
+    getSessionsDto: GetSessionsDto
+  ): Promise<PaginationResult<any>> {
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId }
     });
-  } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
-    sessionIdsQuery.andWhere('detail.start_datetime BETWEEN :startDate AND :endDate', {
-      startDate: new Date(getSessionsDto.startDate),
-      endDate: new Date(getSessionsDto.endDate)
-    });
-  }
 
-  const sessionIdsResult = await sessionIdsQuery.getRawMany();
-  const sessionIds = sessionIdsResult.map(result => result.sessionId);
-
-  if (sessionIds.length === 0) {
-    return {
-      data: [],
-      meta: {
-        page: getSessionsDto.page,
-        limit: getSessionsDto.limit,
-        total: 0,
-        totalPages: 0,
-        hasNext: false,
-        hasPrev: false,
-      }
-    };
-  }
-
-  // 3. Construir condiciones where para las sesiones
-  const whereConditions: any = {
-    id: In(sessionIds)
-  };
-
-  // FILTRO: Si today es true, filtramos por el día actual
-  if (getSessionsDto.today) {
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-
-    whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
-    console.log(`📅 Filtrando por día actual: ${startOfDay} a ${endOfDay}`);
-  }
-  // Si no se usa el filtro today, usar los filtros de fecha normales
-  else if (getSessionsDto.startDate && getSessionsDto.endDate) {
-    whereConditions.sessionDatetime = Between(
-      new Date(getSessionsDto.startDate),
-      new Date(getSessionsDto.endDate)
-    );
-  }
-
-  // FILTRO: Si onlyScheduled es true, filtramos solo por citas agendadas (sessionStatus = 1)
-  if (getSessionsDto.onlyScheduled) {
-    whereConditions.sessionStatus = 1;
-    console.log(`📋 Filtrando solo citas agendadas (sessionStatus = 1)`);
-  } else if (getSessionsDto.sessionStatus !== undefined) {
-    // Si no se usa onlyScheduled pero se proporciona sessionStatus, usar ese
-    whereConditions.sessionStatus = getSessionsDto.sessionStatus;
-  }
-
-  // Resto de filtros existentes
-  if (getSessionsDto.clientId) {
-    whereConditions.clientId = getSessionsDto.clientId;
-  }
-
-  // Determinar ordenamiento
-  let order: any = {};
-  switch (getSessionsDto.orderBy) {
-    case 'recent':
-      order = { sessionDatetime: 'DESC' };
-      break;
-    case 'oldest':
-      order = { sessionDatetime: 'ASC' };
-      break;
-    case 'priority':
-      order = { sessionStatus: 'ASC', sessionDatetime: 'ASC' };
-      break;
-    default:
-      order = { sessionDatetime: 'DESC' };
-  }
-
-  // 4. Obtener las sesiones con los filtros aplicados
-  const [sessions, total] = await this.sessionRepository.findAndCount({
-    where: whereConditions,
-    order: order,
-    skip: (getSessionsDto.page - 1) * getSessionsDto.limit,
-    take: getSessionsDto.limit,
-  });
-
-  // 5. Enriquecer los datos con información completa
-  const enrichedSessions = await Promise.all(
-    sessions.map(async (session) => {
-      // Obtener cliente
-      const client = await this.clientRepository.findOne({
-        where: { id: session.clientId }
-      });
-
-      // Obtener los detalles de la sesión que pertenecen a la compañía del admin
-      const sessionDetails = await this.sessionDetailRepository.find({
-        where: { 
-          sessionId: session.id,
-          companyWorkerId: In(companyWorkerIds)
-        }
-      });
-
-      // Array para servicios
-      const services: any[] = [];
-
-      // Calcular totales sumando los detalles de la compañía del admin
-      let totalCost = 0;
-      let totalTime = 0;
-
-      if (sessionDetails.length > 0) {
-        // Procesar cada detalle
-        for (const detail of sessionDetails) {
-          // Obtener companyWorker
-          const companyWorker = await this.companyWorkerRepository.findOne({
-            where: { id: detail.companyWorkerId },
-            relations: ['worker', 'company']
-          });
-
-          // Obtener servicio
-          const service = await this.serviceRepository.findOne({
-            where: { id: detail.serviceId }
-          });
-
-          // Agregar servicio al array
-          services.push({
-            serviceId: detail.serviceId,
-            serviceName: service?.name || '',
-            serviceDescription: service?.description || '',
-            serviceCost: Number(detail.cost || 0),
-            serviceTime: detail.totalTime || 0,
-            companyWorkerId: detail.companyWorkerId,
-            workerName: companyWorker?.worker ?
-              `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim() : '',
-            workerLastName: companyWorker?.worker?.lastName || '',
-            totalWorker: Number(detail.totalWorker || 0),
-            totalCompany: Number(detail.totalCompany || 0),
-            detailStatus: detail.status || 1
-          });
-
-          // Acumular totales
-          totalCost += Number(detail.cost || 0);
-          totalTime += Number(detail.totalTime || 0);
-        }
-      }
-
-      return {
-        id: session.id,
-        clientId: session.clientId,
-        clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
-        clientLastName: client?.lastName || '',
-        companyId: adminCompany.id,
-        companyName: adminCompany.name,
-        sessionDatetime: session.sessionDatetime,
-        sessionStatus: session.sessionStatus,
-        sessionStatusText: this.getSessionStatusText(session.sessionStatus),
-        totalCost: totalCost,
-        totalTime: totalTime,
-        startDatetime: session.startDatetime,
-        status: session.status,
-        iaResponse: session.iaResponse,
-        servicesCount: sessionDetails.length,
-        services: services,
-        createdAt: session['createdAt'] || null,
-        updatedAt: session['updatedAt'] || null
-      };
-    })
-  );
-
-  return {
-    data: enrichedSessions,
-    meta: {
-      page: getSessionsDto.page,
-      limit: getSessionsDto.limit,
-      total: total,
-      totalPages: Math.ceil(total / getSessionsDto.limit),
-      hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
-      hasPrev: getSessionsDto.page > 1,
+    if (!adminCompany) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
     }
-  };
-}
+
+    // 1. Obtener los company_worker_ids de la compañía
+    const companyWorkers = await this.companyWorkerRepository.find({
+      where: {
+        companyId: adminCompany.id,
+        isActive: 1
+      },
+      select: ['id']
+    });
+
+    const companyWorkerIds = companyWorkers.map(cw => cw.id);
+
+    if (companyWorkerIds.length === 0) {
+      return {
+        data: [],
+        meta: {
+          page: getSessionsDto.page,
+          limit: getSessionsDto.limit,
+          total: 0,
+          totalPages: 0,
+          hasNext: false,
+          hasPrev: false,
+        }
+      };
+    }
+
+    // 2. Buscar sessionIds que tienen detalles con estos company_worker_ids
+    const sessionIdsQuery = this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .select('DISTINCT detail.session_id', 'sessionId')
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
+
+    const sessionIdsResult = await sessionIdsQuery.getRawMany();
+    const sessionIds = sessionIdsResult.map(result => result.sessionId);
+
+    if (sessionIds.length === 0) {
+      return {
+        data: [],
+        meta: {
+          page: getSessionsDto.page,
+          limit: getSessionsDto.limit,
+          total: 0,
+          totalPages: 0,
+          hasNext: false,
+          hasPrev: false,
+        }
+      };
+    }
+
+    // 3. Construir condiciones where para las sesiones
+    const whereConditions: any = {
+      id: In(sessionIds)
+    };
+
+    // ===================================================================
+    // FILTROS DE FECHA
+    // ===================================================================
+
+    // PRIORIDAD 1: Filtrar por un día específico
+    if (getSessionsDto.date) {
+      // Parsear la fecha correctamente (solo YYYY-MM-DD del string)
+      const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0]; // Obtener solo la parte de fecha
+      const [year, month, day] = dateStr.split('-').map(Number);
+
+      // Crear fechas en zona horaria local
+      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+      whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
+      console.log(`📅 Filtrando por fecha específica: ${dateStr} (${startOfDay.toISOString()} - ${endOfDay.toISOString()})`);
+    }
+    // PRIORIDAD 2: Filtrar por día de hoy
+    else if (getSessionsDto.today) {
+      const today = new Date();
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+      const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+
+      whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
+      console.log(`📅 Filtrando por día actual: ${startOfDay.toLocaleDateString()}`);
+    }
+    // PRIORIDAD 3: Filtrar por rango de fechas
+    else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      const startDateStr = getSessionsDto.startDate.split('T')[0].split(' ')[0];
+      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+      const startOfDay = new Date(startYear, startMonth - 1, startDay, 0, 0, 0, 0);
+
+      const endDateStr = getSessionsDto.endDate.split('T')[0].split(' ')[0];
+      const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+      const endOfDay = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+
+      whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
+      console.log(`📅 Filtrando por rango: ${startDateStr} - ${endDateStr}`);
+    }
+
+    // ===================================================================
+    // FILTROS DE ESTADO
+    // ===================================================================
+
+    if (getSessionsDto.onlyScheduled) {
+      whereConditions.sessionStatus = 1;
+      console.log(`📋 Filtrando solo citas agendadas (sessionStatus = 1)`);
+    } else if (getSessionsDto.sessionStatus !== undefined) {
+      whereConditions.sessionStatus = getSessionsDto.sessionStatus;
+    }
+
+    if (getSessionsDto.clientId) {
+      whereConditions.clientId = getSessionsDto.clientId;
+    }
+
+    // Determinar ordenamiento
+    let order: any = {};
+    switch (getSessionsDto.orderBy) {
+      case 'recent':
+        order = { sessionDatetime: 'DESC' };
+        break;
+      case 'oldest':
+        order = { sessionDatetime: 'ASC' };
+        break;
+      case 'priority':
+        order = { sessionStatus: 'ASC', sessionDatetime: 'ASC' };
+        break;
+      default:
+        order = { sessionDatetime: 'DESC' };
+    }
+
+    // 4. Obtener las sesiones con filtros aplicados
+    const [sessions, total] = await this.sessionRepository.findAndCount({
+      where: whereConditions,
+      order: order,
+      skip: (getSessionsDto.page - 1) * getSessionsDto.limit,
+      take: getSessionsDto.limit,
+    });
+
+    // 5. Enriquecer los datos (resto del código permanece igual)
+    const enrichedSessions = await Promise.all(
+      sessions.map(async (session) => {
+        const client = await this.clientRepository.findOne({
+          where: { id: session.clientId }
+        });
+
+        const sessionDetails = await this.sessionDetailRepository.find({
+          where: {
+            sessionId: session.id,
+            companyWorkerId: In(companyWorkerIds)
+          }
+        });
+
+        const services: any[] = [];
+        let totalCost = 0;
+        let totalTime = 0;
+
+        if (sessionDetails.length > 0) {
+          for (const detail of sessionDetails) {
+            const companyWorker = await this.companyWorkerRepository.findOne({
+              where: { id: detail.companyWorkerId },
+              relations: ['worker', 'company']
+            });
+
+            const service = await this.serviceRepository.findOne({
+              where: { id: detail.serviceId }
+            });
+
+            services.push({
+              serviceId: detail.serviceId,
+              serviceName: service?.name || '',
+              serviceDescription: service?.description || '',
+              serviceCost: Number(detail.cost || 0),
+              serviceTime: detail.totalTime || 0,
+              companyWorkerId: detail.companyWorkerId,
+              workerName: companyWorker?.worker ?
+                `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim() : '',
+              workerLastName: companyWorker?.worker?.lastName || '',
+              totalWorker: Number(detail.totalWorker || 0),
+              totalCompany: Number(detail.totalCompany || 0),
+              detailStatus: detail.status || 1
+            });
+
+            totalCost += Number(detail.cost || 0);
+            totalTime += Number(detail.totalTime || 0);
+          }
+        }
+
+        return {
+          id: session.id,
+          clientId: session.clientId,
+          clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
+          clientLastName: client?.lastName || '',
+          companyId: adminCompany.id,
+          companyName: adminCompany.name,
+          sessionDatetime: session.sessionDatetime,
+          sessionStatus: session.sessionStatus,
+          sessionStatusText: this.getSessionStatusText(session.sessionStatus),
+          totalCost: totalCost,
+          totalTime: totalTime,
+          startDatetime: session.startDatetime,
+          status: session.status,
+          iaResponse: session.iaResponse,
+          servicesCount: sessionDetails.length,
+          services: services,
+          createdAt: session['createdAt'] || null,
+          updatedAt: session['updatedAt'] || null
+        };
+      })
+    );
+
+    return {
+      data: enrichedSessions,
+      meta: {
+        page: getSessionsDto.page,
+        limit: getSessionsDto.limit,
+        total: total,
+        totalPages: Math.ceil(total / getSessionsDto.limit),
+        hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
+        hasPrev: getSessionsDto.page > 1,
+      }
+    };
+  }
 
   private getSessionStatusText(status: number): string {
     const statusMap: Record<number, string> = {
@@ -1677,6 +1674,8 @@ async findAllSessionsSimple(
       2: 'En proceso',
       3: 'Completada',
       4: 'Pagado',
+      5: 'Cancelada',
+
     };
     return statusMap[status] || 'Desconocido';
   }
@@ -1775,139 +1774,139 @@ async findAllSessionsSimple(
     };
   }
 
-async updateDetailStatus(
-  detailId: number,
-  updateDetailStatusDto: UpdateDetailStatusDto,
-  userId: number,
-  userRole?: string // Agrega el parámetro para el rol
-): Promise<{
-  message: string;
-  detail: SessionDetail;
-  sessionUpdated: boolean;
-  newSessionStatus: number | null;
-  validation: {
-    canUpdateDetail: boolean;
-    detailPreviousStatus: number;
-    sessionId: number;
-  };
-  autoUpdateResult?: {
-    previousStatus: number;
-    newStatus: number;
-    updated: boolean;
-    reason: string;
-  };
-}> {
-  console.log(`🔄 Actualizando estado del detalle ${detailId} a ${updateDetailStatusDto.status}. Usuario: ${userId}, Rol: ${userRole}`);
-
-  // 1. Buscar el detalle
-  const detail = await this.sessionDetailRepository.findOne({
-    where: { id: detailId }
-  });
-
-  if (!detail) {
-    throw new NotFoundException(`Detalle de sesión con ID ${detailId} no encontrado`);
-  }
-
-  // 2. Validar permisos según el rol
-  if (userRole === 'adm') {
-    // Para administradores: validación original
-    const adminCompany = await this.companyRepository.findOne({
-      where: { userId: userId }
-    });
-
-    if (!adminCompany) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
-    }
-
-    const companyWorker = await this.companyWorkerRepository.findOne({
-      where: { id: detail.companyWorkerId },
-      relations: ['company']
-    });
-
-    if (!companyWorker || companyWorker.company.id !== adminCompany.id) {
-      throw new ForbiddenException('No tienes permiso para modificar este detalle');
-    }
-  } 
-  else if (userRole === 'wrk') {
-    // Para trabajadores: verificar que el detalle esté asignado a este trabajador
-    const worker = await this.workerRepository.findOne({
-      where: { userId: userId }
-    });
-
-    if (!worker) {
-      throw new NotFoundException('Trabajador no encontrado');
-    }
-
-    // Buscar el companyWorker del trabajador
-    const companyWorker = await this.companyWorkerRepository.findOne({
-      where: { 
-        id: detail.companyWorkerId,
-        workerId: worker.id 
-      }
-    });
-
-    if (!companyWorker) {
-      throw new ForbiddenException('No tienes permiso para modificar este detalle');
-    }
-
-    // Validar que el trabajador esté activo en la compañía
-    if (companyWorker.isActive !== 1) {
-      throw new BadRequestException('No estás activo en esta compañía');
-    }
-  }
-  else {
-    // Si no es ni admin ni worker
-    throw new ForbiddenException('No tienes permisos para realizar esta acción');
-  }
-
-  // 3. Guardar estado anterior
-  const previousStatus = detail.status;
-
-  // 4. Validar que el nuevo estado sea válido (1-3 para detalles)
-  if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 3) {
-    throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso) o 3 (Completado)');
-  }
-
-  // 5. Validar transiciones de estado (opcional pero recomendado)
-  if (previousStatus === 3 && updateDetailStatusDto.status !== 3) {
-    throw new BadRequestException('No se puede revertir un detalle completado');
-  }
-
-  // 6. Actualizar el detalle
-  detail.status = updateDetailStatusDto.status;
-  const updatedDetail = await this.sessionDetailRepository.save(detail);
-
-  // 7. Actualizar automáticamente el estado de la sesión
-  const autoUpdateResult = await this.updateSessionStatusBasedOnDetails(detail.sessionId);
-
-  // 8. Obtener la sesión actualizada
-  const session = await this.sessionRepository.findOne({
-    where: { id: detail.sessionId }
-  });
-
-  let sessionUpdated = false;
-  let newSessionStatus: number | null = null;
-
-  if (session && autoUpdateResult.updated) {
-    sessionUpdated = true;
-    newSessionStatus = autoUpdateResult.newStatus;
-  }
-
-  console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status} por ${userRole}`);
-
-  return {
-    message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
-    detail: updatedDetail,
-    sessionUpdated,
-    newSessionStatus,
+  async updateDetailStatus(
+    detailId: number,
+    updateDetailStatusDto: UpdateDetailStatusDto,
+    userId: number,
+    userRole?: string // Agrega el parámetro para el rol
+  ): Promise<{
+    message: string;
+    detail: SessionDetail;
+    sessionUpdated: boolean;
+    newSessionStatus: number | null;
     validation: {
-      canUpdateDetail: true,
-      detailPreviousStatus: previousStatus,
-      sessionId: detail.sessionId
-    },
-    autoUpdateResult
-  };
-}
+      canUpdateDetail: boolean;
+      detailPreviousStatus: number;
+      sessionId: number;
+    };
+    autoUpdateResult?: {
+      previousStatus: number;
+      newStatus: number;
+      updated: boolean;
+      reason: string;
+    };
+  }> {
+    console.log(`🔄 Actualizando estado del detalle ${detailId} a ${updateDetailStatusDto.status}. Usuario: ${userId}, Rol: ${userRole}`);
+
+    // 1. Buscar el detalle
+    const detail = await this.sessionDetailRepository.findOne({
+      where: { id: detailId }
+    });
+
+    if (!detail) {
+      throw new NotFoundException(`Detalle de sesión con ID ${detailId} no encontrado`);
+    }
+
+    // 2. Validar permisos según el rol
+    if (userRole === 'adm') {
+      // Para administradores: validación original
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId: userId }
+      });
+
+      if (!adminCompany) {
+        throw new NotFoundException('El administrador no tiene una compañía asignada');
+      }
+
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['company']
+      });
+
+      if (!companyWorker || companyWorker.company.id !== adminCompany.id) {
+        throw new ForbiddenException('No tienes permiso para modificar este detalle');
+      }
+    }
+    else if (userRole === 'wrk') {
+      // Para trabajadores: verificar que el detalle esté asignado a este trabajador
+      const worker = await this.workerRepository.findOne({
+        where: { userId: userId }
+      });
+
+      if (!worker) {
+        throw new NotFoundException('Trabajador no encontrado');
+      }
+
+      // Buscar el companyWorker del trabajador
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: {
+          id: detail.companyWorkerId,
+          workerId: worker.id
+        }
+      });
+
+      if (!companyWorker) {
+        throw new ForbiddenException('No tienes permiso para modificar este detalle');
+      }
+
+      // Validar que el trabajador esté activo en la compañía
+      if (companyWorker.isActive !== 1) {
+        throw new BadRequestException('No estás activo en esta compañía');
+      }
+    }
+    else {
+      // Si no es ni admin ni worker
+      throw new ForbiddenException('No tienes permisos para realizar esta acción');
+    }
+
+    // 3. Guardar estado anterior
+    const previousStatus = detail.status;
+
+    // 4. Validar que el nuevo estado sea válido (1-3 para detalles)
+    if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 3) {
+      throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso) o 3 (Completado)');
+    }
+
+    // 5. Validar transiciones de estado (opcional pero recomendado)
+    if (previousStatus === 3 && updateDetailStatusDto.status !== 3) {
+      throw new BadRequestException('No se puede revertir un detalle completado');
+    }
+
+    // 6. Actualizar el detalle
+    detail.status = updateDetailStatusDto.status;
+    const updatedDetail = await this.sessionDetailRepository.save(detail);
+
+    // 7. Actualizar automáticamente el estado de la sesión
+    const autoUpdateResult = await this.updateSessionStatusBasedOnDetails(detail.sessionId);
+
+    // 8. Obtener la sesión actualizada
+    const session = await this.sessionRepository.findOne({
+      where: { id: detail.sessionId }
+    });
+
+    let sessionUpdated = false;
+    let newSessionStatus: number | null = null;
+
+    if (session && autoUpdateResult.updated) {
+      sessionUpdated = true;
+      newSessionStatus = autoUpdateResult.newStatus;
+    }
+
+    console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status} por ${userRole}`);
+
+    return {
+      message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
+      detail: updatedDetail,
+      sessionUpdated,
+      newSessionStatus,
+      validation: {
+        canUpdateDetail: true,
+        detailPreviousStatus: previousStatus,
+        sessionId: detail.sessionId
+      },
+      autoUpdateResult
+    };
+  }
   /**
  * Método para actualizar automáticamente el estado de la sesión basado en los estados de sus detalles
  */
@@ -2214,493 +2213,609 @@ async updateDetailStatus(
       1: 'Agendado',
       2: 'En proceso',
       3: 'Completado',
+      4: 'Cancelado',
+
     };
     return statusMap[status] || `Estado ${status}`;
   }
 
-  async getSessionDetailsWithValidation(
-    sessionId: number,
-    adminId: number
-  ): Promise<{
-    session: any;
-    details: any[];
-    statusSummary: {
-      totalDetails: number;
-      completedDetails: number;
-      pendingDetails: number;
-      allDetailsCompleted: boolean;
-      canCompleteSession: boolean;
-      currentSessionStatus: number;
-      currentSessionStatusText: string;
-    };
-  }> {
-    // Verificar permisos
-    const adminCompany = await this.companyRepository.findOne({
-      where: { userId: adminId }
-    });
+/**
+ * Obtiene los detalles de una sesión con validación de permisos según el rol del usuario.
+ * 
+ * @param sessionId ID de la sesión
+ * @param userId ID del usuario autenticado
+ * @param userRole Rol del usuario ('adm', 'wrk', 'cli')
+ * @returns Sesión enriquecida, detalles y resumen de estados
+ */
+async getSessionDetailsWithValidation(
+  sessionId: number,
+  userId: number,
+  userRole: 'adm' | 'wrk' | 'cli'
+): Promise<{
+  session: any;
+  details: any[];
+  statusSummary: {
+    totalDetails: number;
+    completedDetails: number;
+    pendingDetails: number;
+    allDetailsCompleted: boolean;
+    canCompleteSession: boolean;
+    currentSessionStatus: number;
+    currentSessionStatusText: string;
+  };
+}> {
+  this.logger.log(`🔍 Obteniendo detalles de sesión ${sessionId} para usuario ${userId} (rol: ${userRole})`);
 
+  // 1. Buscar la sesión
+  const session = await this.sessionRepository.findOne({
+    where: { id: sessionId }
+  });
+
+  if (!session) {
+    throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+  }
+
+  // 2. Validar permisos según el rol
+  if (userRole === 'adm') {
+    // Admin: debe pertenecer a la compañía que posee la sesión
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId }
+    });
     if (!adminCompany) {
       throw new NotFoundException('El administrador no tiene una compañía asignada');
     }
 
-    // Buscar la sesión
-    const session = await this.sessionRepository.findOne({
-      where: { id: sessionId }
-    });
-
-    if (!session) {
-      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
-    }
-
-    // Obtener detalles con información relacionada
     const sessionDetails = await this.sessionDetailRepository.find({
-      where: { sessionId: sessionId }
+      where: { sessionId }
     });
 
-    // Obtener información del cliente para enriquecer la respuesta
-    const client = await this.clientRepository.findOne({
-      where: { id: session.clientId }
-    });
-
-    // Enriquecer los detalles
-    const enrichedDetails = await Promise.all(
-      sessionDetails.map(async (detail) => {
-        const companyWorker = await this.companyWorkerRepository.findOne({
-          where: { id: detail.companyWorkerId },
-          relations: ['worker', 'company']
-        });
-
-        const service = await this.serviceRepository.findOne({
-          where: { id: detail.serviceId }
-        });
-
-        return {
-          id: detail.id,
-          serviceId: detail.serviceId,
-          serviceName: service?.name || 'Desconocido',
-          serviceDescription: service?.description || '',
-          companyWorkerId: detail.companyWorkerId,
-          workerName: companyWorker?.worker
-            ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
-            : 'Trabajador no encontrado',
-          cost: detail.cost,
-          totalTime: detail.totalTime,
-          totalWorker: detail.totalWorker,
-          totalCompany: detail.totalCompany,
-          status: detail.status,
-          statusText: this.getDetailStatusText(detail.status),
-          startDatetime: detail.startDatetime,
-          updatedAt: detail.updatedAt
-        };
-      })
-    );
-
-    // Calcular resumen de estados
-    const totalDetails = enrichedDetails.length;
-    const completedDetails = enrichedDetails.filter(d => d.status === 3).length;
-    const pendingDetails = totalDetails - completedDetails;
-    const allDetailsCompleted = completedDetails === totalDetails;
-    const canCompleteSession = allDetailsCompleted;
-
-    // Crear un objeto session enriquecido con información adicional
-    const enrichedSession = {
-      ...session,
-      clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
-      clientLastName: client?.lastName || '',
-      sessionStatusText: this.getSessionStatusText(session.sessionStatus)
-    };
-
-    return {
-      session: enrichedSession,
-      details: enrichedDetails,
-      statusSummary: {
-        totalDetails,
-        completedDetails,
-        pendingDetails,
-        allDetailsCompleted,
-        canCompleteSession,
-        currentSessionStatus: session.sessionStatus,
-        currentSessionStatusText: this.getSessionStatusText(session.sessionStatus)
-      }
-    };
-  }
-
-
-  /**
- * Obtener todas las sesiones asignadas al trabajador autenticado
- * @param userId ID del usuario trabajador autenticado
- * @param getSessionsDto DTO con parámetros de filtro y paginación
- * @returns Lista paginada de sesiones asignadas al trabajador
- */
-async getSessionsForAuthenticatedWorker(
-  userId: number,
-  getSessionsDto: GetSessionsDto
-): Promise<PaginationResult<any>> {
-  console.log(`📋 Obteniendo sesiones para trabajador autenticado (userId: ${userId})`);
-
-  // 1. Buscar al trabajador por userId
-  const worker = await this.workerRepository.findOne({
-    where: { userId: userId }
-  });
-
-  if (!worker) {
-    throw new NotFoundException('Trabajador no encontrado');
-  }
-
-  // 2. Buscar las asignaciones activas del trabajador en company_worker
-  const companyWorkers = await this.companyWorkerRepository.find({
-    where: {
-      workerId: worker.id,
-      isActive: 1
-    },
-    relations: ['company']
-  });
-
-  if (companyWorkers.length === 0) {
-    throw new NotFoundException('No tienes asignaciones activas en ninguna compañía');
-  }
-
-  // 3. Obtener los IDs de las asignaciones de compañía
-  const companyWorkerIds = companyWorkers.map(cw => cw.id);
-
-  // 4. Crear query usando joins con las tablas relacionadas
-  const query = this.sessionDetailRepository
-    .createQueryBuilder('detail')
-    .innerJoin('session', 'session', 'session.id = detail.session_id')
-    .leftJoin('client', 'client', 'client.id = session.client_id')
-    .leftJoin('service', 'service', 'service.id = detail.service_id')
-    .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
-    .leftJoin('worker', 'worker', 'worker.id = companyWorker.worker_id')
-    .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
-    .select([
-      'detail.id AS detailId',
-      'detail.cost AS cost',
-      'detail.total_time AS totalTime',
-      'detail.total_worker AS totalWorker',
-      'detail.total_company AS totalCompany',
-      'detail.status AS detailStatus',
-      'detail.start_datetime AS detailStartDatetime',
-      'session.id AS sessionId',
-      'session.client_id AS clientId',
-      'session.session_datetime AS sessionDatetime',
-      'session.session_status AS sessionStatus',
-      'session.total_cost AS sessionTotalCost',
-      'session.total_time AS sessionTotalTime',
-      'session.start_datetime AS sessionStartDatetime',
-      'session.status AS sessionStatusFlag',
-      'session.ia_response AS iaResponse',
-      'session.updated_at AS sessionUpdatedAt',
-      'client.name AS clientName',
-      'client.last_name AS clientLastName',
-      'service.id AS serviceId',
-      'service.name AS serviceName',
-      'service.description AS serviceDescription',
-      'companyWorker.id AS companyWorkerId',
-      'company.id AS companyId',
-      'company.name AS companyName',
-      'worker.id AS workerId',
-      'worker.name AS workerName',
-      'worker.last_name AS workerLastName'
-    ])
-    .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
-
-  // 5. Aplicar filtros adicionales - CORRECCIÓN: Usar detail.start_datetime para filtro today
-  // FILTRO: Solo citas del día actual - usando detail.start_datetime
-  if (getSessionsDto.today) {
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-    
-    query.andWhere('detail.start_datetime BETWEEN :startOfDay AND :endOfDay', {
-      startOfDay,
-      endOfDay
-    });
-    console.log(`📅 Trabajador: Filtrando por día actual en detail.start_datetime (${today.toLocaleDateString()})`);
-  }
-  // FILTRO: Por rango de fechas (si no se usa today) - usando detail.start_datetime
-  else if (getSessionsDto.startDate && getSessionsDto.endDate) {
-    query.andWhere('detail.start_datetime BETWEEN :startDate AND :endDate', {
-      startDate: new Date(getSessionsDto.startDate),
-      endDate: new Date(getSessionsDto.endDate)
-    });
-  }
-
-  // FILTRO: Solo citas agendadas - CORRECCIÓN: Usar detail.status en lugar de session.session_status
-  if (getSessionsDto.onlyScheduled) {
-    query.andWhere('detail.status = :onlyScheduledStatus', {
-      onlyScheduledStatus: 1
-    });
-    console.log(`📋 Trabajador: Filtrando solo detalles agendados (detail.status = 1)`);
-  }
-  // FILTRO: Por estado de sesión (si no se usa onlyScheduled)
-  else if (getSessionsDto.sessionStatus !== undefined) {
-    query.andWhere('session.session_status = :sessionStatus', {
-      sessionStatus: getSessionsDto.sessionStatus
-    });
-  }
-
-  // FILTRO: Por estado del detalle (puede usarse junto con onlyScheduled)
-  if (getSessionsDto.detailStatus !== undefined) {
-    query.andWhere('detail.status = :detailStatus', {
-      detailStatus: getSessionsDto.detailStatus
-    });
-  }
-
-  // FILTRO: Por ID de cliente
-  if (getSessionsDto.clientId) {
-    query.andWhere('session.client_id = :clientId', {
-      clientId: getSessionsDto.clientId
-    });
-  }
-
-  // FILTRO: Por ID de compañía
-  if (getSessionsDto.companyId) {
-    query.andWhere('company.id = :companyId', {
-      companyId: getSessionsDto.companyId
-    });
-  }
-
-  // Ordenar por fecha del detalle (detail.start_datetime) en lugar de la sesión
-  query.orderBy('detail.start_datetime', getSessionsDto.orderBy === 'oldest' ? 'ASC' : 'DESC');
-
-  // 6. Aplicar paginación y obtener datos
-  const details = await query
-    .skip((getSessionsDto.page - 1) * getSessionsDto.limit)
-    .take(getSessionsDto.limit)
-    .getRawMany();
-
-  // 7. Obtener el total (sin paginación)
-  const countQuery = this.sessionDetailRepository
-    .createQueryBuilder('detail')
-    .innerJoin('session', 'session', 'session.id = detail.session_id')
-    .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
-    .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
-    .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
-
-  // Aplicar los mismos filtros a la query de conteo
-  if (getSessionsDto.today) {
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-    
-    countQuery.andWhere('detail.start_datetime BETWEEN :startOfDay AND :endOfDay', {
-      startOfDay,
-      endOfDay
-    });
-  } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
-    countQuery.andWhere('detail.start_datetime BETWEEN :startDate AND :endDate', {
-      startDate: new Date(getSessionsDto.startDate),
-      endDate: new Date(getSessionsDto.endDate)
-    });
-  }
-
-  // CORRECCIÓN: Para onlyScheduled, usar detail.status
-  if (getSessionsDto.onlyScheduled) {
-    countQuery.andWhere('detail.status = :onlyScheduledStatus', {
-      onlyScheduledStatus: 1
-    });
-  } else if (getSessionsDto.sessionStatus !== undefined) {
-    countQuery.andWhere('session.session_status = :sessionStatus', {
-      sessionStatus: getSessionsDto.sessionStatus
-    });
-  }
-
-  if (getSessionsDto.detailStatus !== undefined) {
-    countQuery.andWhere('detail.status = :detailStatus', {
-      detailStatus: getSessionsDto.detailStatus
-    });
-  }
-
-  if (getSessionsDto.clientId) {
-    countQuery.andWhere('session.client_id = :clientId', {
-      clientId: getSessionsDto.clientId
-    });
-  }
-
-  if (getSessionsDto.companyId) {
-    countQuery.andWhere('company.id = :companyId', {
-      companyId: getSessionsDto.companyId
-    });
-  }
-
-  const total = await countQuery.getCount();
-
-  // 8. Procesar resultados y agrupar por sesión
-  const sessionMap = new Map<number, any>();
-
-  for (const detail of details) {
-    const sessionId = detail.sessionId;
-
-    if (!sessionMap.has(sessionId)) {
-      sessionMap.set(sessionId, {
-        id: sessionId,
-        clientId: detail.clientId,
-        clientName: detail.clientName ? `${detail.clientName || ''} ${detail.clientLastName || ''}`.trim() : 'Cliente no encontrado',
-        clientLastName: detail.clientLastName || '',
-        sessionDatetime: detail.sessionDatetime,
-        sessionStatus: detail.sessionStatus,
-        sessionStatusText: this.getSessionStatusText(detail.sessionStatus),
-        totalCost: parseFloat(detail.sessionTotalCost) || 0,
-        totalTime: parseFloat(detail.sessionTotalTime) || 0,
-        startDatetime: detail.sessionStartDatetime,
-        status: detail.sessionStatusFlag,
-        iaResponse: detail.iaResponse,
-        createdAt: detail.sessionUpdatedAt,
-        workerServices: []
+    let sessionBelongsToAdmin = false;
+    for (const detail of sessionDetails) {
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['company']
       });
+      if (companyWorker?.company?.id === adminCompany.id) {
+        sessionBelongsToAdmin = true;
+        break;
+      }
     }
-
-    // Convertir todos los valores numéricos de string a número
-    const cost = parseFloat(detail.cost) || 0;
-    const totalTime = parseFloat(detail.totalTime) || 0;
-    const totalWorker = parseFloat(detail.totalWorker) || 0;
-    const totalCompany = parseFloat(detail.totalCompany) || 0;
-
-    // Calcular porcentajes
-    let workerPercentage = 0;
-    let companyPercentage = 0;
-
-    if (cost > 0) {
-      workerPercentage = parseFloat(((totalWorker / cost) * 100).toFixed(2));
-      companyPercentage = parseFloat(((totalCompany / cost) * 100).toFixed(2));
+    if (!sessionBelongsToAdmin) {
+      throw new ForbiddenException('No tienes permiso para ver los detalles de esta sesión');
     }
-
-    // Agregar el servicio específico del trabajador
-    const sessionData = sessionMap.get(sessionId);
-    sessionData.workerServices.push({
-      detailId: detail.detailId,
-      serviceId: detail.serviceId,
-      serviceName: detail.serviceName || 'Servicio no encontrado',
-      serviceDescription: detail.serviceDescription || '',
-      cost: cost,
-      totalTime: totalTime,
-      totalWorker: totalWorker,
-      totalCompany: totalCompany,
-      detailStatus: detail.detailStatus || 1,
-      detailStatusText: this.getDetailStatusText(detail.detailStatus || 1),
-      startDatetime: detail.detailStartDatetime,
-      companyId: detail.companyId,
-      companyName: detail.companyName || 'Compañía no encontrada',
-      workerPercentage: workerPercentage,
-      companyPercentage: companyPercentage,
-      workerName: detail.workerName,
-      workerLastName: detail.workerLastName
+  } else if (userRole === 'wrk') {
+    // Trabajador: debe tener al menos un servicio asignado en esta sesión
+    const worker = await this.workerRepository.findOne({
+      where: { userId }
     });
+    if (!worker) {
+      throw new NotFoundException('Trabajador no encontrado');
+    }
+
+    const companyWorkers = await this.companyWorkerRepository.find({
+      where: {
+        workerId: worker.id,
+        isActive: 1
+      }
+    });
+
+    if (companyWorkers.length === 0) {
+      throw new ForbiddenException('No estás activo en ninguna compañía');
+    }
+
+    const companyWorkerIds = companyWorkers.map(cw => cw.id);
+
+    const assignedDetail = await this.sessionDetailRepository.findOne({
+      where: {
+        sessionId,
+        companyWorkerId: In(companyWorkerIds)
+      }
+    });
+
+    if (!assignedDetail) {
+      throw new ForbiddenException('No tienes servicios asignados en esta sesión');
+    }
+  } else if (userRole === 'cli') {
+    // Cliente: debe ser el dueño de la sesión
+    const client = await this.clientRepository.findOne({
+      where: { userId }
+    });
+    if (!client) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+    if (session.clientId !== client.id) {
+      throw new ForbiddenException('No puedes ver los detalles de una cita que no te pertenece');
+    }
+  } else {
+    throw new ForbiddenException('Rol de usuario no válido');
   }
 
-  // 9. Convertir el mapa a array y calcular estadísticas
-  const sessions = Array.from(sessionMap.values()).map(session => {
-    // Asegurarse de que los valores sean números
-    const workerTotalCost = session.workerServices.reduce((sum, service) => {
-      return sum + (typeof service.cost === 'number' ? service.cost : parseFloat(service.cost) || 0);
-    }, 0);
-
-    const workerTotalTime = session.workerServices.reduce((sum, service) => {
-      return sum + (typeof service.totalTime === 'number' ? service.totalTime : parseFloat(service.totalTime) || 0);
-    }, 0);
-
-    // Verificar si la sesión tiene detalles hoy
-    const hasTodayDetail = session.workerServices.some(service => 
-      this.isToday(service.startDatetime)
-    );
-
-    // Calcular el estado general basado en los detalles
-    const allDetailsScheduled = session.workerServices.every(service => service.detailStatus === 1);
-    const anyDetailInProcess = session.workerServices.some(service => service.detailStatus === 2);
-    const allDetailsCompleted = session.workerServices.every(service => service.detailStatus === 3);
-
-    let workerOverallStatus = 'Desconocido';
-    if (allDetailsCompleted) {
-      workerOverallStatus = 'Completado';
-    } else if (anyDetailInProcess) {
-      workerOverallStatus = 'En proceso';
-    } else if (allDetailsScheduled) {
-      workerOverallStatus = 'Agendado';
-    } else if (session.workerServices.some(s => s.detailStatus === 3) && session.workerServices.some(s => s.detailStatus !== 3)) {
-      workerOverallStatus = 'Parcialmente completado';
-    }
-
-    return {
-      ...session,
-      workerTotalCost: parseFloat(workerTotalCost.toFixed(2)),
-      workerTotalTime: parseFloat(workerTotalTime.toFixed(2)),
-      workerTotalServices: session.workerServices.length,
-      workerOverallStatus: workerOverallStatus,
-      hasTodayDetail: hasTodayDetail,
-      isToday: hasTodayDetail // Para compatibilidad
-    };
+  // 3. Obtener información del cliente para enriquecer la respuesta
+  const client = await this.clientRepository.findOne({
+    where: { id: session.clientId }
   });
 
-  // 10. Si el filtro today está activo, mostrar solo sesiones con detalles hoy
-  let filteredSessions = sessions;
-  if (getSessionsDto.today) {
-    filteredSessions = sessions.filter(session => session.hasTodayDetail);
-  }
+  // 4. Obtener todos los detalles de la sesión
+  const sessionDetails = await this.sessionDetailRepository.find({
+    where: { sessionId }
+  });
 
-  // 11. Ordenar sesiones según el criterio
-  if (getSessionsDto.orderBy === 'oldest') {
-    filteredSessions.sort((a, b) => {
-      // Ordenar por la fecha del primer detalle
-      const aDate = a.workerServices.length > 0 ? 
-        new Date(a.workerServices[0].startDatetime).getTime() : 
-        new Date(a.sessionDatetime).getTime();
-      const bDate = b.workerServices.length > 0 ? 
-        new Date(b.workerServices[0].startDatetime).getTime() : 
-        new Date(b.sessionDatetime).getTime();
-      return aDate - bDate;
-    });
-  } else {
-    filteredSessions.sort((a, b) => {
-      const aDate = a.workerServices.length > 0 ? 
-        new Date(a.workerServices[0].startDatetime).getTime() : 
-        new Date(a.sessionDatetime).getTime();
-      const bDate = b.workerServices.length > 0 ? 
-        new Date(b.workerServices[0].startDatetime).getTime() : 
-        new Date(b.sessionDatetime).getTime();
-      return bDate - aDate;
-    });
-  }
+  // 5. Enriquecer los detalles con información de servicios y trabajadores
+  const enrichedDetails = await Promise.all(
+    sessionDetails.map(async (detail) => {
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['worker', 'company']
+      });
+
+      const service = await this.serviceRepository.findOne({
+        where: { id: detail.serviceId }
+      });
+
+      return {
+        id: detail.id,
+        serviceId: detail.serviceId,
+        serviceName: service?.name || 'Desconocido',
+        serviceDescription: service?.description || '',
+        companyWorkerId: detail.companyWorkerId,
+        workerName: companyWorker?.worker
+          ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+          : 'Trabajador no encontrado',
+        cost: detail.cost,
+        totalTime: detail.totalTime,
+        totalWorker: detail.totalWorker,
+        totalCompany: detail.totalCompany,
+        status: detail.status,
+        statusText: this.getDetailStatusText(detail.status),
+        startDatetime: detail.startDatetime,
+        updatedAt: detail.updatedAt
+      };
+    })
+  );
+
+  // 6. Calcular resumen de estados
+  const totalDetails = enrichedDetails.length;
+  const completedDetails = enrichedDetails.filter(d => d.status === 3).length;
+  const pendingDetails = totalDetails - completedDetails;
+  const allDetailsCompleted = completedDetails === totalDetails;
+  const canCompleteSession = allDetailsCompleted; // Solo se puede completar si todos los detalles están completados
+
+  // 7. Sesión enriquecida con datos del cliente
+  const enrichedSession = {
+    ...session,
+    clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
+    clientLastName: client?.lastName || '',
+    sessionStatusText: this.getSessionStatusText(session.sessionStatus)
+  };
+
   return {
-    data: filteredSessions,
-    meta: {
-      page: getSessionsDto.page,
-      limit: getSessionsDto.limit,
-      total: total,
-      totalPages: Math.ceil(total / getSessionsDto.limit),
-      hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
-      hasPrev: getSessionsDto.page > 1,
+    session: enrichedSession,
+    details: enrichedDetails,
+    statusSummary: {
+      totalDetails,
+      completedDetails,
+      pendingDetails,
+      allDetailsCompleted,
+      canCompleteSession,
+      currentSessionStatus: session.sessionStatus,
+      currentSessionStatusText: this.getSessionStatusText(session.sessionStatus)
     }
   };
 }
 
-/**
- * Método auxiliar para verificar si una fecha es hoy
- */
-private isToday(date: Date): boolean {
-  const inputDate = new Date(date);
-  const today = new Date();
-  
-  return inputDate.getDate() === today.getDate() &&
-         inputDate.getMonth() === today.getMonth() &&
-         inputDate.getFullYear() === today.getFullYear();
-}
+  /**
+   * Obtener todas las sesiones (citas) asignadas al trabajador autenticado.
+   * Cada sesión incluye los datos de la cita y, dentro de 'assignedServices',
+   * los detalles de los servicios que este trabajador debe realizar en ella.
+   *
+   * Los filtros de fecha (date, today, startDate/endDate) se aplican sobre
+   * session.session_datetime (la fecha de la cita), no sobre el detalle.
+   *
+   * @param userId ID del usuario trabajador autenticado
+   * @param getSessionsDto DTO con parámetros de filtro y paginación
+   * @returns Lista paginada de sesiones con los servicios asignados al trabajador
+   */
+  async getSessionsForAuthenticatedWorker(
+    userId: number,
+    getSessionsDto: GetSessionsDto
+  ): Promise<PaginationResult<any>> {
+    console.log(`📋 Obteniendo sesiones para trabajador autenticado (userId: ${userId})`);
 
-/**
- * Calcular el estado general del trabajador para una sesión basado en sus detalles
- */
-private calculateWorkerOverallStatus(workerServices: any[]): string {
-  if (workerServices.length === 0) return 'Sin servicios';
+    // 1. Buscar al trabajador por userId
+    const worker = await this.workerRepository.findOne({
+      where: { userId: userId }
+    });
 
-  const allCompleted = workerServices.every(service => service.detailStatus === 3);
-  const anyInProgress = workerServices.some(service => service.detailStatus === 2);
-  const anyScheduled = workerServices.some(service => service.detailStatus === 1);
+    if (!worker) {
+      throw new NotFoundException('Trabajador no encontrado');
+    }
 
-  if (allCompleted) return 'Completado';
-  if (anyInProgress) return 'En proceso';
-  if (anyScheduled) return 'Agendado';
+    // 2. Buscar las asignaciones activas del trabajador en company_worker
+    const companyWorkers = await this.companyWorkerRepository.find({
+      where: {
+        workerId: worker.id,
+        isActive: 1
+      },
+      relations: ['company']
+    });
 
-  return 'Desconocido';
-}
+    if (companyWorkers.length === 0) {
+      throw new NotFoundException('No tienes asignaciones activas en ninguna compañía');
+    }
+
+    const companyWorkerIds = companyWorkers.map(cw => cw.id);
+
+    // ---------------------------------------------------------------------
+    // CONSULTA PRINCIPAL: Obtener los detalles (con paginación aplicada)
+    // ---------------------------------------------------------------------
+    const query = this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .innerJoin('session', 'session', 'session.id = detail.session_id')
+      .leftJoin('client', 'client', 'client.id = session.client_id')
+      .leftJoin('service', 'service', 'service.id = detail.service_id')
+      .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
+      .leftJoin('worker', 'worker', 'worker.id = companyWorker.worker_id')
+      .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
+      .select([
+        // Campos de la sesión (cita)
+        'session.id AS sessionId',
+        'session.client_id AS clientId',
+        'session.session_datetime AS sessionDatetime',
+        'session.session_status AS sessionStatus',
+        'session.total_cost AS sessionTotalCost',
+        'session.total_time AS sessionTotalTime',
+        'session.start_datetime AS sessionStartDatetime',
+        'session.status AS sessionStatusFlag',
+        'session.ia_response AS iaResponse',
+        'session.updated_at AS sessionUpdatedAt',
+        'session.description_worker AS descriptionWorker',
+        'session.description_ia AS descriptionIA',
+        'session.description AS description',
+        'session.extra_services AS extraServices',
+
+        // Campos del cliente
+        'client.name AS clientName',
+        'client.last_name AS clientLastName',
+
+        // Campos del detalle (servicio asignado al trabajador)
+        'detail.id AS detailId',
+        'detail.cost AS cost',
+        'detail.total_time AS totalTime',
+        'detail.total_worker AS totalWorker',
+        'detail.total_company AS totalCompany',
+        'detail.status AS detailStatus',
+        'detail.start_datetime AS detailStartDatetime',
+        'detail.is_extra AS isExtra',
+
+        // Campos del servicio
+        'service.id AS serviceId',
+        'service.name AS serviceName',
+        'service.description AS serviceDescription',
+
+        // Campos del trabajador / compañía
+        'companyWorker.id AS companyWorkerId',
+        'company.id AS companyId',
+        'company.name AS companyName',
+        'worker.id AS workerId',
+        'worker.name AS workerName',
+        'worker.last_name AS workerLastName'
+      ])
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
+
+    // =========================================================================
+    // FILTROS DE FECHA - AHORA SE APLICAN SOBRE session.session_datetime
+    // =========================================================================
+
+    // PRIORIDAD 1: Filtrar por una fecha específica (date)
+    if (getSessionsDto.date) {
+      const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+      query.andWhere('session.session_datetime BETWEEN :startOfDay AND :endOfDay', {
+        startOfDay,
+        endOfDay
+      });
+      console.log(`📅 Trabajador: Filtrando por fecha específica en session_datetime: ${dateStr}`);
+    }
+    // PRIORIDAD 2: Filtrar por día actual (today)
+    else if (getSessionsDto.today) {
+      const today = new Date();
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+      const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+
+      query.andWhere('session.session_datetime BETWEEN :startOfDay AND :endOfDay', {
+        startOfDay,
+        endOfDay
+      });
+      console.log(`📅 Trabajador: Filtrando por día actual en session_datetime (${today.toLocaleDateString()})`);
+    }
+    // PRIORIDAD 3: Filtrar por rango de fechas
+    else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      query.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
+        startDate: new Date(getSessionsDto.startDate),
+        endDate: new Date(getSessionsDto.endDate)
+      });
+    }
+
+    // FILTRO: Solo servicios agendados (detail.status = 1)
+    if (getSessionsDto.onlyScheduled) {
+      query.andWhere('detail.status = :onlyScheduledStatus', { onlyScheduledStatus: 1 });
+      console.log(`📋 Trabajador: Filtrando solo servicios agendados (detail.status = 1)`);
+    }
+    // FILTRO: Por estado de sesión
+    else if (getSessionsDto.sessionStatus !== undefined) {
+      query.andWhere('session.session_status = :sessionStatus', {
+        sessionStatus: getSessionsDto.sessionStatus
+      });
+    }
+
+    // FILTRO: Por estado del detalle (independiente)
+    if (getSessionsDto.detailStatus !== undefined) {
+      query.andWhere('detail.status = :detailStatus', {
+        detailStatus: getSessionsDto.detailStatus
+      });
+    }
+
+    // FILTRO: Por ID de cliente
+    if (getSessionsDto.clientId) {
+      query.andWhere('session.client_id = :clientId', { clientId: getSessionsDto.clientId });
+    }
+
+    // FILTRO: Por ID de compañía
+    if (getSessionsDto.companyId) {
+      query.andWhere('company.id = :companyId', { companyId: getSessionsDto.companyId });
+    }
+
+    // Ordenar por fecha del detalle (detail.start_datetime)
+    query.orderBy('detail.start_datetime', getSessionsDto.orderBy === 'oldest' ? 'ASC' : 'DESC');
+
+    // Aplicar paginación (sobre los detalles)
+    const details = await query
+      .skip((getSessionsDto.page - 1) * getSessionsDto.limit)
+      .take(getSessionsDto.limit)
+      .getRawMany();
+
+    // ---------------------------------------------------------------------
+    // CONSULTA DE CONTEO: Obtener el número TOTAL de SESIONES distintas
+    // (sin paginación) que cumplen los mismos filtros.
+    // ---------------------------------------------------------------------
+    const countQuery = this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .innerJoin('session', 'session', 'session.id = detail.session_id')
+      .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
+      .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
+
+    // Replicar los mismos filtros de fecha sobre session.session_datetime
+    if (getSessionsDto.date) {
+      const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+      countQuery.andWhere('session.session_datetime BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
+    } else if (getSessionsDto.today) {
+      const today = new Date();
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+      const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+      countQuery.andWhere('session.session_datetime BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
+    } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      countQuery.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
+        startDate: new Date(getSessionsDto.startDate),
+        endDate: new Date(getSessionsDto.endDate)
+      });
+    }
+
+    // Replicar el resto de filtros
+    if (getSessionsDto.onlyScheduled) {
+      countQuery.andWhere('detail.status = :onlyScheduledStatus', { onlyScheduledStatus: 1 });
+    } else if (getSessionsDto.sessionStatus !== undefined) {
+      countQuery.andWhere('session.session_status = :sessionStatus', { sessionStatus: getSessionsDto.sessionStatus });
+    }
+
+    if (getSessionsDto.detailStatus !== undefined) {
+      countQuery.andWhere('detail.status = :detailStatus', { detailStatus: getSessionsDto.detailStatus });
+    }
+
+    if (getSessionsDto.clientId) {
+      countQuery.andWhere('session.client_id = :clientId', { clientId: getSessionsDto.clientId });
+    }
+
+    if (getSessionsDto.companyId) {
+      countQuery.andWhere('company.id = :companyId', { companyId: getSessionsDto.companyId });
+    }
+
+    // --- CONTAR SESIONES DISTINTAS ---
+    const countResult = await countQuery
+      .select('COUNT(DISTINCT session.id)', 'total')
+      .getRawOne();
+
+    const total = parseInt(countResult?.total || '0', 10);
+
+    // ---------------------------------------------------------------------
+    // AGRUPAR POR SESIÓN
+    // ---------------------------------------------------------------------
+    const sessionMap = new Map<number, any>();
+
+    for (const detail of details) {
+      const sessionId = detail.sessionId;
+
+      if (!sessionMap.has(sessionId)) {
+        sessionMap.set(sessionId, {
+          // === DATOS DE LA SESIÓN (CITA) ===
+          id: sessionId,
+          clientId: detail.clientId,
+          clientName: detail.clientName ? `${detail.clientName || ''} ${detail.clientLastName || ''}`.trim() : 'Cliente no encontrado',
+          clientLastName: detail.clientLastName || '',
+          sessionDatetime: detail.sessionDatetime,
+          sessionStatus: detail.sessionStatus,
+          sessionStatusText: this.getSessionStatusText(detail.sessionStatus),
+          sessionTotalCost: parseFloat(detail.sessionTotalCost) || 0,
+          sessionTotalTime: parseFloat(detail.sessionTotalTime) || 0,
+          startDatetime: detail.sessionStartDatetime,
+          status: detail.sessionStatusFlag,
+          iaResponse: detail.iaResponse,
+          descriptionWorker: detail.descriptionWorker,
+          descriptionIA: detail.descriptionIA,
+          description: detail.description,
+          extraServices: detail.extraServices,
+          createdAt: detail.sessionUpdatedAt,
+          // === SERVICIOS ASIGNADOS A ESTE TRABAJADOR ===
+          assignedServices: [],
+          assignedTotalCost: 0,
+          assignedTotalTime: 0,
+          assignedServicesCount: 0,
+          assignedOverallStatus: null,
+          hasAssignedTodayDetail: false
+        });
+      }
+
+      const sessionData = sessionMap.get(sessionId);
+
+      const cost = parseFloat(detail.cost) || 0;
+      const totalTime = parseFloat(detail.totalTime) || 0;
+      const totalWorker = parseFloat(detail.totalWorker) || 0;
+      const totalCompany = parseFloat(detail.totalCompany) || 0;
+
+      let workerPercentage = 0;
+      let companyPercentage = 0;
+      if (cost > 0) {
+        workerPercentage = parseFloat(((totalWorker / cost) * 100).toFixed(2));
+        companyPercentage = parseFloat(((totalCompany / cost) * 100).toFixed(2));
+      }
+
+      sessionData.assignedServices.push({
+        detailId: detail.detailId,
+        serviceId: detail.serviceId,
+        serviceName: detail.serviceName || 'Servicio no encontrado',
+        serviceDescription: detail.serviceDescription || '',
+        cost,
+        totalTime,
+        totalWorker,
+        totalCompany,
+        detailStatus: detail.detailStatus || 1,
+        detailStatusText: this.getDetailStatusText(detail.detailStatus || 1),
+        startDatetime: detail.detailStartDatetime,
+        isExtra: detail.isExtra === true || detail.isExtra === 1,
+        companyId: detail.companyId,
+        companyName: detail.companyName || 'Compañía no encontrada',
+        workerPercentage,
+        companyPercentage,
+        workerName: detail.workerName,
+        workerLastName: detail.workerLastName
+      });
+
+      sessionData.assignedTotalCost += cost;
+      sessionData.assignedTotalTime += totalTime;
+      sessionData.assignedServicesCount += 1;
+    }
+
+    // ---------------------------------------------------------------------
+    // CALCULAR ESTADO CONSOLIDADO DEL TRABAJADOR POR SESIÓN
+    // ---------------------------------------------------------------------
+    const sessions = Array.from(sessionMap.values()).map(session => {
+      const allScheduled = session.assignedServices.every(s => s.detailStatus === 1);
+      const anyInProcess = session.assignedServices.some(s => s.detailStatus === 2);
+      const allCompleted = session.assignedServices.every(s => s.detailStatus === 3);
+
+      let overallStatus = 'Desconocido';
+      if (allCompleted) overallStatus = 'Completado';
+      else if (anyInProcess) overallStatus = 'En proceso';
+      else if (allScheduled) overallStatus = 'Agendado';
+      else if (session.assignedServices.some(s => s.detailStatus === 3) &&
+        session.assignedServices.some(s => s.detailStatus !== 3)) {
+        overallStatus = 'Parcialmente completado';
+      }
+
+      const hasAssignedToday = session.assignedServices.some(s =>
+        this.isToday(s.startDatetime)
+      );
+
+      return {
+        ...session,
+        assignedTotalCost: parseFloat(session.assignedTotalCost.toFixed(2)),
+        assignedTotalTime: parseFloat(session.assignedTotalTime.toFixed(2)),
+        assignedOverallStatus: overallStatus,
+        hasAssignedTodayDetail: hasAssignedToday
+      };
+    });
+
+    // ---------------------------------------------------------------------
+    // FILTRAR POR 'today' SI ES NECESARIO (ya aplicado en la consulta, pero se deja por si acaso)
+    // ---------------------------------------------------------------------
+    let filteredSessions = sessions;
+    if (getSessionsDto.today) {
+      // Aunque ya filtramos en la BD, podemos dejarlo como respaldo
+      filteredSessions = sessions.filter(s => this.isToday(s.sessionDatetime));
+    }
+
+    // ---------------------------------------------------------------------
+    // ORDENAR SESIONES
+    // ---------------------------------------------------------------------
+    if (getSessionsDto.orderBy === 'oldest') {
+      filteredSessions.sort((a, b) => {
+        const aDate = a.assignedServices.length > 0
+          ? new Date(a.assignedServices[0].startDatetime).getTime()
+          : new Date(a.sessionDatetime).getTime();
+        const bDate = b.assignedServices.length > 0
+          ? new Date(b.assignedServices[0].startDatetime).getTime()
+          : new Date(b.sessionDatetime).getTime();
+        return aDate - bDate;
+      });
+    } else {
+      filteredSessions.sort((a, b) => {
+        const aDate = a.assignedServices.length > 0
+          ? new Date(a.assignedServices[0].startDatetime).getTime()
+          : new Date(a.sessionDatetime).getTime();
+        const bDate = b.assignedServices.length > 0
+          ? new Date(b.assignedServices[0].startDatetime).getTime()
+          : new Date(b.sessionDatetime).getTime();
+        return bDate - aDate;
+      });
+    }
+
+    return {
+      data: filteredSessions,
+      meta: {
+        page: getSessionsDto.page,
+        limit: getSessionsDto.limit,
+        total: total,
+        totalPages: Math.ceil(total / getSessionsDto.limit),
+        hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
+        hasPrev: getSessionsDto.page > 1,
+      }
+    };
+  }
+
+  /**
+   * Método auxiliar para verificar si una fecha es hoy
+   */
+  private isToday(date: Date): boolean {
+    const inputDate = new Date(date);
+    const today = new Date();
+
+    return inputDate.getDate() === today.getDate() &&
+      inputDate.getMonth() === today.getMonth() &&
+      inputDate.getFullYear() === today.getFullYear();
+  }
+
+  /**
+   * Calcular el estado general del trabajador para una sesión basado en sus detalles
+   */
+  private calculateWorkerOverallStatus(workerServices: any[]): string {
+    if (workerServices.length === 0) return 'Sin servicios';
+
+    const allCompleted = workerServices.every(service => service.detailStatus === 3);
+    const anyInProgress = workerServices.some(service => service.detailStatus === 2);
+    const anyScheduled = workerServices.some(service => service.detailStatus === 1);
+
+    if (allCompleted) return 'Completado';
+    if (anyInProgress) return 'En proceso';
+    if (anyScheduled) return 'Agendado';
+
+    return 'Desconocido';
+  }
 
   /**
    * Crear una sesión con detalles para un cliente autenticado
@@ -3273,519 +3388,1019 @@ private calculateWorkerOverallStatus(workerServices: any[]): string {
   }
 
 
-// VERSIÓN ACTUALIZADA DEL MÉTODO addExtraServicesToSession
-// Este método debe REEMPLAZAR el anterior en session.service.ts
+  // VERSIÓN ACTUALIZADA DEL MÉTODO addExtraServicesToSession
+  // Este método debe REEMPLAZAR el anterior en session.service.ts
 
-async addExtraServicesToSession(
-  sessionId: number,
-  addExtraServicesDto: AddExtraServicesDto,
-  adminId: number
-): Promise<{
-  message: string;
-  session: Session;
-  addedDetails: SessionDetail[];
-  calculations: Array<{
-    serviceId: number;
-    serviceName: string;
-    companyWorkerId: number;
-    workerName: string;
-    totalCost: number;
-    totalTime: number;
-    workerPercentage: number;
-    companyPercentage: number;
-    totalWorker: number;
-    totalCompany: number;
-    calculationDetails: string;
-    priceOption: string;
-    isExtra: boolean;
-    configSource: string; // NUEVO: Indica de dónde salió la configuración
-  }>;
-  previousTotals: {
-    totalCost: number;
-    totalTime: number;
-  };
-  newTotals: {
-    totalCost: number;
-    totalTime: number;
-  };
-}> {
-  console.log(`🎁 Agregando servicios extras a sesión ${sessionId}`);
-
-  // 1. Verificar permisos del administrador
-  const adminCompany = await this.companyRepository.findOne({
-    where: { userId: adminId }
-  });
-
-  if (!adminCompany) {
-    throw new NotFoundException('El administrador no tiene una compañía asignada');
-  }
-
-  // 2. Buscar la sesión
-  const session = await this.sessionRepository.findOne({
-    where: { id: sessionId }
-  });
-
-  if (!session) {
-    throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
-  }
-
-  // 3. Verificar que la sesión pertenezca a la compañía del administrador
-  const sessionDetails = await this.sessionDetailRepository.find({
-    where: { sessionId: sessionId }
-  });
-
-  if (sessionDetails.length === 0) {
-    throw new NotFoundException(`La sesión ${sessionId} no tiene detalles`);
-  }
-
-  let sessionBelongsToAdmin = false;
-  for (const detail of sessionDetails) {
-    const companyWorker = await this.companyWorkerRepository.findOne({
-      where: { id: detail.companyWorkerId },
-      relations: ['company']
-    });
-
-    if (companyWorker?.company?.id === adminCompany.id) {
-      sessionBelongsToAdmin = true;
-      break;
-    }
-  }
-
-  if (!sessionBelongsToAdmin) {
-    throw new ForbiddenException('No tienes permiso para modificar esta sesión');
-  }
-
-  // 4. Validar que haya servicios extras para agregar
-  if (!addExtraServicesDto.extraServices || addExtraServicesDto.extraServices.length === 0) {
-    throw new BadRequestException('Debe proporcionar al menos un servicio extra');
-  }
-
-  // 5. Guardar totales anteriores
-  const previousTotalCost = Number(session.totalCost || 0);
-  const previousTotalTime = Number(session.totalTime || 0);
-
-  // 6. Preparar validaciones y cálculos
-  type ExtraServiceValidationType = {
-    extraService: ExtraServiceItemDto;
-    service: Service;
-    companyWorker: CompanyWorker;
-    workerPercentage: number;
-    companyPercentage: number;
-    workerAssigned: boolean;
-    finalPrice: number;
-    calculatedAmounts: {
-      cost: number;
+  async addExtraServicesToSession(
+    sessionId: number,
+    addExtraServicesDto: AddExtraServicesDto,
+    adminId: number
+  ): Promise<{
+    message: string;
+    session: Session;
+    addedDetails: SessionDetail[];
+    calculations: Array<{
+      serviceId: number;
+      serviceName: string;
+      companyWorkerId: number;
+      workerName: string;
+      totalCost: number;
+      totalTime: number;
+      workerPercentage: number;
+      companyPercentage: number;
       totalWorker: number;
       totalCompany: number;
       calculationDetails: string;
+      priceOption: string;
+      isExtra: boolean;
+      configSource: string; // NUEVO: Indica de dónde salió la configuración
+    }>;
+    previousTotals: {
+      totalCost: number;
+      totalTime: number;
     };
-    workerName: string;
-    detailTime: number;
-    startDatetime: Date;
-    configSource: string; // De dónde viene la configuración
-  };
+    newTotals: {
+      totalCost: number;
+      totalTime: number;
+    };
+  }> {
+    console.log(`🎁 Agregando servicios extras a sesión ${sessionId}`);
 
-  const validations: ExtraServiceValidationType[] = [];
-  const calculations: Array<{
-    serviceId: number;
-    serviceName: string;
-    companyWorkerId: number;
-    workerName: string;
-    totalCost: number;
-    totalTime: number;
-    workerPercentage: number;
-    companyPercentage: number;
-    totalWorker: number;
-    totalCompany: number;
-    calculationDetails: string;
-    priceOption: string;
-    isExtra: boolean;
-    configSource: string;
-  }> = [];
-
-  let extraTotalCost = 0;
-  let extraTotalTime = 0;
-
-  // 7. Pre-validar y calcular todos los servicios extras
-  for (const extraService of addExtraServicesDto.extraServices) {
-    // Validar que el servicio exista
-    const service = await this.serviceRepository.findOne({
-      where: {
-        id: extraService.serviceId,
-        companyId: adminCompany.id
-      }
+    // 1. Verificar permisos del administrador
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId }
     });
 
-    if (!service) {
-      throw new NotFoundException(
-        `Servicio con ID ${extraService.serviceId} no encontrado o no pertenece a tu compañía`
-      );
+    if (!adminCompany) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
     }
 
-    // Validar que el trabajador (providerId = companyWorkerId) exista y esté activo
-    const companyWorker = await this.companyWorkerRepository.findOne({
-      where: {
-        id: extraService.providerId,
-        companyId: adminCompany.id
-      },
-      relations: ['worker']
+    // 2. Buscar la sesión
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId }
     });
 
-    if (!companyWorker) {
-      throw new NotFoundException(
-        `Trabajador con ID ${extraService.providerId} no encontrado o no pertenece a tu compañía`
-      );
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
 
-    if (companyWorker.isActive !== 1) {
-      throw new BadRequestException(
-        `El trabajador con ID ${extraService.providerId} no está activo`
-      );
+    // 3. Verificar que la sesión pertenezca a la compañía del administrador
+    const sessionDetails = await this.sessionDetailRepository.find({
+      where: { sessionId: sessionId }
+    });
+
+    if (sessionDetails.length === 0) {
+      throw new NotFoundException(`La sesión ${sessionId} no tiene detalles`);
     }
 
-    // ========================================================================
-    // PRIORIDAD 1: Buscar configuración específica en service.workers[]
-    // ========================================================================
-    console.log(`🔍 Buscando configuración para trabajador ${extraService.providerId} en servicio ${service.id}`);
-    console.log(`📋 Array workers del servicio:`, service.workers);
+    let sessionBelongsToAdmin = false;
+    for (const detail of sessionDetails) {
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['company']
+      });
 
-    let workerPercentage = 0;
-    let companyPercentage = 0;
-    let detailTime = service.standardTime || 0;
-    let configSource = '';
-    let workerAssigned = false;
-
-    // Buscar en el array workers del servicio
-    if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
-      const workerConfig = service.workers.find(
-        (w: any) => w.id === extraService.providerId
-      );
-
-      if (workerConfig) {
-        console.log(`✅ Encontrada configuración específica para trabajador ${extraService.providerId}:`, workerConfig);
-        
-        // PRIORIDAD: Usar porcentaje del worker si existe
-        if (workerConfig.percentage !== undefined && workerConfig.percentage !== null) {
-          workerPercentage = Number(workerConfig.percentage);
-          workerAssigned = true;
-          configSource = 'workers_array_percentage';
-          console.log(`📊 Usando porcentaje de workers[]: ${workerPercentage}%`);
-        }
-
-        // PRIORIDAD: Usar tiempo del worker si existe
-        if (workerConfig.time !== undefined && workerConfig.time !== null) {
-          detailTime = Number(workerConfig.time);
-          configSource = configSource ? `${configSource}, workers_array_time` : 'workers_array_time';
-          console.log(`⏱️  Usando tiempo de workers[]: ${detailTime} minutos`);
-        }
-      } else {
-        console.log(`⚠️  Trabajador ${extraService.providerId} NO encontrado en workers[], usando config general`);
+      if (companyWorker?.company?.id === adminCompany.id) {
+        sessionBelongsToAdmin = true;
+        break;
       }
-    } else {
-      console.log(`ℹ️  Servicio ${service.id} no tiene array workers[], usando config general`);
     }
 
-    // ========================================================================
-    // PRIORIDAD 2: Si no hay configuración específica, usar valores generales
-    // ========================================================================
-    if (!workerAssigned) {
-      if (service.percentage !== undefined && service.percentage !== null) {
-        workerPercentage = Number(service.percentage);
-        configSource = 'service_general_percentage';
-        console.log(`📊 Usando porcentaje general del servicio: ${workerPercentage}%`);
-      } else {
-        throw new BadRequestException(
-          `El servicio "${service.name}" (ID: ${service.id}) no tiene configurado el porcentaje para el trabajador ${extraService.providerId}. ` +
-          `Debe estar en service.workers[] o en service.percentage`
+    if (!sessionBelongsToAdmin) {
+      throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+    }
+
+    // 4. Validar que haya servicios extras para agregar
+    if (!addExtraServicesDto.extraServices || addExtraServicesDto.extraServices.length === 0) {
+      throw new BadRequestException('Debe proporcionar al menos un servicio extra');
+    }
+
+    // 5. Guardar totales anteriores
+    const previousTotalCost = Number(session.totalCost || 0);
+    const previousTotalTime = Number(session.totalTime || 0);
+
+    // 6. Preparar validaciones y cálculos
+    type ExtraServiceValidationType = {
+      extraService: ExtraServiceItemDto;
+      service: Service;
+      companyWorker: CompanyWorker;
+      workerPercentage: number;
+      companyPercentage: number;
+      workerAssigned: boolean;
+      finalPrice: number;
+      calculatedAmounts: {
+        cost: number;
+        totalWorker: number;
+        totalCompany: number;
+        calculationDetails: string;
+      };
+      workerName: string;
+      detailTime: number;
+      startDatetime: Date;
+      configSource: string; // De dónde viene la configuración
+    };
+
+    const validations: ExtraServiceValidationType[] = [];
+    const calculations: Array<{
+      serviceId: number;
+      serviceName: string;
+      companyWorkerId: number;
+      workerName: string;
+      totalCost: number;
+      totalTime: number;
+      workerPercentage: number;
+      companyPercentage: number;
+      totalWorker: number;
+      totalCompany: number;
+      calculationDetails: string;
+      priceOption: string;
+      isExtra: boolean;
+      configSource: string;
+    }> = [];
+
+    let extraTotalCost = 0;
+    let extraTotalTime = 0;
+
+    // 7. Pre-validar y calcular todos los servicios extras
+    for (const extraService of addExtraServicesDto.extraServices) {
+      // Validar que el servicio exista
+      const service = await this.serviceRepository.findOne({
+        where: {
+          id: extraService.serviceId,
+          companyId: adminCompany.id
+        }
+      });
+
+      if (!service) {
+        throw new NotFoundException(
+          `Servicio con ID ${extraService.serviceId} no encontrado o no pertenece a tu compañía`
         );
       }
-    }
 
-    // Si no se encontró tiempo específico, validar que exista tiempo estándar
-    if (!configSource.includes('workers_array_time')) {
-      if (service.standardTime !== undefined && service.standardTime !== null) {
-        detailTime = Number(service.standardTime);
-        configSource = configSource ? `${configSource}, service_standard_time` : 'service_standard_time';
-        console.log(`⏱️  Usando tiempo estándar del servicio: ${detailTime} minutos`);
-      } else {
-        console.warn(`⚠️  Servicio ${service.id} no tiene tiempo configurado, usando 0`);
-        detailTime = 0;
+      // Validar que el trabajador (providerId = companyWorkerId) exista y esté activo
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: {
+          id: extraService.providerId,
+          companyId: adminCompany.id
+        },
+        relations: ['worker']
+      });
+
+      if (!companyWorker) {
+        throw new NotFoundException(
+          `Trabajador con ID ${extraService.providerId} no encontrado o no pertenece a tu compañía`
+        );
       }
-    }
 
-    // Si el frontend envía durationMinutes, puede sobrescribir (opcional)
-    if (extraService.durationMinutes !== undefined && extraService.durationMinutes !== null) {
-      console.log(`🔧 Frontend especificó duración: ${extraService.durationMinutes} minutos (sobrescribiendo ${detailTime})`);
-      detailTime = extraService.durationMinutes;
-      configSource = configSource ? `${configSource}, frontend_override` : 'frontend_override';
-    }
+      if (companyWorker.isActive !== 1) {
+        throw new BadRequestException(
+          `El trabajador con ID ${extraService.providerId} no está activo`
+        );
+      }
 
-    companyPercentage = 100 - workerPercentage;
+      // ========================================================================
+      // PRIORIDAD 1: Buscar configuración específica en service.workers[]
+      // ========================================================================
+      console.log(`🔍 Buscando configuración para trabajador ${extraService.providerId} en servicio ${service.id}`);
+      console.log(`📋 Array workers del servicio:`, service.workers);
 
-    // Validar porcentajes
-    this.validateServicePercentagesAndTime(service);
+      let workerPercentage = 0;
+      let companyPercentage = 0;
+      let detailTime = service.standardTime || 0;
+      let configSource = '';
+      let workerAssigned = false;
 
-    if (workerPercentage < 0 || workerPercentage > 100) {
-      throw new BadRequestException(
-        `El porcentaje del trabajador (${workerPercentage}%) debe estar entre 0 y 100 para el servicio "${service.name}"`
-      );
-    }
+      // Buscar en el array workers del servicio
+      if (service.workers && Array.isArray(service.workers) && service.workers.length > 0) {
+        const workerConfig = service.workers.find(
+          (w: any) => w.id === extraService.providerId
+        );
 
-    if (companyPercentage < 0 || companyPercentage > 100) {
-      throw new BadRequestException(
-        `El porcentaje de la compañía (${companyPercentage}%) debe estar entre 0 y 100 para el servicio "${service.name}"`
-      );
-    }
+        if (workerConfig) {
+          console.log(`✅ Encontrada configuración específica para trabajador ${extraService.providerId}:`, workerConfig);
 
-    console.log(`📋 Configuración final para ${service.name}:`);
-    console.log(`   - Porcentaje trabajador: ${workerPercentage}%`);
-    console.log(`   - Porcentaje compañía: ${companyPercentage}%`);
-    console.log(`   - Tiempo: ${detailTime} minutos`);
-    console.log(`   - Fuente: ${configSource}`);
+          // PRIORIDAD: Usar porcentaje del worker si existe
+          if (workerConfig.percentage !== undefined && workerConfig.percentage !== null) {
+            workerPercentage = Number(workerConfig.percentage);
+            workerAssigned = true;
+            configSource = 'workers_array_percentage';
+            console.log(`📊 Usando porcentaje de workers[]: ${workerPercentage}%`);
+          }
 
-    // ========================================================================
-    // Determinar el precio final según priceOption
-    // ========================================================================
-    let finalPrice = 0;
-
-    switch (extraService.priceOption) {
-      case 'default':
-        const serviceCost = service.cost || 0;
-        if (typeof serviceCost === 'string') {
-          finalPrice = parseFloat(serviceCost);
-        } else if (typeof serviceCost === 'number') {
-          finalPrice = serviceCost;
+          // PRIORIDAD: Usar tiempo del worker si existe
+          if (workerConfig.time !== undefined && workerConfig.time !== null) {
+            detailTime = Number(workerConfig.time);
+            configSource = configSource ? `${configSource}, workers_array_time` : 'workers_array_time';
+            console.log(`⏱️  Usando tiempo de workers[]: ${detailTime} minutos`);
+          }
         } else {
-          finalPrice = parseFloat(String(serviceCost));
+          console.log(`⚠️  Trabajador ${extraService.providerId} NO encontrado en workers[], usando config general`);
         }
-        console.log(`💰 Precio: default (${finalPrice})`);
-        break;
+      } else {
+        console.log(`ℹ️  Servicio ${service.id} no tiene array workers[], usando config general`);
+      }
 
-      case 'custom':
-        if (extraService.customPrice === undefined || extraService.customPrice === null) {
+      // ========================================================================
+      // PRIORIDAD 2: Si no hay configuración específica, usar valores generales
+      // ========================================================================
+      if (!workerAssigned) {
+        if (service.percentage !== undefined && service.percentage !== null) {
+          workerPercentage = Number(service.percentage);
+          configSource = 'service_general_percentage';
+          console.log(`📊 Usando porcentaje general del servicio: ${workerPercentage}%`);
+        } else {
           throw new BadRequestException(
-            `Debe proporcionar customPrice cuando priceOption es "custom" para el servicio ${service.name}`
+            `El servicio "${service.name}" (ID: ${service.id}) no tiene configurado el porcentaje para el trabajador ${extraService.providerId}. ` +
+            `Debe estar en service.workers[] o en service.percentage`
           );
         }
-        finalPrice = extraService.customPrice;
-        console.log(`💰 Precio: custom (${finalPrice})`);
-        break;
-
-      case 'free':
-        finalPrice = 0;
-        console.log(`💰 Precio: free (0)`);
-        break;
-
-      default:
-        throw new BadRequestException(
-          `priceOption inválido: ${extraService.priceOption}. Debe ser "default", "custom" o "free"`
-        );
-    }
-
-    if (finalPrice < 0) {
-      throw new BadRequestException(
-        `El precio del servicio "${service.name}" no puede ser negativo`
-      );
-    }
-
-    // Calcular montos (trabajador/compañía)
-    const calculatedAmounts = this.calculateAmounts(finalPrice, workerPercentage, companyPercentage);
-
-    // Parsear la fecha y hora
-    let startDatetime: Date;
-    try {
-      const dateTimeParts = `${extraService.date} ${extraService.time}`;
-      startDatetime = new Date(dateTimeParts);
-
-      if (isNaN(startDatetime.getTime())) {
-        throw new Error('Fecha inválida');
       }
-    } catch (error) {
-      throw new BadRequestException(
-        `Formato de fecha/hora inválido para el servicio ${service.name}: date="${extraService.date}", time="${extraService.time}"`
-      );
-    }
 
-    // Acumular totales
-    extraTotalCost += calculatedAmounts.cost;
-    extraTotalTime += detailTime;
+      // Si no se encontró tiempo específico, validar que exista tiempo estándar
+      if (!configSource.includes('workers_array_time')) {
+        if (service.standardTime !== undefined && service.standardTime !== null) {
+          detailTime = Number(service.standardTime);
+          configSource = configSource ? `${configSource}, service_standard_time` : 'service_standard_time';
+          console.log(`⏱️  Usando tiempo estándar del servicio: ${detailTime} minutos`);
+        } else {
+          console.warn(`⚠️  Servicio ${service.id} no tiene tiempo configurado, usando 0`);
+          detailTime = 0;
+        }
+      }
 
-    const workerName = companyWorker.worker
-      ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
-      : `Trabajador ID: ${companyWorker.id}`;
+      // Si el frontend envía durationMinutes, puede sobrescribir (opcional)
+      if (extraService.durationMinutes !== undefined && extraService.durationMinutes !== null) {
+        console.log(`🔧 Frontend especificó duración: ${extraService.durationMinutes} minutos (sobrescribiendo ${detailTime})`);
+        detailTime = extraService.durationMinutes;
+        configSource = configSource ? `${configSource}, frontend_override` : 'frontend_override';
+      }
 
-    // Guardar validación
-    validations.push({
-      extraService,
-      service,
-      companyWorker,
-      workerPercentage,
-      companyPercentage,
-      workerAssigned,
-      finalPrice,
-      calculatedAmounts,
-      workerName,
-      detailTime,
-      startDatetime,
-      configSource
-    });
+      companyPercentage = 100 - workerPercentage;
 
-    // Agregar a cálculos
-    calculations.push({
-      serviceId: extraService.serviceId,
-      serviceName: service.name || '',
-      companyWorkerId: extraService.providerId,
-      workerName: workerName,
-      totalCost: calculatedAmounts.cost,
-      totalTime: detailTime,
-      workerPercentage,
-      companyPercentage,
-      totalWorker: calculatedAmounts.totalWorker,
-      totalCompany: calculatedAmounts.totalCompany,
-      calculationDetails: calculatedAmounts.calculationDetails,
-      priceOption: extraService.priceOption,
-      isExtra: true,
-      configSource // NUEVO: indica de dónde salió la config
-    });
-  }
+      // Validar porcentajes
+      this.validateServicePercentagesAndTime(service);
 
-  // 8. Iniciar transacción para crear detalles y actualizar sesión
-  const queryRunner = this.sessionRepository.manager.connection.createQueryRunner();
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
+      if (workerPercentage < 0 || workerPercentage > 100) {
+        throw new BadRequestException(
+          `El porcentaje del trabajador (${workerPercentage}%) debe estar entre 0 y 100 para el servicio "${service.name}"`
+        );
+      }
 
-  const addedDetails: SessionDetail[] = [];
+      if (companyPercentage < 0 || companyPercentage > 100) {
+        throw new BadRequestException(
+          `El porcentaje de la compañía (${companyPercentage}%) debe estar entre 0 y 100 para el servicio "${service.name}"`
+        );
+      }
 
-  try {
-    // 9. Crear los SessionDetail con isExtra: true
-    for (const validation of validations) {
-      const { extraService, calculatedAmounts, detailTime, startDatetime } = validation;
+      console.log(`📋 Configuración final para ${service.name}:`);
+      console.log(`   - Porcentaje trabajador: ${workerPercentage}%`);
+      console.log(`   - Porcentaje compañía: ${companyPercentage}%`);
+      console.log(`   - Tiempo: ${detailTime} minutos`);
+      console.log(`   - Fuente: ${configSource}`);
 
-      const sessionDetailData = {
-        cost: calculatedAmounts.cost,
+      // ========================================================================
+      // Determinar el precio final según priceOption
+      // ========================================================================
+      let finalPrice = 0;
+
+      switch (extraService.priceOption) {
+        case 'default':
+          const serviceCost = service.cost || 0;
+          if (typeof serviceCost === 'string') {
+            finalPrice = parseFloat(serviceCost);
+          } else if (typeof serviceCost === 'number') {
+            finalPrice = serviceCost;
+          } else {
+            finalPrice = parseFloat(String(serviceCost));
+          }
+          console.log(`💰 Precio: default (${finalPrice})`);
+          break;
+
+        case 'custom':
+          if (extraService.customPrice === undefined || extraService.customPrice === null) {
+            throw new BadRequestException(
+              `Debe proporcionar customPrice cuando priceOption es "custom" para el servicio ${service.name}`
+            );
+          }
+          finalPrice = extraService.customPrice;
+          console.log(`💰 Precio: custom (${finalPrice})`);
+          break;
+
+        case 'free':
+          finalPrice = 0;
+          console.log(`💰 Precio: free (0)`);
+          break;
+
+        default:
+          throw new BadRequestException(
+            `priceOption inválido: ${extraService.priceOption}. Debe ser "default", "custom" o "free"`
+          );
+      }
+
+      if (finalPrice < 0) {
+        throw new BadRequestException(
+          `El precio del servicio "${service.name}" no puede ser negativo`
+        );
+      }
+
+      // Calcular montos (trabajador/compañía)
+      const calculatedAmounts = this.calculateAmounts(finalPrice, workerPercentage, companyPercentage);
+
+      // Parsear la fecha y hora
+      let startDatetime: Date;
+      try {
+        const dateTimeParts = `${extraService.date} ${extraService.time}`;
+        startDatetime = new Date(dateTimeParts);
+
+        if (isNaN(startDatetime.getTime())) {
+          throw new Error('Fecha inválida');
+        }
+      } catch (error) {
+        throw new BadRequestException(
+          `Formato de fecha/hora inválido para el servicio ${service.name}: date="${extraService.date}", time="${extraService.time}"`
+        );
+      }
+
+      // Acumular totales
+      extraTotalCost += calculatedAmounts.cost;
+      extraTotalTime += detailTime;
+
+      const workerName = companyWorker.worker
+        ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+        : `Trabajador ID: ${companyWorker.id}`;
+
+      // Guardar validación
+      validations.push({
+        extraService,
+        service,
+        companyWorker,
+        workerPercentage,
+        companyPercentage,
+        workerAssigned,
+        finalPrice,
+        calculatedAmounts,
+        workerName,
+        detailTime,
+        startDatetime,
+        configSource
+      });
+
+      // Agregar a cálculos
+      calculations.push({
         serviceId: extraService.serviceId,
+        serviceName: service.name || '',
         companyWorkerId: extraService.providerId,
-        sessionId: session.id,
-        startDatetime: startDatetime,
+        workerName: workerName,
+        totalCost: calculatedAmounts.cost,
         totalTime: detailTime,
+        workerPercentage,
+        companyPercentage,
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
-        status: 1, // Agendado por defecto
-        isExtra: true // Marcar como servicio extra
-      };
-
-      const sessionDetail = this.sessionDetailRepository.create(sessionDetailData);
-      const savedDetail = await queryRunner.manager.save(sessionDetail);
-      addedDetails.push(savedDetail);
+        calculationDetails: calculatedAmounts.calculationDetails,
+        priceOption: extraService.priceOption,
+        isExtra: true,
+        configSource // NUEVO: indica de dónde salió la config
+      });
     }
 
-    // 10. Actualizar los totales de la sesión
-    const newTotalCost = previousTotalCost + extraTotalCost;
-    const newTotalTime = previousTotalTime + extraTotalTime;
+    // 8. Iniciar transacción para crear detalles y actualizar sesión
+    const queryRunner = this.sessionRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    await queryRunner.manager.update(
-      Session,
-      { id: session.id, clientId: session.clientId },
-      {
-        totalCost: newTotalCost,
-        totalTime: newTotalTime
-      }
-    );
-
-    // 11. Actualizar el campo extra_services en la sesión
-    const existingExtraServices = session.extraServices || [];
-
-    const newExtraServices = addExtraServicesDto.extraServices.map((es, index) => {
-      const addedDetail = addedDetails[index];
-      return {
-        sessionDetailId: addedDetail.id,
-        serviceId: es.serviceId,
-        serviceName: es.serviceName,
-        providerId: es.providerId,
-        providerName: es.providerName,
-        date: es.date,
-        time: es.time,
-        durationMinutes: es.durationMinutes,
-        priceOption: es.priceOption,
-        price: es.price,
-        ...(es.customPrice !== undefined && { customPrice: es.customPrice }),
-        createdAt: es.createdAt || new Date().toISOString()
-      };
-    });
-
-    const updatedExtraServices = [...existingExtraServices, ...newExtraServices];
-
-    await queryRunner.manager.update(
-      Session,
-      { id: session.id, clientId: session.clientId },
-      {
-        extraServices: updatedExtraServices
-      }
-    );
-
-    // 12. Commit de la transacción
-    await queryRunner.commitTransaction();
-
-    console.log(`✅ ${addedDetails.length} servicio(s) extra(s) agregado(s) a la sesión ${sessionId}`);
-
-  } catch (error) {
-    await queryRunner.rollbackTransaction();
-    throw new BadRequestException(`Error al agregar servicios extras: ${error.message}`);
-  } finally {
-    await queryRunner.release();
-  }
-
-  // 13. Obtener la sesión actualizada
-  const updatedSession = await this.sessionRepository.findOne({
-    where: { id: sessionId }
-  });
-
-  if (!updatedSession) {
-    throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada después de actualizar`);
-  }
-
-  // 14. Enviar correos de confirmación
-  for (let i = 0; i < validations.length; i++) {
-    const validation = validations[i];
-    const addedDetail = addedDetails[i];
+    const addedDetails: SessionDetail[] = [];
 
     try {
-      await this.sendConfirmationEmails(
-        updatedSession,
-        addedDetail,
-        session.clientId,
-        validation.extraService.providerId,
-        validation.extraService.serviceId,
-        adminCompany.id
+      // 9. Crear los SessionDetail con isExtra: true
+      for (const validation of validations) {
+        const { extraService, calculatedAmounts, detailTime, startDatetime } = validation;
+
+        const sessionDetailData = {
+          cost: calculatedAmounts.cost,
+          serviceId: extraService.serviceId,
+          companyWorkerId: extraService.providerId,
+          sessionId: session.id,
+          startDatetime: startDatetime,
+          totalTime: detailTime,
+          totalWorker: calculatedAmounts.totalWorker,
+          totalCompany: calculatedAmounts.totalCompany,
+          status: 1, // Agendado por defecto
+          isExtra: true // Marcar como servicio extra
+        };
+
+        const sessionDetail = this.sessionDetailRepository.create(sessionDetailData);
+        const savedDetail = await queryRunner.manager.save(sessionDetail);
+        addedDetails.push(savedDetail);
+      }
+
+      // 10. Actualizar los totales de la sesión
+      const newTotalCost = previousTotalCost + extraTotalCost;
+      const newTotalTime = previousTotalTime + extraTotalTime;
+
+      await queryRunner.manager.update(
+        Session,
+        { id: session.id, clientId: session.clientId },
+        {
+          totalCost: newTotalCost,
+          totalTime: newTotalTime
+        }
       );
+
+      // 11. Actualizar el campo extra_services en la sesión
+      const existingExtraServices = session.extraServices || [];
+
+      const newExtraServices = addExtraServicesDto.extraServices.map((es, index) => {
+        const addedDetail = addedDetails[index];
+        return {
+          sessionDetailId: addedDetail.id,
+          serviceId: es.serviceId,
+          serviceName: es.serviceName,
+          providerId: es.providerId,
+          providerName: es.providerName,
+          date: es.date,
+          time: es.time,
+          durationMinutes: es.durationMinutes,
+          priceOption: es.priceOption,
+          price: es.price,
+          ...(es.customPrice !== undefined && { customPrice: es.customPrice }),
+          createdAt: es.createdAt || new Date().toISOString()
+        };
+      });
+
+      const updatedExtraServices = [...existingExtraServices, ...newExtraServices];
+
+      await queryRunner.manager.update(
+        Session,
+        { id: session.id, clientId: session.clientId },
+        {
+          extraServices: updatedExtraServices
+        }
+      );
+
+      // 12. Commit de la transacción
+      await queryRunner.commitTransaction();
+
+      console.log(`✅ ${addedDetails.length} servicio(s) extra(s) agregado(s) a la sesión ${sessionId}`);
+
     } catch (error) {
-      this.logger.warn(`⚠️ Error enviando correos para servicio extra: ${error.message}`);
+      await queryRunner.rollbackTransaction();
+      throw new BadRequestException(`Error al agregar servicios extras: ${error.message}`);
+    } finally {
+      await queryRunner.release();
+    }
+
+    // 13. Obtener la sesión actualizada
+    const updatedSession = await this.sessionRepository.findOne({
+      where: { id: sessionId }
+    });
+
+    if (!updatedSession) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada después de actualizar`);
+    }
+
+    // 14. Enviar correos de confirmación
+    for (let i = 0; i < validations.length; i++) {
+      const validation = validations[i];
+      const addedDetail = addedDetails[i];
+
+      try {
+        await this.sendConfirmationEmails(
+          updatedSession,
+          addedDetail,
+          session.clientId,
+          validation.extraService.providerId,
+          validation.extraService.serviceId,
+          adminCompany.id
+        );
+      } catch (error) {
+        this.logger.warn(`⚠️ Error enviando correos para servicio extra: ${error.message}`);
+      }
+    }
+
+    // 15. Actualizar automáticamente el estado de la sesión
+    try {
+      await this.updateSessionStatusBasedOnDetails(sessionId);
+      console.log(`✅ Estado de sesión actualizado automáticamente después de agregar servicios extras`);
+    } catch (error) {
+      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${error.message}`);
+    }
+
+    // 16. Retornar resultado
+    return {
+      message: `Se agregaron ${addedDetails.length} servicio(s) extra(s) a la sesión exitosamente`,
+      session: updatedSession,
+      addedDetails,
+      calculations,
+      previousTotals: {
+        totalCost: previousTotalCost,
+        totalTime: previousTotalTime
+      },
+      newTotals: {
+        totalCost: Number(updatedSession.totalCost),
+        totalTime: Number(updatedSession.totalTime)
+      }
+    };
+  }
+
+
+  /**
+   * Cancela una sesión (cita) y todos sus detalles, tanto para administradores como para clientes.
+   * @param sessionId ID de la sesión a cancelar
+   * @param userId ID del usuario que realiza la acción (admin o cliente)
+   * @param userRole Rol del usuario: 'adm' o 'cli'
+   * @param cancelDto Opcional: motivo de cancelación
+   */
+  async cancelSession(
+    sessionId: number,
+    userId: number,
+    userRole: 'adm' | 'cli',
+    cancelDto?: CancelSessionDto,
+  ): Promise<{
+    message: string;
+    session: Session;
+    cancelledDetailsCount: number;
+    reason?: string;
+  }> {
+    this.logger.log(`🛑 Cancelando sesión ${sessionId} por ${userRole} (userId: ${userId})`);
+
+    // 1. Buscar la sesión
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+    }
+
+    // 2. Validar que la sesión pueda cancelarse
+    if (session.sessionStatus === 5) {
+      throw new BadRequestException('La sesión ya está cancelada');
+    }
+    if (session.sessionStatus === 3 || session.sessionStatus === 4) {
+      throw new BadRequestException(
+        'No se puede cancelar una sesión completada o pagada',
+      );
+    }
+
+    // 3. Validar permisos según el rol
+    if (userRole === 'adm') {
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId },
+      });
+      if (!adminCompany) {
+        throw new NotFoundException('El administrador no tiene una compañía asignada');
+      }
+
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId },
+      });
+      let sessionBelongsToAdmin = false;
+      for (const detail of sessionDetails) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: detail.companyWorkerId },
+          relations: ['company'],
+        });
+        if (companyWorker?.company?.id === adminCompany.id) {
+          sessionBelongsToAdmin = true;
+          break;
+        }
+      }
+      if (!sessionBelongsToAdmin) {
+        throw new ForbiddenException('No tienes permiso para cancelar esta sesión');
+      }
+    } else if (userRole === 'cli') {
+      // Verificar que la sesión pertenezca al cliente autenticado
+      const client = await this.clientRepository.findOne({
+        where: { userId },
+      });
+      if (!client) {
+        throw new NotFoundException('Cliente no encontrado');
+      }
+      if (session.clientId !== client.id) {
+        throw new ForbiddenException('No puedes cancelar una cita que no te pertenece');
+      }
+    }
+
+    // 4. Iniciar transacción
+    const queryRunner = this.sessionRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // 5. Actualizar estado de la sesión a 5 = Cancelada
+      session.sessionStatus = 5;
+      const updatedSession = await queryRunner.manager.save(session);
+
+      // 6. Actualizar todos los detalles de la sesión a 4 = Cancelado
+      const updateResult = await queryRunner.manager
+        .createQueryBuilder()
+        .update(SessionDetail)
+        .set({ status: 4 })
+        .where('sessionId = :sessionId', { sessionId })
+        .execute();
+
+      await queryRunner.commitTransaction();
+
+      this.logger.log(
+        `✅ Sesión ${sessionId} cancelada, ${updateResult.affected} detalle(s) actualizados`,
+      );
+
+      // 7. Enviar correos de cancelación (asíncrono, no bloquea)
+      this.sendCancellationEmails(session, cancelDto?.reason).catch((error) => {
+        this.logger.error(`Error enviando correos de cancelación: ${error.message}`);
+      });
+
+      return {
+        message: 'Cita cancelada exitosamente',
+        session: updatedSession,
+        cancelledDetailsCount: updateResult.affected || 0,
+        reason: cancelDto?.reason,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(`❌ Error cancelando sesión: ${error.message}`, error.stack);
+      throw new BadRequestException(`Error al cancelar la sesión: ${error.message}`);
+    } finally {
+      await queryRunner.release();
     }
   }
 
-  // 15. Actualizar automáticamente el estado de la sesión
-  try {
-    await this.updateSessionStatusBasedOnDetails(sessionId);
-    console.log(`✅ Estado de sesión actualizado automáticamente después de agregar servicios extras`);
-  } catch (error) {
-    console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${error.message}`);
+  private async sendCancellationEmails(
+    session: Session,
+    reason?: string,
+  ): Promise<void> {
+    try {
+      const clientInfo = await this.getClientInfo(session.clientId);
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId: session.id },
+      });
+
+      // Obtener información de la compañía (asumimos que todos los detalles pertenecen a la misma)
+      let companyName = '';
+      let companyEmail = '';
+      let companyAddress = '';
+
+      if (sessionDetails.length > 0) {
+        const firstDetail = sessionDetails[0];
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: firstDetail.companyWorkerId },
+          relations: ['company'],
+        });
+        if (companyWorker?.company) {
+          companyName = companyWorker.company.name;
+          companyEmail = companyWorker.company.email || '';
+          companyAddress = companyWorker.company.location || '';
+        }
+      }
+
+      // Formatear fecha y hora
+      const formatted = this.emailService.formatSessionDate(session.sessionDatetime);
+
+      // Enviar correo al cliente
+      if (clientInfo.email) {
+        await this.emailService.sendSessionCancellationToClient(
+          clientInfo.email,
+          clientInfo.name,
+          {
+            date: formatted.date,
+            time: formatted.time,
+            reason: reason || 'No se especificó motivo',
+          },
+          {
+            name: companyName,
+            email: companyEmail,
+            address: companyAddress,
+          },
+        );
+        this.logger.log(`✅ Correo de cancelación enviado al cliente: ${clientInfo.email}`);
+      }
+
+      // Enviar correo a cada trabajador involucrado
+      for (const detail of sessionDetails) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: detail.companyWorkerId },
+          relations: ['worker', 'worker.user'],
+        });
+        if (!companyWorker?.worker) continue;
+
+        const workerUser = await this.userRepository.findOne({
+          where: { id: companyWorker.worker.userId },
+        });
+        const workerEmail = workerUser?.email;
+        if (!workerEmail) continue;
+
+        const service = await this.serviceRepository.findOne({
+          where: { id: detail.serviceId },
+        });
+
+        await this.emailService.sendSessionCancellationToWorker(
+          workerEmail,
+          `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim(),
+          {
+            date: formatted.date,
+            time: formatted.time,
+            serviceName: service?.name || 'Servicio',
+            clientName: clientInfo.name,
+            reason: reason || 'No se especificó motivo',
+          },
+        );
+        this.logger.log(`✅ Correo de cancelación enviado al trabajador: ${workerEmail}`);
+      }
+    } catch (error) {
+      this.logger.error(
+        `❌ Error enviando correos de cancelación: ${error.message}`,
+        error.stack,
+      );
+    }
   }
 
-  // 16. Retornar resultado
+
+
+  /**
+ * Obtiene todas las sesiones (citas) del cliente autenticado.
+ * Incluye los detalles de los servicios, trabajadores y compañías.
+ * Aplica filtros de fecha y estado, y paginación.
+ *
+ * @param clientUserId ID del usuario cliente autenticado
+ * @param getSessionsDto DTO con parámetros de filtro y paginación
+ * @returns Lista paginada de sesiones del cliente
+ */
+async getSessionsForAuthenticatedClient(
+  clientUserId: number,
+  getSessionsDto: GetSessionsDto
+): Promise<PaginationResult<any>> {
+  console.log(`👤 Obteniendo sesiones para cliente autenticado (userId: ${clientUserId})`);
+
+  // 1. Obtener el cliente a partir del userId
+  const client = await this.clientRepository.findOne({
+    where: { userId: clientUserId }
+  });
+
+  if (!client) {
+    throw new NotFoundException('Cliente no encontrado');
+  }
+
+  const clientId = client.id;
+
+  // 2. Construir la consulta principal (obtener detalles con paginación)
+  const query = this.sessionDetailRepository
+    .createQueryBuilder('detail')
+    .innerJoin('session', 'session', 'session.id = detail.session_id')
+    .leftJoin('service', 'service', 'service.id = detail.service_id')
+    .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
+    .leftJoin('worker', 'worker', 'worker.id = companyWorker.worker_id')
+    .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
+    .select([
+      // Campos de la sesión
+      'session.id AS sessionId',
+      'session.client_id AS clientId',
+      'session.session_datetime AS sessionDatetime',
+      'session.session_status AS sessionStatus',
+      'session.total_cost AS sessionTotalCost',
+      'session.total_time AS sessionTotalTime',
+      'session.start_datetime AS sessionStartDatetime',
+      'session.status AS sessionStatusFlag',
+      'session.ia_response AS iaResponse',
+      'session.updated_at AS sessionUpdatedAt',
+      'session.description_worker AS descriptionWorker',
+      'session.description_ia AS descriptionIA',
+      'session.description AS description',
+      'session.extra_services AS extraServices',
+
+      // Campos del detalle (servicio)
+      'detail.id AS detailId',
+      'detail.cost AS cost',
+      'detail.total_time AS totalTime',
+      'detail.total_worker AS totalWorker',
+      'detail.total_company AS totalCompany',
+      'detail.status AS detailStatus',
+      'detail.start_datetime AS detailStartDatetime',
+      'detail.is_extra AS isExtra',
+
+      // Campos del servicio
+      'service.id AS serviceId',
+      'service.name AS serviceName',
+      'service.description AS serviceDescription',
+
+      // Campos del trabajador / compañía
+      'companyWorker.id AS companyWorkerId',
+      'company.id AS companyId',
+      'company.name AS companyName',
+      'worker.id AS workerId',
+      'worker.name AS workerName',
+      'worker.last_name AS workerLastName'
+    ])
+    .where('session.client_id = :clientId', { clientId });
+
+  // =========================================================================
+  // FILTROS DE FECHA (sobre session.session_datetime)
+  // =========================================================================
+
+  // PRIORIDAD 1: Fecha específica
+  if (getSessionsDto.date) {
+    const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+    const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+    query.andWhere('session.session_datetime BETWEEN :startOfDay AND :endOfDay', {
+      startOfDay,
+      endOfDay
+    });
+    console.log(`📅 Cliente: Filtrando por fecha específica: ${dateStr}`);
+  }
+  // PRIORIDAD 2: Día actual
+  else if (getSessionsDto.today) {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+
+    query.andWhere('session.session_datetime BETWEEN :startOfDay AND :endOfDay', {
+      startOfDay,
+      endOfDay
+    });
+    console.log(`📅 Cliente: Filtrando por día actual (${today.toLocaleDateString()})`);
+  }
+  // PRIORIDAD 3: Rango de fechas
+  else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+    query.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
+      startDate: new Date(getSessionsDto.startDate),
+      endDate: new Date(getSessionsDto.endDate)
+    });
+  }
+
+  // FILTRO: Estado de la sesión
+  if (getSessionsDto.sessionStatus !== undefined) {
+    query.andWhere('session.session_status = :sessionStatus', {
+      sessionStatus: getSessionsDto.sessionStatus
+    });
+  }
+
+  // FILTRO: Solo sesiones con estado "Agendado" (atajo)
+  if (getSessionsDto.onlyScheduled) {
+    query.andWhere('session.session_status = 1');
+  }
+
+  // FILTRO: Estado del detalle (opcional)
+  if (getSessionsDto.detailStatus !== undefined) {
+    query.andWhere('detail.status = :detailStatus', {
+      detailStatus: getSessionsDto.detailStatus
+    });
+  }
+
+  // Ordenar por fecha de la sesión (más reciente por defecto)
+  query.orderBy('session.session_datetime', getSessionsDto.orderBy === 'oldest' ? 'ASC' : 'DESC');
+
+  // Aplicar paginación
+  const details = await query
+    .skip((getSessionsDto.page - 1) * getSessionsDto.limit)
+    .take(getSessionsDto.limit)
+    .getRawMany();
+
+  // =========================================================================
+  // CONSULTA DE CONTEO: total de SESIONES distintas que cumplen los filtros
+  // =========================================================================
+  const countQuery = this.sessionDetailRepository
+    .createQueryBuilder('detail')
+    .innerJoin('session', 'session', 'session.id = detail.session_id')
+    .where('session.client_id = :clientId', { clientId });
+
+  // Replicar los mismos filtros de fecha
+  if (getSessionsDto.date) {
+    const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+    const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+    countQuery.andWhere('session.session_datetime BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
+  } else if (getSessionsDto.today) {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    countQuery.andWhere('session.session_datetime BETWEEN :startOfDay AND :endOfDay', { startOfDay, endOfDay });
+  } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+    countQuery.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
+      startDate: new Date(getSessionsDto.startDate),
+      endDate: new Date(getSessionsDto.endDate)
+    });
+  }
+
+  if (getSessionsDto.sessionStatus !== undefined) {
+    countQuery.andWhere('session.session_status = :sessionStatus', { sessionStatus: getSessionsDto.sessionStatus });
+  }
+  if (getSessionsDto.onlyScheduled) {
+    countQuery.andWhere('session.session_status = 1');
+  }
+  if (getSessionsDto.detailStatus !== undefined) {
+    countQuery.andWhere('detail.status = :detailStatus', { detailStatus: getSessionsDto.detailStatus });
+  }
+
+  const countResult = await countQuery
+    .select('COUNT(DISTINCT session.id)', 'total')
+    .getRawOne();
+
+  const total = parseInt(countResult?.total || '0', 10);
+
+  // =========================================================================
+  // AGRUPAR POR SESIÓN
+  // =========================================================================
+  const sessionMap = new Map<number, any>();
+
+  for (const detail of details) {
+    const sessionId = detail.sessionId;
+
+    if (!sessionMap.has(sessionId)) {
+      sessionMap.set(sessionId, {
+        // Datos de la sesión
+        id: sessionId,
+        clientId: detail.clientId,
+        sessionDatetime: detail.sessionDatetime,
+        sessionStatus: detail.sessionStatus,
+        sessionStatusText: this.getSessionStatusText(detail.sessionStatus),
+        sessionTotalCost: parseFloat(detail.sessionTotalCost) || 0,
+        sessionTotalTime: parseFloat(detail.sessionTotalTime) || 0,
+        startDatetime: detail.sessionStartDatetime,
+        status: detail.sessionStatusFlag,
+        iaResponse: detail.iaResponse,
+        descriptionWorker: detail.descriptionWorker,
+        descriptionIA: detail.descriptionIA,
+        description: detail.description,
+        extraServices: detail.extraServices,
+        createdAt: detail.sessionUpdatedAt,
+
+        // Servicios de la sesión
+        services: [],
+        // Totales calculados (se actualizarán)
+        totalCost: 0,
+        totalTime: 0,
+        servicesCount: 0
+      });
+    }
+
+    const sessionData = sessionMap.get(sessionId);
+
+    const cost = parseFloat(detail.cost) || 0;
+    const totalTime = parseFloat(detail.totalTime) || 0;
+    const totalWorker = parseFloat(detail.totalWorker) || 0;
+    const totalCompany = parseFloat(detail.totalCompany) || 0;
+
+    // Calcular porcentajes
+    let workerPercentage = 0;
+    let companyPercentage = 0;
+    if (cost > 0) {
+      workerPercentage = parseFloat(((totalWorker / cost) * 100).toFixed(2));
+      companyPercentage = parseFloat(((totalCompany / cost) * 100).toFixed(2));
+    }
+
+    sessionData.services.push({
+      detailId: detail.detailId,
+      serviceId: detail.serviceId,
+      serviceName: detail.serviceName || 'Servicio no encontrado',
+      serviceDescription: detail.serviceDescription || '',
+      cost,
+      totalTime,
+      totalWorker,
+      totalCompany,
+      detailStatus: detail.detailStatus || 1,
+      detailStatusText: this.getDetailStatusText(detail.detailStatus || 1),
+      startDatetime: detail.detailStartDatetime,
+      isExtra: detail.isExtra === true || detail.isExtra === 1,
+      companyId: detail.companyId,
+      companyName: detail.companyName || 'Compañía no encontrada',
+      workerPercentage,
+      companyPercentage,
+      workerName: detail.workerName,
+      workerLastName: detail.workerLastName
+    });
+
+    sessionData.totalCost += cost;
+    sessionData.totalTime += totalTime;
+    sessionData.servicesCount += 1;
+  }
+
+  // Convertir el mapa a array
+  const sessions = Array.from(sessionMap.values()).map(session => ({
+    ...session,
+    totalCost: parseFloat(session.totalCost.toFixed(2)),
+    totalTime: parseFloat(session.totalTime.toFixed(2))
+  }));
+
+  // Ordenar nuevamente por si acaso (aunque ya se ordenó en la query)
+  if (getSessionsDto.orderBy === 'oldest') {
+    sessions.sort((a, b) => new Date(a.sessionDatetime).getTime() - new Date(b.sessionDatetime).getTime());
+  } else {
+    sessions.sort((a, b) => new Date(b.sessionDatetime).getTime() - new Date(a.sessionDatetime).getTime());
+  }
+
   return {
-    message: `Se agregaron ${addedDetails.length} servicio(s) extra(s) a la sesión exitosamente`,
-    session: updatedSession,
-    addedDetails,
-    calculations,
-    previousTotals: {
-      totalCost: previousTotalCost,
-      totalTime: previousTotalTime
-    },
-    newTotals: {
-      totalCost: Number(updatedSession.totalCost),
-      totalTime: Number(updatedSession.totalTime)
+    data: sessions,
+    meta: {
+      page: getSessionsDto.page,
+      limit: getSessionsDto.limit,
+      total,
+      totalPages: Math.ceil(total / getSessionsDto.limit),
+      hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
+      hasPrev: getSessionsDto.page > 1
     }
   };
 }
-
 }

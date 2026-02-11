@@ -12,34 +12,27 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  UnauthorizedException
 } from '@nestjs/common';
 import { CompanyFeedbackService } from './company_feedback.service';
 import { CompanyFeedback } from './entities/company_feedback.entity';
 import { CreateCompanyFeedbackDto } from './dto/create-company_feedback.dto';
 import { UpdateCompanyFeedbackDto } from './dto/update-company_feedback.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PaginationDto } from '../common/dto/pagination.dto';
+import { PaginationResult } from '../common/utils/pagination.util';
 
 @Controller('companyfeedbacks')
+@UseGuards(JwtAuthGuard)
 export class CompanyFeedbackController {
-  constructor(private readonly companyFeedbackService: CompanyFeedbackService) {}
+  constructor(private readonly companyFeedbackService: CompanyFeedbackService) { }
 
-  @Get()
-  async findAll(): Promise<CompanyFeedback[]> {
-    return this.companyFeedbackService.findAll();
-  }
+  // ------------------------------------------------------------
+  // 1. Crear feedback para una compañía (cliente autenticado)
+  // POST /companyfeedbacks/company/:companyId
+  // ------------------------------------------------------------
 
-  @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number): Promise<CompanyFeedback> {
-    return this.companyFeedbackService.findOne(id);
-  }
-
-  /**
-   * Crear feedback para una company (autenticado)
-   * POST /companyfeedbacks/company/:companyId
-   * Body: { stars, description }
-   */
   @Post('company/:companyId')
-  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   async createForCompany(
     @Param('companyId', ParseIntPipe) companyId: number,
@@ -49,36 +42,44 @@ export class CompanyFeedbackController {
     const clientId = req.user?.sub;
     return this.companyFeedbackService.create(createDto, companyId, clientId);
   }
-
-  @Get('company/:companyId')
+  // ------------------------------------------------------------
+  // 2. (ADMIN) Listar feedbacks de la compañía del admin autenticado
+  // GET /companyfeedbacks/company?page=1&limit=10
+  // ------------------------------------------------------------
+  @Get('company')
   @HttpCode(HttpStatus.OK)
   async findByCompany(
-    @Param('companyId', ParseIntPipe) companyId: number,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ): Promise<{ data: CompanyFeedback[]; meta: any }> {
-    const p = page ? parseInt(page, 10) || 1 : 1;
-    const l = limit ? parseInt(limit, 10) || 10 : 10;
-    return this.companyFeedbackService.findByCompany(companyId, p, l);
-  }
-
-  // NUEVO: listar reseñas que el cliente autenticado escribió hacia companies
-  @Get('my-feedbacks')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  async myCompanyFeedbacks(
+    @Query() paginationDto: PaginationDto,
     @Req() req: any,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ): Promise<{ data: CompanyFeedback[]; meta: any }> {
-    const clientId = req.user?.sub;
-    const p = page ? parseInt(page, 10) || 1 : 1;
-    const l = limit ? parseInt(limit, 10) || 10 : 10;
-    return this.companyFeedbackService.findByClient(clientId, p, l);
+  ): Promise<PaginationResult<CompanyFeedback>> {
+    const userId = req.user?.sub;  // ID del usuario autenticado (JWT)
+    if (!userId) {
+      throw new UnauthorizedException('User not authenticated');
+    }
+    return this.companyFeedbackService.findByCompany(
+      userId,
+      paginationDto.page,
+      paginationDto.limit,
+    );
   }
 
+  // ------------------------------------------------------------
+  // 3. Obtener un feedback por ID
+  // GET /companyfeedbacks/:id
+  // ------------------------------------------------------------
+  @Get(':id')
+  @HttpCode(HttpStatus.OK)
+  async findOne(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<CompanyFeedback> {
+    return this.companyFeedbackService.findOne(id);
+  }
+
+  // ------------------------------------------------------------
+  // 4. Actualizar feedback (solo autor o admin)
+  // PUT /companyfeedbacks/:id
+  // ------------------------------------------------------------
   @Put(':id')
-  @UseGuards(JwtAuthGuard)
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateDto: UpdateCompanyFeedbackDto,
@@ -88,9 +89,11 @@ export class CompanyFeedbackController {
     const requesterUserType = req.user?.userType;
     return this.companyFeedbackService.update(id, updateDto, requesterUserId, requesterUserType);
   }
-
+  // ------------------------------------------------------------
+  // 5. Eliminar feedback (solo autor o admin)
+  // DELETE /companyfeedbacks/:id
+  // ------------------------------------------------------------
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async remove(@Param('id', ParseIntPipe) id: number, @Req() req: any): Promise<{ message: string }> {
     const requesterUserId = req.user?.sub;
@@ -98,4 +101,5 @@ export class CompanyFeedbackController {
     await this.companyFeedbackService.remove(id, requesterUserId, requesterUserType);
     return { message: 'Feedback eliminado correctamente' };
   }
+
 }

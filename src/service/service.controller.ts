@@ -11,7 +11,7 @@ import {
   HttpCode, 
   HttpStatus, 
   UseGuards, 
-  Req 
+  Req ,Query
 } from '@nestjs/common';
 import { ServiceService } from './service.service';
 import { CreateServiceDto } from './dto/create-service.dto';
@@ -19,6 +19,7 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { PaginationDto } from '../common/dto/pagination.dto'; 
 
 @Controller('services')
 @UseGuards(JwtAuthGuard)
@@ -32,13 +33,17 @@ export class ServiceController {
    * GET /services/my-company
    * Solo administradores
    */
-  @Get('my-company')
+@Get('my-company')
   @UseGuards(RolesGuard)
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
-  async findMyCompanyServices(@Req() req: any): Promise<any[]> {
+  async findMyCompanyServices(
+    @Req() req: any,
+    @Query() paginationDto: PaginationDto // <-- Agregar parámetro de paginación
+  ): Promise<any> {
     const adminId = req.user.sub;
-    return this.serviceService.findAllByCompanyWithWorkers(adminId);
+    const { page, limit } = paginationDto;
+    return this.serviceService.findAllByCompanyWithWorkers(adminId, { page, limit });
   }
 
   /**

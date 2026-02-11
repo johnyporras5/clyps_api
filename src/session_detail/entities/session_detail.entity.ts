@@ -33,10 +33,12 @@ export class SessionDetail {
   @Column({ name: 'status', nullable: true })
   status: number;
 
- // Nuevo campo para identificar servicios extras
+  // Nuevo campo para identificar servicios extras
   @Column({ name: 'is_extra', default: false })
   isExtra: boolean;
 
+  @Column({ name: 'end_datetime', nullable: true })
+  endDatetime: Date;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

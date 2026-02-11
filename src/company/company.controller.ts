@@ -29,6 +29,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { Client } from '../client/entities/client.entity';
 
 @Controller('companys')
+@UseGuards(JwtAuthGuard)
 export class CompanyController {
   constructor(private readonly companyService: CompanyService) { }
 
@@ -50,7 +51,6 @@ export class CompanyController {
   }
 
   @Get('admin/profile')
-  @UseGuards(JwtAuthGuard)
   async getAdminProfile(
     @Req() req
   ): Promise<CompanyWithLogoUrl> {
@@ -82,7 +82,6 @@ export class CompanyController {
 
 
   @Put('admin/profile')
-  @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('logo'))
   async updateAdminProfile(
     @Req() req,
@@ -98,11 +97,11 @@ export class CompanyController {
   }
 
 
-   /**
-   * Endpoint para eliminar temporalmente un trabajador (puede restaurarse)
-   */
+  /**
+  * Endpoint para eliminar temporalmente un trabajador (puede restaurarse)
+  */
   @Delete('workers/:workerId/temporary')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles('adm')
   async temporarilyRemoveWorker(
     @Param('workerId', ParseIntPipe) workerId: number,
@@ -116,7 +115,7 @@ export class CompanyController {
    * Endpoint para eliminar permanentemente un trabajador (no puede restaurarse)
    */
   @Delete('workers/:workerId/permanent')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles('adm')
   async permanentlyRemoveWorker(
     @Param('workerId', ParseIntPipe) workerId: number,
@@ -130,7 +129,7 @@ export class CompanyController {
    * Endpoint para restaurar un trabajador temporalmente eliminado
    */
   @Put('workers/:workerId/restore')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles('adm')
   async restoreWorker(
     @Param('workerId', ParseIntPipe) workerId: number,
@@ -144,7 +143,7 @@ export class CompanyController {
    * Endpoint para listar trabajadores temporalmente eliminados
    */
   @Get('workers/temporarily-removed')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles('adm')
   async getTemporarilyRemovedWorkers(
     @Req() req: any
@@ -154,11 +153,11 @@ export class CompanyController {
   }
 
 
-   /**
-   * Endpoint para eliminar temporalmente un cliente (puede restaurarse)
-   */
+  /**
+  * Endpoint para eliminar temporalmente un cliente (puede restaurarse)
+  */
   @Delete('clients/:clientId/temporary')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles('adm')
   async temporarilyRemoveClient(
     @Param('clientId', ParseIntPipe) clientId: number,
@@ -172,7 +171,7 @@ export class CompanyController {
    * Endpoint para eliminar permanentemente un cliente (no puede restaurarse)
    */
   @Delete('clients/:clientId/permanent')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles('adm')
   async permanentlyRemoveClient(
     @Param('clientId', ParseIntPipe) clientId: number,
@@ -186,7 +185,7 @@ export class CompanyController {
    * Endpoint para restaurar un cliente temporalmente eliminado
    */
   @Put('clients/:clientId/restore')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles('adm')
   async restoreClient(
     @Param('clientId', ParseIntPipe) clientId: number,
@@ -200,7 +199,7 @@ export class CompanyController {
    * Endpoint para listar clientes temporalmente eliminados
    */
   @Get('clients/temporarily-removed')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles('adm')
   async getTemporarilyRemovedClients(
     @Req() req: any

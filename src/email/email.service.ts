@@ -207,6 +207,66 @@ export class EmailService {
         };
     }
 
+
+
+    // ============ CANCELACIÓN DE CITAS ============
+
+    /**
+     * Envía correo de cancelación al cliente
+     */
+    async sendSessionCancellationToClient(
+        clientEmail: string,
+        clientName: string,
+        sessionData: {
+            date: string;
+            time: string;
+            reason: string;
+        },
+        companyInfo: {
+            name: string;
+            email?: string;
+            address?: string;
+        }
+    ): Promise<boolean> {
+        const html = this.getSessionCancellationClientTemplate(
+            clientName,
+            sessionData,
+            companyInfo
+        );
+
+        return this.sendEmail(
+            clientEmail,
+            `❌ Cita cancelada - ${sessionData.date}`,
+            html
+        );
+    }
+
+    /**
+     * Envía correo de cancelación al trabajador
+     */
+    async sendSessionCancellationToWorker(
+        workerEmail: string,
+        workerName: string,
+        sessionData: {
+            date: string;
+            time: string;
+            serviceName: string;
+            clientName: string;
+            reason: string;
+        }
+    ): Promise<boolean> {
+        const html = this.getSessionCancellationWorkerTemplate(
+            workerName,
+            sessionData
+        );
+
+        return this.sendEmail(
+            workerEmail,
+            `❌ Cita cancelada - ${sessionData.date}`,
+            html
+        );
+    }
+
     private getVerificationEmailTemplate(username: string, code: string): string {
         return `
       <!DOCTYPE html>
@@ -3726,6 +3786,178 @@ export class EmailService {
         <![endif]-->
     </body>
     </html>
+  `;
+    }
+
+
+    /**
+ * Plantilla para correo de cancelación al cliente
+ */
+    private getSessionCancellationClientTemplate(
+        clientName: string,
+        sessionData: { date: string; time: string; reason: string },
+        companyInfo: { name: string; email?: string; address?: string }
+    ): string {
+        return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cita Cancelada - CLYPS</title>
+  <style>
+    body { margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, sans-serif; color:#334155; }
+    .container { max-width:580px; margin:30px auto; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.08); border:1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); color:#fff; padding:35px 40px; text-align:center; }
+    .logo { font-size:36px; font-weight:700; margin:0 0 8px; }
+    .content { padding:40px; }
+    .greeting { font-size:22px; font-weight:600; color:#1e293b; margin:0 0 20px; border-bottom:2px solid #f1f5f9; padding-bottom:15px; }
+    .message { color:#475569; margin:0 0 30px; font-size:15.5px; line-height:1.7; }
+    .cancellation-card { background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border-radius:10px; padding:35px; margin:35px 0; border:1px solid #fecaca; text-align:center; }
+    .cancellation-title { font-size:22px; font-weight:600; color:#b91c1c; margin:0 0 25px; }
+    .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:25px; }
+    .detail-card { background:#fff; border-radius:8px; padding:20px; border:1px solid #e2e8f0; }
+    .detail-label { font-size:13px; color:#64748b; text-transform:uppercase; letter-spacing:1px; font-weight:600; margin-bottom:8px; }
+    .detail-value { font-size:18px; font-weight:600; color:#1e293b; }
+    .reason-box { background:#fff; border-radius:8px; padding:20px; margin-top:20px; border-left:4px solid #dc2626; text-align:left; }
+    .reason-label { font-weight:600; color:#b91c1c; margin-bottom:8px; }
+    .reason-text { color:#475569; font-size:15px; line-height:1.6; }
+    .footer { background:#f8fafc; padding:25px 40px; text-align:center; color:#64748b; font-size:13px; border-top:1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="logo">CLYPS</h1>
+      <p>Cancelación de Cita</p>
+    </div>
+    <div class="content">
+      <h2 class="greeting">Estimado/a ${clientName},</h2>
+      <p class="message">
+        Lamentamos informarte que tu cita programada ha sido cancelada. 
+        A continuación encontrarás los detalles:
+      </p>
+      <div class="cancellation-card">
+        <h3 class="cancellation-title">❌ Cita Cancelada</h3>
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-label">📅 Fecha</div>
+            <div class="detail-value">${sessionData.date}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">🕐 Hora</div>
+            <div class="detail-value">${sessionData.time}</div>
+          </div>
+        </div>
+        <div class="reason-box">
+          <div class="reason-label">📝 Motivo de cancelación:</div>
+          <div class="reason-text">${sessionData.reason || 'No se especificó motivo.'}</div>
+        </div>
+      </div>
+      <p style="color:#475569; font-size:15px; line-height:1.6;">
+        Si deseas reagendar tu cita, puedes hacerlo a través de nuestra app o contactando 
+        directamente a <strong>${companyInfo.name}</strong>.
+      </p>
+      ${companyInfo.email ? `<p style="color:#475569; font-size:14px;">✉️ ${companyInfo.email}</p>` : ''}
+      ${companyInfo.address ? `<p style="color:#475569; font-size:14px;">📍 ${companyInfo.address}</p>` : ''}
+    </div>
+    <div class="footer">
+      <p>© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
+      <p style="opacity:0.8;">Sistema de Gestión de Citas Profesional</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+    }
+
+    /**
+     * Plantilla para correo de cancelación al trabajador
+     */
+    private getSessionCancellationWorkerTemplate(
+        workerName: string,
+        sessionData: {
+            date: string;
+            time: string;
+            serviceName: string;
+            clientName: string;
+            reason: string;
+        }
+    ): string {
+        return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cita Cancelada - CLYPS</title>
+  <style>
+    body { margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, sans-serif; color:#334155; }
+    .container { max-width:580px; margin:30px auto; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.08); border:1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); color:#fff; padding:35px 40px; text-align:center; }
+    .logo { font-size:36px; font-weight:700; margin:0 0 8px; }
+    .content { padding:40px; }
+    .greeting { font-size:22px; font-weight:600; color:#1e293b; margin:0 0 20px; border-bottom:2px solid #f1f5f9; padding-bottom:15px; }
+    .message { color:#475569; margin:0 0 30px; font-size:15.5px; line-height:1.7; }
+    .cancellation-card { background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border-radius:10px; padding:35px; margin:35px 0; border:1px solid #fecaca; }
+    .cancellation-title { font-size:22px; font-weight:600; color:#b91c1c; text-align:center; margin:0 0 25px; }
+    .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:25px; }
+    .detail-card { background:#fff; border-radius:8px; padding:20px; border:1px solid #e2e8f0; }
+    .detail-label { font-size:13px; color:#64748b; text-transform:uppercase; letter-spacing:1px; font-weight:600; margin-bottom:8px; }
+    .detail-value { font-size:18px; font-weight:600; color:#1e293b; }
+    .reason-box { background:#fff; border-radius:8px; padding:20px; margin-top:20px; border-left:4px solid #dc2626; }
+    .reason-label { font-weight:600; color:#b91c1c; margin-bottom:8px; }
+    .reason-text { color:#475569; font-size:15px; line-height:1.6; }
+    .footer { background:#f8fafc; padding:25px 40px; text-align:center; color:#64748b; font-size:13px; border-top:1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="logo">CLYPS</h1>
+      <p>Cancelación de Cita</p>
+    </div>
+    <div class="content">
+      <h2 class="greeting">Hola ${workerName},</h2>
+      <p class="message">
+        Te informamos que una cita que tenías asignada ha sido cancelada.
+      </p>
+      <div class="cancellation-card">
+        <h3 class="cancellation-title">❌ Cita Cancelada</h3>
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-label">📅 Fecha</div>
+            <div class="detail-value">${sessionData.date}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">🕐 Hora</div>
+            <div class="detail-value">${sessionData.time}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">💼 Servicio</div>
+            <div class="detail-value">${sessionData.serviceName}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">👤 Cliente</div>
+            <div class="detail-value">${sessionData.clientName}</div>
+          </div>
+        </div>
+        <div class="reason-box">
+          <div class="reason-label">📝 Motivo de cancelación:</div>
+          <div class="reason-text">${sessionData.reason || 'No se especificó motivo.'}</div>
+        </div>
+      </div>
+      <p style="color:#475569; font-size:15px; line-height:1.6;">
+        Tu agenda ha sido liberada para esa fecha y hora.
+      </p>
+    </div>
+    <div class="footer">
+      <p>© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
+      <p style="opacity:0.8;">Sistema de Gestión de Citas Profesional</p>
+    </div>
+  </div>
+</body>
+</html>
   `;
     }
 }
