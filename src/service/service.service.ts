@@ -7,6 +7,7 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { Company } from '../company/entities/company.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Worker } from '../worker/entities/worker.entity';
+import { paginate, PaginationOptions, PaginationResult } from '../common/utils/pagination.util';
 
 @Injectable()
 export class ServiceService {
@@ -19,12 +20,15 @@ export class ServiceService {
     private companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
-  ) {}
+  ) { }
 
   /**
-   * Obtener todos los servicios de una compañía con información completa de workers
-   */
-  async findAllByCompanyWithWorkers(adminId: number): Promise<any[]> {
+    * Obtener todos los servicios de una compañía con información completa de workers (paginado)
+    */
+  async findAllByCompanyWithWorkers(
+    adminId: number,
+    paginationOptions: PaginationOptions
+  ): Promise<PaginationResult<any>> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
       where: { userId: adminId }
@@ -34,14 +38,17 @@ export class ServiceService {
       throw new UnauthorizedException('No tienes una compañía asignada');
     }
 
-    // 2. Obtener servicios de la compañía del administrador
-    const services = await this.serviceRepository.find({
-      where: { companyId: company.id }
-    });
+    // 2. Crear query builder para servicios filtrados por compañía
+    const queryBuilder = this.serviceRepository
+      .createQueryBuilder('service')
+      .where('service.companyId = :companyId', { companyId: company.id });
 
-    // 3. Enriquecer cada servicio con información de workers
-    const servicesWithWorkers = await Promise.all(
-      services.map(async (service) => {
+    // 3. Aplicar paginación
+    const paginatedServices = await paginate<Service>(queryBuilder, paginationOptions);
+
+    // 4. Enriquecer cada servicio con información de workers
+    const enrichedData = await Promise.all(
+      paginatedServices.data.map(async (service) => {
         const workersInfo = await this.getWorkersInfoForService(service.workers, company.id);
         return {
           ...service,
@@ -50,9 +57,12 @@ export class ServiceService {
       })
     );
 
-    return servicesWithWorkers;
+    // 5. Devolver resultado paginado con datos enriquecidos
+    return {
+      ...paginatedServices,
+      data: enrichedData
+    };
   }
-
   /**
    * Obtener un servicio específico con información de workers
    */
@@ -68,9 +78,9 @@ export class ServiceService {
 
     // 2. Buscar el servicio que pertenezca a la compañía del admin
     const service = await this.serviceRepository.findOne({
-      where: { 
+      where: {
         id: id,
-        companyId: company.id 
+        companyId: company.id
       }
     });
 
@@ -90,7 +100,7 @@ export class ServiceService {
   /**
    * Obtener información completa de workers asignados a un servicio
    */
-  private async getWorkersInfoForService(workersAssignments: Array<{id: number, percentage: number}>, companyId: number): Promise<any[]> {
+  private async getWorkersInfoForService(workersAssignments: Array<{ id: number, percentage: number }>, companyId: number): Promise<any[]> {
     if (!workersAssignments || workersAssignments.length === 0) {
       return [];
     }
@@ -111,7 +121,7 @@ export class ServiceService {
     // Combinar la información de la base de datos con los porcentajes del servicio
     return workersAssignments.map(workerAssignment => {
       const companyWorker = companyWorkers.find(cw => cw.id === workerAssignment.id);
-      
+
       if (!companyWorker) {
         return {
           id: workerAssignment.id,
@@ -201,9 +211,9 @@ export class ServiceService {
 
     // 2. Buscar el servicio que pertenezca a la compañía del admin
     const service = await this.serviceRepository.findOne({
-      where: { 
+      where: {
         id: id,
-        companyId: company.id 
+        companyId: company.id
       }
     });
 
@@ -239,9 +249,9 @@ export class ServiceService {
 
     // 2. Buscar el servicio que pertenezca a la compañía del admin
     const service = await this.serviceRepository.findOne({
-      where: { 
+      where: {
         id: id,
-        companyId: company.id 
+        companyId: company.id
       }
     });
 
@@ -271,9 +281,9 @@ export class ServiceService {
 
     // 2. Buscar el servicio que pertenezca a la compañía del admin
     const service = await this.serviceRepository.findOne({
-      where: { 
+      where: {
         id: id,
-        companyId: company.id 
+        companyId: company.id
       }
     });
 
@@ -293,7 +303,7 @@ export class ServiceService {
    * Validar que los workers pertenecen a la compañía del administrador
    */
   private async validateWorkersBelongToCompany(
-    workers: Array<{ id: number; percentage: number }>, 
+    workers: Array<{ id: number; percentage: number }>,
     companyId: number
   ): Promise<void> {
     if (!workers || workers.length === 0) return;

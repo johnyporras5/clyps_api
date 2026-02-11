@@ -5,11 +5,12 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DeepPartial } from 'typeorm';
+import { Repository, DeepPartial, SelectQueryBuilder } from 'typeorm';
 import { CompanyFeedback } from './entities/company_feedback.entity';
 import { CreateCompanyFeedbackDto } from './dto/create-company_feedback.dto';
 import { UpdateCompanyFeedbackDto } from './dto/update-company_feedback.dto';
 import { Company } from '../company/entities/company.entity';
+import { paginate, PaginationResult } from '../common/utils/pagination.util';
 
 @Injectable()
 export class CompanyFeedbackService {
@@ -19,11 +20,8 @@ export class CompanyFeedbackService {
 
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
-  ) {}
+  ) { }
 
-  async findAll(): Promise<CompanyFeedback[]> {
-    return await this.companyFeedbackRepository.find({ order: { datetime: 'DESC' } });
-  }
 
   async findOne(id: number): Promise<CompanyFeedback> {
     const f = await this.companyFeedbackRepository.findOne({ where: { id } });
@@ -76,35 +74,30 @@ export class CompanyFeedbackService {
     if (result.affected === 0) throw new NotFoundException(`CompanyFeedback with id ${id} not found`);
   }
 
-  async findByCompany(companyId: number, page = 1, limit = 10): Promise<{ data: CompanyFeedback[]; meta: any }> {
-    const company = await this.companyRepository.findOne({ where: { id: companyId } });
-    if (!company) throw new NotFoundException(`Company with id ${companyId} not found`);
-
-    const skip = (page - 1) * limit;
-    const [data, total] = await this.companyFeedbackRepository.findAndCount({
-      where: { companyId },
-      order: { datetime: 'DESC' },
-      skip,
-      take: limit,
+  async findByCompany(
+    userId: number,
+    page = 1,
+    limit = 10,
+  ): Promise<PaginationResult<CompanyFeedback>> {
+    // 1. Buscar la compañía cuyo userId coincida con el usuario autenticado
+    const company = await this.companyRepository.findOne({
+      where: { userId },
     });
 
-    const totalPages = Math.ceil(total / limit);
-    return { data, meta: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 } };
+    if (!company) {
+      throw new NotFoundException(`No company found for user id ${userId}`);
+    }
+
+    // 2. Construir query builder para los feedbacks de esa compañía
+    const queryBuilder: SelectQueryBuilder<CompanyFeedback> = this.companyFeedbackRepository
+      .createQueryBuilder('feedback')
+      .where('feedback.companyId = :companyId', { companyId: company.id })
+      .orderBy('feedback.datetime', 'DESC');
+
+    // 3. Paginar y retornar
+    return paginate<CompanyFeedback>(queryBuilder, { page, limit });
   }
 
-  /**
-   * Listar todas las reseñas que el cliente autenticado escribió hacia companies
-   */
-  async findByClient(clientId: number, page = 1, limit = 10): Promise<{ data: CompanyFeedback[]; meta: any }> {
-    const skip = (page - 1) * limit;
-    const [data, total] = await this.companyFeedbackRepository.findAndCount({
-      where: { clientId },
-      order: { datetime: 'DESC' },
-      skip,
-      take: limit,
-    });
 
-    const totalPages = Math.ceil(total / limit);
-    return { data, meta: { page, limit, total, totalPages, hasNext: page < totalPages, hasPrev: page > 1 } };
-  }
+
 }

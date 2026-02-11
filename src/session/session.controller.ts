@@ -10,6 +10,7 @@ import { UpdateSessionDto } from './dto/update-session-and-detail.dto';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto } from './dto/add-extra-services.dto';
+import { CancelSessionDto } from './dto/cancel-session.dto';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -40,15 +41,19 @@ export class SessionController {
   async findOne(@Param('id') id: string) {
     return this.sessionService.findOneWithDetails(+id);
   }
-
+  /**
+    * Obtiene los detalles de una sesión (cita) con validación de permisos.
+    * Ahora accesible para administradores, trabajadores y clientes autenticados.
+    */
   @Get(':id/details')
-  @Roles('adm')
+  @Roles('adm', 'wrk', 'cli')
   async getSessionDetails(
     @Request() req,
     @Param('id') id: string
   ) {
-    const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.getSessionDetailsWithValidation(+id, adminId);
+    const userId = req.user?.id || req.user?.sub;
+    const userRole = req.user?.userType;
+    return this.sessionService.getSessionDetailsWithValidation(+id, userId, userRole);
   }
 
   @Get()
@@ -91,7 +96,7 @@ export class SessionController {
     @Body() updateDetailStatusDto: UpdateDetailStatusDto
   ) {
     const userId = req.user?.id || req.user?.sub;
-    const userRole = req.user?.userType; 
+    const userRole = req.user?.userType;
     return this.sessionService.updateDetailStatus(+detailId, updateDetailStatusDto, userId, userRole);
   }
 
@@ -140,18 +145,57 @@ export class SessionController {
 
 
   @Post(':id/extra-services')
-@Roles('adm')
-async addExtraServices(
-  @Request() req,
-  @Param('id') id: string,
-  @Body() addExtraServicesDto: AddExtraServicesDto
-) {
-  const adminId = req.user?.id || req.user?.sub;
-  return this.sessionService.addExtraServicesToSession(
-    +id,
-    addExtraServicesDto,
-    adminId
-  );
-}
+  @Roles('adm')
+  async addExtraServices(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() addExtraServicesDto: AddExtraServicesDto
+  ) {
+    const adminId = req.user?.id || req.user?.sub;
+    return this.sessionService.addExtraServicesToSession(
+      +id,
+      addExtraServicesDto,
+      adminId
+    );
+  }
 
+
+  // ============ CANCELACIÓN POR ADMIN ============
+  @Patch(':id/cancel')
+  @Roles('adm')
+  async cancelSessionByAdmin(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() cancelDto?: CancelSessionDto,
+  ) {
+    const adminId = req.user?.id || req.user?.sub;
+    return this.sessionService.cancelSession(+id, adminId, 'adm', cancelDto);
+  }
+
+  // ============ CANCELACIÓN POR CLIENTE ============
+  @Patch('client/:id/cancel')
+  @Roles('cli')
+  async cancelSessionByClient(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() cancelDto?: CancelSessionDto,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    return this.sessionService.cancelSession(+id, userId, 'cli', cancelDto);
+  }
+
+
+  /**
+ * Obtiene todas las citas del cliente autenticado.
+ * Permite filtros por fecha, estado y paginación.
+ */
+@Get('client/my-sessions')
+@Roles('cli')
+async getMySessionsAsClient(
+  @Request() req,
+  @Query() getSessionsDto: GetSessionsDto
+) {
+  const userId = req.user?.id || req.user?.sub;
+  return this.sessionService.getSessionsForAuthenticatedClient(userId, getSessionsDto);
+}
 }

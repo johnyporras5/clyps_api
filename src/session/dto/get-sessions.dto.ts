@@ -28,6 +28,10 @@ export class GetSessionsDto {
   endDate?: string;
 
   @IsOptional()
+  @IsDateString()
+  date?: string;
+  
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   clientId?: number;

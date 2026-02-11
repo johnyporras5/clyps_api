@@ -5,25 +5,27 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DeepPartial } from 'typeorm';
+import { Repository, DeepPartial, SelectQueryBuilder } from 'typeorm';
 import { WorkerFeedback } from './entities/worker_feedback.entity';
 import { CreateWorkerFeedbackDto } from './dto/create-worker_feedback.dto';
 import { UpdateWorkerFeedbackDto } from './dto/update-worker_feedback.dto';
 import { Worker } from '../worker/entities/worker.entity';
+import { paginate, PaginationResult } from '../common/utils/pagination.util';
+import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+import { Company } from 'src/company/entities/company.entity';
 
 @Injectable()
 export class WorkerFeedbackService {
   constructor(
     @InjectRepository(WorkerFeedback)
     private workerFeedbackRepository: Repository<WorkerFeedback>,
-
+    @InjectRepository(Company)
+    private companyRepository: Repository<Company>,
+    @InjectRepository(CompanyWorker)
+    private companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
-  ) {}
-
-  async findAll(): Promise<WorkerFeedback[]> {
-    return await this.workerFeedbackRepository.find({ order: { datetime: 'DESC' } });
-  }
+  ) { }
 
   async findOne(id: number): Promise<WorkerFeedback> {
     const feedback = await this.workerFeedbackRepository.findOne({ where: { id } });
@@ -96,38 +98,62 @@ export class WorkerFeedbackService {
     }
   }
 
-  /**
-   * Listar feedbacks por worker con paginación simple
-   */
-  async findByWorker(workerId: number, page = 1, limit = 10): Promise<{ data: WorkerFeedback[]; meta: any }> {
+  async findByWorker(
+    workerId: number,
+    page = 1,
+    limit = 10,
+  ): Promise<PaginationResult<WorkerFeedback>> {
+    // Verificar que el worker existe
     const worker = await this.workerRepository.findOne({ where: { id: workerId } });
     if (!worker) {
       throw new NotFoundException(`Worker with id ${workerId} not found`);
     }
 
-    const skip = (page - 1) * limit;
-    const [data, total] = await this.workerFeedbackRepository.findAndCount({
-      where: { workerId },
-      order: { datetime: 'DESC' },
-      skip,
-      take: limit,
-    });
+    // Crear query builder con filtro y orden
+    const queryBuilder: SelectQueryBuilder<WorkerFeedback> = this.workerFeedbackRepository
+      .createQueryBuilder('feedback')
+      .where('feedback.workerId = :workerId', { workerId })
+      .orderBy('feedback.datetime', 'DESC');
 
-    const totalPages = Math.ceil(total / limit);
+    // Delegar la paginación al helper
+    const paginationResult = await paginate<WorkerFeedback>(queryBuilder, { page, limit });
 
-    return {
-      data,
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages,
-        hasNext: page < totalPages,
-        hasPrev: page > 1,
-      },
-    };
+    return paginationResult;
   }
 
 
-  
+  /**
+   * Lista todas las reseñas de los barberos que pertenecen a la compañía del admin autenticado.
+   * @param userId - ID del usuario admin (del token)
+   * @param page - Número de página
+   * @param limit - Elementos por página
+   */
+  async findAllByAdminCompany(
+    userId: number,
+    page = 1,
+    limit = 10,
+  ): Promise<PaginationResult<WorkerFeedback>> {
+    // 1. Buscar la compañía asociada al usuario admin
+    const company = await this.companyRepository.findOne({ where: { userId } });
+    if (!company) {
+      throw new NotFoundException(`No company found for user ${userId}`);
+    }
+
+    // 2. Subconsulta: obtener todos los workerId de los barberos activos en esa compañía
+    const workerIdsSubQuery = this.companyWorkerRepository
+      .createQueryBuilder('cw')
+      .select('cw.workerId')
+      .where('cw.companyId = :companyId', { companyId: company.id })
+      .andWhere('cw.permanentlyDeleted = false'); // Opcional: excluir borrados
+
+    // 3. Consulta principal: feedbacks cuyo workerId esté en la subconsulta
+    const queryBuilder = this.workerFeedbackRepository
+      .createQueryBuilder('feedback')
+      .where(`feedback.workerId IN (${workerIdsSubQuery.getQuery()})`)
+      .setParameters(workerIdsSubQuery.getParameters())
+      .orderBy('feedback.datetime', 'DESC');
+
+    // 4. Paginar usando el helper
+    return paginate<WorkerFeedback>(queryBuilder, { page, limit });
+  }
 }
