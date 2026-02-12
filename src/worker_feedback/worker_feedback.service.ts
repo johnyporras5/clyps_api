@@ -156,4 +156,30 @@ export class WorkerFeedbackService {
     // 4. Paginar usando el helper
     return paginate<WorkerFeedback>(queryBuilder, { page, limit });
   }
+
+  /**
+ * Obtiene todas las reseñas del worker autenticado mediante su userId.
+ * @param userId - ID del usuario (extraído del token)
+ * @param page - Número de página
+ * @param limit - Elementos por página
+ */
+async findMyFeedbacks(
+  userId: number,
+  page = 1,
+  limit = 10,
+): Promise<PaginationResult<WorkerFeedback>> {
+  // 1. Buscar el worker asociado al userId
+  const worker = await this.workerRepository.findOne({
+    where: { userId },
+  });
+
+  if (!worker) {
+    throw new NotFoundException(
+      `No se encontró un perfil de worker para el usuario ${userId}`,
+    );
+  }
+
+  // 2. Reutilizar el método findByWorker para obtener las reseñas paginadas
+  return this.findByWorker(worker.id, page, limit);
+}
 }

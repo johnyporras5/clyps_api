@@ -54,14 +54,6 @@ export class WorkerController {
     return this.workerService.update(id, updateWorkerDto, userId);
   }
 
-  // Eliminar worker (solo admin)
-  @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('adm')
-  async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return this.workerService.remove(id);
-  }
-
   // Obtener el perfil del worker autenticado
   @Get('profile/my-profile')
   @UseGuards(JwtAuthGuard)

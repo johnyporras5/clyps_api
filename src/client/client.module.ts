@@ -5,7 +5,7 @@ import { ClientController } from './client.controller';
 import { Client } from './entities/client.entity';
 import { Company } from 'src/company/entities/company.entity';
 import { User } from 'src/user/entities/user.entity';
-import { FileUploadService } from 'src/common/services/file_upload.service';
+import { FileUploadService } from '../common/services/file_upload.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Client, User, Company])],

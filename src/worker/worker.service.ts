@@ -247,12 +247,7 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
 
 
 
-  async remove(id: number): Promise<void> {
-    const result = await this.workerRepository.delete(id);
-    if (result.affected === 0) {
-      throw new NotFoundException(`Worker with id ${id} not found`);
-    }
-  }
+
 
   // Método para verificar si un usuario es dueño del worker
   async isWorkerOwner(workerId: number, userId: number): Promise<boolean> {

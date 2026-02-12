@@ -33,6 +33,9 @@ export class SessionDetail {
   @Column({ name: 'status', nullable: true })
   status: number;
 
+  @Column({ name: 'description_worker', type: 'text', nullable: true })
+  descriptionWorker: string;
+
   // Nuevo campo para identificar servicios extras
   @Column({ name: 'is_extra', default: false })
   isExtra: boolean;

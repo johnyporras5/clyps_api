@@ -6,11 +6,13 @@ import { User } from '../user/entities/user.entity';
 import { Company } from '../company/entities/company.entity';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
-import { FileUploadService } from '../common/services/file_upload.service';
+import { AllowedFolder, FileUploadService } from '../common/services/file_upload.service';
+import { UpdateClientDto } from './dto/update-client.dto';
 
 @Injectable()
 export class ClientService {
   private readonly logger = new Logger(ClientService.name);
+  private readonly CLIENT_PHOTO_FOLDER: AllowedFolder = 'client_photo';
 
   constructor(
     @InjectRepository(Client)
@@ -20,7 +22,7 @@ export class ClientService {
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
     private fileUploadService: FileUploadService,
-  ) {}
+  ) { }
 
   /**
    * Endpoint para listar clientes para un administrador
@@ -32,7 +34,7 @@ export class ClientService {
    * - Cliente PÚBLICO (isPublic = 1): Visible para CUALQUIER admin logueado
    * - Cliente PRIVADO (isPublic = 0): Solo visible para admins cuyas compañías están en el array companies del cliente
    */
-async findAllByAdminCompanies(
+  async findAllByAdminCompanies(
     adminId: number,
     options: PaginationDto
   ): Promise<PaginationResult<any>> {
@@ -64,13 +66,13 @@ async findAllByAdminCompanies(
       queryBuilder.andWhere(new Brackets(qb => {
         // Condición para clientes que el admin creó
         qb.where('client.userId = :adminId', { adminId })
-          
+
           // O condición para clientes que comparten compañías
           .orWhere(new Brackets(sharedQb => {
-            const companyConditions = adminCompanyIds.map((companyId, index) => 
+            const companyConditions = adminCompanyIds.map((companyId, index) =>
               `JSON_CONTAINS(client.companies, :companyId${index})`
             ).join(' OR ');
-            
+
             if (companyConditions) {
               sharedQb.where(`(${companyConditions})`);
             }
@@ -100,10 +102,10 @@ async findAllByAdminCompanies(
   /**
    * Enriquecer datos del cliente para la respuesta
    */
-private enrichClientData(
-    clients: Client[], 
-    adminCompanies: Company[], 
-    adminCompanyIds: number[], 
+  private enrichClientData(
+    clients: Client[],
+    adminCompanies: Company[],
+    adminCompanyIds: number[],
     adminId: number
   ): any[] {
     return clients.map(client => {
@@ -112,7 +114,7 @@ private enrichClientData(
 
       // Determinar compañías compartidas
       if (client.companies && client.companies.length > 0) {
-        sharedCompanies = adminCompanies.filter(company => 
+        sharedCompanies = adminCompanies.filter(company =>
           client.companies.includes(company.id)
         );
       }
@@ -149,5 +151,150 @@ private enrichClientData(
     if (!user) {
       throw new BadRequestException(`Error: Usuario con ID ${userId} no encontrado`);
     }
+  }
+
+
+  async updateProfileWithPhoto(
+    userId: number,
+    updateClientDto: UpdateClientDto,
+    photoFile?: Express.Multer.File,
+  ): Promise<Client> {
+    // 1. Buscar cliente por userId
+    const client = await this.clientRepository.findOne({
+      where: { userId },
+      relations: ['user'], // Opcional, si quieres devolver el user
+    });
+
+    if (!client) {
+      throw new NotFoundException(`Perfil de cliente para el usuario ${userId} no encontrado`);
+    }
+
+    // 2. Procesar foto si se envía
+    if (photoFile) {
+      try {
+        const photoInfo = await this.fileUploadService.saveFile(
+          photoFile,
+          this.CLIENT_PHOTO_FOLDER,
+          'client',
+          userId,
+        );
+
+        // Eliminar foto anterior
+        if (client.picture) {
+          await this.fileUploadService.deleteFile(
+            this.CLIENT_PHOTO_FOLDER,
+            client.picture,
+          );
+        }
+
+        // Asignar nuevo nombre de archivo al DTO
+        updateClientDto.picture = photoInfo.fileName;
+      } catch (error) {
+        this.logger.error('Error al guardar la foto del cliente:', error);
+        throw new BadRequestException('Error al guardar la foto de perfil');
+      }
+    }
+
+    // 3. Campos permitidos (exactamente los que puede actualizar el cliente)
+    const allowedFields = [
+      'name',
+      'lastName',
+      'email',
+      'phone',
+      'birthDate',
+      'location',
+      'isActive',
+      'picture',
+      'companies',
+    ];
+
+    // 4. Preparar objeto con actualizaciones, con conversiones necesarias
+    const updates: Partial<Client> = {};
+
+    Object.keys(updateClientDto).forEach((key) => {
+      if (!allowedFields.includes(key) || updateClientDto[key] === undefined) {
+        return;
+      }
+
+      let value = updateClientDto[key];
+
+      // Conversiones para datos que vienen como string (form-data)
+      if (key === 'birthDate' && typeof value === 'string') {
+        value = new Date(value);
+      }
+      if (key === 'isActive' && value !== undefined) {
+        value = Number(value);
+      }
+      if (key === 'companies' && typeof value === 'string') {
+        try {
+          value = JSON.parse(value);
+        } catch {
+          throw new BadRequestException('El campo companies debe ser un array JSON válido');
+        }
+      }
+
+      updates[key] = value;
+    });
+
+    // 5. Ignorar campos restringidos (id, userId, user)
+    const restrictedFields = ['id', 'userId', 'user'];
+    const attemptedRestrictedUpdates = Object.keys(updateClientDto).filter(
+      (key) => restrictedFields.includes(key) && updateClientDto[key] !== undefined,
+    );
+    if (attemptedRestrictedUpdates.length > 0) {
+      this.logger.warn(`Intento de modificación de campos restringidos ignorado: ${attemptedRestrictedUpdates}`);
+    }
+
+    // 6. Aplicar cambios y guardar
+    Object.assign(client, updates);
+    return await this.clientRepository.save(client);
+  }
+
+
+  /**
+ * Obtener perfil del cliente por userId (para el cliente autenticado)
+ * @param userId ID del usuario cliente
+ * @returns Cliente con URL de foto y usuario sin contraseña
+ */
+  async findByUserId(userId: number): Promise<Client & { photoUrl: string }> {
+    const client = await this.clientRepository.findOne({
+      where: { userId },
+      relations: ['user'], // Cargar la relación con User
+    });
+
+    if (!client) {
+      throw new NotFoundException(`Perfil de cliente para el usuario ${userId} no encontrado`);
+    }
+
+    // Generar URL completa de la foto
+    const photoUrl = await this.getClientPhotoUrl(client.id);
+
+    // Excluir la contraseña del objeto User
+    if (client.user) {
+      const { password, ...userWithoutPassword } = client.user;
+      client.user = userWithoutPassword as any;
+    }
+
+    return {
+      ...client,
+      photoUrl,
+    };
+  }
+
+
+  async getClientPhotoUrl(clientId: number): Promise<string> {
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId }
+    });
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+    if (!client.picture) {
+      return '';
+    }
+    return this.fileUploadService.getFileUrl(
+      this.CLIENT_PHOTO_FOLDER,
+      client.picture
+    );
   }
 }

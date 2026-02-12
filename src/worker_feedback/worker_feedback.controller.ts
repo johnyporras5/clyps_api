@@ -20,25 +20,17 @@ import { UpdateWorkerFeedbackDto } from './dto/update-worker_feedback.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
+import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { Roles } from 'src/auth/decorators/roles.decorator';
 
 @Controller('workerfeedbacks')
 @UseGuards(JwtAuthGuard)
 export class WorkerFeedbackController {
   constructor(private readonly workerFeedbackService: WorkerFeedbackService) { }
 
-  // =============================================
-  // 0. Obtener un feedback por ID (cualquier usuario autenticado)
-  // GET /workerfeedbacks/:id
-  // =============================================
-
-  @Get(':id')
-  @HttpCode(HttpStatus.OK)
-  async findOne(@Param('id', ParseIntPipe) id: number): Promise<WorkerFeedback> {
-    return this.workerFeedbackService.findOne(id);
-  }
 
   // =============================================
-  // 1. Crear feedback para un trabajador (cliente)
+  //  Crear feedback para un trabajador (cliente)
   // POST /workerfeedbacks/worker/:workerId
   // =============================================
   @Post('worker/:workerId')
@@ -52,7 +44,7 @@ export class WorkerFeedbackController {
     return this.workerFeedbackService.create(createDto, workerId, clientId);
   }
   // =============================================
-  // 2. Listar feedbacks de un trabajador específico (público o privado)
+  //  Listar feedbacks de un trabajador específico (público o privado)
   // GET /workerfeedbacks/worker/:workerId?page=1&limit=10
   // =============================================
   @Get('worker/:workerId')
@@ -67,11 +59,33 @@ export class WorkerFeedbackController {
       paginationDto.limit,
     );
   }
+
   // =============================================
-  // 3. (ADMIN) Listar feedbacks de los barberos de su compañía
+  //  (WORKER) Obtener mis propias reseñas
+  // GET /workerfeedbacks/me?page=1&limit=10
+  // =============================================
+  @Get('me')
+  @UseGuards(RolesGuard)
+  @Roles('wrk') 
+  @HttpCode(HttpStatus.OK)
+  async findMyFeedbacks(
+    @Req() req: any,
+    @Query() paginationDto: PaginationDto,
+  ): Promise<PaginationResult<WorkerFeedback>> {
+    const userId = req.user?.sub; // ID del usuario autenticado
+    return this.workerFeedbackService.findMyFeedbacks(
+      userId,
+      paginationDto.page,
+      paginationDto.limit,
+    );
+  }
+  // =============================================
+  // (ADMIN) Listar feedbacks de los barberos de su compañía
   // GET /workerfeedbacks?page=1&limit=10
   // =============================================
   @Get()
+  @UseGuards(RolesGuard)
+  @Roles('adm') 
   @HttpCode(HttpStatus.OK)
   async findAllPaginated(
     @Query() paginationDto: PaginationDto,
@@ -85,8 +99,20 @@ export class WorkerFeedbackController {
     );
   }
 
+
   // =============================================
-  // 4. Actualizar feedback (solo autor o admin)
+  //  Obtener un feedback por ID (cualquier usuario autenticado)
+  // GET /workerfeedbacks/:id
+  // =============================================
+
+  @Get(':id')
+  @HttpCode(HttpStatus.OK)
+  async findOne(@Param('id', ParseIntPipe) id: number): Promise<WorkerFeedback> {
+    return this.workerFeedbackService.findOne(id);
+  }
+
+  // =============================================
+  //  Actualizar feedback (solo autor o admin)
   // PUT /workerfeedbacks/:id
   // =============================================
 
@@ -102,7 +128,7 @@ export class WorkerFeedbackController {
   }
 
   // =============================================
-  // 5. Eliminar feedback (solo autor o admin)
+  //  Eliminar feedback (solo autor o admin)
   // DELETE /workerfeedbacks/:id
   // =============================================
 
