@@ -30,4 +30,12 @@ export class CreateSessionDto {
   @IsOptional()
   @IsNumber()
   status?: number;
+  
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  descriptionIA?: string;
 }

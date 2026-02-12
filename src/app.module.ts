@@ -11,6 +11,7 @@ import { VerificationModule } from './verification/verification.module';
 import { join } from 'path';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { IAPromptsModule } from './IAprompts/ia_prompts.module';
 //import { TemplatesModule } from './templates/templates.module';
 
 
@@ -49,14 +50,14 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
         const dbHost = configService.get('DB_HOST', 'localhost');
         const isLocalDocker = dbHost === 'localhost' && process.env.NODE_ENV !== 'production';
         const finalHost = isLocalDocker ? 'host.docker.internal' : dbHost;
-        
+
         const dbConfig = {
           type: 'mysql' as const,
           host: process.env.DB_HOST,
           port: configService.get<number>('DB_PORT', 3307),
           username: configService.get('DB_USERNAME', 'root'),
           password: configService.get('DB_PASSWORD', ''),
-          database: configService.get('DB_DATABASE', 'clyps'), 
+          database: configService.get('DB_DATABASE', 'clyps'),
           entities: [__dirname + '/**/*.entity{.ts,.js}'],
           synchronize: false,
           logging: configService.get('NODE_ENV') === 'development',
@@ -85,11 +86,13 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
     GeneratedModules,
     AuthModule,
     VerificationModule,
-       //SeedsModule,
+    //SeedsModule,
     //TemplatesModule,
-    
+
+    IAPromptsModule
+
   ],
   controllers: [AppController],
-  providers: [AppService,CleanupTask],
+  providers: [AppService, CleanupTask],
 })
-export class AppModule {}
+export class AppModule { }

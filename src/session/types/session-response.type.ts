@@ -30,6 +30,9 @@ export interface SessionDetailResponse {
   status: number;
   workerPercentage: number;
   companyPercentage: number;
+  descriptionWorker?: string;
+
+  
 }
 
 export interface SessionResponse {
@@ -47,10 +50,10 @@ export interface SessionResponse {
   startDatetime: Date;
   status: number;
   iaResponse: any;
-  descriptionWorker?: string;
   descriptionIA?: string;
   description?: string;
   extraServices?: ExtraServiceResponse[]; createdAt?: Date;
   updatedAt?: Date;
   details: SessionDetailResponse[];
+
 }

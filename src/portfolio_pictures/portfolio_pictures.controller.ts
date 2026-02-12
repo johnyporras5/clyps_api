@@ -1,38 +1,103 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
+// portfolio_pictures.controller.ts
+import {
+  Controller,
+  Post,
+  UseInterceptors,
+  UploadedFile,
+  Get,
+  UseGuards,
+  Request,
+  Param,
+  ParseIntPipe,
+  Delete,
+  Put,
+  HttpCode,
+  HttpStatus,
+  Query,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { PortfolioPicturesService } from './portfolio_pictures.service';
-import { PortfolioPictures } from './entities/portfolio_pictures.entity';
-import { CreatePortfolioPicturesDto } from './dto/create-portfolio_pictures.dto';
-import { UpdatePortfolioPicturesDto } from './dto/update-portfolio_pictures.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PaginationDto } from '../common/dto/pagination.dto';
 
-@Controller('portfoliopicturess')
+@Controller('portfolio-pictures')
+@UseGuards(JwtAuthGuard)
 export class PortfolioPicturesController {
-  constructor(private readonly PortfolioPicturesService: PortfolioPicturesService) {}
+  constructor(private readonly service: PortfolioPicturesService) {}
 
-  @Get()
-  async findAll(): Promise<PortfolioPictures[]> {
-    return this.PortfolioPicturesService.findAll();
-  }
-
-  @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number): Promise<PortfolioPictures> {
-    return this.PortfolioPicturesService.findOne(id);
-  }
-
+  /**
+   * Subir una nueva imagen al portafolio del trabajador autenticado
+   */
   @Post()
-  async create(@Body() createPortfolioPicturesDto: CreatePortfolioPicturesDto): Promise<PortfolioPictures> {
-    return this.PortfolioPicturesService.create(createPortfolioPicturesDto);
+  @UseInterceptors(FileInterceptor('picture'))
+  async create(
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req,
+  ) {
+    const workerId = req.user.sub; // o req.user.sub si el token contiene workerId
+    return this.service.create(file, workerId);
   }
 
-  @Put(':id')
-  async update(
+  /**
+   * Obtener todas las imágenes del trabajador autenticado (paginated)
+   */
+  @Get()
+  async findAllMyPictures(
+    @Request() req,
+    @Query() paginationDto: PaginationDto,
+  ) {
+    const workerId = req.user.sub;
+    return this.service.findAllByWorker(workerId, paginationDto);
+  }
+
+  /**
+   * Obtener una imagen específica del trabajador autenticado
+   */
+  @Get(':id')
+  async findOne(
+    @Request() req,
     @Param('id', ParseIntPipe) id: number,
-    @Body() updatePortfolioPicturesDto: UpdatePortfolioPicturesDto,
-  ): Promise<PortfolioPictures> {
-    return this.PortfolioPicturesService.update(id, updatePortfolioPicturesDto);
+  ) {
+    const workerId = req.user.sub;
+    return this.service.findOne(id, workerId);
   }
 
+  /**
+   * Reemplazar una imagen existente
+   */
+  @Put(':id')
+  @UseInterceptors(FileInterceptor('picture'))
+  async update(
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const workerId = req.user.sub;
+    return this.service.update(id, file, workerId);
+  }
+
+  /**
+   * Eliminar una imagen
+   */
   @Delete(':id')
-  async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
-    return this.PortfolioPicturesService.remove(id);
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const workerId = req.user.sub;
+    await this.service.remove(id, workerId);
+  }
+
+  /**
+   * (Opcional) Obtener imágenes de cualquier worker por su ID
+   * Útil para perfiles públicos
+   */
+  @Get('worker/:workerId')
+  async findByWorkerId(
+    @Param('workerId', ParseIntPipe) workerId: number,
+    @Query() paginationDto: PaginationDto,
+  ) {
+    return this.service.findAllByWorker(workerId, paginationDto);
   }
 }

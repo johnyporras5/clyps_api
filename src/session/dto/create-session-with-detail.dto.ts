@@ -1,4 +1,4 @@
-import { IsOptional, IsNumber, IsNotEmpty, IsArray, ValidateNested } from 'class-validator';
+import { IsOptional, IsNumber, IsNotEmpty, IsArray, ValidateNested,IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class SessionDetailItemDto {
@@ -46,4 +46,12 @@ export class CreateSessionWithDetailDto {
   @ValidateNested({ each: true })
   @Type(() => SessionDetailItemDto)
   details: SessionDetailItemDto[];
+
+  @IsOptional()
+  @IsString()
+  description?: string; 
+
+  @IsOptional()
+  @IsString()
+  descriptionIA?: string; 
 }
