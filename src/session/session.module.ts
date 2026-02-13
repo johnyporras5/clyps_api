@@ -11,10 +11,13 @@ import { Service } from 'src/service/entities/service.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { Worker } from 'src/worker/entities/worker.entity';
 import { EmailModule } from 'src/email/email.module';
+import { IAPromptsService } from '../IAprompts/ia_prompts.service'; 
+import { IAPrompts } from '../IAprompts/entities/ia_prompts.entity'; 
+import { ChatGPTService } from '../chatgpt/chatgpt.service'; 
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Session, SessionDetail, Client, Company, User, Service, CompanyWorker, Worker]), EmailModule],
-  providers: [SessionService],
+  imports: [TypeOrmModule.forFeature([Session, SessionDetail, Client, Company, User, Service, CompanyWorker, Worker,IAPrompts]), EmailModule],
+  providers: [SessionService,IAPromptsService,ChatGPTService],
   controllers: [SessionController],
   exports: [SessionService],
 })
