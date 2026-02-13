@@ -1,10 +1,12 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, ParseIntPipe, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Delete, ParseIntPipe, Query, UseGuards,Request } from '@nestjs/common';
 import { IAPromptsService } from './ia_prompts.service';
 import { IAPrompts } from './entities/ia_prompts.entity';
 import { CreateIAPromptDto } from './dto/create-ia_prompt.dto';
 import { UpdateIAPromptDto } from './dto/update-ia_prompt.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { QueryIAPromptDto } from './dto/query-ia_prompt.dto';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { ProcessPromptDto } from './dto/process-prompt.dto';
 
 @Controller('ia-prompts')
 export class IAPromptsController {
@@ -39,4 +41,26 @@ export class IAPromptsController {
     async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
         return this.iaPromptsService.remove(id);
     }
+
+     /**
+     * POST /ia-prompts/process
+     * Endpoint UNIFICADO que acepta:
+     * - { "id": 1 } → Usa el prompt de la BD
+     * - { "text": "tu pregunta" } → Pregunta directa
+     * 
+     * El tipo de prompt (cliente/profesional) se determina automáticamente
+     * según el userType del usuario autenticado
+     */
+    @Post('process')
+    @UseGuards(JwtAuthGuard) 
+    async processPrompt(
+        @Body() dto: ProcessPromptDto,
+        @Request() req 
+    ) {
+        // Extraer el userType del usuario autenticado
+        const userType = req.user.userType;
+
+        return this.iaPromptsService.processPrompt(dto, userType);
+    }
 }
+

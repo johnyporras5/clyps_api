@@ -20,6 +20,8 @@ import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto, ExtraServiceItemDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
+import { IAPromptsService } from '../IAprompts/ia_prompts.service'; 
+
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
@@ -42,6 +44,8 @@ export class SessionService {
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
     private emailService: EmailService,
+    private iaPromptsService: IAPromptsService,
+
   ) { }
 
   async create(createSessionDto: CreateSessionDto, adminId: number): Promise<Session> {
