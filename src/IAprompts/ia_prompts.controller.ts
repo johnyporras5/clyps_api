@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, ParseIntPipe, Query, UseGuards,Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Delete, ParseIntPipe, Query, UseGuards,Request, Sse } from '@nestjs/common';
 import { IAPromptsService } from './ia_prompts.service';
 import { IAPrompts } from './entities/ia_prompts.entity';
 import { CreateIAPromptDto } from './dto/create-ia_prompt.dto';
@@ -7,6 +7,7 @@ import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { QueryIAPromptDto } from './dto/query-ia_prompt.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { ProcessPromptDto } from './dto/process-prompt.dto';
+import { Observable } from 'rxjs';
 
 @Controller('ia-prompts')
 export class IAPromptsController {
@@ -62,5 +63,22 @@ export class IAPromptsController {
 
         return this.iaPromptsService.processPrompt(dto, userType);
     }
+
+    /**
+ * POST /ia-prompts/process/stream
+ * Responde letra a letra via Server-Sent Events (SSE)
+ * 
+ * El cliente recibe eventos continuos hasta que llega '[DONE]'
+ */
+@Post('process/stream')
+@UseGuards(JwtAuthGuard)
+@Sse()  // 👈 Convierte el endpoint en SSE
+async processPromptStream(
+    @Body() dto: ProcessPromptDto,
+    @Request() req,
+): Promise<Observable<MessageEvent>> {
+    const userType = req.user.userType;
+    return this.iaPromptsService.processPromptStream(dto, userType);
+}
 }
 
