@@ -8,6 +8,7 @@ import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { QueryIAPromptDto } from './dto/query-ia_prompt.dto';
 import { ChatGPTService } from '../chatgpt/chatgpt.service';
 import { ProcessPromptDto } from './dto/process-prompt.dto';
+import { Observable } from 'rxjs';
 
 @Injectable()
 export class IAPromptsService {
@@ -205,4 +206,38 @@ Siempre responde con información precisa, técnica cuando sea necesario, y mant
             response,
         };
     }
+
+
+    async processPromptStream(
+    dto: ProcessPromptDto,
+    userType: string
+): Promise<Observable<MessageEvent>> {
+    if (!dto.id && !dto.text) {
+        throw new BadRequestException(
+            'Debes proporcionar "id" o "text"'
+        );
+    }
+    if (dto.id && dto.text) {
+        throw new BadRequestException(
+            'No puedes enviar "id" y "text" al mismo tiempo.'
+        );
+    }
+
+    let promptText: string;
+    let promptType: 'c' | 'p';
+
+    if (dto.id) {
+        const promptEntity = await this.findOne(dto.id);
+        promptText = promptEntity.text;
+        promptType = promptEntity.type as 'c' | 'p';
+    } else {
+        promptText = dto.text!;
+        promptType = this.mapUserTypeToPromptType(userType);
+    }
+
+    const systemPrompt = this.getSystemPrompt(promptType);
+
+    // Retorna el Observable directamente para que el controlador lo pipe a SSE
+    return this.chatGPTService.sendPromptStream(promptText, systemPrompt);
+}
 }
