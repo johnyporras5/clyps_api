@@ -8,6 +8,7 @@ import { Company } from '../company/entities/company.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Worker } from '../worker/entities/worker.entity';
 import { paginate, PaginationOptions, PaginationResult } from '../common/utils/pagination.util';
+import { ServiceCategory } from '../service_category/entities/service_category.entity';
 
 @Injectable()
 export class ServiceService {
@@ -20,6 +21,9 @@ export class ServiceService {
     private companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
+    @InjectRepository(ServiceCategory)
+    private categoryRepository: Repository<ServiceCategory>,
+    
   ) { }
 
   /**
@@ -352,4 +356,7 @@ export class ServiceService {
     }
     return service;
   }
+
+
+  
 }

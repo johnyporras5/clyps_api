@@ -13,6 +13,7 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { IAPromptsModule } from './IAprompts/ia_prompts.module';
 //import { TemplatesModule } from './templates/templates.module';
+import { ServiceCategoryModule } from './service_category/service_category.module';
 
 
 @Module({
@@ -89,7 +90,8 @@ import { IAPromptsModule } from './IAprompts/ia_prompts.module';
     //SeedsModule,
     //TemplatesModule,
 
-    IAPromptsModule
+    IAPromptsModule,
+    ServiceCategoryModule
 
   ],
   controllers: [AppController],

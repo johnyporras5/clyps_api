@@ -5,18 +5,18 @@ import { Currency } from '../../common/enum/currency.enum';
 class WorkerAssignmentDto {
   @IsNumber()
   id: number;
-  
- @IsOptional()
+
+  @IsOptional()
   @IsNumber()
   @Min(0)
   @Max(100)
   percentage: number;
-  
-  
+
+
   @IsOptional()
   @IsNumber()
   @Min(0)
-  time?: number;  
+  time?: number;
 
 
 }
@@ -55,4 +55,10 @@ export class CreateServiceDto {
   @IsOptional()
   @IsNumber()
   status?: number;
+
+  @IsOptional()
+  @IsNumber()
+  categoryId?: number;
+
+
 }

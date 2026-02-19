@@ -55,4 +55,8 @@ export class UpdateServiceDto {
   @IsOptional()
   @IsNumber()
   status?: number;
+
+  @IsOptional()
+  @IsNumber()
+  categoryId?: number;
 }
