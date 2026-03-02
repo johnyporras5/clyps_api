@@ -2,6 +2,7 @@ import { CompanyFeedback } from '../../company_feedback/entities/company_feedbac
 import { CalendarCompany } from '../../calendar_company/entities/calendar-company.entity';
 import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, OneToMany, UpdateDateColumn } from 'typeorm';
 import { ServiceCategory } from '../../service_category/entities/service_category.entity';
+import { CompanyCategory } from '../../company_category/entities/company_category.entity';
 
 @Entity('company')
 export class Company {
@@ -51,4 +52,7 @@ export class Company {
 
    @OneToMany(() => ServiceCategory, (category) => category.company, { cascade: true })
   serviceCategories: ServiceCategory[];
+
+   @OneToMany(() => CompanyCategory, (category) => category.company, { cascade: true })
+  categories: CompanyCategory[];
 }

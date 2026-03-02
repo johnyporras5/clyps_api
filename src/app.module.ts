@@ -14,6 +14,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { IAPromptsModule } from './IAprompts/ia_prompts.module';
 //import { TemplatesModule } from './templates/templates.module';
 import { ServiceCategoryModule } from './service_category/service_category.module';
+import { CompanyCategoryModule } from './company_category/company_category.module';
 
 
 @Module({
@@ -91,7 +92,8 @@ import { ServiceCategoryModule } from './service_category/service_category.modul
     //TemplatesModule,
 
     IAPromptsModule,
-    ServiceCategoryModule
+    ServiceCategoryModule,
+    CompanyCategoryModule
 
   ],
   controllers: [AppController],
