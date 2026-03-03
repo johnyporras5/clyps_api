@@ -59,4 +59,8 @@ export class Session {
     customPrice?: number;      // Solo si priceOption === "custom"
     createdAt: string          // "2026-02-15T08:45:00.000Z"
   }>;
+
+
+  @Column({ name: 'offer_id', nullable: true })
+  offerId: number;
 }
