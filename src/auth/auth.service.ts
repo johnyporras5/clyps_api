@@ -21,6 +21,7 @@ import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
+import { CompanyCategoryService } from '../company_category/company_category.service';
 
 
 @Injectable()
@@ -42,6 +43,7 @@ export class AuthService {
     private verificationService: VerificationService,
     private tokenBlacklistService: TokenBlacklistService,
     private fileUploadService: FileUploadService,
+    private readonly companyCategoryService: CompanyCategoryService,
 
   ) { }
 
@@ -126,6 +128,15 @@ export class AuthService {
 
     await this.companyService.create(companyData);
 
+
+    if (registerDto.categories && registerDto.categories.length > 0) {
+      for (const categoryName of registerDto.categories) {
+        await this.companyCategoryService.create(
+          { name: categoryName },
+          savedUser.id  // adminId
+        );
+      }
+    }
     // Enviar código de verificación
     await this.sendVerificationCode(savedUser.email);
 
@@ -331,7 +342,7 @@ export class AuthService {
         isActive: 1,
         startDate: new Date(),
         servicesDetail: {},
-        calendar: registerDto.calendar || {}, // <-- AGREGAR CAMPO CALENDAR AQUÍ
+        calendar: registerDto.calendar || {},
       });
 
       await this.companyWorkerRepository.save(companyWorker);
@@ -568,7 +579,7 @@ export class AuthService {
         console.log(`Cambio detectado en ubicación: ${client.location} -> ${registerDto.location}`);
       }
 
-   
+
       // Solo actualizar si hay cambios reales
       if (hasChanges) {
         console.log(`Detectados cambios reales. Actualizando perfil del cliente...`);
@@ -588,7 +599,7 @@ export class AuthService {
       }
     }
 
- 
+
     // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
 
@@ -649,7 +660,7 @@ export class AuthService {
       }
     };
 
-       return response;
+    return response;
   }
   // ==================== MÉTODOS DE LOGIN ====================
 

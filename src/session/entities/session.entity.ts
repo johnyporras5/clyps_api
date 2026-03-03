@@ -43,11 +43,6 @@ export class Session {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-  @Column({ name: 'description_ia', type: 'text', nullable: true })
-  descriptionIA: string;
-
-  @Column({ name: 'description', type: 'text', nullable: true })
-  description: string;
 
   @Column({ name: 'extra_services', type: 'json', nullable: true })
   extraServices?: Array<{

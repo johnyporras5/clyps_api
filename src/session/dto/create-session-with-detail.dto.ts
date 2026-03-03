@@ -10,6 +10,15 @@ export class SessionDetailItemDto {
   @IsNumber()
   companyWorkerId: number;
 
+  
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  descriptionIA?: string;
+
   @IsOptional()
   detailStartDatetime?: Date;
 

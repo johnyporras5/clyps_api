@@ -20,7 +20,7 @@ import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto, ExtraServiceItemDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
-import { IAPromptsService } from '../IAprompts/ia_prompts.service'; 
+import { IAPromptsService } from '../IAprompts/ia_prompts.service';
 
 @Injectable()
 export class SessionService {
@@ -550,6 +550,8 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
+        description: detail.description,
+        descriptionIA: detail.descriptionIA,
       };
 
       try {
@@ -991,8 +993,8 @@ export class SessionService {
       iaResponse: session.iaResponse,
       createdAt: (session as any).createdAt || null,
       updatedAt: (session as any).updatedAt || null,
-      description: session.description,
-      descriptionIA: session.descriptionIA,
+      // description: session.description,
+      //descriptionIA: session.descriptionIA,
       details: details, // Incluir todos los detalles
 
     };
@@ -1658,8 +1660,8 @@ export class SessionService {
           services: services,
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
-          description: session.description,
-          descriptionIA: session.descriptionIA,
+          //   description: session.description,
+          //  descriptionIA: session.descriptionIA,
         };
       })
     );
@@ -2395,8 +2397,8 @@ export class SessionService {
       clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
       clientLastName: client?.lastName || '',
       sessionStatusText: this.getSessionStatusText(session.sessionStatus),
-      description: session.description,
-      descriptionIA: session.descriptionIA,
+      // description: session.description,
+      //  descriptionIA: session.descriptionIA,
       extraServices: session.extraServices,
     };
 
@@ -3185,6 +3187,8 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
+        description: detail.description,
+        descriptionIA: detail.descriptionIA,
       };
 
       try {
