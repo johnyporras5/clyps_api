@@ -26,7 +26,22 @@ export class OfferController {
   constructor(private readonly offerService: OfferService) {}
 
   /**
-   * Obtener todas las ofertas de la compañía del administrador autenticado
+   * Obtener todos los servicios en oferta ACTIVA y VIGENTE de la compañía.
+   * Usado por el frontend para mostrar la lista de servicios en oferta
+   * al momento de crear una sesión.
+   * GET /offers/my-company/active-services
+   *  Debe ir ANTES de /my-company/:id para evitar conflicto de rutas
+   */
+  @Get('my-company/active-services')
+  @Roles('adm')
+  @HttpCode(HttpStatus.OK)
+  async findActiveServiceOffers(@Req() req: any) {
+    const adminId = req.user.sub;
+    return this.offerService.findActiveServiceOffers(adminId);
+  }
+
+  /**
+   * Obtener todas las ofertas de la compañía
    * GET /offers/my-company
    */
   @Get('my-company')
@@ -44,7 +59,10 @@ export class OfferController {
   @Get('my-company/:id')
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
-  async findOneMyCompany(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  async findOneMyCompany(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+  ) {
     const adminId = req.user.sub;
     return this.offerService.findOne(id, adminId);
   }
@@ -56,7 +74,10 @@ export class OfferController {
   @Post('my-company')
   @Roles('adm')
   @HttpCode(HttpStatus.CREATED)
-  async createForMyCompany(@Body() createOfferDto: CreateOfferDto, @Req() req: any) {
+  async createForMyCompany(
+    @Body() createOfferDto: CreateOfferDto,
+    @Req() req: any,
+  ) {
     const adminId = req.user.sub;
     return this.offerService.create(createOfferDto, adminId);
   }
@@ -102,13 +123,16 @@ export class OfferController {
   }
 
   /**
-   * Eliminar una oferta (borrado físico)
+   * Eliminar una oferta
    * DELETE /offers/my-company/:id
    */
   @Delete('my-company/:id')
   @Roles('adm')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async removeMyCompany(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  async removeMyCompany(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+  ) {
     const adminId = req.user.sub;
     return this.offerService.remove(id, adminId);
   }

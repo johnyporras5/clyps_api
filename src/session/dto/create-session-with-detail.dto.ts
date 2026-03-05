@@ -25,6 +25,10 @@ export class SessionDetailItemDto {
   @IsOptional()
   @IsNumber()
   detailStatus?: number;
+
+  @IsOptional()
+  @IsNumber()
+  offerId?: number;
 }
 
 export class CreateSessionWithDetailDto {

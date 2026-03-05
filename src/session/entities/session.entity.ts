@@ -61,6 +61,4 @@ export class Session {
   }>;
 
 
-  @Column({ name: 'offer_id', nullable: true })
-  offerId: number;
 }

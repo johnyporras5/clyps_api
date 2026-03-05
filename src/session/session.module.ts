@@ -14,9 +14,12 @@ import { EmailModule } from 'src/email/email.module';
 import { IAPromptsService } from '../IAprompts/ia_prompts.service'; 
 import { IAPrompts } from '../IAprompts/entities/ia_prompts.entity'; 
 import { ChatGPTService } from '../chatgpt/chatgpt.service'; 
+import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
+import { Offer } from 'src/Offer/entities/offer.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Session, SessionDetail, Client, Company, User, Service, CompanyWorker, Worker,IAPrompts]), EmailModule],
+  imports: [TypeOrmModule.forFeature([Session, SessionDetail, Client, Company, User, Service, CompanyWorker, Worker,IAPrompts,Offer,
+  ServiceOffer]), EmailModule],
   providers: [SessionService,IAPromptsService,ChatGPTService],
   controllers: [SessionController],
   exports: [SessionService],

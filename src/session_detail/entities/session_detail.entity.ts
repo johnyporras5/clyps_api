@@ -55,5 +55,6 @@ export class SessionDetail {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-
+  @Column({ name: 'offer_id', nullable: true })
+  offerId: number;
 }

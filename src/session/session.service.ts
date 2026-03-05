@@ -20,7 +20,7 @@ import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto, ExtraServiceItemDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
-import { IAPromptsService } from '../IAprompts/ia_prompts.service'; 
+import { IAPromptsService } from '../IAprompts/ia_prompts.service';
 import { Offer } from 'src/Offer/entities/offer.entity';
 import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
 
@@ -47,44 +47,13 @@ export class SessionService {
     private workerRepository: Repository<Worker>,
     private emailService: EmailService,
     private iaPromptsService: IAPromptsService,
-     @InjectRepository(Offer)
+    @InjectRepository(Offer)
     private offerRepository: Repository<Offer>,
     @InjectRepository(ServiceOffer)
     private serviceOfferRepository: Repository<ServiceOffer>,
 
   ) { }
 
-
-   /**
-   * Busca la oferta activa (más barata) para un servicio en una compañía.
-   * Retorna el precio de oferta o null si no hay ninguna activa hoy.
-   */
-  private async getActiveOfferForService(
-    serviceId: number,
-    companyId: number
-  ): Promise<{ price: number; offerId: number; offerName: string } | null> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const serviceOffer = await this.serviceOfferRepository
-      .createQueryBuilder('so')
-      .innerJoinAndSelect('so.offer', 'offer')
-      .where('so.serviceId = :serviceId', { serviceId })
-      .andWhere('offer.companyId = :companyId', { companyId })
-      .andWhere('offer.status = :status', { status: 1 })
-      .andWhere('offer.startDate <= :today', { today })
-      .andWhere('offer.endDate >= :today', { today })
-      .orderBy('so.price', 'ASC')
-      .getOne();
-
-    if (!serviceOffer) return null;
-
-    return {
-      price: Number(serviceOffer.price),
-      offerId: serviceOffer.offerId,
-      offerName: (serviceOffer as any).offer?.name || '',
-    };
-  }
 
 
   async create(createSessionDto: CreateSessionDto, adminId: number): Promise<Session> {
@@ -310,6 +279,10 @@ export class SessionService {
       totalCompany: number;
       calculationDetails: string;
       workerAssigned: boolean;
+      isOffer: boolean;
+      appliedOfferId: number | null;
+      offerName: string | null;
+      originalPrice: number | null;
     }>;
     createdDetails?: SessionDetail[];
     existingSession?: Session;
@@ -408,6 +381,10 @@ export class SessionService {
       totalCompany: number;
       calculationDetails: string;
       workerAssigned: boolean;
+      isOffer: boolean;
+      appliedOfferId: number | null;
+      offerName: string | null;
+      originalPrice: number | null;
     }> = [];
 
     const serviceValidations: ServiceValidationType[] = [];
@@ -448,22 +425,41 @@ export class SessionService {
         detail.companyWorkerId
       );
 
-      let serviceCost = service.cost || 0;
+      // Resolver precio: oferta o normal
+      const priceResolution = await this.resolveServicePrice(
+        detail.serviceId,
+        companyId,
+        detail.offerId,
+        createSessionWithDetailDto.sessionDatetime
+      );
 
-      // Convertir a número decimal de forma segura
       let serviceCostNumber: number;
-      if (typeof serviceCost === 'string') {
-        serviceCostNumber = parseFloat(serviceCost);
-      } else if (typeof serviceCost === 'number') {
-        serviceCostNumber = serviceCost;
-      } else if (serviceCost && typeof serviceCost === 'object') {
-        serviceCostNumber = parseFloat(String(serviceCost));
+
+      if (priceResolution.isOffer) {
+        // Precio de la oferta (service_offer.price)
+        serviceCostNumber = priceResolution.finalPrice;
+        console.log(
+          `🏷️ Servicio "${service.name}" → precio de OFERTA "${priceResolution.offerName}": ${serviceCostNumber}`,
+        );
       } else {
-        serviceCostNumber = 0;
+        // Precio normal (service.cost)
+        const serviceCost = service.cost || 0;
+        if (typeof serviceCost === 'string') {
+          serviceCostNumber = parseFloat(serviceCost);
+        } else if (typeof serviceCost === 'number') {
+          serviceCostNumber = serviceCost;
+        } else if (serviceCost && typeof serviceCost === 'object') {
+          serviceCostNumber = parseFloat(String(serviceCost));
+        } else {
+          serviceCostNumber = 0;
+        }
+        console.log(`💰 Servicio "${service.name}" → precio NORMAL: ${serviceCostNumber}`);
       }
 
       if (serviceCostNumber <= 0) {
-        throw new BadRequestException(`El costo del servicio "${service.name}" debe ser mayor a 0`);
+        throw new BadRequestException(
+          `El costo del servicio "${service.name}" debe ser mayor a 0`,
+        );
       }
 
       const calculatedAmounts = this.calculateAmounts(serviceCostNumber, workerPercentage, companyPercentage);
@@ -506,7 +502,12 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         calculationDetails: calculatedAmounts.calculationDetails,
-        workerAssigned
+        workerAssigned,
+        // Info de oferta
+        isOffer: priceResolution.isOffer,
+        appliedOfferId: priceResolution.appliedOfferId,
+        offerName: priceResolution.offerName,
+        originalPrice: priceResolution.isOffer ? Number(service.cost) : null,
       });
     }
 
@@ -589,6 +590,7 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
+        offerId: detail.offerId ?? undefined,
       };
 
       try {
@@ -1030,7 +1032,7 @@ export class SessionService {
       iaResponse: session.iaResponse,
       createdAt: (session as any).createdAt || null,
       updatedAt: (session as any).updatedAt || null,
-     // description: session.description,
+      // description: session.description,
       //descriptionIA: session.descriptionIA,
       details: details, // Incluir todos los detalles
 
@@ -1697,8 +1699,8 @@ export class SessionService {
           services: services,
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
-       //   description: session.description,
-        //  descriptionIA: session.descriptionIA,
+          //   description: session.description,
+          //  descriptionIA: session.descriptionIA,
         };
       })
     );
@@ -2434,8 +2436,8 @@ export class SessionService {
       clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
       clientLastName: client?.lastName || '',
       sessionStatusText: this.getSessionStatusText(session.sessionStatus),
-     // description: session.description,
-    //  descriptionIA: session.descriptionIA,
+      // description: session.description,
+      //  descriptionIA: session.descriptionIA,
       extraServices: session.extraServices,
     };
 
@@ -2898,6 +2900,10 @@ export class SessionService {
       totalCompany: number;
       calculationDetails: string;
       workerAssigned: boolean;
+      isOffer: boolean;
+      appliedOfferId: number | null;
+      offerName: string | null;
+      originalPrice: number | null;
     }>;
     createdDetails?: SessionDetail[];
     existingSession?: Session;
@@ -3032,6 +3038,10 @@ export class SessionService {
       totalCompany: number;
       calculationDetails: string;
       workerAssigned: boolean;
+      isOffer: boolean;
+      appliedOfferId: number | null;
+      offerName: string | null;
+      originalPrice: number | null;
     }> = [];
 
     const serviceValidations: ServiceValidationType[] = [];
@@ -3077,22 +3087,41 @@ export class SessionService {
         detail.companyWorkerId
       );
 
-      let serviceCost = service.cost || 0;
+      // Resolver precio: oferta o normal
+      const priceResolution = await this.resolveServicePrice(
+        detail.serviceId,
+        companyId,
+        detail.offerId,
+        createSessionWithDetailDto.sessionDatetime
+      );
 
-      // Convertir a número decimal de forma segura
       let serviceCostNumber: number;
-      if (typeof serviceCost === 'string') {
-        serviceCostNumber = parseFloat(serviceCost);
-      } else if (typeof serviceCost === 'number') {
-        serviceCostNumber = serviceCost;
-      } else if (serviceCost && typeof serviceCost === 'object') {
-        serviceCostNumber = parseFloat(String(serviceCost));
+
+      if (priceResolution.isOffer) {
+        // Precio de la oferta (service_offer.price)
+        serviceCostNumber = priceResolution.finalPrice;
+        console.log(
+          `🏷️ Servicio "${service.name}" → precio de OFERTA "${priceResolution.offerName}": ${serviceCostNumber}`,
+        );
       } else {
-        serviceCostNumber = 0;
+        // Precio normal (service.cost)
+        const serviceCost = service.cost || 0;
+        if (typeof serviceCost === 'string') {
+          serviceCostNumber = parseFloat(serviceCost);
+        } else if (typeof serviceCost === 'number') {
+          serviceCostNumber = serviceCost;
+        } else if (serviceCost && typeof serviceCost === 'object') {
+          serviceCostNumber = parseFloat(String(serviceCost));
+        } else {
+          serviceCostNumber = 0;
+        }
+        console.log(`💰 Servicio "${service.name}" → precio NORMAL: ${serviceCostNumber}`);
       }
 
       if (serviceCostNumber <= 0) {
-        throw new BadRequestException(`El costo del servicio "${service.name}" debe ser mayor a 0`);
+        throw new BadRequestException(
+          `El costo del servicio "${service.name}" debe ser mayor a 0`,
+        );
       }
 
       const calculatedAmounts = this.calculateAmounts(serviceCostNumber, workerPercentage, companyPercentage);
@@ -3131,7 +3160,12 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         calculationDetails: calculatedAmounts.calculationDetails,
-        workerAssigned
+        workerAssigned,
+        // Info de oferta
+        isOffer: priceResolution.isOffer,
+        appliedOfferId: priceResolution.appliedOfferId,
+        offerName: priceResolution.offerName,
+        originalPrice: priceResolution.isOffer ? Number(service.cost) : null,
       });
     }
 
@@ -3224,6 +3258,7 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
+        offerId: detail.offerId ?? undefined,
       };
 
       try {
@@ -3441,8 +3476,6 @@ export class SessionService {
   }
 
 
-  // VERSIÓN ACTUALIZADA DEL MÉTODO addExtraServicesToSession
-  // Este método debe REEMPLAZAR el anterior en session.service.ts
 
   async addExtraServicesToSession(
     sessionId: number,
@@ -4452,6 +4485,63 @@ export class SessionService {
         hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
         hasPrev: getSessionsDto.page > 1
       }
+    };
+  }
+
+
+  /**
+ * Resuelve el precio final de un servicio.
+ * Si viene offerId → valida y usa el precio de oferta (service_offer.price)
+ * Si no viene offerId → retorna isOffer: false para usar service.cost
+ */
+  private async resolveServicePrice(
+    serviceId: number,
+    companyId: number,
+    offerId?: number,
+    referenceDate?: Date
+  ): Promise<{
+    finalPrice: number;
+    appliedOfferId: number | null;
+    isOffer: boolean;
+    offerName: string | null;
+  }> {
+    // Sin offerId → precio normal
+    if (!offerId) {
+      return {
+        finalPrice: 0,
+        appliedOfferId: null,
+        isOffer: false,
+        offerName: null,
+      };
+    }
+
+    const checkDate = referenceDate ? new Date(referenceDate) : new Date();
+
+    // Buscar el service_offer con su oferta relacionada
+    const serviceOffer = await this.serviceOfferRepository
+      .createQueryBuilder('so')
+      .innerJoinAndSelect('so.offer', 'offer')
+      .where('so.serviceId = :serviceId', { serviceId })
+      .andWhere('so.offerId = :offerId', { offerId })
+      .andWhere('offer.companyId = :companyId', { companyId })
+      .andWhere('offer.status = 1')
+      .andWhere('offer.startDate <= :checkDate', { checkDate })  // ← CAMBIO
+      .andWhere('offer.endDate >= :checkDate', { checkDate })    // ← CAMBIO
+      .getOne();
+
+
+    if (!serviceOffer) {
+      throw new BadRequestException(
+        `La oferta con ID ${offerId} no es válida para el servicio ${serviceId}. ` +
+        `Verifique que la oferta exista, pertenezca a su compañía y esté activa y vigente.`,
+      );
+    }
+
+    return {
+      finalPrice: Number(serviceOffer.price),
+      appliedOfferId: offerId,
+      isOffer: true,
+      offerName: serviceOffer.offer?.name || null,
     };
   }
 }
