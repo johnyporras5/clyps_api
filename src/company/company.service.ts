@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, Inject, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
 import { User } from '../user/entities/user.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -16,6 +16,7 @@ import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Client } from '../client/entities/client.entity';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
+import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
 
 
 @Injectable()
@@ -575,6 +576,117 @@ async updateAdminProfile(
     return {
       message: 'Cliente eliminado permanentemente. No podrá ser restaurado.',
       canRestore: false
+    };
+  }
+
+  async findByFilters(dto: GetCompaniesFilterDto): Promise<PaginationResult<CompanyWithLogoUrl>> {
+    const query = this.companyRepository.createQueryBuilder('company');
+
+    if (dto.categoryName) {
+      query.innerJoin(
+        'company.categories',
+        'cat',
+        'cat.name LIKE :catName',
+        { catName: `%${dto.categoryName}%` },
+      );
+    }
+
+    if (dto.city) {
+      query.andWhere('company.location LIKE :city', { city: `%${dto.city}%` });
+    }
+
+    if (!dto.date) {
+      const result = await paginate(query, { page: dto.page, limit: dto.limit });
+      return {
+        ...result,
+        data: result.data.map(c => this.mapToCompanyWithLogoUrl(c)),
+      };
+    }
+
+    const dayOfWeek = this.getDayOfWeek(dto.date);
+    const allCompanies = await query.getMany();
+
+    if (allCompanies.length === 0) {
+      return {
+        data: [],
+        meta: { page: dto.page, limit: dto.limit, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
+      };
+    }
+
+    const companyIds = allCompanies.map(c => c.id);
+
+    const [companyCalendars, workerCalendars] = await Promise.all([
+      this.calendarCompanyRepository.find({ where: { companyId: In(companyIds) } }),
+      this.companyWorkerRepository.find({
+        where: {
+          companyId: In(companyIds),
+          isActive: 1,
+          temporarilyDeleted: false,
+          permanentlyDeleted: false,
+        },
+      }),
+    ]);
+
+    const compCalMap = new Map<number, any[]>();
+    for (const cc of companyCalendars) {
+      if (!compCalMap.has(cc.companyId)) compCalMap.set(cc.companyId, []);
+      if (cc.calendarDetail) compCalMap.get(cc.companyId)!.push(cc.calendarDetail);
+    }
+
+    const workerCalMap = new Map<number, any[]>();
+    for (const cw of workerCalendars) {
+      if (!workerCalMap.has(cw.companyId)) workerCalMap.set(cw.companyId, []);
+      if (cw.calendar) workerCalMap.get(cw.companyId)!.push(cw.calendar);
+    }
+
+    const available = allCompanies.filter(company => {
+      const compCals = compCalMap.get(company.id) || [];
+      const workerCals = workerCalMap.get(company.id) || [];
+      return (
+        compCals.some(cal => this.isCalendarAvailable(cal, dto.date!, dayOfWeek)) ||
+        workerCals.some(cal => this.isCalendarAvailable(cal, dto.date!, dayOfWeek))
+      );
+    });
+
+    const total = available.length;
+    const skip = (dto.page - 1) * dto.limit;
+    const totalPages = Math.ceil(total / dto.limit);
+
+    return {
+      data: available.slice(skip, skip + dto.limit).map(c => this.mapToCompanyWithLogoUrl(c)),
+      meta: {
+        page: dto.page,
+        limit: dto.limit,
+        total,
+        totalPages,
+        hasNext: dto.page < totalPages,
+        hasPrev: dto.page > 1,
+      },
+    };
+  }
+
+  private getDayOfWeek(date: string): string {
+    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const [year, month, day] = date.split('-').map(Number);
+    return days[new Date(year, month - 1, day).getDay()];
+  }
+
+  private isCalendarAvailable(calendarDetail: any, date: string, dayOfWeek: string): boolean {
+    let cal = calendarDetail;
+    if (typeof cal === 'string') {
+      try { cal = JSON.parse(cal); } catch { return false; }
+    }
+    if (!cal?.schedule?.days) return false;
+    if (!cal.schedule.days.includes(dayOfWeek)) return false;
+    const exception = cal.exceptions?.find((e: any) => e.date === date);
+    if (exception?.type === 'non-working-day') return false;
+    return true;
+  }
+
+  private mapToCompanyWithLogoUrl(company: Company): CompanyWithLogoUrl {
+    return {
+      ...company,
+      logoUrl: company.logo ? this.fileUploadService.getFileUrl('company_logo', company.logo) : null,
     };
   }
 
