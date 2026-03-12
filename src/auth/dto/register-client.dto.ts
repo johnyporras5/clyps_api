@@ -29,10 +29,6 @@ export class RegisterClientDto {
   birthdate?: Date;
 
   @IsOptional()
-  @IsString()
-  picture?: string;
-
-  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @IsIn([0, 1])

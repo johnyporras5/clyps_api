@@ -124,6 +124,7 @@ export class AuthService {
       email: registerDto.email,
       userId: savedUser.id,
       logo: logoFileName,
+      phone: registerDto.phone,
     };
 
     await this.companyService.create(companyData);
@@ -190,7 +191,8 @@ export class AuthService {
    */
   async registerWorker(
     registerDto: RegisterWorkerDto,
-    adminId: number // ID del administrador que registra
+    adminId: number, // ID del administrador que registra
+    pictureFile?: Express.Multer.File
   ): Promise<{
     message: string;
     user: Partial<User>;
@@ -287,6 +289,24 @@ export class AuthService {
       await this.sendVerificationCode(user.email);
     }
 
+
+    // ==================== [NUEVO] PROCESAR ARCHIVO DE FOTO (SI SE ENVIÓ) ====================
+    let pictureFileName: string | undefined;
+    if (pictureFile) {
+      try {
+        const fileInfo = await this.fileUploadService.saveFile(
+          pictureFile,
+          'worker_photo',   // subcarpeta
+          'worker',              // tipo de entidad
+          user.id                // ID del usuario
+        );
+        pictureFileName = fileInfo.fileName;
+        console.log(`✅ Foto de trabajador guardada: ${pictureFileName}`);
+      } catch (error) {
+        console.error('❌ Error al guardar foto de trabajador:', error);
+      }
+    }
+
     // ==================== VERIFICAR SI YA ESTÁ EN COMPANY_WORKER ====================
     // Verificar si ya está asignado a esta compañía por userId
     const existingAssignment = await this.companyWorkerRepository.findOne({
@@ -314,7 +334,7 @@ export class AuthService {
         phone: registerDto.phone,
         address: registerDto.address,
         birthdate: registerDto.birthdate,
-        picture: registerDto.picture,
+        picture: pictureFileName,
         description: registerDto.description,
         isActive: 1,
         location: registerDto.location,
@@ -349,16 +369,7 @@ export class AuthService {
       createdCompanyWorker = true;
     }
 
-    // Generar token JWT solo para nuevo trabajador (usuario nuevo)
-    let access_token: string | undefined;
-    if (!isExistingWorker) {
-      const payload = {
-        email: user.email,
-        sub: user.id,
-        userType: user.userType
-      };
-      access_token = this.jwtService.sign(payload);
-    }
+    // No se genera token JWT en el registro de trabajador
 
     // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
@@ -423,7 +434,7 @@ export class AuthService {
   /**
   * Registro específico para clientes CON CONTRASEÑA AUTOMÁTICA
   */
-  async registerClient(registerDto: RegisterClientDto): Promise<{
+  async registerClient(registerDto: RegisterClientDto, pictureFile?: Express.Multer.File): Promise<{
     message: string;
     user: Partial<User>;
     generatedPassword?: string;
@@ -475,6 +486,8 @@ export class AuthService {
 
       user = await this.userRepository.save(newUser);
 
+
+
       const credentialsSent = await this.emailService.sendClientCredentials(
         user.email,
         user.username,
@@ -486,6 +499,24 @@ export class AuthService {
       }
 
       await this.sendVerificationCode(user.email);
+    }
+
+    // ==================== [NUEVO] PROCESAR ARCHIVO DE FOTO (SI SE ENVIÓ) ====================
+    let pictureFileName: string | undefined;
+    if (pictureFile) {
+      try {
+        const fileInfo = await this.fileUploadService.saveFile(
+          pictureFile,
+          'client_photo',   // subcarpeta
+          'client',              // tipo de entidad
+          user.id                // ID del usuario
+        );
+        pictureFileName = fileInfo.fileName;
+        console.log(`✅ Foto de cliente guardada: ${pictureFileName}`);
+      } catch (error) {
+        console.error('❌ Error al guardar foto de cliente:', error);
+        // Si falla, se ignora y se usará el valor del DTO (si existe)
+      }
     }
 
     // ==================== VERIFICAR SI YA TIENE PERFIL DE CLIENTE ====================
@@ -507,7 +538,7 @@ export class AuthService {
         email: registerDto.email,
         phone: registerDto.phone,
         birthDate: registerDto.birthdate,
-        picture: registerDto.picture,
+        picture: pictureFileName ,
         isActive: registerDto.isActive !== undefined ? registerDto.isActive : 1,
         companies: [],
         location: registerDto.location,
@@ -561,10 +592,12 @@ export class AuthService {
         }
       }
 
-      if (registerDto.picture !== undefined && registerDto.picture !== client.picture) {
-        updateData.picture = registerDto.picture;
+
+
+      if (pictureFileName) {
+        updateData.picture = pictureFileName;
         hasChanges = true;
-        console.log(`Cambio detectado en imagen: ${client.picture} -> ${registerDto.picture}`);
+        console.log(`Cambio detectado en foto (archivo): ${client.picture} -> ${pictureFileName}`);
       }
 
       if (registerDto.isActive !== undefined && registerDto.isActive !== client.isActive) {

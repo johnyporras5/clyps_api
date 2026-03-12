@@ -34,10 +34,6 @@ export class RegisterWorkerDto {
 
   @IsOptional()
   @IsString()
-  picture?: string;
-
-  @IsOptional()
-  @IsString()
   description?: string;
 
   @IsOptional()

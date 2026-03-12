@@ -20,6 +20,10 @@ export class RegisterAdminDto {
   companyName: string;
 
   @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
   @Transform(({ value }) => {
     if (value === undefined || value === null) return undefined;
 
@@ -40,8 +44,8 @@ export class RegisterAdminDto {
         }
       }
 
-           return trimmed.split(',').map(item =>
-        item.trim().replace(/^["']|["']$/g, '') 
+      return trimmed.split(',').map(item =>
+        item.trim().replace(/^["']|["']$/g, '')
       );
     }
 
