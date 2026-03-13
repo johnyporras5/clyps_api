@@ -43,6 +43,9 @@ export class Company {
   @Column({ name: 'phone', length: 20, nullable: true })
   phone: string;
 
+  @Column({ name: 'birth_date', type: 'date', nullable: true })
+  birthDate: Date;
+
 
   @OneToMany(() => CalendarCompany, (calendar) => calendar.company, { cascade: true })
   calendars: CalendarCompany[];

@@ -14,7 +14,7 @@ import { FileUploadService, AllowedFolder } from '../common/services/file_upload
 
 @Injectable()
 export class CompanyWorkerService {
-  private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'client_photo';
+  private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'worker_photo';
 
   constructor(
     @InjectRepository(CompanyWorker)
