@@ -75,7 +75,8 @@ export class CompanyService {
 
 async findByUserId(userId: number): Promise<CompanyWithLogoUrl> {
   const company = await this.companyRepository.findOne({
-    where: { userId }
+    where: { userId },
+    relations: ['categories'],
   });
 
   if (!company) {

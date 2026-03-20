@@ -45,6 +45,7 @@ export class ServiceService {
     // 2. Crear query builder para servicios filtrados por compañía
     const queryBuilder = this.serviceRepository
       .createQueryBuilder('service')
+      .leftJoinAndSelect('service.category', 'category')
       .where('service.companyId = :companyId', { companyId: company.id });
 
     // 3. Aplicar paginación
