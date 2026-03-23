@@ -282,6 +282,83 @@ export class ClientService {
   }
 
 
+  /**
+   * Obtener perfil de un cliente por su clientId (para el administrador)
+   */
+  async findByClientId(clientId: number): Promise<Client & { photoUrl: string }> {
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+      relations: ['user'],
+    });
+
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    const photoUrl = await this.getClientPhotoUrl(clientId);
+
+    if (client.user) {
+      const { password, ...userWithoutPassword } = client.user;
+      client.user = userWithoutPassword as any;
+    }
+
+    return { ...client, photoUrl };
+  }
+
+  /**
+   * Actualizar perfil de un cliente por su clientId (para el administrador)
+   */
+  async updateClientByAdmin(
+    clientId: number,
+    updateClientDto: UpdateClientDto,
+    photoFile?: Express.Multer.File,
+  ): Promise<Client> {
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+      relations: ['user'],
+    });
+
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    if (photoFile) {
+      try {
+        const photoInfo = await this.fileUploadService.saveFile(
+          photoFile,
+          this.CLIENT_PHOTO_FOLDER,
+          'client',
+          client.userId,
+        );
+
+        if (client.picture) {
+          await this.fileUploadService.deleteFile(this.CLIENT_PHOTO_FOLDER, client.picture);
+        }
+
+        updateClientDto.picture = photoInfo.fileName;
+      } catch (error) {
+        this.logger.error('Error al guardar la foto del cliente:', error);
+        throw new BadRequestException('Error al guardar la foto de perfil');
+      }
+    }
+
+    const allowedFields = ['name', 'lastName', 'email', 'phone', 'birthDate', 'location', 'isActive', 'picture'];
+    const updates: Partial<Client> = {};
+
+    Object.keys(updateClientDto).forEach((key) => {
+      if (!allowedFields.includes(key) || updateClientDto[key] === undefined) return;
+
+      let value = updateClientDto[key];
+      if (key === 'birthDate' && typeof value === 'string') value = new Date(value);
+      if (key === 'isActive' && value !== undefined) value = Number(value);
+
+      updates[key] = value;
+    });
+
+    Object.assign(client, updates);
+    return await this.clientRepository.save(client);
+  }
+
   async getClientPhotoUrl(clientId: number): Promise<string> {
     const client = await this.clientRepository.findOne({
       where: { id: clientId }

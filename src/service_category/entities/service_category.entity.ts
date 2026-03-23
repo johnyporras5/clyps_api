@@ -13,6 +13,12 @@ export class ServiceCategory {
   @Column({ name: 'company_id', nullable: false })
   companyId: number;
 
+  @Column({ name: 'description', type: 'text', nullable: true })
+  description: string;
+
+  @Column({ name: 'is_active', default: true })
+  isActive: boolean;
+
   @ManyToOne(() => Company, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'company_id' })
   company: Company;
