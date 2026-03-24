@@ -695,6 +695,113 @@ export class AuthService {
 
     return response;
   }
+  /**
+   * Registro de cliente por parte del administrador de la compañía
+   */
+  async registerClientByAdmin(
+    registerDto: RegisterClientDto,
+    adminId: number,
+    pictureFile?: Express.Multer.File,
+  ): Promise<{ message: string; user: Partial<User>; generatedPassword?: string }> {
+    // 1. Validar que el admin existe y tiene compañía
+    const admin = await this.userRepository.findOne({
+      where: { id: adminId, userType: 'adm' },
+    });
+    if (!admin) {
+      throw new UnauthorizedException('Solo los administradores pueden registrar clientes');
+    }
+
+    const company = await this.companyRepository.findOne({ where: { userId: adminId } });
+    if (!company) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
+    }
+
+    // 2. Verificar email
+    const existingUserByEmail = await this.userRepository.findOne({
+      where: { email: registerDto.email },
+    });
+
+    let user: User;
+    let client: Client | null = null;
+    let isExistingUser = false;
+    let generatedPassword: string | undefined;
+
+    if (existingUserByEmail) {
+      if (existingUserByEmail.userType !== 'cli') {
+        throw new ConflictException('El email ya está registrado como otro tipo de usuario');
+      }
+      user = existingUserByEmail;
+      isExistingUser = true;
+    } else {
+      const existingByUsername = await this.userRepository.findOne({
+        where: { username: registerDto.username },
+      });
+      if (existingByUsername) {
+        throw new ConflictException('El nombre de usuario ya está en uso');
+      }
+
+      generatedPassword = this.generateRandomPassword(12);
+      const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+
+      const newUser = this.userRepository.create({
+        username: registerDto.username,
+        email: registerDto.email,
+        password: hashedPassword,
+        userType: 'cli',
+        emailVerified: 0,
+      });
+      user = await this.userRepository.save(newUser);
+
+      await this.emailService.sendClientCredentials(user.email, user.username, generatedPassword);
+      await this.sendVerificationCode(user.email);
+    }
+
+    // 3. Procesar foto
+    let pictureFileName: string | undefined;
+    if (pictureFile) {
+      try {
+        const fileInfo = await this.fileUploadService.saveFile(pictureFile, 'client_photo', 'client', user.id);
+        pictureFileName = fileInfo.fileName;
+      } catch (error) {
+        console.error('Error al guardar foto de cliente:', error);
+      }
+    }
+
+    // 4. Crear o actualizar perfil del cliente
+    client = await this.clientRepository.findOne({ where: { userId: user.id } });
+
+    if (!client) {
+      const newClient = this.clientRepository.create({
+        name: registerDto.name,
+        lastName: registerDto.lastName,
+        email: registerDto.email,
+        phone: registerDto.phone,
+        birthDate: registerDto.birthdate,
+        picture: pictureFileName,
+        isActive: registerDto.isActive ?? 1,
+        companies: [company.id],
+        location: registerDto.location,
+        userId: user.id,
+      });
+      client = await this.clientRepository.save(newClient);
+    } else {
+      // Agregar compañía si aún no está en el array
+      const currentCompanies: number[] = Array.isArray(client.companies) ? client.companies : [];
+      if (!currentCompanies.includes(company.id)) {
+        currentCompanies.push(company.id);
+        await this.clientRepository.update(client.id, { companies: currentCompanies });
+      }
+    }
+
+    const { password, ...userWithoutPassword } = user;
+
+    const message = isExistingUser
+      ? `Cliente existente vinculado a la compañía '${company.name}' exitosamente.`
+      : `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'. Las credenciales fueron enviadas a su correo.`;
+
+    return { message, user: userWithoutPassword, generatedPassword };
+  }
+
   // ==================== MÉTODOS DE LOGIN ====================
 
   async login(loginDto: LoginDto): Promise<{ access_token: string; user: Partial<User> }> {

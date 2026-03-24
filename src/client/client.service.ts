@@ -356,7 +356,18 @@ export class ClientService {
     });
 
     Object.assign(client, updates);
-    return await this.clientRepository.save(client);
+    const saved = await this.clientRepository.save(client);
+
+    const photoUrl = saved.picture
+      ? this.fileUploadService.getFileUrl(this.CLIENT_PHOTO_FOLDER, saved.picture)
+      : '';
+
+    if (saved.user) {
+      const { password, ...userWithoutPassword } = saved.user as any;
+      saved.user = userWithoutPassword;
+    }
+
+    return { ...saved, photoUrl } as any;
   }
 
   async getClientPhotoUrl(clientId: number): Promise<string> {

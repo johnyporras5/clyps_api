@@ -2,19 +2,18 @@ import {
   Injectable,
   NotFoundException,
   UnauthorizedException,
-  ForbiddenException,
   BadRequestException,
   ConflictException,
-  Inject
+  Inject,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Worker } from './entities/worker.entity';
 import { CreateWorkerDto } from './dto/create-worker.dto';
 import { UpdateWorkerDto } from './dto/update-worker.dto';
+import { UpdateWorkerByAdminDto } from './dto/update-worker-by-admin.dto';
 import { User } from '../user/entities/user.entity';
-import { FindAllWorkersDto } from './dto/find-all-workers.dto';
-import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Company } from '../company/entities/company.entity';
 import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
@@ -24,6 +23,7 @@ import { FeedbackSummary } from './types/feedback_summary.type';
 @Injectable()
 export class WorkerService {
   private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'worker_photo';
+  private readonly logger = new Logger(WorkerService.name);
 
   constructor(
     @InjectRepository(Worker)
@@ -44,7 +44,7 @@ export class WorkerService {
 async findOne(id: number, userId?: number, userType?: string): Promise<PhotoWithUrl & { feedbackSummary?: FeedbackSummary }> {
   const worker = await this.workerRepository.findOne({
     where: { id },
-    relations: ['user']
+    relations: ['user'],
   });
 
   if (!worker) {
@@ -61,11 +61,17 @@ async findOne(id: number, userId?: number, userType?: string): Promise<PhotoWith
   const userWithoutPassword = this.excludePasswordFromUser(worker.user);
   const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
 
+  const companyWorker = await this.companyWorkerRepository.findOne({
+    where: { workerId: id },
+    relations: ['company'],
+  });
+
   return {
     ...worker,
     photoUrl,
     user: userWithoutPassword,
     feedbackSummary,
+    companyWorker: companyWorker ?? null,
   };
 }
 
@@ -171,7 +177,7 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
 
         // Eliminar la foto anterior si existe
         if (worker.picture) {
-          await this.fileUploadService.deleteFile(
+          this.fileUploadService.deleteFile(
             this.WORKER_PHOTO_FOLDER,
             worker.picture
           );
@@ -248,6 +254,143 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
 
 
 
+
+  /**
+   * Actualizar información completa de un worker por el administrador:
+   * cubre las tablas user, worker y company_worker.
+   */
+  async updateWorkerByAdmin(
+    workerId: number,
+    adminId: number,
+    dto: UpdateWorkerByAdminDto,
+    photoFile?: Express.Multer.File,
+  ): Promise<{ worker: any; companyWorker: any }> {
+    // 1. Obtener el worker
+    const worker = await this.workerRepository.findOne({
+      where: { id: workerId },
+      relations: ['user'],
+    });
+    if (!worker) {
+      throw new NotFoundException(`Trabajador con ID ${workerId} no encontrado`);
+    }
+
+    // 2. Obtener la compañía del admin
+    const company = await this.companyRepository.findOne({ where: { userId: adminId } });
+    if (!company) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
+    }
+
+    // 3. Verificar que el worker pertenece a la compañía del admin
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: { workerId, companyId: company.id },
+    });
+    if (!companyWorker) {
+      throw new NotFoundException(
+        `El trabajador con ID ${workerId} no pertenece a tu compañía`,
+      );
+    }
+
+    // 4. Procesar foto
+    if (photoFile) {
+      try {
+        const photoInfo = await this.fileUploadService.saveFile(
+          photoFile,
+          this.WORKER_PHOTO_FOLDER,
+          'worker',
+          worker.userId,
+        );
+        if (worker.picture) {
+          this.fileUploadService.deleteFile(this.WORKER_PHOTO_FOLDER, worker.picture);
+        }
+        dto.picture = photoInfo.fileName;
+      } catch (error) {
+        this.logger.error('Error al guardar la foto del trabajador:', error);
+        throw new BadRequestException('Error al guardar la foto de perfil');
+      }
+    }
+
+    // 5. Actualizar User (username / email)
+    const userUpdates: Partial<User> = {};
+    if (dto.username !== undefined) {
+      const taken = await this.userRepository.findOne({ where: { username: dto.username } });
+      if (taken && taken.id !== worker.userId) {
+        throw new BadRequestException('El nombre de usuario ya está en uso');
+      }
+      userUpdates.username = dto.username;
+    }
+    if (dto.email !== undefined) {
+      const taken = await this.userRepository.findOne({ where: { email: dto.email } });
+      if (taken && taken.id !== worker.userId) {
+        throw new BadRequestException('El email ya está registrado');
+      }
+      userUpdates.email = dto.email;
+    }
+    if (Object.keys(userUpdates).length > 0) {
+      await this.userRepository.update(worker.userId, userUpdates);
+    }
+
+    // 6. Actualizar Worker
+    const workerFields: (keyof UpdateWorkerByAdminDto)[] = [
+      'name', 'lastName', 'phone', 'address', 'birthdate',
+      'description', 'location', 'picture',
+    ];
+    const workerUpdates: Partial<Worker> = {};
+    workerFields.forEach((key) => {
+      if (dto[key] !== undefined) {
+        let value = dto[key];
+        if (key === 'birthdate' && typeof value === 'string') value = new Date(value);
+        workerUpdates[key as string] = value;
+      }
+    });
+    if (dto.isActive !== undefined) {
+      workerUpdates['isActive'] = Number(dto.isActive);
+    }
+    if (Object.keys(workerUpdates).length > 0) {
+      await this.workerRepository.update(worker.id, workerUpdates);
+    }
+
+    // 7. Actualizar CompanyWorker
+    const cwUpdates: Partial<CompanyWorker> = {};
+    if (dto.companyWorkerIsActive !== undefined) cwUpdates.isActive = Number(dto.companyWorkerIsActive);
+    if (dto.startDate !== undefined) cwUpdates.startDate = dto.startDate;
+    if (dto.endDate !== undefined) cwUpdates.endDate = dto.endDate;
+    if (dto.servicesDetail !== undefined) {
+      cwUpdates.servicesDetail =
+        typeof dto.servicesDetail === 'string'
+          ? JSON.parse(dto.servicesDetail)
+          : dto.servicesDetail;
+    }
+    if (dto.calendar !== undefined) {
+      cwUpdates.calendar =
+        typeof dto.calendar === 'string' ? JSON.parse(dto.calendar) : dto.calendar;
+    }
+    if (Object.keys(cwUpdates).length > 0) {
+      await this.companyWorkerRepository.update(companyWorker.id, cwUpdates);
+    }
+
+    // 8. Retornar datos actualizados
+    const updatedWorker = await this.workerRepository.findOne({
+      where: { id: workerId },
+      relations: ['user'],
+    });
+    if (!updatedWorker) {
+      throw new NotFoundException(`Trabajador con ID ${workerId} no encontrado`);
+    }
+    const updatedCW = await this.companyWorkerRepository.findOne({
+      where: { id: companyWorker.id },
+    });
+
+    const photoUrl = updatedWorker.picture
+      ? this.fileUploadService.getFileUrl(this.WORKER_PHOTO_FOLDER, updatedWorker.picture)
+      : '';
+
+    const { password, ...userWithoutPassword } = updatedWorker.user as any;
+
+    return {
+      worker: { ...updatedWorker, user: userWithoutPassword, photoUrl },
+      companyWorker: updatedCW,
+    };
+  }
 
   // Método para verificar si un usuario es dueño del worker
   async isWorkerOwner(workerId: number, userId: number): Promise<boolean> {

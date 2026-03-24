@@ -110,6 +110,32 @@ export class AuthController {
     return this.authService.registerClient(registerDto, pictureFile);
   }
 
+  /**
+   * Registro de cliente por parte del administrador de la compañía
+   * POST /auth/register/client-by-admin
+   */
+  @Post('register/client-by-admin')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('picture'))
+  @HttpCode(HttpStatus.CREATED)
+  async registerClientByAdmin(
+    @Body() registerDto: RegisterClientDto,
+    @Req() req: any,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
+          new FileTypeValidator({ fileType: 'image/(jpeg|png|jpg|gif|webp)' }),
+        ],
+        fileIsRequired: false,
+      }),
+    )
+    pictureFile?: Express.Multer.File,
+  ) {
+    const adminId = req.user.sub;
+    return this.authService.registerClientByAdmin(registerDto, adminId, pictureFile);
+  }
+
   // ==================== ENDPOINTS DE LOGIN ====================
 
   /**
