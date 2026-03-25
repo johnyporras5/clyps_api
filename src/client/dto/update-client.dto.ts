@@ -5,6 +5,10 @@ export class UpdateClientDto {
 
   @IsOptional()
   @IsString()
+  username?: string;
+
+  @IsOptional()
+  @IsString()
   name?: string;
 
   @IsOptional()

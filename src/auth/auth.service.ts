@@ -65,7 +65,11 @@ export class AuthService {
     });
 
     if (existingUserByEmail) {
-      // Si el usuario existe pero no está verificado, permitir reenviar código
+      // Si el email pertenece a otro rol, rechazar inmediatamente
+      if (existingUserByEmail.userType !== 'adm') {
+        throw new ConflictException('El email ya está registrado con un rol diferente (trabajador o cliente)');
+      }
+      // Mismo rol (admin), pero no verificado → reenviar código
       if (existingUserByEmail.emailVerified === 0) {
         await this.sendVerificationCode(registerDto.email);
         throw new ConflictException({
@@ -232,7 +236,7 @@ export class AuthService {
     if (existingUserByEmail) {
       // Si el usuario existe, verificar si ya es un trabajador
       if (existingUserByEmail.userType !== 'wrk') {
-        throw new ConflictException('El email ya está registrado como otro tipo de usuario (no trabajador)');
+        throw new ConflictException('El email ya está registrado con un rol diferente (no trabajador)');
       }
 
       // Usuario existe y es trabajador (verificado o no)
@@ -454,7 +458,7 @@ export class AuthService {
     // ==================== VERIFICAR SI YA EXISTE EL USUARIO ====================
     if (existingUserByEmail) {
       if (existingUserByEmail.userType !== 'cli') {
-        throw new ConflictException('El email ya está registrado como otro tipo de usuario (no cliente)');
+        throw new ConflictException('El email ya está registrado con un rol diferente (no cliente)');
       }
 
       user = existingUserByEmail;
@@ -728,7 +732,7 @@ export class AuthService {
 
     if (existingUserByEmail) {
       if (existingUserByEmail.userType !== 'cli') {
-        throw new ConflictException('El email ya está registrado como otro tipo de usuario');
+        throw new ConflictException('El email ya está registrado con un rol diferente (no cliente)');
       }
       user = existingUserByEmail;
       isExistingUser = true;

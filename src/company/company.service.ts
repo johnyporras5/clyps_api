@@ -218,6 +218,7 @@ async updateAdminProfile(
   if (updateAdminProfileDto.instagramUrl !== undefined) updateData.instagramUrl = updateAdminProfileDto.instagramUrl;
   if (updateAdminProfileDto.tiktokUrl !== undefined) updateData.tiktokUrl = updateAdminProfileDto.tiktokUrl;
   if (updateAdminProfileDto.facebookUrl !== undefined) updateData.facebookUrl = updateAdminProfileDto.facebookUrl;
+  if (updateAdminProfileDto.birthDate !== undefined) updateData.birthDate = new Date(updateAdminProfileDto.birthDate);
 
   // Aplicar actualizaciones
   Object.assign(company, updateData);

@@ -342,6 +342,12 @@ export class ClientService {
       }
     }
 
+    // Actualizar username en la entidad User si se proporcionó
+    if (updateClientDto.username !== undefined && client.user) {
+      await this.userRepository.update(client.user.id, { username: updateClientDto.username });
+      client.user.username = updateClientDto.username;
+    }
+
     const allowedFields = ['name', 'lastName', 'email', 'phone', 'birthDate', 'location', 'isActive', 'picture'];
     const updates: Partial<Client> = {};
 
