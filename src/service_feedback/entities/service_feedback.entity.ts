@@ -6,10 +6,10 @@ import {
   CreateDateColumn,
   JoinColumn,
 } from 'typeorm';
-import { Worker } from '../../worker/entities/worker.entity';
+import { Service } from '../../service/entities/service.entity';
 
-@Entity('worker_feedback')
-export class WorkerFeedback {
+@Entity('service_feedback')
+export class ServiceFeedback {
   @PrimaryGeneratedColumn()
   id: number;
 
@@ -22,12 +22,12 @@ export class WorkerFeedback {
   @CreateDateColumn({ name: 'datetime', type: 'timestamp' })
   datetime: Date;
 
-  @ManyToOne(() => Worker, (worker) => worker.feedbacks, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'worker_id' })
-  worker: Worker;
+  @ManyToOne(() => Service, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'service_id' })
+  service: Service;
 
-  @Column({ name: 'worker_id', type: 'int' })
-  workerId: number;
+  @Column({ name: 'service_id', type: 'int' })
+  serviceId: number;
 
   client?: any;
 

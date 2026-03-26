@@ -12,6 +12,7 @@ import { UserModule } from './user/user.module';
 import { WorkerModule } from './worker/worker.module';
 import { WorkerFeedbackModule } from './worker_feedback/worker_feedback.module';
 import { CalendarCompanyModule } from './calendar_company/calendar-company.module';
+import { ServiceFeedbackModule } from './service_feedback/service_feedback.module';
 
 @Module({
   imports: [
@@ -27,7 +28,8 @@ import { CalendarCompanyModule } from './calendar_company/calendar-company.modul
     UserModule,
     WorkerModule,
     WorkerFeedbackModule,
-    CalendarCompanyModule
+    CalendarCompanyModule,
+    ServiceFeedbackModule,
   ],
 })
 export class GeneratedModules {}

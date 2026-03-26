@@ -286,7 +286,6 @@ export class CompanyWorkerService {
         'COUNT(wf.id) AS totalReviews'
       ])
       .where('cw.company_id = :companyId', { companyId: company.id })
-      .andWhere('cw.is_active = 1')
       .andWhere('cw.temporarily_deleted = 0')
       .andWhere('cw.permanently_deleted = 0')
       .groupBy('worker.id')
