@@ -9,6 +9,7 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { Worker } from '../worker/entities/worker.entity';
 import { paginate, PaginationOptions, PaginationResult } from '../common/utils/pagination.util';
 import { ServiceCategory } from '../service_category/entities/service_category.entity';
+import { ServiceOffer } from '../Offer/entities/service-offer.entity';
 
 @Injectable()
 export class ServiceService {
@@ -23,7 +24,9 @@ export class ServiceService {
     private workerRepository: Repository<Worker>,
     @InjectRepository(ServiceCategory)
     private categoryRepository: Repository<ServiceCategory>,
-    
+    @InjectRepository(ServiceOffer)
+    private serviceOfferRepository: Repository<ServiceOffer>,
+
   ) { }
 
   /**
@@ -264,7 +267,10 @@ export class ServiceService {
       throw new NotFoundException(`Service with id ${id} not found or you don't have permission`);
     }
 
-    // 3. Eliminar el servicio
+    // 3. Eliminar service_offers relacionados
+    await this.serviceOfferRepository.delete({ serviceId: id });
+
+    // 4. Eliminar el servicio
     const result = await this.serviceRepository.delete(id);
     if (result.affected === 0) {
       throw new NotFoundException(`Service with id ${id} not found`);

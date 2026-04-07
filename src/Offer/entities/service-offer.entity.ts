@@ -16,7 +16,7 @@ export class ServiceOffer {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   price: number;
 
-  @ManyToOne(() => Service)
+  @ManyToOne(() => Service, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'service_id' })
   service: Service;
 
