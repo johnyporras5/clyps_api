@@ -21,6 +21,7 @@ import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto, ExtraServiceItemDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
 import { IAPromptsService } from '../IAprompts/ia_prompts.service';
+import { FileUploadService } from '../common/services/file_upload.service';
 import { Offer } from 'src/Offer/entities/offer.entity';
 import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
 
@@ -51,7 +52,7 @@ export class SessionService {
     private offerRepository: Repository<Offer>,
     @InjectRepository(ServiceOffer)
     private serviceOfferRepository: Repository<ServiceOffer>,
-
+    private fileUploadService: FileUploadService,
   ) { }
 
 
@@ -618,7 +619,7 @@ export class SessionService {
           clientId: session.clientId
         });
 
-        throw new BadRequestException(`Error al crear el detalle para el servicio ${service.name}: ${error.message}`);
+        throw new BadRequestException(`Error al crear el detalle para el servicio ${service.name}: ${(error as Error).message}`);
       }
     }
 
@@ -627,7 +628,7 @@ export class SessionService {
       await this.updateSessionStatusBasedOnDetails(session.id);
       console.log(`✅ Estado de sesión actualizado automáticamente basado en ${createdDetails.length} detalle(s)`);
     } catch (error) {
-      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${error.message}`);
+      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${(error as Error).message}`);
       // No lanzamos error para no romper el flujo, solo registramos advertencia
     }
 
@@ -1020,6 +1021,7 @@ export class SessionService {
       clientId: session.clientId,
       clientName: client.name || '',
       clientLastName: client.lastName || '',
+      clientPicture: client.picture ? this.fileUploadService.getFileUrl('client_photo', client.picture) : null,
       companyId: companyId,
       companyName: companyName,
       sessionDatetime: session.sessionDatetime,
@@ -1160,7 +1162,7 @@ export class SessionService {
 
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      throw new BadRequestException(`Error al actualizar fechas: ${error.message}`);
+      throw new BadRequestException(`Error al actualizar fechas: ${(error as Error).message}`);
     } finally {
       await queryRunner.release();
     }
@@ -1432,7 +1434,7 @@ export class SessionService {
       }
 
     } catch (error) {
-      this.logger.error(`❌ Error enviando correos de confirmación: ${error.message}`, error.stack);
+      this.logger.error(`❌ Error enviando correos de confirmación: ${(error as Error).message}`, (error as Error).stack);
     }
   }
 
@@ -3241,7 +3243,7 @@ export class SessionService {
       await this.updateSessionStatusBasedOnDetails(session.id);
       console.log(`✅ Estado de sesión del cliente actualizado automáticamente basado en ${createdDetails.length} detalle(s)`);
     } catch (error) {
-      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión del cliente: ${error.message}`);
+      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión del cliente: ${(error as Error).message}`);
     }
 
     // 10. Crear los detalles de sesión
@@ -3286,7 +3288,7 @@ export class SessionService {
           clientId: session.clientId
         });
 
-        throw new BadRequestException(`Error al crear el detalle para el servicio ${service.name}: ${error.message}`);
+        throw new BadRequestException(`Error al crear el detalle para el servicio ${service.name}: ${(error as Error).message}`);
       }
     }
 
@@ -3931,7 +3933,7 @@ export class SessionService {
 
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      throw new BadRequestException(`Error al agregar servicios extras: ${error.message}`);
+      throw new BadRequestException(`Error al agregar servicios extras: ${(error as Error).message}`);
     } finally {
       await queryRunner.release();
     }
@@ -3960,7 +3962,7 @@ export class SessionService {
           adminCompany.id
         );
       } catch (error) {
-        this.logger.warn(`⚠️ Error enviando correos para servicio extra: ${error.message}`);
+        this.logger.warn(`⚠️ Error enviando correos para servicio extra: ${(error as Error).message}`);
       }
     }
 
@@ -3969,7 +3971,7 @@ export class SessionService {
       await this.updateSessionStatusBasedOnDetails(sessionId);
       console.log(`✅ Estado de sesión actualizado automáticamente después de agregar servicios extras`);
     } catch (error) {
-      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${error.message}`);
+      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${(error as Error).message}`);
     }
 
     // 16. Retornar resultado
@@ -4104,8 +4106,8 @@ export class SessionService {
       };
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      this.logger.error(`❌ Error cancelando sesión: ${error.message}`, error.stack);
-      throw new BadRequestException(`Error al cancelar la sesión: ${error.message}`);
+      this.logger.error(`❌ Error cancelando sesión: ${(error as Error).message}`, (error as Error).stack);
+      throw new BadRequestException(`Error al cancelar la sesión: ${(error as Error).message}`);
     } finally {
       await queryRunner.release();
     }
@@ -4194,8 +4196,8 @@ export class SessionService {
       }
     } catch (error) {
       this.logger.error(
-        `❌ Error enviando correos de cancelación: ${error.message}`,
-        error.stack,
+        `❌ Error enviando correos de cancelación: ${(error as Error).message}`,
+        (error as Error).stack,
       );
     }
   }
