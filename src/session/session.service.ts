@@ -1687,6 +1687,7 @@ export class SessionService {
           clientId: session.clientId,
           clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
           clientLastName: client?.lastName || '',
+          clientPicture: client?.picture ? this.fileUploadService.getFileUrl('client_photo', client.picture) : null,
           companyId: adminCompany.id,
           companyName: adminCompany.name,
           sessionDatetime: session.sessionDatetime,
