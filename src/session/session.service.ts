@@ -1493,6 +1493,8 @@ export class SessionService {
     adminId: number,
     getSessionsDto: GetSessionsDto
   ): Promise<PaginationResult<any>> {
+    console.log(`🔍 findAllSessionsSimple called with adminId=${adminId}, dto=`, JSON.stringify(getSessionsDto));
+    try {
     const adminCompany = await this.companyRepository.findOne({
       where: { userId: adminId }
     });
@@ -1708,7 +1710,7 @@ export class SessionService {
       })
     );
 
-    return {
+    const result = {
       data: enrichedSessions,
       meta: {
         page: getSessionsDto.page,
@@ -1719,6 +1721,12 @@ export class SessionService {
         hasPrev: getSessionsDto.page > 1,
       }
     };
+    console.log(`✅ findAllSessionsSimple returning ${enrichedSessions.length} sessions`);
+    return result;
+    } catch (error) {
+      console.error(`❌ findAllSessionsSimple ERROR:`, error.message, error.stack);
+      throw error;
+    }
   }
 
   private getSessionStatusText(status: number): string {
@@ -1915,49 +1923,27 @@ export class SessionService {
     // 3. Guardar estado anterior
     const previousStatus = detail.status;
 
-    // 4. Validar que el nuevo estado sea válido (1-3 para detalles)
-    if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 3) {
-      throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso) o 3 (Completado)');
+    // 4. Validar que el nuevo estado sea válido (1-5 para detalles)
+    if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 5) {
+      throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso), 3 (Completado), 4 (Pagado) o 5 (Cancelado)');
     }
 
-    // 5. Validar transiciones de estado (opcional pero recomendado)
-    if (previousStatus === 3 && updateDetailStatusDto.status !== 3) {
-      throw new BadRequestException('No se puede revertir un detalle completado');
-    }
-
-    // 6. Actualizar el detalle
+    // 5. Actualizar el detalle
     detail.status = updateDetailStatusDto.status;
     const updatedDetail = await this.sessionDetailRepository.save(detail);
-
-    // 7. Actualizar automáticamente el estado de la sesión
-    const autoUpdateResult = await this.updateSessionStatusBasedOnDetails(detail.sessionId);
-
-    // 8. Obtener la sesión actualizada
-    const session = await this.sessionRepository.findOne({
-      where: { id: detail.sessionId }
-    });
-
-    let sessionUpdated = false;
-    let newSessionStatus: number | null = null;
-
-    if (session && autoUpdateResult.updated) {
-      sessionUpdated = true;
-      newSessionStatus = autoUpdateResult.newStatus;
-    }
 
     console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status} por ${userRole}`);
 
     return {
       message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
       detail: updatedDetail,
-      sessionUpdated,
-      newSessionStatus,
+      sessionUpdated: false,
+      newSessionStatus: null,
       validation: {
         canUpdateDetail: true,
         detailPreviousStatus: previousStatus,
         sessionId: detail.sessionId
-      },
-      autoUpdateResult
+      }
     };
   }
   /**
@@ -2011,6 +1997,8 @@ export class SessionService {
     let scheduledCount = 0;    // 1: Agendado
     let inProcessCount = 0;    // 2: En proceso
     let completedCount = 0;    // 3: Completado
+    let paidCount = 0;         // 4: Pagado
+    let cancelledCount = 0;    // 5: Cancelado
     let totalDetails = sessionDetails.length;
 
     for (const detail of sessionDetails) {
@@ -2022,61 +2010,68 @@ export class SessionService {
         inProcessCount++;
       } else if (status === 3) {
         completedCount++;
+      } else if (status === 4) {
+        paidCount++;
+      } else if (status === 5) {
+        cancelledCount++;
       }
     }
 
-    const allCompleted = completedCount === totalDetails;
+    // Para la lógica, detalles pagados también cuentan como "terminados"
+    const finishedCount = completedCount + paidCount;
+    const activeDetails = totalDetails - cancelledCount;
+    const allFinished = finishedCount === activeDetails && activeDetails > 0;
+    const allPaid = paidCount === activeDetails && activeDetails > 0;
+    const allCompleted = completedCount === activeDetails && activeDetails > 0;
     const anyInProcess = inProcessCount > 0;
     const anyScheduled = scheduledCount > 0;
     const anyCompleted = completedCount > 0;
+    const anyFinished = finishedCount > 0;
 
     console.log(`📊 Resumen de detalles para sesión ${sessionId}:`);
     console.log(`- Total: ${totalDetails}`);
     console.log(`- Agendados: ${scheduledCount}`);
     console.log(`- En proceso: ${inProcessCount}`);
     console.log(`- Completados: ${completedCount}`);
+    console.log(`- Pagados: ${paidCount}`);
+    console.log(`- Cancelados: ${cancelledCount}`);
     console.log(`- Estado actual de sesión: ${this.getSessionStatusText(session.sessionStatus)}`);
 
-    // 4. Determinar el nuevo estado de la sesión basado en la lógica CORREGIDA
+    // 4. Determinar el nuevo estado de la sesión basado en la lógica
     const previousStatus = session.sessionStatus;
     let newStatus = previousStatus;
     let reason = '';
 
-    // REGLAS DE ACTUALIZACIÓN AUTOMÁTICA CORREGIDAS:
-    // 1. Si TODOS los detalles están completados (3) → Sesión COMPLETADA (3)
-    if (allCompleted && totalDetails > 0) {
+    // REGLAS DE ACTUALIZACIÓN AUTOMÁTICA:
+    // 1. Si TODOS los detalles activos están pagados (4) → Sesión PAGADA (4)
+    if (allPaid) {
+      newStatus = 4; // Pagado
+      reason = 'Todos los servicios han sido pagados';
+    }
+    // 2. Si TODOS los detalles activos están completados o pagados (3/4) → Sesión COMPLETADA (3)
+    else if (allFinished) {
       newStatus = 3; // Completada
       reason = 'Todos los servicios han sido completados';
-    }
-    // 2. Si ALGÚN detalle está en proceso (2) Y hay detalles completados → Sesión EN PROCESO (2)
-    else if (anyInProcess && anyCompleted) {
-      newStatus = 2; // En proceso
-      reason = 'Hay servicios en proceso y algunos completados';
     }
     // 3. Si ALGÚN detalle está en proceso (2) → Sesión EN PROCESO (2)
     else if (anyInProcess) {
       newStatus = 2; // En proceso
       reason = 'Hay servicios en proceso';
     }
-    // 4. Si ALGÚN detalle está agendado (1) y hay detalles completados → Sesión EN PROCESO (2)
-    else if (anyScheduled && anyCompleted) {
+    // 4. Si ALGÚN detalle está agendado (1) y hay detalles terminados → Sesión EN PROCESO (2)
+    else if (anyScheduled && anyFinished) {
       newStatus = 2; // En proceso
       reason = 'Hay servicios agendados y algunos completados';
     }
-    // 5. Si ALGÚN detalle está agendado (1) y NO hay en proceso → Sesión AGENDADA (1)
-    else if (anyScheduled && !anyInProcess) {
+    // 5. Si ALGÚN detalle está agendado (1) → Sesión AGENDADA (1)
+    else if (anyScheduled) {
       newStatus = 1; // Agendado
       reason = 'Hay servicios agendados';
     }
-    // 6. Si la sesión estaba como completada (3) o pagada (4) pero no todos están completados
-    else if ((previousStatus === 3 || previousStatus === 4) && !allCompleted) {
-      if (anyInProcess) {
-        newStatus = 2;
-        reason = 'La sesión tenía estado completado/pagado pero hay servicios en proceso';
-      } else if (anyScheduled) {
-        newStatus = 1;
-        reason = 'La sesión tenía estado completado/pagado pero hay servicios agendados';
-      }
+    // 6. Si todos los detalles están cancelados → Sesión CANCELADA (5)
+    else if (cancelledCount === totalDetails && totalDetails > 0) {
+      newStatus = 5; // Cancelada
+      reason = 'Todos los servicios han sido cancelados';
     }
 
     // 5. Solo actualizar si el estado cambió
@@ -2139,9 +2134,13 @@ export class SessionService {
     });
 
     const totalDetails = sessionDetails.length;
+    const cancelledDetails = sessionDetails.filter(d => d.status === 5).length;
+    const activeDetails = totalDetails - cancelledDetails;
     const completedDetails = sessionDetails.filter(d => d.status === 3).length;
-    const pendingDetails = totalDetails - completedDetails;
-    const allDetailsCompleted = completedDetails === totalDetails;
+    const paidDetails = sessionDetails.filter(d => d.status === 4).length;
+    const finishedDetails = completedDetails + paidDetails;
+    const pendingDetails = activeDetails - finishedDetails;
+    const allDetailsCompleted = finishedDetails === activeDetails && activeDetails > 0;
 
     // Contar estados para lógica automática
     const scheduledDetails = sessionDetails.filter(d => d.status === 1).length;
@@ -2151,7 +2150,10 @@ export class SessionService {
     let recommendedStatus = 1; // Por defecto Agendado
     let reason = '';
 
-    if (allDetailsCompleted && totalDetails > 0) {
+    if (paidDetails === activeDetails && activeDetails > 0) {
+      recommendedStatus = 4;
+      reason = 'Todos los servicios pagados';
+    } else if (allDetailsCompleted && activeDetails > 0) {
       recommendedStatus = 3;
       reason = 'Todos los servicios completados';
     } else if (inProcessDetails > 0) {
@@ -2184,22 +2186,17 @@ export class SessionService {
     let canUpdate = true;
     let errorMessage = '';
 
-    // 1. Solo se puede marcar como pagada (4) si la sesión está completada (3) y todos los detalles completados
+    // 1. Solo se puede marcar como pagada (4) si la sesión está completada (3)
     if (newSessionStatus === 4) {
       if (session.sessionStatus !== 3) {
         canUpdate = false;
         errorMessage = 'La sesión debe estar en estado "Completada" antes de marcarla como "Pagada".';
-      } else if (!allDetailsCompleted) {
-        canUpdate = false;
-        errorMessage = 'Todos los detalles deben estar completados para marcar la sesión como pagada.';
       }
     }
 
     // 2. Advertencia si se intenta cambiar manualmente a un estado que no coincide con la lógica automática
-    // (permitimos pero con advertencia)
-    if (newSessionStatus !== 4 && newSessionStatus !== recommendedStatus) {
+    if (newSessionStatus !== 4 && newSessionStatus !== 5 && newSessionStatus !== recommendedStatus) {
       console.warn(`⚠️ Intento de cambiar estado de sesión ${sessionId} a ${newSessionStatus}, pero la lógica automática recomienda ${recommendedStatus} (${reason})`);
-      // No bloqueamos, pero registramos la advertencia
     }
 
     // Obtener información detallada de cada detalle
@@ -2266,7 +2263,8 @@ export class SessionService {
       1: 'Agendado',
       2: 'En proceso',
       3: 'Completado',
-      4: 'Cancelado',
+      4: 'Pagado',
+      5: 'Cancelado',
 
     };
     return statusMap[status] || `Estado ${status}`;
@@ -4080,11 +4078,11 @@ export class SessionService {
       session.sessionStatus = 5;
       const updatedSession = await queryRunner.manager.save(session);
 
-      // 6. Actualizar todos los detalles de la sesión a 4 = Cancelado
+      // 6. Actualizar todos los detalles de la sesión a 5 = Cancelado
       const updateResult = await queryRunner.manager
         .createQueryBuilder()
         .update(SessionDetail)
-        .set({ status: 4 })
+        .set({ status: 5 })
         .where('sessionId = :sessionId', { sessionId })
         .execute();
 

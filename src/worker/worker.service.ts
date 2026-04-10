@@ -430,7 +430,7 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
   const raw = await this.workerFeedbackRepository
     .createQueryBuilder('f')
     .select('AVG(f.stars)', 'avg')
-    .where('f.worker_id = :workerId', { workerId })
+    .where('f.workerId = :workerId', { workerId })
     .getRawOne();
 
   const averageStars = raw && raw.avg ? parseFloat(raw.avg) : 0;
