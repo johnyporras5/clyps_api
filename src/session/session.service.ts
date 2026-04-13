@@ -3481,7 +3481,8 @@ export class SessionService {
   async addExtraServicesToSession(
     sessionId: number,
     addExtraServicesDto: AddExtraServicesDto,
-    adminId: number
+    userId: number,
+    userRole?: string
   ): Promise<{
     message: string;
     session: Session;
@@ -3513,16 +3514,7 @@ export class SessionService {
   }> {
     console.log(`🎁 Agregando servicios extras a sesión ${sessionId}`);
 
-    // 1. Verificar permisos del administrador
-    const adminCompany = await this.companyRepository.findOne({
-      where: { userId: adminId }
-    });
-
-    if (!adminCompany) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
-    }
-
-    // 2. Buscar la sesión
+    // 1. Buscar la sesión
     const session = await this.sessionRepository.findOne({
       where: { id: sessionId }
     });
@@ -3531,33 +3523,60 @@ export class SessionService {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
 
-    // 3. Verificar que la sesión pertenezca a la compañía del administrador
-    const sessionDetails = await this.sessionDetailRepository.find({
-      where: { sessionId: sessionId }
-    });
+    // 2. Obtener la compañía (necesaria para validaciones posteriores)
+    let adminCompany: any = null;
 
-    if (sessionDetails.length === 0) {
-      throw new NotFoundException(`La sesión ${sessionId} no tiene detalles`);
-    }
-
-    let sessionBelongsToAdmin = false;
-    for (const detail of sessionDetails) {
-      const companyWorker = await this.companyWorkerRepository.findOne({
-        where: { id: detail.companyWorkerId },
-        relations: ['company']
+    if (userRole === 'cli') {
+      if (session.clientId !== userId) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+      }
+      // Obtener la compañía a partir de los detalles de la sesión
+      const firstDetail = await this.sessionDetailRepository.findOne({
+        where: { sessionId: sessionId }
+      });
+      if (firstDetail) {
+        const cw = await this.companyWorkerRepository.findOne({
+          where: { id: firstDetail.companyWorkerId },
+          relations: ['company']
+        });
+        adminCompany = cw?.company || null;
+      }
+    } else {
+      adminCompany = await this.companyRepository.findOne({
+        where: { userId: userId }
       });
 
-      if (companyWorker?.company?.id === adminCompany.id) {
-        sessionBelongsToAdmin = true;
-        break;
+      if (!adminCompany) {
+        throw new NotFoundException('El administrador no tiene una compañía asignada');
+      }
+
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId: sessionId }
+      });
+
+      if (sessionDetails.length === 0) {
+        throw new NotFoundException(`La sesión ${sessionId} no tiene detalles`);
+      }
+
+      let sessionBelongsToAdmin = false;
+      for (const detail of sessionDetails) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: detail.companyWorkerId },
+          relations: ['company']
+        });
+
+        if (companyWorker?.company?.id === adminCompany.id) {
+          sessionBelongsToAdmin = true;
+          break;
+        }
+      }
+
+      if (!sessionBelongsToAdmin) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
       }
     }
 
-    if (!sessionBelongsToAdmin) {
-      throw new ForbiddenException('No tienes permiso para modificar esta sesión');
-    }
-
-    // 4. Validar que haya servicios extras para agregar
+    // 3. Validar que haya servicios extras para agregar
     if (!addExtraServicesDto.extraServices || addExtraServicesDto.extraServices.length === 0) {
       throw new BadRequestException('Debe proporcionar al menos un servicio extra');
     }
@@ -4543,6 +4562,83 @@ export class SessionService {
       appliedOfferId: offerId,
       isOffer: true,
       offerName: serviceOffer.offer?.name || null,
+    };
+  }
+
+  /**
+   * Eliminar un servicio extra de una sesión
+   */
+  async removeExtraServiceFromSession(
+    sessionId: number,
+    detailId: number,
+    userId: number,
+    userRole: string
+  ): Promise<{ message: string }> {
+
+    // 1. Buscar la sesión
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+    }
+
+    // 2. Buscar el detalle extra
+    const detail = await this.sessionDetailRepository.findOne({
+      where: { id: detailId, sessionId: sessionId, isExtra: true }
+    });
+
+    if (!detail) {
+      throw new NotFoundException(`Servicio extra con ID ${detailId} no encontrado en la sesión ${sessionId}`);
+    }
+
+    // 3. Verificar permisos según el rol
+    if (userRole === 'adm') {
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId: userId }
+      });
+
+      if (!adminCompany) {
+        throw new NotFoundException('El administrador no tiene una compañía asignada');
+      }
+
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['company']
+      });
+
+      if (companyWorker?.company?.id !== adminCompany.id) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+      }
+    } else if (userRole === 'cli') {
+      if (session.clientId !== userId) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+      }
+    }
+
+    // 5. Restar los totales del detalle de la sesión
+    session.totalCost = Number(session.totalCost || 0) - Number(detail.cost || 0);
+    session.totalTime = Number(session.totalTime || 0) - Number(detail.totalTime || 0);
+
+    // 6. Eliminar del JSON extraServices
+    if (session.extraServices && Array.isArray(session.extraServices)) {
+      session.extraServices = session.extraServices.filter(
+        (extra) => extra.sessionDetailId !== detailId
+      );
+    }
+
+    await this.sessionRepository.save(session);
+
+    // 7. Eliminar el detalle extra
+    await this.sessionDetailRepository
+      .createQueryBuilder()
+      .delete()
+      .where("id = :id AND session_id = :sessionId", { id: detailId, sessionId: sessionId })
+      .execute();
+
+    return {
+      message: `Servicio extra eliminado exitosamente de la sesión ${sessionId}`
     };
   }
 }

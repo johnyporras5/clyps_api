@@ -16,6 +16,7 @@ import { IAPromptsModule } from './IAprompts/ia_prompts.module';
 import { ServiceCategoryModule } from './service_category/service_category.module';
 import { CompanyCategoryModule } from './company_category/company_category.module';
 import { OfferModule } from './Offer/offer.module';
+import { ReportsModule } from './reports/reports.module';
 
 
 @Module({
@@ -95,7 +96,8 @@ import { OfferModule } from './Offer/offer.module';
     IAPromptsModule,
     ServiceCategoryModule,
     CompanyCategoryModule,
-    OfferModule
+    OfferModule,
+    ReportsModule,
 
   ],
   controllers: [AppController],

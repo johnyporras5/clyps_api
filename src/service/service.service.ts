@@ -10,6 +10,7 @@ import { Worker } from '../worker/entities/worker.entity';
 import { paginate, PaginationOptions, PaginationResult } from '../common/utils/pagination.util';
 import { ServiceCategory } from '../service_category/entities/service_category.entity';
 import { ServiceOffer } from '../Offer/entities/service-offer.entity';
+import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 
 @Injectable()
 export class ServiceService {
@@ -26,6 +27,8 @@ export class ServiceService {
     private categoryRepository: Repository<ServiceCategory>,
     @InjectRepository(ServiceOffer)
     private serviceOfferRepository: Repository<ServiceOffer>,
+    @InjectRepository(SessionDetail)
+    private sessionDetailRepository: Repository<SessionDetail>,
 
   ) { }
 
@@ -267,10 +270,19 @@ export class ServiceService {
       throw new NotFoundException(`Service with id ${id} not found or you don't have permission`);
     }
 
-    // 3. Eliminar service_offers relacionados
+    // 3. Verificar que el servicio no tenga sessions asociadas
+    const sessionDetailCount = await this.sessionDetailRepository.count({
+      where: { serviceId: id }
+    });
+
+    if (sessionDetailCount > 0) {
+      throw new BadRequestException('No se puede eliminar el servicio porque tiene sesiones asociadas');
+    }
+
+    // 4. Eliminar service_offers relacionados
     await this.serviceOfferRepository.delete({ serviceId: id });
 
-    // 4. Eliminar el servicio
+    // 5. Eliminar el servicio
     const result = await this.serviceRepository.delete(id);
     if (result.affected === 0) {
       throw new NotFoundException(`Service with id ${id} not found`);
