@@ -426,6 +426,26 @@ export class SessionService {
         detail.companyWorkerId
       );
 
+      // Verificar si el trabajador ya tiene una cita que se solape con este horario
+      const detailStartDatetime = detail.detailStartDatetime || createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime;
+      if (detailStartDatetime) {
+        const workerConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
+          detail.companyWorkerId,
+          detailStartDatetime,
+          detailTime
+        );
+
+        if (workerConflict) {
+          const conflictStart = new Date(workerConflict.startDatetime);
+          const workerName = companyWorker.worker
+            ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+            : `Trabajador ID: ${companyWorker.id}`;
+          throw new BadRequestException(
+            `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`
+          );
+        }
+      }
+
       // Resolver precio: oferta o normal
       const priceResolution = await this.resolveServicePrice(
         detail.serviceId,
@@ -470,7 +490,6 @@ export class SessionService {
       // const detailTime = service.standardTime || 0;
 
       totalSessionCost += detailCost;
-      totalSessionTime += detailTime;
 
       const workerName = companyWorker.worker
         ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
@@ -512,7 +531,16 @@ export class SessionService {
       });
     }
 
-    // 5. Crear datos de la sesión con los totales calculados
+    // 5. Calcular tiempo total real considerando solapamiento entre servicios
+    const defaultStartDatetime = createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime || new Date();
+    totalSessionTime = this.calculateRealTotalTime(
+      serviceValidations.map(v => ({
+        startDatetime: v.detail.detailStartDatetime || defaultStartDatetime,
+        totalTime: v.detailTime
+      }))
+    );
+
+    // 6. Crear datos de la sesión con los totales calculados
     const sessionData: CreateSessionDto = {
       clientId: createSessionWithDetailDto.clientId,
       sessionDatetime: createSessionWithDetailDto.sessionDatetime,
@@ -782,6 +810,96 @@ export class SessionService {
     }
 
     return null;
+  }
+
+  /**
+   * Verificar si el trabajador ya tiene una cita que se solape con el horario propuesto.
+   * Compara el rango [startDatetime, startDatetime + totalTime] contra los detalles existentes del trabajador.
+   * Excluye detalles con status 5 (cancelados) y opcionalmente una sesión específica.
+   */
+  private async checkIfWorkerHasAppointmentAtSameTime(
+    companyWorkerId: number,
+    startDatetime: Date,
+    totalTimeMinutes: number,
+    excludeSessionId?: number
+  ): Promise<SessionDetail | null> {
+    if (!startDatetime || !totalTimeMinutes) {
+      return null;
+    }
+
+    const newStart = new Date(startDatetime).getTime();
+    const newEnd = newStart + totalTimeMinutes * 60000;
+
+    const appointmentDate = new Date(startDatetime);
+    const startOfDay = new Date(appointmentDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(appointmentDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Buscar detalles del trabajador en el mismo día (excluyendo cancelados status=5)
+    const workerDetails = await this.sessionDetailRepository
+      .createQueryBuilder('sd')
+      .where('sd.company_worker_id = :companyWorkerId', { companyWorkerId })
+      .andWhere('sd.start_datetime BETWEEN :startOfDay AND :endOfDay', {
+        startOfDay,
+        endOfDay
+      })
+      .andWhere('sd.status != :cancelledStatus', { cancelledStatus: 5 })
+      .getMany();
+
+    for (const detail of workerDetails) {
+      // Excluir detalles de la misma sesión (para no comparar consigo misma)
+      if (excludeSessionId && detail.sessionId === excludeSessionId) {
+        continue;
+      }
+
+      const existingStart = new Date(detail.startDatetime).getTime();
+      const existingEnd = existingStart + (detail.totalTime || 0) * 60000;
+
+      // Verificar solapamiento: newStart < existingEnd AND newEnd > existingStart
+      if (newStart < existingEnd && newEnd > existingStart) {
+        return detail;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Calcula el tiempo total real de una sesión considerando solapamiento entre servicios.
+   * En lugar de sumar los tiempos individuales, calcula la unión de los rangos de tiempo.
+   * Ejemplo: servicio 2:00-2:50 (50min) + servicio 2:10-3:10 (60min) → tiempo real = 70min (2:00-3:10)
+   */
+  private calculateRealTotalTime(
+    details: Array<{ startDatetime: Date; totalTime: number }>
+  ): number {
+    if (details.length === 0) return 0;
+    if (details.length === 1) return details[0].totalTime;
+
+    // Convertir a rangos [start, end] en milisegundos
+    const ranges = details
+      .map(d => ({
+        start: new Date(d.startDatetime).getTime(),
+        end: new Date(d.startDatetime).getTime() + (d.totalTime || 0) * 60000
+      }))
+      .sort((a, b) => a.start - b.start);
+
+    // Merge de rangos solapados
+    const merged: Array<{ start: number; end: number }> = [ranges[0]];
+
+    for (let i = 1; i < ranges.length; i++) {
+      const last = merged[merged.length - 1];
+      if (ranges[i].start <= last.end) {
+        // Solapamiento: extender el rango
+        last.end = Math.max(last.end, ranges[i].end);
+      } else {
+        // Sin solapamiento: nuevo rango
+        merged.push({ ...ranges[i] });
+      }
+    }
+
+    // Sumar la duración de los rangos merged (en minutos)
+    return merged.reduce((total, range) => total + (range.end - range.start) / 60000, 0);
   }
 
   /**
@@ -1377,11 +1495,12 @@ export class SessionService {
         where: { id: companyId }
       });
 
-      const formattedDate = this.emailService.formatSessionDate(session.sessionDatetime);
+      // Usar datos del detalle individual, no los totales de la sesión
+      const detailStartDatetime = sessionDetail.startDatetime || session.sessionDatetime;
+      const formattedDate = this.emailService.formatSessionDate(detailStartDatetime);
 
-      const sessionCost = parseFloat(String(session.totalCost)) || 0;
-      const serviceCost = parseFloat(String(service?.cost)) || 0;
-      const finalCost = sessionCost || serviceCost;
+      const detailCost = parseFloat(String(sessionDetail.cost)) || parseFloat(String(service?.cost)) || 0;
+      const detailDuration = Number(sessionDetail.totalTime) || Number(service?.standardTime) || 0;
 
       if (clientInfo.email) {
         await this.emailService.sendSessionConfirmationToClient(
@@ -1391,8 +1510,8 @@ export class SessionService {
             date: formattedDate.date,
             time: formattedDate.time,
             serviceName: service?.name || 'Servicio',
-            serviceCost: finalCost,
-            serviceDuration: Number(session.totalTime) || Number(service?.standardTime) || 0
+            serviceCost: detailCost,
+            serviceDuration: detailDuration
           },
           {
             name: workerInfo.name,
@@ -1417,8 +1536,8 @@ export class SessionService {
             serviceName: service?.name || 'Servicio',
             clientName: clientInfo.name,
             clientPhone: clientInfo.phone,
-            serviceCost: finalCost,
-            serviceDuration: Number(session.totalTime) || Number(service?.standardTime) || 0
+            serviceCost: detailCost,
+            serviceDuration: detailDuration
           },
           {
             name: clientInfo.name,
@@ -1665,18 +1784,22 @@ export class SessionService {
             });
 
             services.push({
+              detailId: detail.id,
               serviceId: detail.serviceId,
               serviceName: service?.name || '',
               serviceDescription: service?.description || '',
               serviceCost: Number(detail.cost || 0),
               serviceTime: detail.totalTime || 0,
+              startDatetime: detail.startDatetime,
               companyWorkerId: detail.companyWorkerId,
               workerName: companyWorker?.worker ?
                 `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim() : '',
               workerLastName: companyWorker?.worker?.lastName || '',
               totalWorker: Number(detail.totalWorker || 0),
               totalCompany: Number(detail.totalCompany || 0),
-              detailStatus: detail.status || 1
+              detailStatus: detail.status || 1,
+              detailStatusText: this.getDetailStatusText(detail.status || 1),
+              isExtra: detail.isExtra === true || (detail.isExtra as any) === 1
             });
 
             totalCost += Number(detail.cost || 0);
@@ -1702,10 +1825,9 @@ export class SessionService {
           iaResponse: session.iaResponse,
           servicesCount: sessionDetails.length,
           services: services,
+          extraServices: session.extraServices || [],
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
-          //   description: session.description,
-          //  descriptionIA: session.descriptionIA,
         };
       })
     );
@@ -3088,6 +3210,26 @@ export class SessionService {
         detail.companyWorkerId
       );
 
+      // Verificar si el trabajador ya tiene una cita que se solape con este horario
+      const detailStartDatetime = detail.detailStartDatetime || createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime;
+      if (detailStartDatetime) {
+        const workerConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
+          detail.companyWorkerId,
+          detailStartDatetime,
+          detailTime
+        );
+
+        if (workerConflict) {
+          const conflictStart = new Date(workerConflict.startDatetime);
+          const workerName = companyWorker.worker
+            ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+            : `Trabajador ID: ${companyWorker.id}`;
+          throw new BadRequestException(
+            `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`
+          );
+        }
+      }
+
       // Resolver precio: oferta o normal
       const priceResolution = await this.resolveServicePrice(
         detail.serviceId,
@@ -3129,7 +3271,6 @@ export class SessionService {
 
       const detailCost = calculatedAmounts.cost;
       totalSessionCost += detailCost;
-      totalSessionTime += detailTime;
 
       const workerName = companyWorker.worker
         ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
@@ -3170,7 +3311,16 @@ export class SessionService {
       });
     }
 
-    // 7. Crear datos de la sesión con los totales calculados
+    // 7. Calcular tiempo total real considerando solapamiento entre servicios
+    const defaultClientStartDatetime = createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime || new Date();
+    totalSessionTime = this.calculateRealTotalTime(
+      serviceValidations.map(v => ({
+        startDatetime: v.detail.detailStartDatetime || defaultClientStartDatetime,
+        totalTime: v.detailTime
+      }))
+    );
+
+    // 8. Crear datos de la sesión con los totales calculados
     const sessionData: CreateSessionDto = {
       clientId: clientId, // Usar el ID del cliente autenticado
       sessionDatetime: createSessionWithDetailDto.sessionDatetime,
@@ -3827,6 +3977,44 @@ export class SessionService {
         );
       }
 
+      // Verificar si el mismo servicio ya existe en esta sesión con horario solapado
+      const existingSessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId: session.id, serviceId: extraService.serviceId }
+      });
+
+      const newStart = new Date(startDatetime).getTime();
+      const newEnd = newStart + detailTime * 60000;
+
+      for (const existingDetail of existingSessionDetails) {
+        if (existingDetail.status === 5) continue; // Ignorar cancelados
+        const existStart = new Date(existingDetail.startDatetime).getTime();
+        const existEnd = existStart + (existingDetail.totalTime || 0) * 60000;
+
+        if (newStart < existEnd && newEnd > existStart) {
+          throw new BadRequestException(
+            `El servicio "${service.name}" ya está asignado en esta sesión en un horario que se solapa (${new Date(existingDetail.startDatetime).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). No se puede agregar el mismo servicio dos veces en el mismo horario.`
+          );
+        }
+      }
+
+      // Verificar si el trabajador ya tiene una cita que se solape con este horario
+      const workerConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
+        extraService.providerId,
+        startDatetime,
+        detailTime,
+        session.id // Excluir la sesión actual
+      );
+
+      if (workerConflict) {
+        const conflictStart = new Date(workerConflict.startDatetime);
+        const workerName = companyWorker.worker
+          ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+          : `Trabajador ID: ${companyWorker.id}`;
+        throw new BadRequestException(
+          `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`
+        );
+      }
+
       // Acumular totales
       extraTotalCost += calculatedAmounts.cost;
       extraTotalTime += detailTime;
@@ -3902,7 +4090,18 @@ export class SessionService {
 
       // 10. Actualizar los totales de la sesión
       const newTotalCost = previousTotalCost + extraTotalCost;
-      const newTotalTime = previousTotalTime + extraTotalTime;
+
+      // Calcular tiempo total real considerando solapamiento entre todos los detalles
+      const existingDetails = await this.sessionDetailRepository.find({
+        where: { sessionId: session.id }
+      });
+      const allDetails = [
+        ...existingDetails
+          .filter(d => d.status !== 5) // Excluir cancelados
+          .map(d => ({ startDatetime: d.startDatetime, totalTime: d.totalTime || 0 })),
+        ...validations.map(v => ({ startDatetime: v.startDatetime, totalTime: v.detailTime }))
+      ];
+      const newTotalTime = this.calculateRealTotalTime(allDetails);
 
       await queryRunner.manager.update(
         Session,
