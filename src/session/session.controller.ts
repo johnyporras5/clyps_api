@@ -145,18 +145,32 @@ export class SessionController {
 
 
   @Post(':id/extra-services')
-  @Roles('adm')
+  @Roles('adm', 'cli')
   async addExtraServices(
     @Request() req,
     @Param('id') id: string,
     @Body() addExtraServicesDto: AddExtraServicesDto
   ) {
-    const adminId = req.user?.id || req.user?.sub;
+    const userId = req.user?.id || req.user?.sub;
+    const userRole = req.user?.userType;
     return this.sessionService.addExtraServicesToSession(
       +id,
       addExtraServicesDto,
-      adminId
+      userId,
+      userRole
     );
+  }
+
+  @Delete(':id/extra-services/:detailId')
+  @Roles('adm', 'cli')
+  async removeExtraService(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('detailId') detailId: string,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    const userRole = req.user?.userType;
+    return this.sessionService.removeExtraServiceFromSession(+id, +detailId, userId, userRole);
   }
 
 

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEmail, IsUrl } from 'class-validator';
+import { IsOptional, IsString, IsEmail, IsUrl, IsDateString } from 'class-validator';
 
 export class UpdateAdminProfileDto {
   @IsOptional()
@@ -39,4 +39,8 @@ export class UpdateAdminProfileDto {
 
   @IsOptional()
   calendarDetail?: any;
+
+  @IsOptional()
+  @IsDateString()
+  birthDate?: string;
 }

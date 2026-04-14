@@ -36,6 +36,12 @@ export class SessionDetail {
   @Column({ name: 'description_worker', type: 'text', nullable: true })
   descriptionWorker: string;
 
+  @Column({ name: 'description_ia', type: 'text', nullable: true })
+  descriptionIA: string;
+
+  @Column({ name: 'description', type: 'text', nullable: true })
+  description: string;
+
   // Nuevo campo para identificar servicios extras
   @Column({ name: 'is_extra', default: false })
   isExtra: boolean;
@@ -49,5 +55,6 @@ export class SessionDetail {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-
+  @Column({ name: 'offer_id', nullable: true })
+  offerId: number;
 }

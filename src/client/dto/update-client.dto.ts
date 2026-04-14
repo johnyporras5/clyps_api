@@ -5,6 +5,10 @@ export class UpdateClientDto {
 
   @IsOptional()
   @IsString()
+  username?: string;
+
+  @IsOptional()
+  @IsString()
   name?: string;
 
   @IsOptional()
@@ -19,11 +23,9 @@ export class UpdateClientDto {
   @Length(0, 20)
   phone?: string;
   @IsOptional()
-
-
   @Type(() => Date)
   @IsDate()
-  birthdate?: Date;
+  birthDate?: Date;
 
   @IsOptional()
   @IsString()

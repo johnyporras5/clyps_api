@@ -20,7 +20,10 @@ import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto, ExtraServiceItemDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
-import { IAPromptsService } from '../IAprompts/ia_prompts.service'; 
+import { IAPromptsService } from '../IAprompts/ia_prompts.service';
+import { FileUploadService } from '../common/services/file_upload.service';
+import { Offer } from 'src/Offer/entities/offer.entity';
+import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
 
 @Injectable()
 export class SessionService {
@@ -45,8 +48,14 @@ export class SessionService {
     private workerRepository: Repository<Worker>,
     private emailService: EmailService,
     private iaPromptsService: IAPromptsService,
-
+    @InjectRepository(Offer)
+    private offerRepository: Repository<Offer>,
+    @InjectRepository(ServiceOffer)
+    private serviceOfferRepository: Repository<ServiceOffer>,
+    private fileUploadService: FileUploadService,
   ) { }
+
+
 
   async create(createSessionDto: CreateSessionDto, adminId: number): Promise<Session> {
     const existingSession = await this.checkExistingSession(createSessionDto);
@@ -271,6 +280,10 @@ export class SessionService {
       totalCompany: number;
       calculationDetails: string;
       workerAssigned: boolean;
+      isOffer: boolean;
+      appliedOfferId: number | null;
+      offerName: string | null;
+      originalPrice: number | null;
     }>;
     createdDetails?: SessionDetail[];
     existingSession?: Session;
@@ -369,6 +382,10 @@ export class SessionService {
       totalCompany: number;
       calculationDetails: string;
       workerAssigned: boolean;
+      isOffer: boolean;
+      appliedOfferId: number | null;
+      offerName: string | null;
+      originalPrice: number | null;
     }> = [];
 
     const serviceValidations: ServiceValidationType[] = [];
@@ -409,22 +426,41 @@ export class SessionService {
         detail.companyWorkerId
       );
 
-      let serviceCost = service.cost || 0;
+      // Resolver precio: oferta o normal
+      const priceResolution = await this.resolveServicePrice(
+        detail.serviceId,
+        companyId,
+        detail.offerId,
+        createSessionWithDetailDto.sessionDatetime
+      );
 
-      // Convertir a número decimal de forma segura
       let serviceCostNumber: number;
-      if (typeof serviceCost === 'string') {
-        serviceCostNumber = parseFloat(serviceCost);
-      } else if (typeof serviceCost === 'number') {
-        serviceCostNumber = serviceCost;
-      } else if (serviceCost && typeof serviceCost === 'object') {
-        serviceCostNumber = parseFloat(String(serviceCost));
+
+      if (priceResolution.isOffer) {
+        // Precio de la oferta (service_offer.price)
+        serviceCostNumber = priceResolution.finalPrice;
+        console.log(
+          `🏷️ Servicio "${service.name}" → precio de OFERTA "${priceResolution.offerName}": ${serviceCostNumber}`,
+        );
       } else {
-        serviceCostNumber = 0;
+        // Precio normal (service.cost)
+        const serviceCost = service.cost || 0;
+        if (typeof serviceCost === 'string') {
+          serviceCostNumber = parseFloat(serviceCost);
+        } else if (typeof serviceCost === 'number') {
+          serviceCostNumber = serviceCost;
+        } else if (serviceCost && typeof serviceCost === 'object') {
+          serviceCostNumber = parseFloat(String(serviceCost));
+        } else {
+          serviceCostNumber = 0;
+        }
+        console.log(`💰 Servicio "${service.name}" → precio NORMAL: ${serviceCostNumber}`);
       }
 
       if (serviceCostNumber <= 0) {
-        throw new BadRequestException(`El costo del servicio "${service.name}" debe ser mayor a 0`);
+        throw new BadRequestException(
+          `El costo del servicio "${service.name}" debe ser mayor a 0`,
+        );
       }
 
       const calculatedAmounts = this.calculateAmounts(serviceCostNumber, workerPercentage, companyPercentage);
@@ -467,7 +503,12 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         calculationDetails: calculatedAmounts.calculationDetails,
-        workerAssigned
+        workerAssigned,
+        // Info de oferta
+        isOffer: priceResolution.isOffer,
+        appliedOfferId: priceResolution.appliedOfferId,
+        offerName: priceResolution.offerName,
+        originalPrice: priceResolution.isOffer ? Number(service.cost) : null,
       });
     }
 
@@ -550,6 +591,7 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
+        offerId: detail.offerId ?? undefined,
       };
 
       try {
@@ -577,7 +619,7 @@ export class SessionService {
           clientId: session.clientId
         });
 
-        throw new BadRequestException(`Error al crear el detalle para el servicio ${service.name}: ${error.message}`);
+        throw new BadRequestException(`Error al crear el detalle para el servicio ${service.name}: ${(error as Error).message}`);
       }
     }
 
@@ -586,7 +628,7 @@ export class SessionService {
       await this.updateSessionStatusBasedOnDetails(session.id);
       console.log(`✅ Estado de sesión actualizado automáticamente basado en ${createdDetails.length} detalle(s)`);
     } catch (error) {
-      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${error.message}`);
+      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${(error as Error).message}`);
       // No lanzamos error para no romper el flujo, solo registramos advertencia
     }
 
@@ -979,6 +1021,7 @@ export class SessionService {
       clientId: session.clientId,
       clientName: client.name || '',
       clientLastName: client.lastName || '',
+      clientPicture: client.picture ? this.fileUploadService.getFileUrl('client_photo', client.picture) : null,
       companyId: companyId,
       companyName: companyName,
       sessionDatetime: session.sessionDatetime,
@@ -991,8 +1034,8 @@ export class SessionService {
       iaResponse: session.iaResponse,
       createdAt: (session as any).createdAt || null,
       updatedAt: (session as any).updatedAt || null,
-      description: session.description,
-      descriptionIA: session.descriptionIA,
+      // description: session.description,
+      //descriptionIA: session.descriptionIA,
       details: details, // Incluir todos los detalles
 
     };
@@ -1119,7 +1162,7 @@ export class SessionService {
 
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      throw new BadRequestException(`Error al actualizar fechas: ${error.message}`);
+      throw new BadRequestException(`Error al actualizar fechas: ${(error as Error).message}`);
     } finally {
       await queryRunner.release();
     }
@@ -1391,7 +1434,7 @@ export class SessionService {
       }
 
     } catch (error) {
-      this.logger.error(`❌ Error enviando correos de confirmación: ${error.message}`, error.stack);
+      this.logger.error(`❌ Error enviando correos de confirmación: ${(error as Error).message}`, (error as Error).stack);
     }
   }
 
@@ -1450,6 +1493,8 @@ export class SessionService {
     adminId: number,
     getSessionsDto: GetSessionsDto
   ): Promise<PaginationResult<any>> {
+    console.log(`🔍 findAllSessionsSimple called with adminId=${adminId}, dto=`, JSON.stringify(getSessionsDto));
+    try {
     const adminCompany = await this.companyRepository.findOne({
       where: { userId: adminId }
     });
@@ -1644,6 +1689,7 @@ export class SessionService {
           clientId: session.clientId,
           clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
           clientLastName: client?.lastName || '',
+          clientPicture: client?.picture ? this.fileUploadService.getFileUrl('client_photo', client.picture) : null,
           companyId: adminCompany.id,
           companyName: adminCompany.name,
           sessionDatetime: session.sessionDatetime,
@@ -1658,13 +1704,13 @@ export class SessionService {
           services: services,
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
-          description: session.description,
-          descriptionIA: session.descriptionIA,
+          //   description: session.description,
+          //  descriptionIA: session.descriptionIA,
         };
       })
     );
 
-    return {
+    const result = {
       data: enrichedSessions,
       meta: {
         page: getSessionsDto.page,
@@ -1675,6 +1721,12 @@ export class SessionService {
         hasPrev: getSessionsDto.page > 1,
       }
     };
+    console.log(`✅ findAllSessionsSimple returning ${enrichedSessions.length} sessions`);
+    return result;
+    } catch (error) {
+      console.error(`❌ findAllSessionsSimple ERROR:`, error.message, error.stack);
+      throw error;
+    }
   }
 
   private getSessionStatusText(status: number): string {
@@ -1871,49 +1923,27 @@ export class SessionService {
     // 3. Guardar estado anterior
     const previousStatus = detail.status;
 
-    // 4. Validar que el nuevo estado sea válido (1-3 para detalles)
-    if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 3) {
-      throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso) o 3 (Completado)');
+    // 4. Validar que el nuevo estado sea válido (1-5 para detalles)
+    if (updateDetailStatusDto.status < 1 || updateDetailStatusDto.status > 5) {
+      throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso), 3 (Completado), 4 (Pagado) o 5 (Cancelado)');
     }
 
-    // 5. Validar transiciones de estado (opcional pero recomendado)
-    if (previousStatus === 3 && updateDetailStatusDto.status !== 3) {
-      throw new BadRequestException('No se puede revertir un detalle completado');
-    }
-
-    // 6. Actualizar el detalle
+    // 5. Actualizar el detalle
     detail.status = updateDetailStatusDto.status;
     const updatedDetail = await this.sessionDetailRepository.save(detail);
-
-    // 7. Actualizar automáticamente el estado de la sesión
-    const autoUpdateResult = await this.updateSessionStatusBasedOnDetails(detail.sessionId);
-
-    // 8. Obtener la sesión actualizada
-    const session = await this.sessionRepository.findOne({
-      where: { id: detail.sessionId }
-    });
-
-    let sessionUpdated = false;
-    let newSessionStatus: number | null = null;
-
-    if (session && autoUpdateResult.updated) {
-      sessionUpdated = true;
-      newSessionStatus = autoUpdateResult.newStatus;
-    }
 
     console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status} por ${userRole}`);
 
     return {
       message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
       detail: updatedDetail,
-      sessionUpdated,
-      newSessionStatus,
+      sessionUpdated: false,
+      newSessionStatus: null,
       validation: {
         canUpdateDetail: true,
         detailPreviousStatus: previousStatus,
         sessionId: detail.sessionId
-      },
-      autoUpdateResult
+      }
     };
   }
   /**
@@ -1967,6 +1997,8 @@ export class SessionService {
     let scheduledCount = 0;    // 1: Agendado
     let inProcessCount = 0;    // 2: En proceso
     let completedCount = 0;    // 3: Completado
+    let paidCount = 0;         // 4: Pagado
+    let cancelledCount = 0;    // 5: Cancelado
     let totalDetails = sessionDetails.length;
 
     for (const detail of sessionDetails) {
@@ -1978,61 +2010,68 @@ export class SessionService {
         inProcessCount++;
       } else if (status === 3) {
         completedCount++;
+      } else if (status === 4) {
+        paidCount++;
+      } else if (status === 5) {
+        cancelledCount++;
       }
     }
 
-    const allCompleted = completedCount === totalDetails;
+    // Para la lógica, detalles pagados también cuentan como "terminados"
+    const finishedCount = completedCount + paidCount;
+    const activeDetails = totalDetails - cancelledCount;
+    const allFinished = finishedCount === activeDetails && activeDetails > 0;
+    const allPaid = paidCount === activeDetails && activeDetails > 0;
+    const allCompleted = completedCount === activeDetails && activeDetails > 0;
     const anyInProcess = inProcessCount > 0;
     const anyScheduled = scheduledCount > 0;
     const anyCompleted = completedCount > 0;
+    const anyFinished = finishedCount > 0;
 
     console.log(`📊 Resumen de detalles para sesión ${sessionId}:`);
     console.log(`- Total: ${totalDetails}`);
     console.log(`- Agendados: ${scheduledCount}`);
     console.log(`- En proceso: ${inProcessCount}`);
     console.log(`- Completados: ${completedCount}`);
+    console.log(`- Pagados: ${paidCount}`);
+    console.log(`- Cancelados: ${cancelledCount}`);
     console.log(`- Estado actual de sesión: ${this.getSessionStatusText(session.sessionStatus)}`);
 
-    // 4. Determinar el nuevo estado de la sesión basado en la lógica CORREGIDA
+    // 4. Determinar el nuevo estado de la sesión basado en la lógica
     const previousStatus = session.sessionStatus;
     let newStatus = previousStatus;
     let reason = '';
 
-    // REGLAS DE ACTUALIZACIÓN AUTOMÁTICA CORREGIDAS:
-    // 1. Si TODOS los detalles están completados (3) → Sesión COMPLETADA (3)
-    if (allCompleted && totalDetails > 0) {
+    // REGLAS DE ACTUALIZACIÓN AUTOMÁTICA:
+    // 1. Si TODOS los detalles activos están pagados (4) → Sesión PAGADA (4)
+    if (allPaid) {
+      newStatus = 4; // Pagado
+      reason = 'Todos los servicios han sido pagados';
+    }
+    // 2. Si TODOS los detalles activos están completados o pagados (3/4) → Sesión COMPLETADA (3)
+    else if (allFinished) {
       newStatus = 3; // Completada
       reason = 'Todos los servicios han sido completados';
-    }
-    // 2. Si ALGÚN detalle está en proceso (2) Y hay detalles completados → Sesión EN PROCESO (2)
-    else if (anyInProcess && anyCompleted) {
-      newStatus = 2; // En proceso
-      reason = 'Hay servicios en proceso y algunos completados';
     }
     // 3. Si ALGÚN detalle está en proceso (2) → Sesión EN PROCESO (2)
     else if (anyInProcess) {
       newStatus = 2; // En proceso
       reason = 'Hay servicios en proceso';
     }
-    // 4. Si ALGÚN detalle está agendado (1) y hay detalles completados → Sesión EN PROCESO (2)
-    else if (anyScheduled && anyCompleted) {
+    // 4. Si ALGÚN detalle está agendado (1) y hay detalles terminados → Sesión EN PROCESO (2)
+    else if (anyScheduled && anyFinished) {
       newStatus = 2; // En proceso
       reason = 'Hay servicios agendados y algunos completados';
     }
-    // 5. Si ALGÚN detalle está agendado (1) y NO hay en proceso → Sesión AGENDADA (1)
-    else if (anyScheduled && !anyInProcess) {
+    // 5. Si ALGÚN detalle está agendado (1) → Sesión AGENDADA (1)
+    else if (anyScheduled) {
       newStatus = 1; // Agendado
       reason = 'Hay servicios agendados';
     }
-    // 6. Si la sesión estaba como completada (3) o pagada (4) pero no todos están completados
-    else if ((previousStatus === 3 || previousStatus === 4) && !allCompleted) {
-      if (anyInProcess) {
-        newStatus = 2;
-        reason = 'La sesión tenía estado completado/pagado pero hay servicios en proceso';
-      } else if (anyScheduled) {
-        newStatus = 1;
-        reason = 'La sesión tenía estado completado/pagado pero hay servicios agendados';
-      }
+    // 6. Si todos los detalles están cancelados → Sesión CANCELADA (5)
+    else if (cancelledCount === totalDetails && totalDetails > 0) {
+      newStatus = 5; // Cancelada
+      reason = 'Todos los servicios han sido cancelados';
     }
 
     // 5. Solo actualizar si el estado cambió
@@ -2095,9 +2134,13 @@ export class SessionService {
     });
 
     const totalDetails = sessionDetails.length;
+    const cancelledDetails = sessionDetails.filter(d => d.status === 5).length;
+    const activeDetails = totalDetails - cancelledDetails;
     const completedDetails = sessionDetails.filter(d => d.status === 3).length;
-    const pendingDetails = totalDetails - completedDetails;
-    const allDetailsCompleted = completedDetails === totalDetails;
+    const paidDetails = sessionDetails.filter(d => d.status === 4).length;
+    const finishedDetails = completedDetails + paidDetails;
+    const pendingDetails = activeDetails - finishedDetails;
+    const allDetailsCompleted = finishedDetails === activeDetails && activeDetails > 0;
 
     // Contar estados para lógica automática
     const scheduledDetails = sessionDetails.filter(d => d.status === 1).length;
@@ -2107,7 +2150,10 @@ export class SessionService {
     let recommendedStatus = 1; // Por defecto Agendado
     let reason = '';
 
-    if (allDetailsCompleted && totalDetails > 0) {
+    if (paidDetails === activeDetails && activeDetails > 0) {
+      recommendedStatus = 4;
+      reason = 'Todos los servicios pagados';
+    } else if (allDetailsCompleted && activeDetails > 0) {
       recommendedStatus = 3;
       reason = 'Todos los servicios completados';
     } else if (inProcessDetails > 0) {
@@ -2140,22 +2186,17 @@ export class SessionService {
     let canUpdate = true;
     let errorMessage = '';
 
-    // 1. Solo se puede marcar como pagada (4) si la sesión está completada (3) y todos los detalles completados
+    // 1. Solo se puede marcar como pagada (4) si la sesión está completada (3)
     if (newSessionStatus === 4) {
       if (session.sessionStatus !== 3) {
         canUpdate = false;
         errorMessage = 'La sesión debe estar en estado "Completada" antes de marcarla como "Pagada".';
-      } else if (!allDetailsCompleted) {
-        canUpdate = false;
-        errorMessage = 'Todos los detalles deben estar completados para marcar la sesión como pagada.';
       }
     }
 
     // 2. Advertencia si se intenta cambiar manualmente a un estado que no coincide con la lógica automática
-    // (permitimos pero con advertencia)
-    if (newSessionStatus !== 4 && newSessionStatus !== recommendedStatus) {
+    if (newSessionStatus !== 4 && newSessionStatus !== 5 && newSessionStatus !== recommendedStatus) {
       console.warn(`⚠️ Intento de cambiar estado de sesión ${sessionId} a ${newSessionStatus}, pero la lógica automática recomienda ${recommendedStatus} (${reason})`);
-      // No bloqueamos, pero registramos la advertencia
     }
 
     // Obtener información detallada de cada detalle
@@ -2222,7 +2263,8 @@ export class SessionService {
       1: 'Agendado',
       2: 'En proceso',
       3: 'Completado',
-      4: 'Cancelado',
+      4: 'Pagado',
+      5: 'Cancelado',
 
     };
     return statusMap[status] || `Estado ${status}`;
@@ -2395,8 +2437,8 @@ export class SessionService {
       clientName: client ? `${client.name || ''} ${client.lastName || ''}`.trim() : 'Cliente no encontrado',
       clientLastName: client?.lastName || '',
       sessionStatusText: this.getSessionStatusText(session.sessionStatus),
-      description: session.description,
-      descriptionIA: session.descriptionIA,
+      // description: session.description,
+      //  descriptionIA: session.descriptionIA,
       extraServices: session.extraServices,
     };
 
@@ -2859,6 +2901,10 @@ export class SessionService {
       totalCompany: number;
       calculationDetails: string;
       workerAssigned: boolean;
+      isOffer: boolean;
+      appliedOfferId: number | null;
+      offerName: string | null;
+      originalPrice: number | null;
     }>;
     createdDetails?: SessionDetail[];
     existingSession?: Session;
@@ -2993,6 +3039,10 @@ export class SessionService {
       totalCompany: number;
       calculationDetails: string;
       workerAssigned: boolean;
+      isOffer: boolean;
+      appliedOfferId: number | null;
+      offerName: string | null;
+      originalPrice: number | null;
     }> = [];
 
     const serviceValidations: ServiceValidationType[] = [];
@@ -3038,22 +3088,41 @@ export class SessionService {
         detail.companyWorkerId
       );
 
-      let serviceCost = service.cost || 0;
+      // Resolver precio: oferta o normal
+      const priceResolution = await this.resolveServicePrice(
+        detail.serviceId,
+        companyId,
+        detail.offerId,
+        createSessionWithDetailDto.sessionDatetime
+      );
 
-      // Convertir a número decimal de forma segura
       let serviceCostNumber: number;
-      if (typeof serviceCost === 'string') {
-        serviceCostNumber = parseFloat(serviceCost);
-      } else if (typeof serviceCost === 'number') {
-        serviceCostNumber = serviceCost;
-      } else if (serviceCost && typeof serviceCost === 'object') {
-        serviceCostNumber = parseFloat(String(serviceCost));
+
+      if (priceResolution.isOffer) {
+        // Precio de la oferta (service_offer.price)
+        serviceCostNumber = priceResolution.finalPrice;
+        console.log(
+          `🏷️ Servicio "${service.name}" → precio de OFERTA "${priceResolution.offerName}": ${serviceCostNumber}`,
+        );
       } else {
-        serviceCostNumber = 0;
+        // Precio normal (service.cost)
+        const serviceCost = service.cost || 0;
+        if (typeof serviceCost === 'string') {
+          serviceCostNumber = parseFloat(serviceCost);
+        } else if (typeof serviceCost === 'number') {
+          serviceCostNumber = serviceCost;
+        } else if (serviceCost && typeof serviceCost === 'object') {
+          serviceCostNumber = parseFloat(String(serviceCost));
+        } else {
+          serviceCostNumber = 0;
+        }
+        console.log(`💰 Servicio "${service.name}" → precio NORMAL: ${serviceCostNumber}`);
       }
 
       if (serviceCostNumber <= 0) {
-        throw new BadRequestException(`El costo del servicio "${service.name}" debe ser mayor a 0`);
+        throw new BadRequestException(
+          `El costo del servicio "${service.name}" debe ser mayor a 0`,
+        );
       }
 
       const calculatedAmounts = this.calculateAmounts(serviceCostNumber, workerPercentage, companyPercentage);
@@ -3092,7 +3161,12 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         calculationDetails: calculatedAmounts.calculationDetails,
-        workerAssigned
+        workerAssigned,
+        // Info de oferta
+        isOffer: priceResolution.isOffer,
+        appliedOfferId: priceResolution.appliedOfferId,
+        offerName: priceResolution.offerName,
+        originalPrice: priceResolution.isOffer ? Number(service.cost) : null,
       });
     }
 
@@ -3168,7 +3242,7 @@ export class SessionService {
       await this.updateSessionStatusBasedOnDetails(session.id);
       console.log(`✅ Estado de sesión del cliente actualizado automáticamente basado en ${createdDetails.length} detalle(s)`);
     } catch (error) {
-      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión del cliente: ${error.message}`);
+      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión del cliente: ${(error as Error).message}`);
     }
 
     // 10. Crear los detalles de sesión
@@ -3185,6 +3259,7 @@ export class SessionService {
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
+        offerId: detail.offerId ?? undefined,
       };
 
       try {
@@ -3212,7 +3287,7 @@ export class SessionService {
           clientId: session.clientId
         });
 
-        throw new BadRequestException(`Error al crear el detalle para el servicio ${service.name}: ${error.message}`);
+        throw new BadRequestException(`Error al crear el detalle para el servicio ${service.name}: ${(error as Error).message}`);
       }
     }
 
@@ -3402,13 +3477,12 @@ export class SessionService {
   }
 
 
-  // VERSIÓN ACTUALIZADA DEL MÉTODO addExtraServicesToSession
-  // Este método debe REEMPLAZAR el anterior en session.service.ts
 
   async addExtraServicesToSession(
     sessionId: number,
     addExtraServicesDto: AddExtraServicesDto,
-    adminId: number
+    userId: number,
+    userRole?: string
   ): Promise<{
     message: string;
     session: Session;
@@ -3440,16 +3514,7 @@ export class SessionService {
   }> {
     console.log(`🎁 Agregando servicios extras a sesión ${sessionId}`);
 
-    // 1. Verificar permisos del administrador
-    const adminCompany = await this.companyRepository.findOne({
-      where: { userId: adminId }
-    });
-
-    if (!adminCompany) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
-    }
-
-    // 2. Buscar la sesión
+    // 1. Buscar la sesión
     const session = await this.sessionRepository.findOne({
       where: { id: sessionId }
     });
@@ -3458,33 +3523,60 @@ export class SessionService {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
 
-    // 3. Verificar que la sesión pertenezca a la compañía del administrador
-    const sessionDetails = await this.sessionDetailRepository.find({
-      where: { sessionId: sessionId }
-    });
+    // 2. Obtener la compañía (necesaria para validaciones posteriores)
+    let adminCompany: any = null;
 
-    if (sessionDetails.length === 0) {
-      throw new NotFoundException(`La sesión ${sessionId} no tiene detalles`);
-    }
-
-    let sessionBelongsToAdmin = false;
-    for (const detail of sessionDetails) {
-      const companyWorker = await this.companyWorkerRepository.findOne({
-        where: { id: detail.companyWorkerId },
-        relations: ['company']
+    if (userRole === 'cli') {
+      if (session.clientId !== userId) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+      }
+      // Obtener la compañía a partir de los detalles de la sesión
+      const firstDetail = await this.sessionDetailRepository.findOne({
+        where: { sessionId: sessionId }
+      });
+      if (firstDetail) {
+        const cw = await this.companyWorkerRepository.findOne({
+          where: { id: firstDetail.companyWorkerId },
+          relations: ['company']
+        });
+        adminCompany = cw?.company || null;
+      }
+    } else {
+      adminCompany = await this.companyRepository.findOne({
+        where: { userId: userId }
       });
 
-      if (companyWorker?.company?.id === adminCompany.id) {
-        sessionBelongsToAdmin = true;
-        break;
+      if (!adminCompany) {
+        throw new NotFoundException('El administrador no tiene una compañía asignada');
+      }
+
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId: sessionId }
+      });
+
+      if (sessionDetails.length === 0) {
+        throw new NotFoundException(`La sesión ${sessionId} no tiene detalles`);
+      }
+
+      let sessionBelongsToAdmin = false;
+      for (const detail of sessionDetails) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: detail.companyWorkerId },
+          relations: ['company']
+        });
+
+        if (companyWorker?.company?.id === adminCompany.id) {
+          sessionBelongsToAdmin = true;
+          break;
+        }
+      }
+
+      if (!sessionBelongsToAdmin) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
       }
     }
 
-    if (!sessionBelongsToAdmin) {
-      throw new ForbiddenException('No tienes permiso para modificar esta sesión');
-    }
-
-    // 4. Validar que haya servicios extras para agregar
+    // 3. Validar que haya servicios extras para agregar
     if (!addExtraServicesDto.extraServices || addExtraServicesDto.extraServices.length === 0) {
       throw new BadRequestException('Debe proporcionar al menos un servicio extra');
     }
@@ -3859,7 +3951,7 @@ export class SessionService {
 
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      throw new BadRequestException(`Error al agregar servicios extras: ${error.message}`);
+      throw new BadRequestException(`Error al agregar servicios extras: ${(error as Error).message}`);
     } finally {
       await queryRunner.release();
     }
@@ -3888,7 +3980,7 @@ export class SessionService {
           adminCompany.id
         );
       } catch (error) {
-        this.logger.warn(`⚠️ Error enviando correos para servicio extra: ${error.message}`);
+        this.logger.warn(`⚠️ Error enviando correos para servicio extra: ${(error as Error).message}`);
       }
     }
 
@@ -3897,7 +3989,7 @@ export class SessionService {
       await this.updateSessionStatusBasedOnDetails(sessionId);
       console.log(`✅ Estado de sesión actualizado automáticamente después de agregar servicios extras`);
     } catch (error) {
-      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${error.message}`);
+      console.warn(`⚠️ No se pudo actualizar automáticamente el estado de la sesión: ${(error as Error).message}`);
     }
 
     // 16. Retornar resultado
@@ -4005,11 +4097,11 @@ export class SessionService {
       session.sessionStatus = 5;
       const updatedSession = await queryRunner.manager.save(session);
 
-      // 6. Actualizar todos los detalles de la sesión a 4 = Cancelado
+      // 6. Actualizar todos los detalles de la sesión a 5 = Cancelado
       const updateResult = await queryRunner.manager
         .createQueryBuilder()
         .update(SessionDetail)
-        .set({ status: 4 })
+        .set({ status: 5 })
         .where('sessionId = :sessionId', { sessionId })
         .execute();
 
@@ -4032,8 +4124,8 @@ export class SessionService {
       };
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      this.logger.error(`❌ Error cancelando sesión: ${error.message}`, error.stack);
-      throw new BadRequestException(`Error al cancelar la sesión: ${error.message}`);
+      this.logger.error(`❌ Error cancelando sesión: ${(error as Error).message}`, (error as Error).stack);
+      throw new BadRequestException(`Error al cancelar la sesión: ${(error as Error).message}`);
     } finally {
       await queryRunner.release();
     }
@@ -4122,8 +4214,8 @@ export class SessionService {
       }
     } catch (error) {
       this.logger.error(
-        `❌ Error enviando correos de cancelación: ${error.message}`,
-        error.stack,
+        `❌ Error enviando correos de cancelación: ${(error as Error).message}`,
+        (error as Error).stack,
       );
     }
   }
@@ -4413,6 +4505,140 @@ export class SessionService {
         hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
         hasPrev: getSessionsDto.page > 1
       }
+    };
+  }
+
+
+  /**
+ * Resuelve el precio final de un servicio.
+ * Si viene offerId → valida y usa el precio de oferta (service_offer.price)
+ * Si no viene offerId → retorna isOffer: false para usar service.cost
+ */
+  private async resolveServicePrice(
+    serviceId: number,
+    companyId: number,
+    offerId?: number,
+    referenceDate?: Date
+  ): Promise<{
+    finalPrice: number;
+    appliedOfferId: number | null;
+    isOffer: boolean;
+    offerName: string | null;
+  }> {
+    // Sin offerId → precio normal
+    if (!offerId) {
+      return {
+        finalPrice: 0,
+        appliedOfferId: null,
+        isOffer: false,
+        offerName: null,
+      };
+    }
+
+    const checkDate = referenceDate ? new Date(referenceDate) : new Date();
+
+    // Buscar el service_offer con su oferta relacionada
+    const serviceOffer = await this.serviceOfferRepository
+      .createQueryBuilder('so')
+      .innerJoinAndSelect('so.offer', 'offer')
+      .where('so.serviceId = :serviceId', { serviceId })
+      .andWhere('so.offerId = :offerId', { offerId })
+      .andWhere('offer.companyId = :companyId', { companyId })
+      .andWhere('offer.status = 1')
+      .andWhere('offer.startDate <= :checkDate', { checkDate })  // ← CAMBIO
+      .andWhere('offer.endDate >= :checkDate', { checkDate })    // ← CAMBIO
+      .getOne();
+
+
+    if (!serviceOffer) {
+      throw new BadRequestException(
+        `La oferta con ID ${offerId} no es válida para el servicio ${serviceId}. ` +
+        `Verifique que la oferta exista, pertenezca a su compañía y esté activa y vigente.`,
+      );
+    }
+
+    return {
+      finalPrice: Number(serviceOffer.price),
+      appliedOfferId: offerId,
+      isOffer: true,
+      offerName: serviceOffer.offer?.name || null,
+    };
+  }
+
+  /**
+   * Eliminar un servicio extra de una sesión
+   */
+  async removeExtraServiceFromSession(
+    sessionId: number,
+    detailId: number,
+    userId: number,
+    userRole: string
+  ): Promise<{ message: string }> {
+
+    // 1. Buscar la sesión
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId }
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+    }
+
+    // 2. Buscar el detalle extra
+    const detail = await this.sessionDetailRepository.findOne({
+      where: { id: detailId, sessionId: sessionId, isExtra: true }
+    });
+
+    if (!detail) {
+      throw new NotFoundException(`Servicio extra con ID ${detailId} no encontrado en la sesión ${sessionId}`);
+    }
+
+    // 3. Verificar permisos según el rol
+    if (userRole === 'adm') {
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId: userId }
+      });
+
+      if (!adminCompany) {
+        throw new NotFoundException('El administrador no tiene una compañía asignada');
+      }
+
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['company']
+      });
+
+      if (companyWorker?.company?.id !== adminCompany.id) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+      }
+    } else if (userRole === 'cli') {
+      if (session.clientId !== userId) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+      }
+    }
+
+    // 5. Restar los totales del detalle de la sesión
+    session.totalCost = Number(session.totalCost || 0) - Number(detail.cost || 0);
+    session.totalTime = Number(session.totalTime || 0) - Number(detail.totalTime || 0);
+
+    // 6. Eliminar del JSON extraServices
+    if (session.extraServices && Array.isArray(session.extraServices)) {
+      session.extraServices = session.extraServices.filter(
+        (extra) => extra.sessionDetailId !== detailId
+      );
+    }
+
+    await this.sessionRepository.save(session);
+
+    // 7. Eliminar el detalle extra
+    await this.sessionDetailRepository
+      .createQueryBuilder()
+      .delete()
+      .where("id = :id AND session_id = :sessionId", { id: detailId, sessionId: sessionId })
+      .execute();
+
+    return {
+      message: `Servicio extra eliminado exitosamente de la sesión ${sessionId}`
     };
   }
 }

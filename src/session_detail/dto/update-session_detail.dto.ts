@@ -36,4 +36,12 @@ export class UpdateSessionDetailDto {
   @IsOptional()
   @IsNumber()
   status?: number;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  descriptionIA?: string;
 }

@@ -14,7 +14,7 @@ import { FileUploadService, AllowedFolder } from '../common/services/file_upload
 
 @Injectable()
 export class CompanyWorkerService {
-  private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'client_photo';
+  private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'worker_photo';
 
   constructor(
     @InjectRepository(CompanyWorker)
@@ -264,8 +264,8 @@ export class CompanyWorkerService {
       throw new UnauthorizedException('No tienes una compañía asignada');
     }
 
-    // 2. Extraer page, limit y name del DTO
-    const { page, limit, name } = paginationDto;
+    // 2. Extraer page, limit, name e isActive del DTO
+    const { page, limit, name, isActive } = paginationDto;
 
     // 3. Crear QueryBuilder con alias correctos
     const queryBuilder = this.workerRepository
@@ -282,16 +282,20 @@ export class CompanyWorkerService {
         'cw.is_active AS isActive',
         'cw.temporarily_deleted AS temporarilyDeleted',
         'cw.permanently_deleted AS permanentlyDeleted',
-      'COALESCE(AVG(wf.stars), 0) AS averageRating',  
+      'COALESCE(AVG(wf.stars), 0) AS averageRating',
         'COUNT(wf.id) AS totalReviews'
       ])
       .where('cw.company_id = :companyId', { companyId: company.id })
-      .andWhere('cw.is_active = 1')
       .andWhere('cw.temporarily_deleted = 0')
       .andWhere('cw.permanently_deleted = 0')
       .groupBy('worker.id')
       .addGroupBy('cw.id')
       .orderBy('worker.name', 'ASC');
+
+    // Filtrar por isActive si se proporciona (0 = inactivos, 1 = activos), si no se envía devuelve todos
+    if (isActive !== undefined) {
+      queryBuilder.andWhere('cw.is_active = :isActive', { isActive: parseInt(isActive) });
+    }
 
     // 4. Aplicar filtro por nombre si se proporciona
     if (name && name.trim() !== '') {
@@ -313,7 +317,8 @@ export class CompanyWorkerService {
       queryBuilder,
       paginationOptions,
       company.id,
-      name
+      name,
+      isActive
     );
 
     // 7. Formatear los datos y construir las URLs completas
@@ -353,7 +358,8 @@ export class CompanyWorkerService {
     queryBuilder: any,
     options: PaginationOptions,
     companyId: number,
-    name?: string
+    name?: string,
+    isActive?: string
   ): Promise<{ data: T[]; meta: any }> {
     const { page, limit } = options;
     const skip = (page - 1) * limit;
@@ -369,9 +375,13 @@ export class CompanyWorkerService {
       .createQueryBuilder('worker')
       .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id')
       .where('cw.company_id = :companyId', { companyId })
-      .andWhere('cw.is_active = 1')
       .andWhere('cw.temporarily_deleted = 0')
       .andWhere('cw.permanently_deleted = 0');
+
+    // Aplicar filtro por isActive si existe
+    if (isActive !== undefined) {
+      countQueryBuilder.andWhere('cw.is_active = :isActive', { isActive: parseInt(isActive) });
+    }
 
     // Aplicar filtro por nombre si existe
     if (name && name.trim() !== '') {

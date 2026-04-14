@@ -8,6 +8,9 @@ import { Company } from '../company/entities/company.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Worker } from '../worker/entities/worker.entity';
 import { paginate, PaginationOptions, PaginationResult } from '../common/utils/pagination.util';
+import { ServiceCategory } from '../service_category/entities/service_category.entity';
+import { ServiceOffer } from '../Offer/entities/service-offer.entity';
+import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 
 @Injectable()
 export class ServiceService {
@@ -20,6 +23,13 @@ export class ServiceService {
     private companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
+    @InjectRepository(ServiceCategory)
+    private categoryRepository: Repository<ServiceCategory>,
+    @InjectRepository(ServiceOffer)
+    private serviceOfferRepository: Repository<ServiceOffer>,
+    @InjectRepository(SessionDetail)
+    private sessionDetailRepository: Repository<SessionDetail>,
+
   ) { }
 
   /**
@@ -41,6 +51,7 @@ export class ServiceService {
     // 2. Crear query builder para servicios filtrados por compañía
     const queryBuilder = this.serviceRepository
       .createQueryBuilder('service')
+      .leftJoinAndSelect('service.category', 'category')
       .where('service.companyId = :companyId', { companyId: company.id });
 
     // 3. Aplicar paginación
@@ -259,7 +270,19 @@ export class ServiceService {
       throw new NotFoundException(`Service with id ${id} not found or you don't have permission`);
     }
 
-    // 3. Eliminar el servicio
+    // 3. Verificar que el servicio no tenga sessions asociadas
+    const sessionDetailCount = await this.sessionDetailRepository.count({
+      where: { serviceId: id }
+    });
+
+    if (sessionDetailCount > 0) {
+      throw new BadRequestException('No se puede eliminar el servicio porque tiene sesiones asociadas');
+    }
+
+    // 4. Eliminar service_offers relacionados
+    await this.serviceOfferRepository.delete({ serviceId: id });
+
+    // 5. Eliminar el servicio
     const result = await this.serviceRepository.delete(id);
     if (result.affected === 0) {
       throw new NotFoundException(`Service with id ${id} not found`);
@@ -352,4 +375,7 @@ export class ServiceService {
     }
     return service;
   }
+
+
+  
 }

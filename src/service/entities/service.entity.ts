@@ -1,5 +1,6 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { ServiceStatus } from '../enum/service-status.enum';
+import { ServiceCategory } from '../../service_category/entities/service_category.entity';
 
 @Entity('service')
 export class Service {
@@ -45,5 +46,12 @@ export class Service {
     this.workers = [];
     this.status = ServiceStatus.ACTIVE;
   }
+
+  @Column({ name: 'category_id', nullable: true })
+  categoryId: number;
+
+  @ManyToOne(() => ServiceCategory, (category) => category.services, { nullable: true, eager: true })
+  @JoinColumn({ name: 'category_id' })
+  category: ServiceCategory;
 
 }

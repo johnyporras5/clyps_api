@@ -27,6 +27,7 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Client } from '../client/entities/client.entity';
+import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
 
 @Controller('companys')
 @UseGuards(JwtAuthGuard)
@@ -41,6 +42,13 @@ export class CompanyController {
       page: paginationDto.page,
       limit: paginationDto.limit
     });
+  }
+
+  @Get('filter')
+  async findByFilters(
+    @Query() dto: GetCompaniesFilterDto
+  ): Promise<PaginationResult<CompanyWithLogoUrl>> {
+    return this.companyService.findByFilters(dto);
   }
 
   @Get(':id')

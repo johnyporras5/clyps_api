@@ -21,6 +21,7 @@ import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
+import { CompanyCategoryService } from '../company_category/company_category.service';
 
 
 @Injectable()
@@ -42,6 +43,7 @@ export class AuthService {
     private verificationService: VerificationService,
     private tokenBlacklistService: TokenBlacklistService,
     private fileUploadService: FileUploadService,
+    private readonly companyCategoryService: CompanyCategoryService,
 
   ) { }
 
@@ -63,7 +65,11 @@ export class AuthService {
     });
 
     if (existingUserByEmail) {
-      // Si el usuario existe pero no está verificado, permitir reenviar código
+      // Si el email pertenece a otro rol, rechazar inmediatamente
+      if (existingUserByEmail.userType !== 'adm') {
+        throw new ConflictException('El email ya está registrado con un rol diferente (trabajador o cliente)');
+      }
+      // Mismo rol (admin), pero no verificado → reenviar código
       if (existingUserByEmail.emailVerified === 0) {
         await this.sendVerificationCode(registerDto.email);
         throw new ConflictException({
@@ -122,10 +128,20 @@ export class AuthService {
       email: registerDto.email,
       userId: savedUser.id,
       logo: logoFileName,
+      phone: registerDto.phone,
     };
 
     await this.companyService.create(companyData);
 
+
+    if (registerDto.categories && registerDto.categories.length > 0) {
+      for (const categoryName of registerDto.categories) {
+        await this.companyCategoryService.create(
+          { name: categoryName },
+          savedUser.id  // adminId
+        );
+      }
+    }
     // Enviar código de verificación
     await this.sendVerificationCode(savedUser.email);
 
@@ -179,7 +195,8 @@ export class AuthService {
    */
   async registerWorker(
     registerDto: RegisterWorkerDto,
-    adminId: number // ID del administrador que registra
+    adminId: number, // ID del administrador que registra
+    pictureFile?: Express.Multer.File
   ): Promise<{
     message: string;
     user: Partial<User>;
@@ -219,7 +236,7 @@ export class AuthService {
     if (existingUserByEmail) {
       // Si el usuario existe, verificar si ya es un trabajador
       if (existingUserByEmail.userType !== 'wrk') {
-        throw new ConflictException('El email ya está registrado como otro tipo de usuario (no trabajador)');
+        throw new ConflictException('El email ya está registrado con un rol diferente (no trabajador)');
       }
 
       // Usuario existe y es trabajador (verificado o no)
@@ -276,6 +293,24 @@ export class AuthService {
       await this.sendVerificationCode(user.email);
     }
 
+
+    // ==================== [NUEVO] PROCESAR ARCHIVO DE FOTO (SI SE ENVIÓ) ====================
+    let pictureFileName: string | undefined;
+    if (pictureFile) {
+      try {
+        const fileInfo = await this.fileUploadService.saveFile(
+          pictureFile,
+          'worker_photo',   // subcarpeta
+          'worker',              // tipo de entidad
+          user.id                // ID del usuario
+        );
+        pictureFileName = fileInfo.fileName;
+        console.log(`✅ Foto de trabajador guardada: ${pictureFileName}`);
+      } catch (error) {
+        console.error('❌ Error al guardar foto de trabajador:', error);
+      }
+    }
+
     // ==================== VERIFICAR SI YA ESTÁ EN COMPANY_WORKER ====================
     // Verificar si ya está asignado a esta compañía por userId
     const existingAssignment = await this.companyWorkerRepository.findOne({
@@ -303,7 +338,7 @@ export class AuthService {
         phone: registerDto.phone,
         address: registerDto.address,
         birthdate: registerDto.birthdate,
-        picture: registerDto.picture,
+        picture: pictureFileName,
         description: registerDto.description,
         isActive: 1,
         location: registerDto.location,
@@ -331,23 +366,14 @@ export class AuthService {
         isActive: 1,
         startDate: new Date(),
         servicesDetail: {},
-        calendar: registerDto.calendar || {}, // <-- AGREGAR CAMPO CALENDAR AQUÍ
+        calendar: registerDto.calendar || {},
       });
 
       await this.companyWorkerRepository.save(companyWorker);
       createdCompanyWorker = true;
     }
 
-    // Generar token JWT solo para nuevo trabajador (usuario nuevo)
-    let access_token: string | undefined;
-    if (!isExistingWorker) {
-      const payload = {
-        email: user.email,
-        sub: user.id,
-        userType: user.userType
-      };
-      access_token = this.jwtService.sign(payload);
-    }
+    // No se genera token JWT en el registro de trabajador
 
     // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
@@ -412,7 +438,7 @@ export class AuthService {
   /**
   * Registro específico para clientes CON CONTRASEÑA AUTOMÁTICA
   */
-  async registerClient(registerDto: RegisterClientDto): Promise<{
+  async registerClient(registerDto: RegisterClientDto, pictureFile?: Express.Multer.File): Promise<{
     message: string;
     user: Partial<User>;
     generatedPassword?: string;
@@ -432,7 +458,7 @@ export class AuthService {
     // ==================== VERIFICAR SI YA EXISTE EL USUARIO ====================
     if (existingUserByEmail) {
       if (existingUserByEmail.userType !== 'cli') {
-        throw new ConflictException('El email ya está registrado como otro tipo de usuario (no cliente)');
+        throw new ConflictException('El email ya está registrado con un rol diferente (no cliente)');
       }
 
       user = existingUserByEmail;
@@ -464,6 +490,8 @@ export class AuthService {
 
       user = await this.userRepository.save(newUser);
 
+
+
       const credentialsSent = await this.emailService.sendClientCredentials(
         user.email,
         user.username,
@@ -475,6 +503,24 @@ export class AuthService {
       }
 
       await this.sendVerificationCode(user.email);
+    }
+
+    // ==================== [NUEVO] PROCESAR ARCHIVO DE FOTO (SI SE ENVIÓ) ====================
+    let pictureFileName: string | undefined;
+    if (pictureFile) {
+      try {
+        const fileInfo = await this.fileUploadService.saveFile(
+          pictureFile,
+          'client_photo',   // subcarpeta
+          'client',              // tipo de entidad
+          user.id                // ID del usuario
+        );
+        pictureFileName = fileInfo.fileName;
+        console.log(`✅ Foto de cliente guardada: ${pictureFileName}`);
+      } catch (error) {
+        console.error('❌ Error al guardar foto de cliente:', error);
+        // Si falla, se ignora y se usará el valor del DTO (si existe)
+      }
     }
 
     // ==================== VERIFICAR SI YA TIENE PERFIL DE CLIENTE ====================
@@ -496,7 +542,7 @@ export class AuthService {
         email: registerDto.email,
         phone: registerDto.phone,
         birthDate: registerDto.birthdate,
-        picture: registerDto.picture,
+        picture: pictureFileName ,
         isActive: registerDto.isActive !== undefined ? registerDto.isActive : 1,
         companies: [],
         location: registerDto.location,
@@ -550,10 +596,12 @@ export class AuthService {
         }
       }
 
-      if (registerDto.picture !== undefined && registerDto.picture !== client.picture) {
-        updateData.picture = registerDto.picture;
+
+
+      if (pictureFileName) {
+        updateData.picture = pictureFileName;
         hasChanges = true;
-        console.log(`Cambio detectado en imagen: ${client.picture} -> ${registerDto.picture}`);
+        console.log(`Cambio detectado en foto (archivo): ${client.picture} -> ${pictureFileName}`);
       }
 
       if (registerDto.isActive !== undefined && registerDto.isActive !== client.isActive) {
@@ -568,7 +616,7 @@ export class AuthService {
         console.log(`Cambio detectado en ubicación: ${client.location} -> ${registerDto.location}`);
       }
 
-   
+
       // Solo actualizar si hay cambios reales
       if (hasChanges) {
         console.log(`Detectados cambios reales. Actualizando perfil del cliente...`);
@@ -588,7 +636,7 @@ export class AuthService {
       }
     }
 
- 
+
     // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
 
@@ -649,8 +697,115 @@ export class AuthService {
       }
     };
 
-       return response;
+    return response;
   }
+  /**
+   * Registro de cliente por parte del administrador de la compañía
+   */
+  async registerClientByAdmin(
+    registerDto: RegisterClientDto,
+    adminId: number,
+    pictureFile?: Express.Multer.File,
+  ): Promise<{ message: string; user: Partial<User>; generatedPassword?: string }> {
+    // 1. Validar que el admin existe y tiene compañía
+    const admin = await this.userRepository.findOne({
+      where: { id: adminId, userType: 'adm' },
+    });
+    if (!admin) {
+      throw new UnauthorizedException('Solo los administradores pueden registrar clientes');
+    }
+
+    const company = await this.companyRepository.findOne({ where: { userId: adminId } });
+    if (!company) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
+    }
+
+    // 2. Verificar email
+    const existingUserByEmail = await this.userRepository.findOne({
+      where: { email: registerDto.email },
+    });
+
+    let user: User;
+    let client: Client | null = null;
+    let isExistingUser = false;
+    let generatedPassword: string | undefined;
+
+    if (existingUserByEmail) {
+      if (existingUserByEmail.userType !== 'cli') {
+        throw new ConflictException('El email ya está registrado con un rol diferente (no cliente)');
+      }
+      user = existingUserByEmail;
+      isExistingUser = true;
+    } else {
+      const existingByUsername = await this.userRepository.findOne({
+        where: { username: registerDto.username },
+      });
+      if (existingByUsername) {
+        throw new ConflictException('El nombre de usuario ya está en uso');
+      }
+
+      generatedPassword = this.generateRandomPassword(12);
+      const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+
+      const newUser = this.userRepository.create({
+        username: registerDto.username,
+        email: registerDto.email,
+        password: hashedPassword,
+        userType: 'cli',
+        emailVerified: 0,
+      });
+      user = await this.userRepository.save(newUser);
+
+      await this.emailService.sendClientCredentials(user.email, user.username, generatedPassword);
+      await this.sendVerificationCode(user.email);
+    }
+
+    // 3. Procesar foto
+    let pictureFileName: string | undefined;
+    if (pictureFile) {
+      try {
+        const fileInfo = await this.fileUploadService.saveFile(pictureFile, 'client_photo', 'client', user.id);
+        pictureFileName = fileInfo.fileName;
+      } catch (error) {
+        console.error('Error al guardar foto de cliente:', error);
+      }
+    }
+
+    // 4. Crear o actualizar perfil del cliente
+    client = await this.clientRepository.findOne({ where: { userId: user.id } });
+
+    if (!client) {
+      const newClient = this.clientRepository.create({
+        name: registerDto.name,
+        lastName: registerDto.lastName,
+        email: registerDto.email,
+        phone: registerDto.phone,
+        birthDate: registerDto.birthdate,
+        picture: pictureFileName,
+        isActive: registerDto.isActive ?? 1,
+        companies: [company.id],
+        location: registerDto.location,
+        userId: user.id,
+      });
+      client = await this.clientRepository.save(newClient);
+    } else {
+      // Agregar compañía si aún no está en el array
+      const currentCompanies: number[] = Array.isArray(client.companies) ? client.companies : [];
+      if (!currentCompanies.includes(company.id)) {
+        currentCompanies.push(company.id);
+        await this.clientRepository.update(client.id, { companies: currentCompanies });
+      }
+    }
+
+    const { password, ...userWithoutPassword } = user;
+
+    const message = isExistingUser
+      ? `Cliente existente vinculado a la compañía '${company.name}' exitosamente.`
+      : `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'. Las credenciales fueron enviadas a su correo.`;
+
+    return { message, user: userWithoutPassword, generatedPassword };
+  }
+
   // ==================== MÉTODOS DE LOGIN ====================
 
   async login(loginDto: LoginDto): Promise<{ access_token: string; user: Partial<User> }> {

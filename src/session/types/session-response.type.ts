@@ -40,6 +40,7 @@ export interface SessionResponse {
   clientId: number;
   clientName: string;
   clientLastName: string;
+  clientPicture: string | null;
   companyId: number;
   companyName: string;
   sessionDatetime: Date;

@@ -13,6 +13,8 @@ import { Worker } from '../worker/entities/worker.entity';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Company } from 'src/company/entities/company.entity';
+import { Client } from 'src/client/entities/client.entity';
+import { FileUploadService } from 'src/common/services/file_upload.service';
 
 @Injectable()
 export class WorkerFeedbackService {
@@ -25,6 +27,7 @@ export class WorkerFeedbackService {
     private companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
+    private fileUploadService: FileUploadService,
   ) { }
 
   async findOne(id: number): Promise<WorkerFeedback> {
@@ -149,12 +152,24 @@ export class WorkerFeedbackService {
     // 3. Consulta principal: feedbacks cuyo workerId esté en la subconsulta
     const queryBuilder = this.workerFeedbackRepository
       .createQueryBuilder('feedback')
+      .leftJoinAndSelect('feedback.worker', 'worker')
+      .leftJoinAndMapOne('feedback.client', Client, 'client', 'client.userId = feedback.clientId')
       .where(`feedback.workerId IN (${workerIdsSubQuery.getQuery()})`)
       .setParameters(workerIdsSubQuery.getParameters())
       .orderBy('feedback.datetime', 'DESC');
 
     // 4. Paginar usando el helper
-    return paginate<WorkerFeedback>(queryBuilder, { page, limit });
+    const result = await paginate<WorkerFeedback>(queryBuilder, { page, limit });
+
+    // 5. Agregar pictureUrl al cliente
+    result.data = result.data.map((feedback) => {
+      if (feedback.client?.picture) {
+        feedback.client.pictureUrl = this.fileUploadService.getFileUrl('client_photo', feedback.client.picture);
+      }
+      return feedback;
+    });
+
+    return result;
   }
 
   /**

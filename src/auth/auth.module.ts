@@ -18,6 +18,7 @@ import { CompanyService } from 'src/company/company.service';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { CommonModule } from '../common/common.module';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
+import { CompanyCategoryModule } from 'src/company_category/company_category.module';
 
 
 @Module({
@@ -37,7 +38,8 @@ import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.
 
     EmailModule,
     VerificationModule,
-    CommonModule
+    CommonModule,
+    CompanyCategoryModule
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, TokenBlacklistService, CompanyService],

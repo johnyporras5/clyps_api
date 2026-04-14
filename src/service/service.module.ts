@@ -6,9 +6,12 @@ import { Service } from './entities/service.entity';
 import { Company } from 'src/company/entities/company.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { Worker } from 'src/worker/entities/worker.entity';
+import { ServiceCategory } from 'src/service_category/entities/service_category.entity';
+import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
+import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Service,Company,CompanyWorker,Worker])],
+  imports: [TypeOrmModule.forFeature([Service,Company,CompanyWorker,Worker,ServiceCategory,ServiceOffer,SessionDetail])],
   providers: [ServiceService],
   controllers: [ServiceController],
   exports: [ServiceService],

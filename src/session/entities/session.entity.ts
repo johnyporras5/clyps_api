@@ -43,11 +43,6 @@ export class Session {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-  @Column({ name: 'description_ia', type: 'text', nullable: true })
-  descriptionIA: string;
-
-  @Column({ name: 'description', type: 'text', nullable: true })
-  description: string;
 
   @Column({ name: 'extra_services', type: 'json', nullable: true })
   extraServices?: Array<{
@@ -64,4 +59,6 @@ export class Session {
     customPrice?: number;      // Solo si priceOption === "custom"
     createdAt: string          // "2026-02-15T08:45:00.000Z"
   }>;
+
+
 }

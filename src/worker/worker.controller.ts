@@ -15,6 +15,7 @@ import {
 import { WorkerService } from './worker.service';
 import { Worker } from './entities/worker.entity';
 import { UpdateWorkerDto } from './dto/update-worker.dto';
+import { UpdateWorkerByAdminDto } from './dto/update-worker-by-admin.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -67,6 +68,29 @@ export class WorkerController {
     }
 
     return this.workerService.findByUserId(userId);
+  }
+
+  /**
+   * Actualizar información completa de un worker por el administrador
+   * PUT /workers/admin/:workerId/update
+   * Abarca: user, worker y company_worker
+   */
+  @Put('admin/:workerId/update')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('adm')
+  @UseInterceptors(FileInterceptor('photo'))
+  async updateWorkerByAdmin(
+    @Param('workerId', ParseIntPipe) workerId: number,
+    @Req() req: any,
+    @Body() dto: UpdateWorkerByAdminDto,
+    @UploadedFile() photoFile?: Express.Multer.File,
+  ) {
+    const adminId = req.user.sub;
+    const hasUpdates = Object.keys(dto).some((k) => dto[k] !== undefined);
+    if (!hasUpdates && !photoFile) {
+      throw new BadRequestException('Debe proporcionar al menos un campo para actualizar');
+    }
+    return this.workerService.updateWorkerByAdmin(workerId, adminId, dto, photoFile);
   }
 
   /**

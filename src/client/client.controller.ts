@@ -11,6 +11,8 @@ import {
   Req,
   UseInterceptors,
   Put,
+  Param,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { ClientService } from './client.service';
 import { PaginationDto } from '../common/dto/pagination.dto';
@@ -19,6 +21,7 @@ import { Client } from './entities/client.entity';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 
 @Controller('clients')
 @UseGuards(JwtAuthGuard)
@@ -86,6 +89,41 @@ export class ClientController {
       throw new UnauthorizedException('Usuario no autenticado');
     }
     return this.clientService.findByUserId(userId);
+  }
+
+  /**
+   * Ver perfil de un cliente por ID (solo administradores)
+   * GET /clients/admin/:clientId/profile
+   */
+  @Get('admin/:clientId/profile')
+  @Roles('adm')
+  @UseGuards(RolesGuard)
+  async getClientProfileByAdmin(
+    @Param('clientId', ParseIntPipe) clientId: number,
+  ): Promise<any> {
+    return this.clientService.findByClientId(clientId);
+  }
+
+  /**
+   * Actualizar perfil de un cliente por ID (solo administradores)
+   * PUT /clients/admin/:clientId/update
+   */
+  @Put('admin/:clientId/update')
+  @Roles('adm')
+  @UseGuards(RolesGuard)
+  @UseInterceptors(FileInterceptor('photo'))
+  async updateClientProfileByAdmin(
+    @Param('clientId', ParseIntPipe) clientId: number,
+    @Body() updateClientDto: UpdateClientDto,
+    @UploadedFile() photoFile?: Express.Multer.File,
+  ): Promise<any> {
+    const hasUpdates = Object.keys(updateClientDto).some(
+      (key) => updateClientDto[key] !== undefined,
+    );
+    if (!hasUpdates && !photoFile) {
+      throw new BadRequestException('Debe proporcionar al menos un campo para actualizar');
+    }
+    return this.clientService.updateClientByAdmin(clientId, updateClientDto, photoFile);
   }
 
 }

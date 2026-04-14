@@ -64,7 +64,7 @@ async function bootstrap() {
   console.error('Current working directory:', process.cwd());
   console.error('Node version:', process.version);
   console.error('__dirname:', __dirname);
-  
+
   // Check if dist directory exists
   const distPath = path.join(__dirname, '..');
   console.error('Checking dist path:', distPath);
@@ -81,7 +81,7 @@ async function bootstrap() {
   } else {
     console.error('❌ dist directory NOT FOUND');
   }
-  
+
   try {
     console.log('🚀 Starting NestJS application...');
     console.log('═══════════════════════════════════════════════════════');
@@ -95,14 +95,14 @@ async function bootstrap() {
     console.log(`DB_PASSWORD: ${process.env.DB_PASSWORD ? '***SET***' : 'NOT SET'}`);
     console.log(`DB_DATABASE: ${process.env.DB_DATABASE || 'NOT SET (default: projectdb)'}`); // CAMBIADO
     console.log('═══════════════════════════════════════════════════════');
-    
+
     // Validate critical environment variables
     const missingVars: string[] = [];
     if (!process.env.DB_HOST) missingVars.push('DB_HOST');
     if (!process.env.DB_USERNAME) missingVars.push('DB_USERNAME');
     if (!process.env.DB_PASSWORD) missingVars.push('DB_PASSWORD');
     if (!process.env.DB_DATABASE) missingVars.push('DB_DATABASE');
-    
+
     if (missingVars.length > 0) {
       console.warn(`⚠️  WARNING: Missing environment variables: ${missingVars.join(', ')}`);
       console.warn(`⚠️  App will attempt to start but database connection may fail`);
@@ -110,55 +110,57 @@ async function bootstrap() {
     } else {
       console.log(`✅ All required database environment variables are set`);
     }
-    
+
     console.log(`📊 Database connection will use: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 3306}`);
-    
+
     // Create app with timeout to prevent hanging on database connection
     const createAppPromise = NestFactory.create(AppModule, {
       logger: ['error', 'warn', 'log'],
       abortOnError: false, // Critical: Don't abort on TypeORM connection errors
     });
-    
+
     // Set a 15 second timeout for app creation - fail fast if database is blocking
-    const timeoutPromise = new Promise((_, reject) => 
+    const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('App creation timeout after 15s')), 15000)
     );
-    
+
     let app;
     try {
+
       app = await Promise.race([createAppPromise, timeoutPromise]) as any;
+
+      app.enableCors();
     } catch (timeoutError) {
+
       if (timeoutError instanceof Error && timeoutError.message.includes('timeout')) {
-        console.error('⚠️  App creation timed out - this usually means database connection is blocking');
-        console.error('⚠️  Attempting to start app anyway...');
-        // Try to create app one more time without timeout
-        try {
-          app = await NestFactory.create(AppModule, {
-            logger: ['error', 'warn'],
-            abortOnError: false,
-          });
-          console.log('✅ App created after timeout - database may still be connecting');
-        } catch (retryError) {
-          console.error('❌ Failed to create app even after retry:', retryError);
-          throw retryError;
-        }
+
+        console.error('⚠️ App creation timed out');
+
+        app = await NestFactory.create(AppModule, {
+          logger: ['error', 'warn'],
+          abortOnError: false,
+        });
+
+        app.enableCors();
+
       } else {
         throw timeoutError;
       }
+
     }
-    
+
     app.useGlobalPipes(new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
       transformOptions: {
-        enableImplicitConversion: true, 
+        enableImplicitConversion: true,
       },
     }));
-    
+
     const port = process.env.PORT ?? 4000; // CAMBIADO: 4000
     console.log(`🌐 Starting HTTP server on port ${port}...`);
-    
+
     // Add error handlers - but don't exit immediately, log and continue
     process.on('uncaughtException', (error) => {
       console.error('❌ UNCAUGHT EXCEPTION:', error);
@@ -166,7 +168,7 @@ async function bootstrap() {
       console.error('⚠️  App will continue running despite uncaught exception');
       // Don't exit - let the app keep running
     });
-    
+
     process.on('unhandledRejection', (reason, promise) => {
       console.error('❌ UNHANDLED REJECTION at:', promise, 'reason:', reason);
       if (reason instanceof Error) {
@@ -175,28 +177,28 @@ async function bootstrap() {
       console.error('⚠️  App will continue running despite unhandled rejection');
       // Don't exit - let the app keep running
     });
-    
+
     // Keep the process alive
     process.on('SIGTERM', () => {
       console.error('⚠️  SIGTERM received, shutting down gracefully...');
       process.exit(0);
     });
-    
+
     process.on('SIGINT', () => {
       console.error('⚠️  SIGINT received, shutting down gracefully...');
       process.exit(0);
     });
-    
+
     console.error(`🌐 Attempting to listen on port ${port}...`);
     console.error(`🌐 PORT environment variable: ${process.env.PORT || 'NOT SET (using default 4000)'}`); // CAMBIADO
-    
+
     await app.listen(port, '0.0.0.0');
-    
+
     // Verify the server is actually listening
     const server = app.getHttpServer();
     const address = server.address();
     console.error(`✅ Server listening on:`, address);
-    
+
     // Double-check the port
     if (address && typeof address === 'object') {
       console.error(`✅ Verified: Server is listening on port ${address.port}`);
@@ -209,21 +211,21 @@ async function bootstrap() {
     console.error(`✅ Health check available at: http://0.0.0.0:${port}/health`);
     console.error(`✅ Debug endpoints available at: http://0.0.0.0:${port}/debug/status`);
     console.error(`⚠️  Database connection will retry in background if not available`);
-    
+
     // Log startup completion - use console.error so it shows in Digital Ocean logs
     console.error('═══════════════════════════════════════════════════════');
     console.error('✅ APPLICATION STARTUP COMPLETE');
     console.error('═══════════════════════════════════════════════════════');
-    
+
     // Also log to stdout for supervisor
     console.log(`✅ Application is running on: http://0.0.0.0:${port}`);
     console.log(`✅ APPLICATION STARTUP COMPLETE`);
-    
+
     // Keep the process alive and log periodically to verify it's running
     setInterval(() => {
       console.log(`💓 Heartbeat: App still running (uptime: ${Math.floor(process.uptime())}s)`);
     }, 30000); // Every 30 seconds
-    
+
     // Log a message after 10 seconds to confirm app is still running
     setTimeout(() => {
       console.log(`✅ App has been running for 10 seconds - startup successful`);
@@ -233,7 +235,7 @@ async function bootstrap() {
     console.error('❌ Error type:', error?.constructor?.name || typeof error);
     console.error('❌ Error message:', error instanceof Error ? error.message : String(error));
     console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack trace');
-    
+
     if (error instanceof Error) {
       if (error.message.includes('timeout')) {
         console.error('⚠️  App creation timed out - database connection may be slow');
@@ -244,13 +246,13 @@ async function bootstrap() {
         console.error('⚠️  Expected path: dist/src/main.js');
       }
     }
-    
+
     // Log environment one more time before exiting
     console.error('Environment at crash:');
     console.error('  NODE_ENV:', process.env.NODE_ENV);
     console.error('  PORT:', process.env.PORT);
     console.error('  DB_HOST:', process.env.DB_HOST || 'NOT SET');
-    
+
     // Exit and let supervisor restart it
     process.exit(1);
   }

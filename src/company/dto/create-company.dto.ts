@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber, IsDateString } from 'class-validator';
 
 export class CreateCompanyDto {
 
@@ -29,4 +29,8 @@ export class CreateCompanyDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsDateString()
+  birthDate?: string;
 }

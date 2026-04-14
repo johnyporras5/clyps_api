@@ -1,6 +1,8 @@
 import { CompanyFeedback } from '../../company_feedback/entities/company_feedback.entity';
 import { CalendarCompany } from '../../calendar_company/entities/calendar-company.entity';
 import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, OneToMany, UpdateDateColumn } from 'typeorm';
+import { ServiceCategory } from '../../service_category/entities/service_category.entity';
+import { CompanyCategory } from '../../company_category/entities/company_category.entity';
 
 @Entity('company')
 export class Company {
@@ -41,10 +43,19 @@ export class Company {
   @Column({ name: 'phone', length: 20, nullable: true })
   phone: string;
 
+  @Column({ name: 'birth_date', type: 'date', nullable: true })
+  birthDate: Date;
+
 
   @OneToMany(() => CalendarCompany, (calendar) => calendar.company, { cascade: true })
   calendars: CalendarCompany[];
 
   @OneToMany(() => CompanyFeedback, (f) => f.company)
   feedbacks?: CompanyFeedback[];
+
+   @OneToMany(() => ServiceCategory, (category) => category.company, { cascade: true })
+  serviceCategories: ServiceCategory[];
+
+   @OneToMany(() => CompanyCategory, (category) => category.company, { cascade: true })
+  categories: CompanyCategory[];
 }

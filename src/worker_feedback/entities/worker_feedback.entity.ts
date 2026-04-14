@@ -29,6 +29,8 @@ export class WorkerFeedback {
   @Column({ name: 'worker_id', type: 'int' })
   workerId: number;
 
+  client?: any;
+
   @Column({ name: 'client_id', type: 'int', nullable: true })
   clientId?: number | null;
 }
