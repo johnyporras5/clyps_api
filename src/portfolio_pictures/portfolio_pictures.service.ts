@@ -108,7 +108,7 @@ export class PortfolioPicturesService {
     const existing = await this.findOne(id, workerId); // lanza 404 si no existe
 
     // 2. Eliminar archivo anterior
-    this.fileUploadService.deleteFile(this.FOLDER, existing.picture);
+    await this.fileUploadService.deleteFile(this.FOLDER, existing.picture);
 
     // 3. Guardar nuevo archivo
     const fileInfo = await this.fileUploadService.saveFile(
@@ -141,7 +141,7 @@ export class PortfolioPicturesService {
     }
 
     // Eliminar archivo físico
-    this.fileUploadService.deleteFile(this.FOLDER, picture.picture);
+    await this.fileUploadService.deleteFile(this.FOLDER, picture.picture);
 
     // Eliminar registro
     await this.repository.remove(picture);

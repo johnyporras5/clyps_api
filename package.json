@@ -40,6 +40,7 @@
     "generate:all": "npm run clean:gen && npm run generate:resources"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1030.0",
     "@langchain/core": "^1.1.24",
     "@langchain/openai": "^1.2.7",
     "@nestjs/common": "^11.0.1",

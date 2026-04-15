@@ -177,7 +177,7 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
 
         // Eliminar la foto anterior si existe
         if (worker.picture) {
-          this.fileUploadService.deleteFile(
+          await this.fileUploadService.deleteFile(
             this.WORKER_PHOTO_FOLDER,
             worker.picture
           );
@@ -300,7 +300,7 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
           worker.userId,
         );
         if (worker.picture) {
-          this.fileUploadService.deleteFile(this.WORKER_PHOTO_FOLDER, worker.picture);
+          await this.fileUploadService.deleteFile(this.WORKER_PHOTO_FOLDER, worker.picture);
         }
         dto.picture = photoInfo.fileName;
       } catch (error) {

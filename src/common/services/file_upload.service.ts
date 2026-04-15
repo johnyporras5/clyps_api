@@ -1,8 +1,7 @@
 import { Injectable, BadRequestException, Logger, Inject } from '@nestjs/common';
-import * as fs from 'fs';
-import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfigService } from '@nestjs/config';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 export type AllowedFolder =
   | 'client_photo'
@@ -19,8 +18,10 @@ export interface FileInfo {
 @Injectable()
 export class FileUploadService {
   private readonly logger = new Logger(FileUploadService.name);
-  private readonly assetsPath: string;
   private readonly assetsBaseUrl: string;
+  private readonly s3Client: S3Client;
+  private readonly bucket: string;
+  private readonly useSpaces: boolean;
 
   // Tipos de carpetas permitidas
   private readonly allowedFolders: AllowedFolder[] = [
@@ -34,30 +35,33 @@ export class FileUploadService {
     @Inject(ConfigService)
     private readonly configService: ConfigService
   ) {
-    this.assetsPath = path.join(process.cwd(), 'assets');
-
     // Obtener la URL base desde las variables de entorno con valor por defecto
     this.assetsBaseUrl = this.configService.get<string>('ASSETS_BASE_URL') || 'http://localhost:4000/assets';
+    this.bucket = this.configService.get<string>('DO_SPACES_BUCKET') || 'clyps';
 
-    this.logger.log(`📁 Ruta de assets: ${this.assetsPath}`);
-    this.logger.log(`🌐 URL base de assets: ${this.assetsBaseUrl}`);
+    // Verificar si se debe usar Digital Ocean Spaces
+    const endpoint = this.configService.get<string>('DO_SPACES_ENDPOINT');
+    const accessKey = this.configService.get<string>('DO_SPACES_ACCESS_KEY');
+    const secretKey = this.configService.get<string>('DO_SPACES_SECRET_KEY');
+    const region = this.configService.get<string>('DO_SPACES_REGION') || 'sfo3';
 
-    this.createDirectories();
-  }
+    this.useSpaces = !!(endpoint && accessKey && secretKey);
 
-  private createDirectories() {
-    // Crear directorio raíz de assets si no existe
-    if (!fs.existsSync(this.assetsPath)) {
-      fs.mkdirSync(this.assetsPath, { recursive: true });
+    if (this.useSpaces) {
+      this.s3Client = new S3Client({
+        region,
+        endpoint: endpoint!,
+        credentials: {
+          accessKeyId: accessKey!,
+          secretAccessKey: secretKey!,
+        },
+      });
+      this.logger.log(`☁️ Usando Digital Ocean Spaces`);
+      this.logger.log(`📦 Bucket: ${this.bucket}`);
+      this.logger.log(`🌐 URL base: ${this.assetsBaseUrl}`);
+    } else {
+      this.logger.warn(`⚠️ Digital Ocean Spaces no configurado, modo local deshabilitado`);
     }
-
-    // Crear todos los directorios permitidos
-    this.allowedFolders.forEach(folder => {
-      const dirPath = path.join(this.assetsPath, folder);
-      if (!fs.existsSync(dirPath)) {
-        fs.mkdirSync(dirPath, { recursive: true });
-      }
-    });
   }
 
   async saveFile(
@@ -73,29 +77,43 @@ export class FileUploadService {
       }
 
       // Validar que sea una imagen
-      if (!file.mimetype.startsWith('image/')) {
+      if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+        this.logger.error(`❌ Tipo de archivo no permitido: ${file.mimetype || 'sin mimetype'}`);
         throw new BadRequestException('Solo se permiten archivos de imagen');
       }
 
       // Generar nombre único para el archivo
-      const fileExtension = path.extname(file.originalname) || this.getExtensionFromMimeType(file.mimetype);
+      const fileExtension = this.getExtensionFromMimeType(file.mimetype);
       const sanitizedEntityType = entityType.replace(/[^a-zA-Z0-9-_]/g, '');
       const fileName = `${sanitizedEntityType}-${entityId}-${uuidv4()}${fileExtension}`;
-      const filePath = path.join(this.assetsPath, folder, fileName);
+      const key = `${folder}/${fileName}`;
 
-      // Guardar archivo
-      fs.writeFileSync(filePath, file.buffer);
+      if (this.useSpaces) {
+        // Guardar en Digital Ocean Spaces
+        const command = new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: file.buffer,
+          ContentType: file.mimetype,
+          ACL: 'public-read',
+        });
+
+        await this.s3Client.send(command);
+        this.logger.log(`☁️ Archivo subido a Spaces: ${key}`);
+      } else {
+        throw new BadRequestException('Digital Ocean Spaces no está configurado');
+      }
 
       // Generar URL completa
       const fileUrl = this.getFileUrl(folder, fileName);
 
-      this.logger.log(`✅ Archivo guardado: ${filePath}`);
+      this.logger.log(`✅ Archivo guardado: ${fileName}`);
       this.logger.log(`🔗 URL generada: ${fileUrl}`);
 
       return {
         fileName,
         fileUrl,
-        filePath
+        filePath: key
       };
     } catch (error) {
       this.logger.error(`❌ Error al guardar el archivo: ${error.message}`);
@@ -116,17 +134,21 @@ export class FileUploadService {
     return `${this.assetsBaseUrl}/${safeFolder}/${safeFileName}`;
   }
 
-  deleteFile(folder: string, fileName: string): boolean {
+  async deleteFile(folder: string, fileName: string): Promise<boolean> {
     try {
-      const filePath = path.join(this.assetsPath, folder, fileName);
+      if (this.useSpaces) {
+        const key = `${folder}/${fileName}`;
+        const command = new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        });
 
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        this.logger.log(`🗑️  Archivo eliminado: ${filePath}`);
+        await this.s3Client.send(command);
+        this.logger.log(`🗑️ Archivo eliminado de Spaces: ${key}`);
         return true;
       }
 
-      this.logger.warn(`⚠️  Archivo no encontrado para eliminar: ${filePath}`);
+      this.logger.warn(`⚠️ Digital Ocean Spaces no configurado`);
       return false;
     } catch (error) {
       this.logger.error(`❌ Error al eliminar archivo ${fileName}:`, error);

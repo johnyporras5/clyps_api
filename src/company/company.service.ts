@@ -149,7 +149,7 @@ async findByUserId(userId: number): Promise<CompanyWithLogoUrl> {
 
     // Eliminar el archivo del logo si existe
     if (company.logo) {
-      this.fileUploadService.deleteFile('company_logo', company.logo);
+      await this.fileUploadService.deleteFile('company_logo', company.logo);
     }
 
     const result = await this.companyRepository.delete(id);
