@@ -275,7 +275,7 @@ export class CompanyWorkerService {
       .select([
         'cw.id AS companyWorkerId',
         'worker.id AS workerId',
-        'CONCAT(worker.name, " ", worker.last_name) AS fullName',
+        "CONCAT(worker.name, ' ', worker.last_name) AS fullName",
         'worker.picture AS picture',
         'cw.start_date AS startDate',
         'cw.end_date AS endDate',
@@ -301,7 +301,7 @@ export class CompanyWorkerService {
     if (name && name.trim() !== '') {
       const searchTerm = `%${name.trim()}%`;
       queryBuilder.andWhere(
-        '(worker.name LIKE :search OR worker.last_name LIKE :search OR CONCAT(worker.name, " ", worker.last_name) LIKE :search)',
+        "(worker.name LIKE :search OR worker.last_name LIKE :search OR CONCAT(worker.name, ' ', worker.last_name) LIKE :search)",
         { search: searchTerm }
       );
     }
@@ -387,7 +387,7 @@ export class CompanyWorkerService {
     if (name && name.trim() !== '') {
       const searchTerm = `%${name.trim()}%`;
       countQueryBuilder.andWhere(
-        '(worker.name LIKE :search OR worker.last_name LIKE :search OR CONCAT(worker.name, " ", worker.last_name) LIKE :search)',
+        "(worker.name LIKE :search OR worker.last_name LIKE :search OR CONCAT(worker.name, ' ', worker.last_name) LIKE :search)",
         { search: searchTerm }
       );
     }
