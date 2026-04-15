@@ -17,7 +17,7 @@ export class ReportsController {
     @Query() query: IncomeServicesQueryDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
-    return this.reportsService.getIncomeByServices(adminId, query.startDate, query.endDate);
+    return this.reportsService.getIncomeByServices(adminId, query.startDate, query.endDate, query.page, query.limit);
   }
 
   @Get('income-employees')
@@ -27,6 +27,6 @@ export class ReportsController {
     @Query() query: IncomeServicesQueryDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
-    return this.reportsService.getIncomeByEmployees(adminId, query.startDate, query.endDate);
+    return this.reportsService.getIncomeByEmployees(adminId, query.startDate, query.endDate, query.page, query.limit);
   }
 }
