@@ -3,6 +3,7 @@ import {
   NotFoundException,
   UnauthorizedException,
   BadRequestException,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
@@ -12,6 +13,7 @@ import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
 import { Company } from '../company/entities/company.entity';
 import { Service } from '../service/entities/service.entity';
+import { FileUploadService } from '../common/services/file_upload.service';
 
 @Injectable()
 export class OfferService {
@@ -24,17 +26,20 @@ export class OfferService {
     private companyRepository: Repository<Company>,
     @InjectRepository(Service)
     private serviceRepository: Repository<Service>,
+    @Inject(FileUploadService)
+    private fileUploadService: FileUploadService,
   ) {}
 
-  async findAllByCompany(adminId: number): Promise<Offer[]> {
+  async findAllByCompany(adminId: number): Promise<any[]> {
     const company = await this.getCompanyByAdmin(adminId);
-    return this.offerRepository.find({
+    const offers = await this.offerRepository.find({
       where: { companyId: company.id },
       relations: ['serviceOffers', 'serviceOffers.service'],
     });
+    return offers.map((offer) => this.addLogoUrl(offer));
   }
 
-  async findOne(id: number, adminId: number): Promise<Offer> {
+  async findOne(id: number, adminId: number): Promise<any> {
     const company = await this.getCompanyByAdmin(adminId);
     const offer = await this.offerRepository.findOne({
       where: { id, companyId: company.id },
@@ -45,10 +50,14 @@ export class OfferService {
         `Offer with id ${id} not found or you don't have permission`,
       );
     }
-    return offer;
+    return this.addLogoUrl(offer);
   }
 
-  async create(createOfferDto: CreateOfferDto, adminId: number): Promise<Offer> {
+  async create(
+    createOfferDto: CreateOfferDto,
+    adminId: number,
+    logoFile?: Express.Multer.File,
+  ): Promise<any> {
     const company = await this.getCompanyByAdmin(adminId);
 
     if (new Date(createOfferDto.startDate) >= new Date(createOfferDto.endDate)) {
@@ -62,8 +71,21 @@ export class OfferService {
       );
     }
 
+    // Procesar logo si se envió archivo
+    let logoFileName: string | undefined;
+    if (logoFile) {
+      const logoInfo = await this.fileUploadService.saveFile(
+        logoFile,
+        'offer_logo',
+        'offer',
+        company.id,
+      );
+      logoFileName = logoInfo.fileName;
+    }
+
     const offer = this.offerRepository.create({
       ...createOfferDto,
+      logo: logoFileName || createOfferDto.logo || undefined,
       companyId: company.id,
       serviceOffers: createOfferDto.serviceOffers?.map((item) => ({
         serviceId: item.serviceId,
@@ -71,7 +93,7 @@ export class OfferService {
       })),
     });
 
-    const savedOffer = await this.offerRepository.save(offer);
+    const savedOffer = await this.offerRepository.save(offer) as Offer;
     return this.findOne(savedOffer.id, adminId);
   }
 
@@ -79,7 +101,8 @@ export class OfferService {
     id: number,
     updateOfferDto: UpdateOfferDto,
     adminId: number,
-  ): Promise<Offer> {
+    logoFile?: Express.Multer.File,
+  ): Promise<any> {
     const company = await this.getCompanyByAdmin(adminId);
 
     const offer = await this.offerRepository.findOne({
@@ -99,7 +122,22 @@ export class OfferService {
       }
     }
 
-    const { serviceOffers, ...restDto } = updateOfferDto;
+    // Procesar logo si se envió archivo
+    if (logoFile) {
+      // Eliminar logo anterior si existe
+      if (offer.logo) {
+        await this.fileUploadService.deleteFile('offer_logo', offer.logo);
+      }
+      const logoInfo = await this.fileUploadService.saveFile(
+        logoFile,
+        'offer_logo',
+        'offer',
+        company.id,
+      );
+      offer.logo = logoInfo.fileName;
+    }
+
+    const { serviceOffers, logo: _logoIgnored, ...restDto } = updateOfferDto;
     Object.assign(offer, restDto);
 
     if (serviceOffers) {
@@ -128,10 +166,14 @@ export class OfferService {
         `Offer with id ${id} not found or you don't have permission`,
       );
     }
+    // Eliminar logo del almacenamiento si existe
+    if (offer.logo) {
+      await this.fileUploadService.deleteFile('offer_logo', offer.logo);
+    }
     await this.offerRepository.remove(offer);
   }
 
-  async setStatus(id: number, status: number, adminId: number): Promise<Offer> {
+  async setStatus(id: number, status: number, adminId: number): Promise<any> {
     const company = await this.getCompanyByAdmin(adminId);
     const offer = await this.offerRepository.findOne({
       where: { id, companyId: company.id },
@@ -184,6 +226,9 @@ export class OfferService {
           offerId: offer.id,
           offerName: offer.name,
           offerLogo: offer.logo,
+          offerLogoUrl: offer.logo
+            ? this.fileUploadService.getFileUrl('offer_logo', offer.logo)
+            : null,
           offerDescription: offer.description,
           startDate: offer.startDate,
           endDate: offer.endDate,
@@ -220,6 +265,15 @@ export class OfferService {
   }
 
   // ==================== MÉTODOS PRIVADOS ====================
+
+  private addLogoUrl(offer: Offer): any {
+    return {
+      ...offer,
+      logoUrl: offer.logo
+        ? this.fileUploadService.getFileUrl('offer_logo', offer.logo)
+        : null,
+    };
+  }
 
   private async getCompanyByAdmin(adminId: number): Promise<Company> {
     const company = await this.companyRepository.findOne({

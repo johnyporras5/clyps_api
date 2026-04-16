@@ -1,5 +1,5 @@
-import { IsString, IsOptional, IsDateString, IsEnum, IsArray, ValidateNested, IsNumber, IsDate } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsOptional, IsEnum, IsArray, ValidateNested } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
 import { OfferStatus } from '../entities/offer.entity';
 import { CreateServiceOfferDto } from './create-service-offer.dto';
 
@@ -25,8 +25,14 @@ export class CreateOfferDto {
     @IsOptional()
     endDate: Date;
 
-
     @IsOptional()
+    @Transform(({ value }) => {
+        const arr = typeof value === 'string' ? JSON.parse(value) : value;
+        if (Array.isArray(arr)) {
+            return arr.map((item) => Object.assign(new CreateServiceOfferDto(), item));
+        }
+        return arr;
+    })
     @IsArray()
     @ValidateNested({ each: true })
     @Type(() => CreateServiceOfferDto)

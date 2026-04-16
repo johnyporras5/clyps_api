@@ -6,11 +6,12 @@ import { Offer } from './entities/offer.entity';
 import { ServiceOffer } from './entities/service-offer.entity';
 import { Company } from '../company/entities/company.entity';
 import { Service } from '../service/entities/service.entity';
+import { CommonModule } from '../common/common.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Offer, ServiceOffer, Company, Service])],
+  imports: [TypeOrmModule.forFeature([Offer, ServiceOffer, Company, Service]), CommonModule],
   providers: [OfferService],
   controllers: [OfferController],
-  exports: [OfferService, TypeOrmModule], 
+  exports: [OfferService, TypeOrmModule],
 })
 export class OfferModule {}

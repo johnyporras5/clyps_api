@@ -7,7 +7,8 @@ export type AllowedFolder =
   | 'client_photo'
   | 'company_logo'
   | 'worker_photo'
-  | 'portfolio';
+  | 'portfolio'
+  | 'offer_logo';
 
 export interface FileInfo {
   fileName: string;
@@ -29,6 +30,7 @@ export class FileUploadService {
     'company_logo',
     'worker_photo',
     'portfolio',
+    'offer_logo',
   ];
 
   constructor(

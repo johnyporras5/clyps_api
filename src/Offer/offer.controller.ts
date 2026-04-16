@@ -12,7 +12,10 @@ import {
   HttpStatus,
   UseGuards,
   Req,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { OfferService } from './offer.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
@@ -73,13 +76,15 @@ export class OfferController {
    */
   @Post('my-company')
   @Roles('adm')
+  @UseInterceptors(FileInterceptor('logo'))
   @HttpCode(HttpStatus.CREATED)
   async createForMyCompany(
     @Body() createOfferDto: CreateOfferDto,
     @Req() req: any,
+    @UploadedFile() logoFile?: Express.Multer.File,
   ) {
     const adminId = req.user.sub;
-    return this.offerService.create(createOfferDto, adminId);
+    return this.offerService.create(createOfferDto, adminId, logoFile);
   }
 
   /**
@@ -88,14 +93,16 @@ export class OfferController {
    */
   @Put('my-company/:id')
   @Roles('adm')
+  @UseInterceptors(FileInterceptor('logo'))
   @HttpCode(HttpStatus.OK)
   async updateMyCompany(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateOfferDto: UpdateOfferDto,
     @Req() req: any,
+    @UploadedFile() logoFile?: Express.Multer.File,
   ) {
     const adminId = req.user.sub;
-    return this.offerService.update(id, updateOfferDto, adminId);
+    return this.offerService.update(id, updateOfferDto, adminId, logoFile);
   }
 
   /**
