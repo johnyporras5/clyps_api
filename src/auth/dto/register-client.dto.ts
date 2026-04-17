@@ -12,6 +12,11 @@ export class RegisterClientDto {
 
   @IsOptional()
   @IsString()
+  @Length(8, 100)
+  password?: string;
+
+  @IsOptional()
+  @IsString()
   name?: string;
 
   @IsOptional()

@@ -477,8 +477,13 @@ export class AuthService {
         throw new ConflictException('El nombre de usuario ya está en uso');
       }
 
-      generatedPassword = this.generateRandomPassword(12);
-      const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+      // Si el cliente envió contraseña, úsala; si no, generar aleatoria y enviar por correo.
+      const clientProvidedPassword = !!registerDto.password;
+      const passwordToUse = registerDto.password || this.generateRandomPassword(12);
+      if (!clientProvidedPassword) {
+        generatedPassword = passwordToUse;
+      }
+      const hashedPassword = await bcrypt.hash(passwordToUse, 10);
 
       const newUser = this.userRepository.create({
         username: registerDto.username,
@@ -490,16 +495,16 @@ export class AuthService {
 
       user = await this.userRepository.save(newUser);
 
+      if (!clientProvidedPassword) {
+        const credentialsSent = await this.emailService.sendClientCredentials(
+          user.email,
+          user.username,
+          passwordToUse
+        );
 
-
-      const credentialsSent = await this.emailService.sendClientCredentials(
-        user.email,
-        user.username,
-        generatedPassword
-      );
-
-      if (!credentialsSent) {
-        console.warn('No se pudieron enviar las credenciales por correo, pero el usuario fue creado');
+        if (!credentialsSent) {
+          console.warn('No se pudieron enviar las credenciales por correo, pero el usuario fue creado');
+        }
       }
 
       await this.sendVerificationCode(user.email);
