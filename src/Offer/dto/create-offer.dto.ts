@@ -9,10 +9,6 @@ export class CreateOfferDto {
 
     @IsOptional()
     @IsString()
-    logo?: string;
-
-    @IsOptional()
-    @IsString()
     description?: string;
 
     @IsOptional()

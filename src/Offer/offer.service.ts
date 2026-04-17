@@ -85,7 +85,7 @@ export class OfferService {
 
     const offer = this.offerRepository.create({
       ...createOfferDto,
-      logo: logoFileName || createOfferDto.logo || undefined,
+      logo: logoFileName,
       companyId: company.id,
       serviceOffers: createOfferDto.serviceOffers?.map((item) => ({
         serviceId: item.serviceId,
@@ -137,7 +137,7 @@ export class OfferService {
       offer.logo = logoInfo.fileName;
     }
 
-    const { serviceOffers, logo: _logoIgnored, ...restDto } = updateOfferDto;
+    const { serviceOffers, ...restDto } = updateOfferDto;
     Object.assign(offer, restDto);
 
     if (serviceOffers) {
@@ -145,11 +145,13 @@ export class OfferService {
         serviceOffers.map((s) => s.serviceId),
         company.id,
       );
-      offer.serviceOffers = serviceOffers.map((item) => ({
-        serviceId: item.serviceId,
-        price: item.price,
-        offer: offer,
-      })) as any;
+      await this.serviceOfferRepository.delete({ offerId: id });
+      offer.serviceOffers = serviceOffers.map((item) =>
+        this.serviceOfferRepository.create({
+          serviceId: item.serviceId,
+          price: item.price,
+        }),
+      );
     }
 
     await this.offerRepository.save(offer);

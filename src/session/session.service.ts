@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Between } from 'typeorm';
+import { Repository, In, Between, Not } from 'typeorm';
 import { Session } from './entities/session.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { CreateSessionWithDetailDto, SessionDetailItemDto } from './dto/create-session-with-detail.dto';
@@ -627,15 +627,17 @@ export class SessionService {
         const savedSessionDetail = await this.sessionDetailRepository.save(sessionDetail);
         createdDetails.push(savedSessionDetail);
 
-        // Enviar correos de confirmación para este servicio
-        await this.sendConfirmationEmails(
+        // Enviar correos de confirmación en segundo plano (no bloquear la respuesta)
+        this.sendConfirmationEmails(
           session,
           savedSessionDetail,
           createSessionWithDetailDto.clientId,
           detail.companyWorkerId,
           detail.serviceId,
           companyId
-        );
+        ).catch((error) => {
+          this.logger.error(`Error enviando correos de confirmación: ${(error as Error).message}`);
+        });
       } catch (error) {
         // Si falla algún detalle, eliminar todo lo creado
         if (createdDetails.length > 0) {
@@ -765,11 +767,12 @@ export class SessionService {
     const startTime = new Date(appointmentDate.getTime() - timeMarginMinutes * 60000);
     const endTime = new Date(appointmentDate.getTime() + timeMarginMinutes * 60000);
 
-    // Buscar sesiones del cliente en el mismo día
+    // Buscar sesiones del cliente en el mismo día (excluyendo canceladas status=5)
     const sessionsSameDay = await this.sessionRepository.find({
       where: {
         clientId: clientId,
-        sessionDatetime: Between(startOfDay, endOfDay)
+        sessionDatetime: Between(startOfDay, endOfDay),
+        sessionStatus: Not(5)
       }
     });
 
@@ -922,11 +925,12 @@ export class SessionService {
     const endOfDay = new Date(appointmentDate);
     endOfDay.setHours(23, 59, 59, 999);
 
-    // Buscar sesiones del cliente en el mismo día
+    // Buscar sesiones del cliente en el mismo día (excluyendo canceladas status=5)
     const sessions = await this.sessionRepository.find({
       where: {
         clientId: clientId,
-        sessionDatetime: Between(startOfDay, endOfDay)
+        sessionDatetime: Between(startOfDay, endOfDay),
+        sessionStatus: Not(5)
       },
       order: {
         sessionDatetime: 'ASC'
@@ -1732,18 +1736,22 @@ export class SessionService {
 
     // Determinar ordenamiento
     let order: any = {};
-    switch (getSessionsDto.orderBy) {
-      case 'recent':
-        order = { sessionDatetime: 'DESC' };
-        break;
-      case 'oldest':
-        order = { sessionDatetime: 'ASC' };
-        break;
-      case 'priority':
-        order = { sessionStatus: 'ASC', sessionDatetime: 'ASC' };
-        break;
-      default:
-        order = { sessionDatetime: 'DESC' };
+    if (getSessionsDto.today) {
+      order = { sessionDatetime: 'ASC' };
+    } else {
+      switch (getSessionsDto.orderBy) {
+        case 'recent':
+          order = { sessionDatetime: 'DESC' };
+          break;
+        case 'oldest':
+          order = { sessionDatetime: 'ASC' };
+          break;
+        case 'priority':
+          order = { sessionStatus: 'ASC', sessionDatetime: 'ASC' };
+          break;
+        default:
+          order = { sessionDatetime: 'DESC' };
+      }
     }
 
     // 4. Obtener las sesiones con filtros aplicados
@@ -2744,8 +2752,14 @@ export class SessionService {
       query.andWhere('company.id = :companyId', { companyId: getSessionsDto.companyId });
     }
 
-    // Ordenar por fecha del detalle (detail.start_datetime)
-    query.orderBy('detail.start_datetime', getSessionsDto.orderBy === 'oldest' ? 'ASC' : 'DESC');
+    // Ordenar por fecha del detalle (detail.start_datetime).
+    // Cuando today=true, forzar ASC (hora más temprana primero).
+    const detailOrder: 'ASC' | 'DESC' = getSessionsDto.today
+      ? 'ASC'
+      : getSessionsDto.orderBy === 'oldest'
+        ? 'ASC'
+        : 'DESC';
+    query.orderBy('detail.start_datetime', detailOrder);
 
     // Aplicar paginación (sobre los detalles)
     const details = await query
@@ -3417,15 +3431,17 @@ export class SessionService {
         const savedSessionDetail = await this.sessionDetailRepository.save(sessionDetail);
         createdDetails.push(savedSessionDetail);
 
-        // Enviar correos de confirmación para este servicio
-        await this.sendConfirmationEmails(
+        // Enviar correos de confirmación en segundo plano (no bloquear la respuesta)
+        this.sendConfirmationEmails(
           session,
           savedSessionDetail,
           clientId,
           detail.companyWorkerId,
           detail.serviceId,
           companyId
-        );
+        ).catch((error) => {
+          this.logger.error(`Error enviando correos de confirmación: ${(error as Error).message}`);
+        });
       } catch (error) {
         // Si falla algún detalle, eliminar todo lo creado
         if (createdDetails.length > 0) {
@@ -4164,23 +4180,21 @@ export class SessionService {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada después de actualizar`);
     }
 
-    // 14. Enviar correos de confirmación
+    // 14. Enviar correos de confirmación en segundo plano (no bloquear la respuesta)
     for (let i = 0; i < validations.length; i++) {
       const validation = validations[i];
       const addedDetail = addedDetails[i];
 
-      try {
-        await this.sendConfirmationEmails(
-          updatedSession,
-          addedDetail,
-          session.clientId,
-          validation.extraService.providerId,
-          validation.extraService.serviceId,
-          adminCompany.id
-        );
-      } catch (error) {
+      this.sendConfirmationEmails(
+        updatedSession,
+        addedDetail,
+        session.clientId,
+        validation.extraService.providerId,
+        validation.extraService.serviceId,
+        adminCompany.id
+      ).catch((error) => {
         this.logger.warn(`⚠️ Error enviando correos para servicio extra: ${(error as Error).message}`);
-      }
+      });
     }
 
     // 15. Actualizar automáticamente el estado de la sesión
@@ -4552,8 +4566,13 @@ export class SessionService {
       });
     }
 
-    // Ordenar por fecha de la sesión (más reciente por defecto)
-    query.orderBy('session.session_datetime', getSessionsDto.orderBy === 'oldest' ? 'ASC' : 'DESC');
+    // Ordenar por fecha de la sesión. Cuando today=true, forzar ASC (hora más temprana primero).
+    const sessionOrder: 'ASC' | 'DESC' = getSessionsDto.today
+      ? 'ASC'
+      : getSessionsDto.orderBy === 'oldest'
+        ? 'ASC'
+        : 'DESC';
+    query.orderBy('session.session_datetime', sessionOrder);
 
     // Aplicar paginación
     const details = await query
