@@ -24,7 +24,7 @@ export class ServiceCategoryService {
   async findAllByCompany(adminId: number): Promise<ServiceCategory[]> {
     const company = await this.getCompanyOrFail(adminId);
     return this.categoryRepository.find({
-      where: { companyId: company.id, isActive: true },
+      where: { companyId: company.id },
       relations: ['services'],
     });
   }

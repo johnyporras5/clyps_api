@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEmail, IsUrl, IsDateString } from 'class-validator';
+import { IsOptional, IsString, IsEmail, IsDateString } from 'class-validator';
 
 export class UpdateAdminProfileDto {
   @IsOptional()
@@ -26,15 +26,15 @@ export class UpdateAdminProfileDto {
   managerName?: string;
 
   @IsOptional()
-  @IsUrl()
+  @IsString()
   instagramUrl?: string;
 
   @IsOptional()
-  @IsUrl()
+  @IsString()
   tiktokUrl?: string;
 
   @IsOptional()
-  @IsUrl()
+  @IsString()
   facebookUrl?: string;
 
   @IsOptional()
