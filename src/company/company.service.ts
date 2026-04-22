@@ -77,18 +77,182 @@ export class CompanyService {
     };
   }
 
-  async findOne(id: number): Promise<CompanyWithLogoUrl> {
+  async findOne(id: number): Promise<any> {
     const company = await this.companyRepository.findOne({ where: { id } });
     if (!company) {
       throw new NotFoundException(`Company with id ${id} not found`);
     }
 
-    const companyWithLogo: CompanyWithLogoUrl = {
-      ...company,
-      logoUrl: company.logo ? this.fileUploadService.getFileUrl('company_logo', company.logo) : null
-    };
+    const [
+      calendars,
+      companyWorkers,
+      services,
+      serviceCategories,
+      companyCategories,
+      companyRatingRaw,
+      user,
+    ] = await Promise.all([
+      this.calendarCompanyRepository.find({ where: { companyId: id } }),
+      this.companyWorkerRepository.find({
+        where: {
+          companyId: id,
+          isActive: 1,
+          temporarilyDeleted: false,
+          permanentlyDeleted: false,
+        },
+      }),
+      this.serviceRepository.find({ where: { companyId: id } }),
+      this.serviceCategoryRepository.find({ where: { companyId: id, isActive: true } }),
+      this.companyCategoryRepository.find({ where: { companyId: id } }),
+      this.companyFeedbackRepository
+        .createQueryBuilder('f')
+        .select('AVG(f.stars)', 'avg')
+        .addSelect('COUNT(f.id)', 'count')
+        .where('f.company_id = :id', { id })
+        .andWhere('f.stars IS NOT NULL')
+        .getRawOne<{ avg: string; count: string }>(),
+      company.userId
+        ? this.userRepository.findOne({ where: { id: company.userId } })
+        : Promise.resolve(null),
+    ]);
 
-    return companyWithLogo;
+    const workerIds = companyWorkers
+      .map(cw => cw.worker?.id)
+      .filter((wid): wid is number => typeof wid === 'number');
+    const serviceIds = services.map(s => s.id);
+
+    const [workerRatings, serviceRatings] = await Promise.all([
+      workerIds.length
+        ? this.workerFeedbackRepository
+            .createQueryBuilder('f')
+            .select('f.worker_id', 'workerId')
+            .addSelect('AVG(f.stars)', 'avg')
+            .addSelect('COUNT(f.id)', 'count')
+            .where('f.worker_id IN (:...ids)', { ids: workerIds })
+            .andWhere('f.stars IS NOT NULL')
+            .groupBy('f.worker_id')
+            .getRawMany<{ workerId: number; avg: string; count: string }>()
+        : Promise.resolve([]),
+      serviceIds.length
+        ? this.serviceFeedbackRepository
+            .createQueryBuilder('f')
+            .select('f.service_id', 'serviceId')
+            .addSelect('AVG(f.stars)', 'avg')
+            .addSelect('COUNT(f.id)', 'count')
+            .where('f.service_id IN (:...ids)', { ids: serviceIds })
+            .andWhere('f.stars IS NOT NULL')
+            .groupBy('f.service_id')
+            .getRawMany<{ serviceId: number; avg: string; count: string }>()
+        : Promise.resolve([]),
+    ]);
+
+    const workerRatingMap = new Map<number, { average: number; total: number }>();
+    for (const r of workerRatings) {
+      workerRatingMap.set(Number(r.workerId), {
+        average: Number(Number(r.avg).toFixed(2)),
+        total: Number(r.count),
+      });
+    }
+    const serviceRatingMap = new Map<number, { average: number; total: number }>();
+    for (const r of serviceRatings) {
+      serviceRatingMap.set(Number(r.serviceId), {
+        average: Number(Number(r.avg).toFixed(2)),
+        total: Number(r.count),
+      });
+    }
+
+    let calendarDetail: any = null;
+    if (calendars.length > 0) {
+      let detail = calendars[0].calendarDetail;
+      if (typeof detail === 'string') {
+        try { detail = JSON.parse(detail); } catch { /* ignore */ }
+      }
+      calendarDetail = detail;
+    }
+
+    const categoryById = new Map<number, ServiceCategory>();
+    for (const cat of serviceCategories) {
+      categoryById.set(cat.id, cat);
+    }
+
+    const workers = companyWorkers
+      .filter(cw => cw.worker)
+      .map(cw => {
+        const w = cw.worker;
+        const rating = workerRatingMap.get(w.id) || { average: 0, total: 0 };
+        return {
+          id: w.id,
+          name: w.name,
+          lastName: w.lastName,
+          phone: w.phone,
+          description: w.description,
+          location: w.location,
+          instagramUrl: w.instagramUrl,
+          tiktokUrl: w.tiktokUrl,
+          facebookUrl: w.facebookUrl,
+          pictureUrl: w.picture
+            ? this.fileUploadService.getFileUrl('worker_photo', w.picture)
+            : null,
+          rating,
+        };
+      });
+
+    const servicesData = services.map(s => {
+      const cat = s.categoryId ? categoryById.get(s.categoryId) : null;
+      const rating = serviceRatingMap.get(s.id) || { average: 0, total: 0 };
+      return {
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        cost: s.cost,
+        currency: s.currency,
+        standardTime: s.standardTime,
+        status: s.status,
+        category: cat
+          ? { id: cat.id, name: cat.name, description: cat.description }
+          : null,
+        rating,
+      };
+    });
+
+    const categories = companyCategories.map(cc => ({
+      id: cc.id,
+      name: cc.name,
+    }));
+
+    const rating = companyRatingRaw && companyRatingRaw.avg
+      ? {
+          average: Number(Number(companyRatingRaw.avg).toFixed(2)),
+          total: Number(companyRatingRaw.count),
+        }
+      : { average: 0, total: 0 };
+
+    const userWithoutPassword = user
+      ? (() => {
+          const { password, ...rest } = user;
+          return rest;
+        })()
+      : null;
+
+    return {
+      ...company,
+      logoUrl: company.logo
+        ? this.fileUploadService.getFileUrl('company_logo', company.logo)
+        : null,
+      rating,
+      calendarDetail,
+      schedule: calendarDetail,
+      categories,
+      serviceCategories: serviceCategories.map(sc => ({
+        id: sc.id,
+        name: sc.name,
+        description: sc.description,
+        isActive: sc.isActive,
+      })),
+      workers,
+      services: servicesData,
+      user: userWithoutPassword,
+    };
   }
 
 async findByUserId(userId: number): Promise<CompanyWithLogoUrl> {

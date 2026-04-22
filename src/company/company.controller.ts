@@ -70,7 +70,7 @@ export class CompanyController {
   @Get(':id')
   async findOne(
     @Param('id', ParseIntPipe) id: number
-  ): Promise<CompanyWithLogoUrl> {
+  ): Promise<any> {
     return this.companyService.findOne(id);
   }
 
