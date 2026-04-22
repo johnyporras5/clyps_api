@@ -35,6 +35,15 @@ export class Worker {
   @Column({ name: 'location', length: 145, nullable: true })
   location: string;
 
+  @Column({ name: 'instagram_url', length: 245, nullable: true })
+  instagramUrl: string;
+
+  @Column({ name: 'tiktok_url', length: 245, nullable: true })
+  tiktokUrl: string;
+
+  @Column({ name: 'facebook_url', length: 245, nullable: true })
+  facebookUrl: string;
+
   // Relación uno a uno con User
   @OneToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })

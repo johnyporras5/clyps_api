@@ -13,6 +13,7 @@ import { WorkerModule } from './worker/worker.module';
 import { WorkerFeedbackModule } from './worker_feedback/worker_feedback.module';
 import { CalendarCompanyModule } from './calendar_company/calendar-company.module';
 import { ServiceFeedbackModule } from './service_feedback/service_feedback.module';
+import { ClientFavoriteCompanyModule } from './client_favorite_company/client-favorite-company.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { ServiceFeedbackModule } from './service_feedback/service_feedback.modul
     WorkerFeedbackModule,
     CalendarCompanyModule,
     ServiceFeedbackModule,
+    ClientFavoriteCompanyModule,
   ],
 })
 export class GeneratedModules {}

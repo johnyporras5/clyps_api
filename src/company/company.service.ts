@@ -17,6 +17,12 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { Client } from '../client/entities/client.entity';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
+import { Service } from 'src/service/entities/service.entity';
+import { ServiceCategory } from 'src/service_category/entities/service_category.entity';
+import { CompanyCategory } from 'src/company_category/entities/company_category.entity';
+import { CompanyFeedback } from 'src/company_feedback/entities/company_feedback.entity';
+import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
+import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.entity';
 
 
 @Injectable()
@@ -32,6 +38,18 @@ export class CompanyService {
     private clientRepository: Repository<Client>,
     @InjectRepository(CalendarCompany)
     private calendarCompanyRepository: Repository<CalendarCompany>,
+    @InjectRepository(Service)
+    private serviceRepository: Repository<Service>,
+    @InjectRepository(ServiceCategory)
+    private serviceCategoryRepository: Repository<ServiceCategory>,
+    @InjectRepository(CompanyCategory)
+    private companyCategoryRepository: Repository<CompanyCategory>,
+    @InjectRepository(CompanyFeedback)
+    private companyFeedbackRepository: Repository<CompanyFeedback>,
+    @InjectRepository(WorkerFeedback)
+    private workerFeedbackRepository: Repository<WorkerFeedback>,
+    @InjectRepository(ServiceFeedback)
+    private serviceFeedbackRepository: Repository<ServiceFeedback>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
   ) { }
@@ -718,5 +736,236 @@ async updateAdminProfile(
     return allTemporarilyDeletedClients.filter(client =>
       client.companies && client.companies.includes(company.id)
     );
+  }
+
+  /**
+   * Listado de compañías con logo, información, horario, ubicación,
+   * equipo de trabajadores y servicios (con descripción, monto y duración).
+   */
+  async findAllWithDetails(
+    options: PaginationOptions
+  ): Promise<PaginationResult<any>> {
+    const { page, limit } = options;
+    const skip = (page - 1) * limit;
+
+    const [companies, total] = await this.companyRepository.findAndCount({
+      take: limit,
+      skip,
+      order: { id: 'ASC' },
+    });
+
+    if (companies.length === 0) {
+      return {
+        data: [],
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+          hasNext: false,
+          hasPrev: false,
+        },
+      };
+    }
+
+    const companyIds = companies.map(c => c.id);
+
+    const [
+      calendars,
+      companyWorkers,
+      services,
+      serviceCategories,
+      companyCategories,
+      companyRatings,
+    ] = await Promise.all([
+      this.calendarCompanyRepository.find({
+        where: { companyId: In(companyIds) },
+      }),
+      this.companyWorkerRepository.find({
+        where: {
+          companyId: In(companyIds),
+          isActive: 1,
+          temporarilyDeleted: false,
+          permanentlyDeleted: false,
+        },
+      }),
+      this.serviceRepository.find({
+        where: { companyId: In(companyIds) },
+      }),
+      this.serviceCategoryRepository.find({
+        where: { companyId: In(companyIds), isActive: true },
+      }),
+      this.companyCategoryRepository.find({
+        where: { companyId: In(companyIds) },
+      }),
+      this.companyFeedbackRepository
+        .createQueryBuilder('f')
+        .select('f.company_id', 'companyId')
+        .addSelect('AVG(f.stars)', 'avg')
+        .addSelect('COUNT(f.id)', 'count')
+        .where('f.company_id IN (:...ids)', { ids: companyIds })
+        .andWhere('f.stars IS NOT NULL')
+        .groupBy('f.company_id')
+        .getRawMany<{ companyId: number; avg: string; count: string }>(),
+    ]);
+
+    const workerIds = companyWorkers
+      .map(cw => cw.worker?.id)
+      .filter((id): id is number => typeof id === 'number');
+    const serviceIds = services.map(s => s.id);
+
+    const [workerRatings, serviceRatings] = await Promise.all([
+      workerIds.length
+        ? this.workerFeedbackRepository
+            .createQueryBuilder('f')
+            .select('f.worker_id', 'workerId')
+            .addSelect('AVG(f.stars)', 'avg')
+            .addSelect('COUNT(f.id)', 'count')
+            .where('f.worker_id IN (:...ids)', { ids: workerIds })
+            .andWhere('f.stars IS NOT NULL')
+            .groupBy('f.worker_id')
+            .getRawMany<{ workerId: number; avg: string; count: string }>()
+        : Promise.resolve([]),
+      serviceIds.length
+        ? this.serviceFeedbackRepository
+            .createQueryBuilder('f')
+            .select('f.service_id', 'serviceId')
+            .addSelect('AVG(f.stars)', 'avg')
+            .addSelect('COUNT(f.id)', 'count')
+            .where('f.service_id IN (:...ids)', { ids: serviceIds })
+            .andWhere('f.stars IS NOT NULL')
+            .groupBy('f.service_id')
+            .getRawMany<{ serviceId: number; avg: string; count: string }>()
+        : Promise.resolve([]),
+    ]);
+
+    const companyRatingMap = new Map<number, { average: number; total: number }>();
+    for (const r of companyRatings) {
+      companyRatingMap.set(Number(r.companyId), {
+        average: Number(Number(r.avg).toFixed(2)),
+        total: Number(r.count),
+      });
+    }
+    const workerRatingMap = new Map<number, { average: number; total: number }>();
+    for (const r of workerRatings) {
+      workerRatingMap.set(Number(r.workerId), {
+        average: Number(Number(r.avg).toFixed(2)),
+        total: Number(r.count),
+      });
+    }
+    const serviceRatingMap = new Map<number, { average: number; total: number }>();
+    for (const r of serviceRatings) {
+      serviceRatingMap.set(Number(r.serviceId), {
+        average: Number(Number(r.avg).toFixed(2)),
+        total: Number(r.count),
+      });
+    }
+
+    const calendarByCompany = new Map<number, any>();
+    for (const cal of calendars) {
+      let detail = cal.calendarDetail;
+      if (typeof detail === 'string') {
+        try { detail = JSON.parse(detail); } catch { /* ignore */ }
+      }
+      calendarByCompany.set(cal.companyId, detail);
+    }
+
+    const workersByCompany = new Map<number, any[]>();
+    for (const cw of companyWorkers) {
+      if (!workersByCompany.has(cw.companyId)) {
+        workersByCompany.set(cw.companyId, []);
+      }
+      const w = cw.worker;
+      if (!w) continue;
+      const rating = workerRatingMap.get(w.id) || { average: 0, total: 0 };
+      workersByCompany.get(cw.companyId)!.push({
+        id: w.id,
+        name: w.name,
+        lastName: w.lastName,
+        phone: w.phone,
+        description: w.description,
+        location: w.location,
+        instagramUrl: w.instagramUrl,
+        tiktokUrl: w.tiktokUrl,
+        facebookUrl: w.facebookUrl,
+        pictureUrl: w.picture
+          ? this.fileUploadService.getFileUrl('worker_photo', w.picture)
+          : null,
+        rating,
+      });
+    }
+
+    const categoryById = new Map<number, ServiceCategory>();
+    for (const cat of serviceCategories) {
+      categoryById.set(cat.id, cat);
+    }
+
+    const servicesByCompany = new Map<number, any[]>();
+    for (const s of services) {
+      if (!servicesByCompany.has(s.companyId)) {
+        servicesByCompany.set(s.companyId, []);
+      }
+      const cat = s.categoryId ? categoryById.get(s.categoryId) : null;
+      const rating = serviceRatingMap.get(s.id) || { average: 0, total: 0 };
+      servicesByCompany.get(s.companyId)!.push({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        cost: s.cost,
+        currency: s.currency,
+        standardTime: s.standardTime,
+        status: s.status,
+        category: cat
+          ? { id: cat.id, name: cat.name, description: cat.description }
+          : null,
+        rating,
+      });
+    }
+
+    const companyCategoriesByCompany = new Map<number, any[]>();
+    for (const cc of companyCategories) {
+      if (!companyCategoriesByCompany.has(cc.companyId)) {
+        companyCategoriesByCompany.set(cc.companyId, []);
+      }
+      companyCategoriesByCompany.get(cc.companyId)!.push({
+        id: cc.id,
+        name: cc.name,
+      });
+    }
+
+    const data = companies.map(company => ({
+      id: company.id,
+      name: company.name,
+      description: company.description,
+      location: company.location,
+      email: company.email,
+      phone: company.phone,
+      managerName: company.managerName,
+      instagramUrl: company.instagramUrl,
+      tiktokUrl: company.tiktokUrl,
+      facebookUrl: company.facebookUrl,
+      logoUrl: company.logo
+        ? this.fileUploadService.getFileUrl('company_logo', company.logo)
+        : null,
+      rating: companyRatingMap.get(company.id) || { average: 0, total: 0 },
+      schedule: calendarByCompany.get(company.id) || null,
+      categories: companyCategoriesByCompany.get(company.id) || [],
+      workers: workersByCompany.get(company.id) || [],
+      services: servicesByCompany.get(company.id) || [],
+    }));
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    };
   }
 }

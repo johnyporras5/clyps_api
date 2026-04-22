@@ -8,9 +8,30 @@ import { User } from 'src/user/entities/user.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { Client } from 'src/client/entities/client.entity';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
+import { Service } from 'src/service/entities/service.entity';
+import { ServiceCategory } from 'src/service_category/entities/service_category.entity';
+import { CompanyCategory } from 'src/company_category/entities/company_category.entity';
+import { CompanyFeedback } from 'src/company_feedback/entities/company_feedback.entity';
+import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
+import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Company, User, CompanyWorker, Client, CalendarCompany]), CommonModule],
+  imports: [
+    TypeOrmModule.forFeature([
+      Company,
+      User,
+      CompanyWorker,
+      Client,
+      CalendarCompany,
+      Service,
+      ServiceCategory,
+      CompanyCategory,
+      CompanyFeedback,
+      WorkerFeedback,
+      ServiceFeedback,
+    ]),
+    CommonModule,
+  ],
   providers: [CompanyService],
   controllers: [CompanyController],
   exports: [CompanyService],

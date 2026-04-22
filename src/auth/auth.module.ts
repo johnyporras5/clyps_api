@@ -19,11 +19,31 @@ import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity
 import { CommonModule } from '../common/common.module';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 import { CompanyCategoryModule } from 'src/company_category/company_category.module';
+import { Service } from 'src/service/entities/service.entity';
+import { ServiceCategory } from 'src/service_category/entities/service_category.entity';
+import { CompanyCategory } from 'src/company_category/entities/company_category.entity';
+import { CompanyFeedback } from 'src/company_feedback/entities/company_feedback.entity';
+import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
+import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.entity';
 
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Worker, Client, BlacklistedToken, Company, CompanyWorker, CalendarCompany]),
+    TypeOrmModule.forFeature([
+      User,
+      Worker,
+      Client,
+      BlacklistedToken,
+      Company,
+      CompanyWorker,
+      CalendarCompany,
+      Service,
+      ServiceCategory,
+      CompanyCategory,
+      CompanyFeedback,
+      WorkerFeedback,
+      ServiceFeedback,
+    ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -109,6 +109,36 @@ export class ServiceService {
   }
 
   /**
+   * Obtener un servicio con workers accesible para admin, worker o cliente.
+   * - Admin: debe pertenecer a su compañía (mismo chequeo que findOneWithWorkers).
+   * - Worker/Cliente: puede consultarlo sin restricción de propiedad.
+   */
+  async findOneWithWorkersForUser(
+    id: number,
+    userId: number,
+    userType: string,
+  ): Promise<any> {
+    if (userType === 'adm') {
+      return this.findOneWithWorkers(id, userId);
+    }
+
+    const service = await this.serviceRepository.findOne({ where: { id } });
+    if (!service) {
+      throw new NotFoundException(`Service with id ${id} not found`);
+    }
+
+    const workersInfo = await this.getWorkersInfoForService(
+      service.workers,
+      service.companyId,
+    );
+
+    return {
+      ...service,
+      workersInfo,
+    };
+  }
+
+  /**
    * Obtener información completa de workers asignados a un servicio
    */
   private async getWorkersInfoForService(workersAssignments: Array<{ id: number, percentage: number }>, companyId: number): Promise<any[]> {

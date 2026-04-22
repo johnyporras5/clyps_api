@@ -47,20 +47,22 @@ export class ServiceController {
   }
 
   /**
-   * Obtener un servicio específico de mi compañía CON información de workers
+   * Obtener un servicio específico CON información de workers.
    * GET /services/my-company/:id
-   * Solo administradores
+   * Accesible para administradores, trabajadores y clientes.
+   * Para admin se valida que el servicio pertenezca a su compañía.
    */
   @Get('my-company/:id')
   @UseGuards(RolesGuard)
-  @Roles('adm')
+  @Roles('adm', 'wrk', 'cli')
   @HttpCode(HttpStatus.OK)
   async findOneMyCompany(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: any
   ): Promise<any> {
-    const adminId = req.user.sub;
-    return this.serviceService.findOneWithWorkers(id, adminId);
+    const userId = req.user.sub;
+    const userType = req.user.userType;
+    return this.serviceService.findOneWithWorkersForUser(id, userId, userType);
   }
 
   /**

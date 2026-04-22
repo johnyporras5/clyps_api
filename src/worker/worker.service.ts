@@ -52,7 +52,11 @@ async findOne(id: number, userId?: number, userType?: string): Promise<PhotoWith
   }
 
   if (userId && userType) {
-    if (userType !== 'adm' && worker.userId !== userId) {
+    const canView =
+      userType === 'adm' ||
+      userType === 'cli' ||
+      worker.userId === userId;
+    if (!canView) {
       throw new UnauthorizedException('No tienes permiso para ver este perfil');
     }
   }
@@ -201,7 +205,10 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
       'picture',
       'description',
       'location',
-      'isActive'
+      'isActive',
+      'instagramUrl',
+      'tiktokUrl',
+      'facebookUrl'
     ];
 
     // Filtrar solo los campos permitidos
@@ -333,6 +340,7 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
     const workerFields: (keyof UpdateWorkerByAdminDto)[] = [
       'name', 'lastName', 'phone', 'address', 'birthdate',
       'description', 'location', 'picture',
+      'instagramUrl', 'tiktokUrl', 'facebookUrl',
     ];
     const workerUpdates: Partial<Worker> = {};
     workerFields.forEach((key) => {

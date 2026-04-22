@@ -59,4 +59,19 @@ export class UpdateWorkerDto {
   @Length(1, 145)
   location?: string;
 
+  @IsOptional()
+  @IsString()
+  @Length(0, 245)
+  instagramUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 245)
+  tiktokUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 245)
+  facebookUrl?: string;
+
 }

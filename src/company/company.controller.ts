@@ -51,6 +51,22 @@ export class CompanyController {
     return this.companyService.findByFilters(dto);
   }
 
+  /**
+   * Listado de compañías con logo, información, horario, ubicación,
+   * equipo de trabajadores y servicios. Disponible para admin, worker y cliente.
+   */
+  @Get('directory')
+  @UseGuards(RolesGuard)
+  @Roles('adm', 'wrk', 'cli')
+  async findAllDirectory(
+    @Query() paginationDto: PaginationDto,
+  ): Promise<PaginationResult<any>> {
+    return this.companyService.findAllWithDetails({
+      page: paginationDto.page,
+      limit: paginationDto.limit,
+    });
+  }
+
   @Get(':id')
   async findOne(
     @Param('id', ParseIntPipe) id: number

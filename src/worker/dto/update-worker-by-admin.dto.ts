@@ -66,6 +66,21 @@ export class UpdateWorkerByAdminDto {
   @IsIn([0, 1])
   isActive?: number;
 
+  @IsOptional()
+  @IsString()
+  @Length(0, 245)
+  instagramUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 245)
+  tiktokUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 245)
+  facebookUrl?: string;
+
   // Asignado internamente por el servicio al procesar el archivo
   @IsOptional()
   @IsString()
