@@ -40,6 +40,12 @@ export class Session {
   @Column({ name: 'status', nullable: true })
   status: number;
 
+  @Column({ name: 'description', type: 'text', nullable: true })
+  description: string;
+
+  @Column({ name: 'description_ia', type: 'text', nullable: true })
+  descriptionIA: string;
+
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 

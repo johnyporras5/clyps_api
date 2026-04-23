@@ -66,6 +66,25 @@ export class ServiceController {
   }
 
   /**
+   * Obtener los trabajadores asignados a un servicio específico.
+   * GET /services/:id/workers
+   * Accesible para administradores, trabajadores y clientes.
+   * Para admin se valida que el servicio pertenezca a su compañía.
+   */
+  @Get(':id/workers')
+  @UseGuards(RolesGuard)
+  @Roles('adm', 'wrk', 'cli')
+  @HttpCode(HttpStatus.OK)
+  async findWorkersByService(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+  ): Promise<any[]> {
+    const userId = req.user.sub;
+    const userType = req.user.userType;
+    return this.serviceService.findWorkersByServiceId(id, userId, userType);
+  }
+
+  /**
    * Crear un servicio para mi compañía
    * POST /services/my-company
    * Solo administradores

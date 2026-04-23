@@ -139,6 +139,38 @@ export class ServiceService {
   }
 
   /**
+   * Obtener los workers asignados a un servicio por ID.
+   * - Admin: debe pertenecer a su compañía.
+   * - Worker/Cliente: puede consultarlo sin restricción de propiedad.
+   */
+  async findWorkersByServiceId(
+    serviceId: number,
+    userId: number,
+    userType: string,
+  ): Promise<any[]> {
+    const service = await this.serviceRepository.findOne({ where: { id: serviceId } });
+    if (!service) {
+      throw new NotFoundException(`Service with id ${serviceId} not found`);
+    }
+
+    if (userType === 'adm') {
+      const company = await this.companyRepository.findOne({
+        where: { userId: userId },
+      });
+      if (!company) {
+        throw new UnauthorizedException('No tienes una compañía asignada');
+      }
+      if (service.companyId !== company.id) {
+        throw new NotFoundException(
+          `Service with id ${serviceId} not found or you don't have permission`,
+        );
+      }
+    }
+
+    return this.getWorkersInfoForService(service.workers, service.companyId);
+  }
+
+  /**
    * Obtener información completa de workers asignados a un servicio
    */
   private async getWorkersInfoForService(workersAssignments: Array<{ id: number, percentage: number }>, companyId: number): Promise<any[]> {

@@ -550,6 +550,8 @@ export class SessionService {
       iaResponse: createSessionWithDetailDto.iaResponse,
       startDatetime: createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime || new Date(),
       status: createSessionWithDetailDto.status !== undefined ? createSessionWithDetailDto.status : 1,
+      description: createSessionWithDetailDto.description,
+      descriptionIA: createSessionWithDetailDto.descriptionIA,
     };
 
     console.log('📝 Creando sesión con datos:', {
