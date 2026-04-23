@@ -79,6 +79,37 @@ export class ServiceService {
     };
   }
   /**
+   * Obtener todos los servicios ACTIVOS de una compañía por ID, con info de workers (paginado).
+   * Accesible para admin, worker y cliente (no requiere pertenencia).
+   */
+  async findAllByCompanyIdWithWorkers(
+    companyId: number,
+    paginationOptions: PaginationOptions,
+  ): Promise<PaginationResult<any>> {
+    const company = await this.companyRepository.findOne({ where: { id: companyId } });
+    if (!company) {
+      throw new NotFoundException(`Company with id ${companyId} not found`);
+    }
+
+    const queryBuilder = this.serviceRepository
+      .createQueryBuilder('service')
+      .leftJoinAndSelect('service.category', 'category')
+      .where('service.companyId = :companyId', { companyId })
+      .andWhere('service.status = 1');
+
+    const paginatedServices = await paginate<Service>(queryBuilder, paginationOptions);
+
+    const enrichedData = await Promise.all(
+      paginatedServices.data.map(async (service) => {
+        const workersInfo = await this.getWorkersInfoForService(service.workers, companyId);
+        return { ...service, workersInfo };
+      }),
+    );
+
+    return { ...paginatedServices, data: enrichedData };
+  }
+
+  /**
    * Obtener un servicio específico con información de workers
    */
   async findOneWithWorkers(id: number, adminId: number): Promise<any> {

@@ -44,6 +44,20 @@ export class OfferController {
   }
 
   /**
+   * Obtener los servicios en oferta ACTIVA y VIGENTE de una compañía por ID.
+   * GET /offers/company/:companyId/active-services
+   * Accesible para administradores, trabajadores y clientes.
+   */
+  @Get('company/:companyId/active-services')
+  @Roles('adm', 'wrk', 'cli')
+  @HttpCode(HttpStatus.OK)
+  async findActiveServiceOffersByCompany(
+    @Param('companyId', ParseIntPipe) companyId: number,
+  ) {
+    return this.offerService.findActiveServiceOffersByCompanyId(companyId);
+  }
+
+  /**
    * Obtener todas las ofertas de la compañía
    * GET /offers/my-company
    */

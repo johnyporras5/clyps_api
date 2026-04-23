@@ -191,19 +191,33 @@ export class OfferService {
   }
 
   /**
-   * Obtener todos los servicios en ofertas activas y vigentes de la compañía.
-   * Usado por el frontend para mostrar la lista de servicios en oferta
-   * al momento de crear una sesión.
+   * Obtener todos los servicios en ofertas activas y vigentes de la compañía del admin.
    */
   async findActiveServiceOffers(adminId: number): Promise<any[]> {
     const company = await this.getCompanyByAdmin(adminId);
+    return this.fetchActiveServiceOffersByCompanyId(company.id);
+  }
+
+  /**
+   * Obtener todos los servicios en ofertas activas y vigentes de una compañía por ID.
+   * Accesible para admin, worker y cliente (no requiere pertenencia).
+   */
+  async findActiveServiceOffersByCompanyId(companyId: number): Promise<any[]> {
+    const company = await this.companyRepository.findOne({ where: { id: companyId } });
+    if (!company) {
+      throw new NotFoundException(`Company with id ${companyId} not found`);
+    }
+    return this.fetchActiveServiceOffersByCompanyId(companyId);
+  }
+
+  private async fetchActiveServiceOffersByCompanyId(companyId: number): Promise<any[]> {
     const today = new Date();
 
     const serviceOffers = await this.serviceOfferRepository
       .createQueryBuilder('so')
       .innerJoinAndSelect('so.offer', 'offer')
       .innerJoinAndSelect('so.service', 'service')
-      .where('offer.companyId = :companyId', { companyId: company.id })
+      .where('offer.companyId = :companyId', { companyId })
       .andWhere('offer.status = 1')
       .andWhere('offer.startDate <= :today', { today })
       .andWhere('offer.endDate >= :today', { today })

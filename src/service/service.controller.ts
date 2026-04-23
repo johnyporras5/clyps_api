@@ -66,6 +66,23 @@ export class ServiceController {
   }
 
   /**
+   * Obtener los servicios ACTIVOS de una compañía por ID (paginado) con info de workers.
+   * GET /services/company/:companyId
+   * Accesible para administradores, trabajadores y clientes.
+   */
+  @Get('company/:companyId')
+  @UseGuards(RolesGuard)
+  @Roles('adm', 'wrk', 'cli')
+  @HttpCode(HttpStatus.OK)
+  async findByCompany(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @Query() paginationDto: PaginationDto,
+  ): Promise<any> {
+    const { page, limit } = paginationDto;
+    return this.serviceService.findAllByCompanyIdWithWorkers(companyId, { page, limit });
+  }
+
+  /**
    * Obtener los trabajadores asignados a un servicio específico.
    * GET /services/:id/workers
    * Accesible para administradores, trabajadores y clientes.
