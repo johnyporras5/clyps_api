@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, BadRequestException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Service } from './entities/service.entity';
@@ -11,9 +11,12 @@ import { paginate, PaginationOptions, PaginationResult } from '../common/utils/p
 import { ServiceCategory } from '../service_category/entities/service_category.entity';
 import { ServiceOffer } from '../Offer/entities/service-offer.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
+import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
 
 @Injectable()
 export class ServiceService {
+  private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'worker_photo';
+
   constructor(
     @InjectRepository(Service)
     private serviceRepository: Repository<Service>,
@@ -29,7 +32,8 @@ export class ServiceService {
     private serviceOfferRepository: Repository<ServiceOffer>,
     @InjectRepository(SessionDetail)
     private sessionDetailRepository: Repository<SessionDetail>,
-
+    @Inject(FileUploadService)
+    private fileUploadService: FileUploadService,
   ) { }
 
   /**
@@ -139,7 +143,7 @@ export class ServiceService {
   }
 
   /**
-   * Obtener los workers asignados a un servicio por ID.
+   * Obtener los workers activos asignados a un servicio por ID.
    * - Admin: debe pertenecer a su compañía.
    * - Worker/Cliente: puede consultarlo sin restricción de propiedad.
    */
@@ -147,7 +151,21 @@ export class ServiceService {
     serviceId: number,
     userId: number,
     userType: string,
-  ): Promise<any[]> {
+  ): Promise<{
+    serviceId: number;
+    serviceName: string;
+    standardTime: number;
+    currency?: string;
+    workers: Array<{
+      companyWorkerId: number;
+      workerId: number;
+      fullName: string;
+      pictureURL: string;
+      averageRating: string;
+      time: number;
+      percentage: number;
+    }>;
+  }> {
     const service = await this.serviceRepository.findOne({ where: { id: serviceId } });
     if (!service) {
       throw new NotFoundException(`Service with id ${serviceId} not found`);
@@ -167,7 +185,72 @@ export class ServiceService {
       }
     }
 
-    return this.getWorkersInfoForService(service.workers, service.companyId);
+    const assignments = service.workers || [];
+    let workers: Array<{
+      companyWorkerId: number;
+      workerId: number;
+      fullName: string;
+      pictureURL: string;
+      averageRating: string;
+      time: number;
+      percentage: number;
+    }> = [];
+
+    if (assignments.length > 0) {
+      const companyWorkerIds = assignments.map((w) => w.id);
+
+      const rows = await this.companyWorkerRepository
+        .createQueryBuilder('cw')
+        .innerJoin('cw.worker', 'worker')
+        .leftJoin('worker_feedback', 'wf', 'wf.worker_id = worker.id')
+        .select([
+          'cw.id AS companyWorkerId',
+          'worker.id AS workerId',
+          "CONCAT(worker.name, ' ', worker.last_name) AS fullName",
+          'worker.picture AS picture',
+          'COALESCE(AVG(wf.stars), 0) AS averageRating',
+        ])
+        .where('cw.id IN (:...ids)', { ids: companyWorkerIds })
+        .andWhere('cw.companyId = :companyId', { companyId: service.companyId })
+        .andWhere('cw.isActive = 1')
+        .groupBy('worker.id')
+        .addGroupBy('cw.id')
+        .getRawMany();
+
+      workers = assignments
+        .map((assignment) => {
+          const row = rows.find(
+            (r: any) => Number(r.companyWorkerId) === assignment.id,
+          );
+          if (!row) return null;
+
+          const pictureURL = row.picture
+            ? this.fileUploadService.getFileUrl(this.WORKER_PHOTO_FOLDER, row.picture)
+            : '';
+
+          return {
+            companyWorkerId: Number(row.companyWorkerId),
+            workerId: Number(row.workerId),
+            fullName: row.fullName,
+            pictureURL,
+            averageRating: parseFloat(row.averageRating).toFixed(1),
+            time:
+              typeof assignment.time === 'number'
+                ? assignment.time
+                : service.standardTime,
+            percentage: assignment.percentage,
+          };
+        })
+        .filter((w): w is NonNullable<typeof w> => w !== null);
+    }
+
+    return {
+      serviceId: service.id,
+      serviceName: service.name,
+      standardTime: service.standardTime,
+      currency: service.currency,
+      workers,
+    };
   }
 
   /**

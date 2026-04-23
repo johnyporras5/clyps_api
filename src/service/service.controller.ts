@@ -78,7 +78,7 @@ export class ServiceController {
   async findWorkersByService(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: any,
-  ): Promise<any[]> {
+  ): Promise<any> {
     const userId = req.user.sub;
     const userType = req.user.userType;
     return this.serviceService.findWorkersByServiceId(id, userId, userType);
