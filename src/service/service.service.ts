@@ -11,6 +11,7 @@ import { paginate, PaginationOptions, PaginationResult } from '../common/utils/p
 import { ServiceCategory } from '../service_category/entities/service_category.entity';
 import { ServiceOffer } from '../Offer/entities/service-offer.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
+import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
 import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
 
 @Injectable()
@@ -32,6 +33,8 @@ export class ServiceService {
     private serviceOfferRepository: Repository<ServiceOffer>,
     @InjectRepository(SessionDetail)
     private sessionDetailRepository: Repository<SessionDetail>,
+    @InjectRepository(CalendarCompany)
+    private calendarCompanyRepository: Repository<CalendarCompany>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
   ) { }
@@ -85,7 +88,7 @@ export class ServiceService {
   async findAllByCompanyIdWithWorkers(
     companyId: number,
     paginationOptions: PaginationOptions,
-  ): Promise<PaginationResult<any>> {
+  ): Promise<PaginationResult<any> & { company: any }> {
     const company = await this.companyRepository.findOne({ where: { id: companyId } });
     if (!company) {
       throw new NotFoundException(`Company with id ${companyId} not found`);
@@ -106,7 +109,38 @@ export class ServiceService {
       }),
     );
 
-    return { ...paginatedServices, data: enrichedData };
+    const calendar = await this.calendarCompanyRepository.findOne({
+      where: { companyId },
+    });
+
+    let schedule: any = null;
+    if (calendar?.calendarDetail) {
+      let detail = calendar.calendarDetail;
+      if (typeof detail === 'string') {
+        try { detail = JSON.parse(detail); } catch { /* ignore */ }
+      }
+      schedule = detail;
+    }
+
+    const companyInfo = {
+      id: company.id,
+      name: company.name,
+      location: company.location,
+      email: company.email,
+      description: company.description,
+      managerName: company.managerName,
+      phone: company.phone,
+      instagramUrl: company.instagramUrl,
+      tiktokUrl: company.tiktokUrl,
+      facebookUrl: company.facebookUrl,
+      logo: company.logo,
+      logoUrl: company.logo
+        ? this.fileUploadService.getFileUrl('company_logo', company.logo)
+        : null,
+      schedule,
+    };
+
+    return { company: companyInfo, ...paginatedServices, data: enrichedData };
   }
 
   /**
