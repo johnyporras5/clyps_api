@@ -12,6 +12,8 @@ import { ServiceCategory } from '../service_category/entities/service_category.e
 import { ServiceOffer } from '../Offer/entities/service-offer.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
+import { CompanyFeedback } from '../company_feedback/entities/company_feedback.entity';
+import { WorkerFeedback } from '../worker_feedback/entities/worker_feedback.entity';
 import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
 
 @Injectable()
@@ -35,6 +37,10 @@ export class ServiceService {
     private sessionDetailRepository: Repository<SessionDetail>,
     @InjectRepository(CalendarCompany)
     private calendarCompanyRepository: Repository<CalendarCompany>,
+    @InjectRepository(CompanyFeedback)
+    private companyFeedbackRepository: Repository<CompanyFeedback>,
+    @InjectRepository(WorkerFeedback)
+    private workerFeedbackRepository: Repository<WorkerFeedback>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
   ) { }
@@ -122,6 +128,21 @@ export class ServiceService {
       schedule = detail;
     }
 
+    const companyRatingRaw = await this.companyFeedbackRepository
+      .createQueryBuilder('f')
+      .select('AVG(f.stars)', 'avg')
+      .addSelect('COUNT(f.id)', 'count')
+      .where('f.company_id = :companyId', { companyId })
+      .andWhere('f.stars IS NOT NULL')
+      .getRawOne<{ avg: string; count: string }>();
+
+    const companyRating = companyRatingRaw && companyRatingRaw.avg
+      ? {
+          average: Number(Number(companyRatingRaw.avg).toFixed(2)),
+          total: Number(companyRatingRaw.count),
+        }
+      : { average: 0, total: 0 };
+
     const companyInfo = {
       id: company.id,
       name: company.name,
@@ -138,6 +159,7 @@ export class ServiceService {
         ? this.fileUploadService.getFileUrl('company_logo', company.logo)
         : null,
       schedule,
+      rating: companyRating,
     };
 
     return { company: companyInfo, ...paginatedServices, data: enrichedData };
@@ -339,6 +361,31 @@ export class ServiceService {
       .andWhere('cw.isActive = 1')
       .getMany();
 
+    // Obtener ratings agregados por worker
+    const workerEntityIds = companyWorkers
+      .map(cw => cw.worker?.id)
+      .filter((wid): wid is number => typeof wid === 'number');
+
+    const workerRatingMap = new Map<number, { average: number; total: number }>();
+    if (workerEntityIds.length > 0) {
+      const workerRatings = await this.workerFeedbackRepository
+        .createQueryBuilder('f')
+        .select('f.worker_id', 'workerId')
+        .addSelect('AVG(f.stars)', 'avg')
+        .addSelect('COUNT(f.id)', 'count')
+        .where('f.worker_id IN (:...ids)', { ids: workerEntityIds })
+        .andWhere('f.stars IS NOT NULL')
+        .groupBy('f.worker_id')
+        .getRawMany<{ workerId: number; avg: string; count: string }>();
+
+      for (const r of workerRatings) {
+        workerRatingMap.set(Number(r.workerId), {
+          average: Number(Number(r.avg).toFixed(2)),
+          total: Number(r.count),
+        });
+      }
+    }
+
     // Combinar la información de la base de datos con los porcentajes del servicio
     return workersAssignments.map(workerAssignment => {
       const companyWorker = companyWorkers.find(cw => cw.id === workerAssignment.id);
@@ -375,6 +422,7 @@ export class ServiceService {
             : null,
           phone: companyWorker.worker.phone,
           address: companyWorker.worker.address,
+          rating: workerRatingMap.get(companyWorker.worker.id) || { average: 0, total: 0 },
         },
         companyWorkerInfo: {
           startDate: companyWorker.startDate,

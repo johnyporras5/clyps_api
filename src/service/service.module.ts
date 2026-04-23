@@ -10,11 +10,13 @@ import { ServiceCategory } from 'src/service_category/entities/service_category.
 import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
+import { CompanyFeedback } from 'src/company_feedback/entities/company_feedback.entity';
+import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
 import { CommonModule } from 'src/common/common.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Service,Company,CompanyWorker,Worker,ServiceCategory,ServiceOffer,SessionDetail,CalendarCompany]),
+    TypeOrmModule.forFeature([Service,Company,CompanyWorker,Worker,ServiceCategory,ServiceOffer,SessionDetail,CalendarCompany,CompanyFeedback,WorkerFeedback]),
     CommonModule,
   ],
   providers: [ServiceService],
