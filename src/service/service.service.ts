@@ -370,6 +370,9 @@ export class ServiceService {
           name: companyWorker.worker.name,
           lastName: companyWorker.worker.lastName,
           picture: companyWorker.worker.picture,
+          pictureUrl: companyWorker.worker.picture
+            ? this.fileUploadService.getFileUrl(this.WORKER_PHOTO_FOLDER, companyWorker.worker.picture)
+            : null,
           phone: companyWorker.worker.phone,
           address: companyWorker.worker.address,
         },
