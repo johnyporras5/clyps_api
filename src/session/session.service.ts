@@ -1728,8 +1728,11 @@ export class SessionService {
     if (getSessionsDto.onlyScheduled) {
       whereConditions.sessionStatus = 1;
       console.log(`📋 Filtrando solo citas agendadas (sessionStatus = 1)`);
-    } else if (getSessionsDto.sessionStatus !== undefined) {
-      whereConditions.sessionStatus = getSessionsDto.sessionStatus;
+    } else if (getSessionsDto.sessionStatus && getSessionsDto.sessionStatus.length > 0) {
+      whereConditions.sessionStatus =
+        getSessionsDto.sessionStatus.length === 1
+          ? getSessionsDto.sessionStatus[0]
+          : In(getSessionsDto.sessionStatus);
     }
 
     if (getSessionsDto.clientId) {
@@ -2730,16 +2733,16 @@ export class SessionService {
       query.andWhere('detail.status = :onlyScheduledStatus', { onlyScheduledStatus: 1 });
       console.log(`📋 Trabajador: Filtrando solo servicios agendados (detail.status = 1)`);
     }
-    // FILTRO: Por estado de sesión
-    else if (getSessionsDto.sessionStatus !== undefined) {
-      query.andWhere('session.session_status = :sessionStatus', {
+    // FILTRO: Por estado de sesión (uno o varios)
+    else if (getSessionsDto.sessionStatus && getSessionsDto.sessionStatus.length > 0) {
+      query.andWhere('session.session_status IN (:...sessionStatus)', {
         sessionStatus: getSessionsDto.sessionStatus
       });
     }
 
-    // FILTRO: Por estado del detalle (independiente)
-    if (getSessionsDto.detailStatus !== undefined) {
-      query.andWhere('detail.status = :detailStatus', {
+    // FILTRO: Por estado del detalle (uno o varios)
+    if (getSessionsDto.detailStatus && getSessionsDto.detailStatus.length > 0) {
+      query.andWhere('detail.status IN (:...detailStatus)', {
         detailStatus: getSessionsDto.detailStatus
       });
     }
@@ -2802,12 +2805,16 @@ export class SessionService {
     // Replicar el resto de filtros
     if (getSessionsDto.onlyScheduled) {
       countQuery.andWhere('detail.status = :onlyScheduledStatus', { onlyScheduledStatus: 1 });
-    } else if (getSessionsDto.sessionStatus !== undefined) {
-      countQuery.andWhere('session.session_status = :sessionStatus', { sessionStatus: getSessionsDto.sessionStatus });
+    } else if (getSessionsDto.sessionStatus && getSessionsDto.sessionStatus.length > 0) {
+      countQuery.andWhere('session.session_status IN (:...sessionStatus)', {
+        sessionStatus: getSessionsDto.sessionStatus
+      });
     }
 
-    if (getSessionsDto.detailStatus !== undefined) {
-      countQuery.andWhere('detail.status = :detailStatus', { detailStatus: getSessionsDto.detailStatus });
+    if (getSessionsDto.detailStatus && getSessionsDto.detailStatus.length > 0) {
+      countQuery.andWhere('detail.status IN (:...detailStatus)', {
+        detailStatus: getSessionsDto.detailStatus
+      });
     }
 
     if (getSessionsDto.clientId) {
@@ -4449,7 +4456,7 @@ export class SessionService {
   async getSessionsForAuthenticatedClient(
     clientUserId: number,
     getSessionsDto: GetSessionsDto
-  ): Promise<PaginationResult<any>> {
+  ): Promise<PaginationResult<any> & { client: any }> {
     console.log(`👤 Obteniendo sesiones para cliente autenticado (userId: ${clientUserId})`);
 
     // 1. Obtener el cliente a partir del userId
@@ -4502,13 +4509,34 @@ export class SessionService {
         'service.name AS serviceName',
         'service.description AS serviceDescription',
 
-        // Campos del trabajador / compañía
+        // Compañía
         'companyWorker.id AS companyWorkerId',
         'company.id AS companyId',
         'company.name AS companyName',
+        'company.location AS companyLocation',
+        'company.email AS companyEmail',
+        'company.phone AS companyPhone',
+        'company.description AS companyDescription',
+        'company.manager_name AS companyManagerName',
+        'company.instagram_url AS companyInstagramUrl',
+        'company.tiktok_url AS companyTiktokUrl',
+        'company.facebook_url AS companyFacebookUrl',
+        'company.logo AS companyLogo',
+
+        // Trabajador
         'worker.id AS workerId',
         'worker.name AS workerName',
-        'worker.last_name AS workerLastName'
+        'worker.last_name AS workerLastName',
+        'worker.phone AS workerPhone',
+        'worker.address AS workerAddress',
+        'worker.birthdate AS workerBirthdate',
+        'worker.description AS workerDescription',
+        'worker.is_active AS workerIsActive',
+        'worker.location AS workerLocation',
+        'worker.instagram_url AS workerInstagramUrl',
+        'worker.tiktok_url AS workerTiktokUrl',
+        'worker.facebook_url AS workerFacebookUrl',
+        'worker.picture AS workerPicture'
       ])
       .where('session.client_id = :clientId', { clientId });
 
@@ -4549,9 +4577,9 @@ export class SessionService {
       });
     }
 
-    // FILTRO: Estado de la sesión
-    if (getSessionsDto.sessionStatus !== undefined) {
-      query.andWhere('session.session_status = :sessionStatus', {
+    // FILTRO: Estado de la sesión (uno o varios)
+    if (getSessionsDto.sessionStatus && getSessionsDto.sessionStatus.length > 0) {
+      query.andWhere('session.session_status IN (:...sessionStatus)', {
         sessionStatus: getSessionsDto.sessionStatus
       });
     }
@@ -4561,9 +4589,9 @@ export class SessionService {
       query.andWhere('session.session_status = 1');
     }
 
-    // FILTRO: Estado del detalle (opcional)
-    if (getSessionsDto.detailStatus !== undefined) {
-      query.andWhere('detail.status = :detailStatus', {
+    // FILTRO: Estado del detalle (uno o varios)
+    if (getSessionsDto.detailStatus && getSessionsDto.detailStatus.length > 0) {
+      query.andWhere('detail.status IN (:...detailStatus)', {
         detailStatus: getSessionsDto.detailStatus
       });
     }
@@ -4609,14 +4637,18 @@ export class SessionService {
       });
     }
 
-    if (getSessionsDto.sessionStatus !== undefined) {
-      countQuery.andWhere('session.session_status = :sessionStatus', { sessionStatus: getSessionsDto.sessionStatus });
+    if (getSessionsDto.sessionStatus && getSessionsDto.sessionStatus.length > 0) {
+      countQuery.andWhere('session.session_status IN (:...sessionStatus)', {
+        sessionStatus: getSessionsDto.sessionStatus
+      });
     }
     if (getSessionsDto.onlyScheduled) {
       countQuery.andWhere('session.session_status = 1');
     }
-    if (getSessionsDto.detailStatus !== undefined) {
-      countQuery.andWhere('detail.status = :detailStatus', { detailStatus: getSessionsDto.detailStatus });
+    if (getSessionsDto.detailStatus && getSessionsDto.detailStatus.length > 0) {
+      countQuery.andWhere('detail.status IN (:...detailStatus)', {
+        detailStatus: getSessionsDto.detailStatus
+      });
     }
 
     const countResult = await countQuery
@@ -4624,6 +4656,70 @@ export class SessionService {
       .getRawOne();
 
     const total = parseInt(countResult?.total || '0', 10);
+
+    // =========================================================================
+    // RATINGS DE LOS WORKERS (una sola query por todos los workers de la página)
+    // =========================================================================
+    const workerIds = Array.from(
+      new Set(
+        details
+          .map(d => d.workerId)
+          .filter((id: any) => id !== null && id !== undefined)
+      )
+    ) as number[];
+
+    const ratingsByWorker = new Map<number, { averageStars: number; totalReviews: number }>();
+    if (workerIds.length > 0) {
+      const ratingRows = await this.sessionDetailRepository.manager
+        .createQueryBuilder()
+        .select('f.worker_id', 'workerId')
+        .addSelect('AVG(f.stars)', 'avg')
+        .addSelect('COUNT(f.id)', 'cnt')
+        .from('worker_feedback', 'f')
+        .where('f.worker_id IN (:...workerIds)', { workerIds })
+        .groupBy('f.worker_id')
+        .getRawMany();
+
+      for (const r of ratingRows) {
+        const avg = r.avg ? parseFloat(r.avg) : 0;
+        ratingsByWorker.set(parseInt(r.workerId, 10), {
+          averageStars: Math.round((avg + Number.EPSILON) * 100) / 100,
+          totalReviews: parseInt(r.cnt, 10) || 0,
+        });
+      }
+    }
+
+    // =========================================================================
+    // RATINGS DE LAS COMPAÑÍAS (una sola query agregada)
+    // =========================================================================
+    const companyIds = Array.from(
+      new Set(
+        details
+          .map(d => d.companyId)
+          .filter((id: any) => id !== null && id !== undefined)
+      )
+    ) as number[];
+
+    const ratingsByCompany = new Map<number, { averageStars: number; totalReviews: number }>();
+    if (companyIds.length > 0) {
+      const companyRatingRows = await this.sessionDetailRepository.manager
+        .createQueryBuilder()
+        .select('f.company_id', 'companyId')
+        .addSelect('AVG(f.stars)', 'avg')
+        .addSelect('COUNT(f.id)', 'cnt')
+        .from('company_feedback', 'f')
+        .where('f.company_id IN (:...companyIds)', { companyIds })
+        .groupBy('f.company_id')
+        .getRawMany();
+
+      for (const r of companyRatingRows) {
+        const avg = r.avg ? parseFloat(r.avg) : 0;
+        ratingsByCompany.set(parseInt(r.companyId, 10), {
+          averageStars: Math.round((avg + Number.EPSILON) * 100) / 100,
+          totalReviews: parseInt(r.cnt, 10) || 0,
+        });
+      }
+    }
 
     // =========================================================================
     // AGRUPAR POR SESIÓN
@@ -4675,6 +4771,52 @@ export class SessionService {
         companyPercentage = parseFloat(((totalCompany / cost) * 100).toFixed(2));
       }
 
+      const rating = ratingsByWorker.get(detail.workerId) || { averageStars: 0, totalReviews: 0 };
+
+      const workerObj = detail.workerId ? {
+        id: detail.workerId,
+        name: detail.workerName,
+        lastName: detail.workerLastName,
+        phone: detail.workerPhone,
+        address: detail.workerAddress,
+        birthdate: detail.workerBirthdate,
+        description: detail.workerDescription,
+        isActive: detail.workerIsActive,
+        location: detail.workerLocation,
+        instagramUrl: detail.workerInstagramUrl,
+        tiktokUrl: detail.workerTiktokUrl,
+        facebookUrl: detail.workerFacebookUrl,
+        photoUrl: detail.workerPicture
+          ? this.fileUploadService.getFileUrl('worker_photo', detail.workerPicture)
+          : null,
+        rating: {
+          averageStars: rating.averageStars,
+          totalReviews: rating.totalReviews,
+        },
+      } : null;
+
+      const companyRating = ratingsByCompany.get(detail.companyId) || { averageStars: 0, totalReviews: 0 };
+
+      const companyObj = detail.companyId ? {
+        id: detail.companyId,
+        name: detail.companyName,
+        location: detail.companyLocation,
+        email: detail.companyEmail,
+        phone: detail.companyPhone,
+        description: detail.companyDescription,
+        managerName: detail.companyManagerName,
+        instagramUrl: detail.companyInstagramUrl,
+        tiktokUrl: detail.companyTiktokUrl,
+        facebookUrl: detail.companyFacebookUrl,
+        logoUrl: detail.companyLogo
+          ? this.fileUploadService.getFileUrl('company_logo', detail.companyLogo)
+          : null,
+        rating: {
+          averageStars: companyRating.averageStars,
+          totalReviews: companyRating.totalReviews,
+        },
+      } : null;
+
       sessionData.services.push({
         detailId: detail.detailId,
         serviceId: detail.serviceId,
@@ -4688,12 +4830,10 @@ export class SessionService {
         detailStatusText: this.getDetailStatusText(detail.detailStatus || 1),
         startDatetime: detail.detailStartDatetime,
         isExtra: detail.isExtra === true || detail.isExtra === 1,
-        companyId: detail.companyId,
-        companyName: detail.companyName || 'Compañía no encontrada',
         workerPercentage,
         companyPercentage,
-        workerName: detail.workerName,
-        workerLastName: detail.workerLastName
+        company: companyObj,
+        worker: workerObj,
       });
 
       sessionData.totalCost += cost;
@@ -4715,8 +4855,24 @@ export class SessionService {
       sessions.sort((a, b) => new Date(b.sessionDatetime).getTime() - new Date(a.sessionDatetime).getTime());
     }
 
+    // Datos del cliente autenticado (una sola vez, top-level)
+    const clientInfo = {
+      id: client.id,
+      name: client.name,
+      lastName: client.lastName,
+      email: client.email,
+      phone: client.phone,
+      birthDate: client.birthDate,
+      location: client.location,
+      isActive: client.isActive,
+      photoUrl: client.picture
+        ? this.fileUploadService.getFileUrl('client_photo', client.picture)
+        : null,
+    };
+
     return {
       data: sessions,
+      client: clientInfo,
       meta: {
         page: getSessionsDto.page,
         limit: getSessionsDto.limit,

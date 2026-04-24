@@ -1,5 +1,5 @@
-import { IsOptional, IsIn, IsDateString, IsNumber, Min, Max } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsOptional, IsIn, IsDateString, IsNumber, Min, Max, IsArray } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
 
 export class GetSessionsDto {
   @IsOptional()
@@ -42,15 +42,30 @@ export class GetSessionsDto {
   companyId?: number;
 
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  sessionStatus?: number;
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const toNum = (v: unknown) => parseInt(String(v).trim(), 10);
+    const arr = Array.isArray(value)
+      ? value.map(toNum)
+      : String(value).split(',').map(toNum);
+    return arr.filter(n => !isNaN(n));
+  })
+  @IsArray()
+  @IsNumber({}, { each: true })
+  sessionStatus?: number[];
 
   @IsOptional()
-  @IsNumber()
-  @Min(1)
-  @Max(3)
-  detailStatus?: number;
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const toNum = (v: unknown) => parseInt(String(v).trim(), 10);
+    const arr = Array.isArray(value)
+      ? value.map(toNum)
+      : String(value).split(',').map(toNum);
+    return arr.filter(n => !isNaN(n));
+  })
+  @IsArray()
+  @IsNumber({}, { each: true })
+  detailStatus?: number[];
 
   @IsOptional()
   @Type(() => Boolean)
