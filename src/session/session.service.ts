@@ -1691,10 +1691,16 @@ export class SessionService {
     }
 
     // 2. Buscar sessionIds que tienen detalles con estos company_worker_ids
+    //    O detalles sin worker cuya oferta pertenezca a la misma compañía
+    //    (caso "pendiente de asignación de trabajador").
     const sessionIdsQuery = this.sessionDetailRepository
       .createQueryBuilder('detail')
+      .leftJoin('offer', 'offer', 'offer.id = detail.offer_id')
       .select('DISTINCT detail.session_id', 'sessionId')
-      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
+      .where(
+        '(detail.company_worker_id IN (:...companyWorkerIds) OR (detail.company_worker_id IS NULL AND offer.company_id = :adminCompanyId))',
+        { companyWorkerIds, adminCompanyId: adminCompany.id },
+      );
 
     const sessionIdsResult = await sessionIdsQuery.getRawMany();
     const sessionIds = sessionIdsResult.map(result => result.sessionId);
@@ -1811,12 +1817,17 @@ export class SessionService {
           where: { id: session.clientId }
         });
 
-        const sessionDetails = await this.sessionDetailRepository.find({
-          where: {
-            sessionId: session.id,
-            companyWorkerId: In(companyWorkerIds)
-          }
-        });
+        // Incluir detalles con worker de la compañía O detalles sin worker
+        // cuya oferta pertenezca a la compañía (pendientes de asignación).
+        const sessionDetails = await this.sessionDetailRepository
+          .createQueryBuilder('detail')
+          .leftJoin('offer', 'offer', 'offer.id = detail.offer_id')
+          .where('detail.session_id = :sessionId', { sessionId: session.id })
+          .andWhere(
+            '(detail.company_worker_id IN (:...companyWorkerIds) OR (detail.company_worker_id IS NULL AND offer.company_id = :adminCompanyId))',
+            { companyWorkerIds, adminCompanyId: adminCompany.id },
+          )
+          .getMany();
 
         const services: any[] = [];
         let totalCost = 0;
@@ -1824,10 +1835,12 @@ export class SessionService {
 
         if (sessionDetails.length > 0) {
           for (const detail of sessionDetails) {
-            const companyWorker = await this.companyWorkerRepository.findOne({
-              where: { id: detail.companyWorkerId },
-              relations: ['worker', 'company']
-            });
+            const companyWorker = detail.companyWorkerId
+              ? await this.companyWorkerRepository.findOne({
+                  where: { id: detail.companyWorkerId },
+                  relations: ['worker', 'company'],
+                })
+              : null;
 
             const service = await this.serviceRepository.findOne({
               where: { id: detail.serviceId }
