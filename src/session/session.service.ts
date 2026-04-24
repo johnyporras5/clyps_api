@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Between, Not } from 'typeorm';
+import { Repository, In, Between, Not, DeepPartial } from 'typeorm';
 import { Session } from './entities/session.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { CreateSessionWithDetailDto, SessionDetailItemDto } from './dto/create-session-with-detail.dto';
@@ -20,6 +20,7 @@ import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto, ExtraServiceItemDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
+import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
 import { IAPromptsService } from '../IAprompts/ia_prompts.service';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { Offer } from 'src/Offer/entities/offer.entity';
@@ -270,7 +271,7 @@ export class SessionService {
     calculations?: Array<{
       serviceId: number;
       serviceName: string;
-      companyWorkerId: number;
+      companyWorkerId: number | null;
       workerName: string;
       totalCost: number;
       totalTime: number;
@@ -350,7 +351,7 @@ export class SessionService {
     type ServiceValidationType = {
       detail: SessionDetailItemDto;
       service: Service;
-      companyWorker: CompanyWorker;
+      companyWorker: CompanyWorker | null;
       workerPercentage: number;
       companyPercentage: number;
       workerAssigned: boolean;
@@ -372,7 +373,7 @@ export class SessionService {
     const calculations: Array<{
       serviceId: number;
       serviceName: string;
-      companyWorkerId: number;
+      companyWorkerId: number | null;
       workerName: string;
       totalCost: number;
       totalTime: number;
@@ -403,46 +404,65 @@ export class SessionService {
         throw new NotFoundException(`Servicio con ID ${detail.serviceId} no encontrado o no pertenece a tu compañía`);
       }
 
-      const companyWorker = await this.companyWorkerRepository.findOne({
-        where: {
-          id: detail.companyWorkerId,
-          companyId: adminCompany.id
-        },
-        relations: ['worker']
-      });
+      // Si no se asignó trabajador, el detalle queda pendiente de asignación.
+      // El DTO garantiza que en ese caso venga offerId; saltamos las
+      // validaciones de disponibilidad/porcentaje por trabajador.
+      const hasWorker =
+        detail.companyWorkerId !== null && detail.companyWorkerId !== undefined;
 
-      if (!companyWorker) {
-        throw new NotFoundException(`Trabajador de compañía con ID ${detail.companyWorkerId} no encontrado o no pertenece a tu compañía`);
-      }
+      let companyWorker: CompanyWorker | null = null;
+      let workerPercentage = 0;
+      let companyPercentage = 100;
+      let workerAssigned = false;
+      let detailTime = Number(service.standardTime) || 0;
 
-      if (companyWorker.isActive !== 1) {
-        throw new BadRequestException(`El trabajador de compañía con ID ${detail.companyWorkerId} no está activo`);
-      }
-
-      // Validar porcentajes del servicio
+      // Validar estructura general de porcentajes/tiempos del servicio siempre.
       this.validateServicePercentagesAndTime(service);
-      const { workerPercentage, companyPercentage, workerAssigned, time: detailTime } = this.calculatePercentagesAndTime(
-        service,
-        detail.companyWorkerId
-      );
 
-      // Verificar si el trabajador ya tiene una cita que se solape con este horario
-      const detailStartDatetime = detail.detailStartDatetime || createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime;
-      if (detailStartDatetime) {
-        const workerConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
-          detail.companyWorkerId,
-          detailStartDatetime,
-          detailTime
+      if (hasWorker) {
+        companyWorker = await this.companyWorkerRepository.findOne({
+          where: {
+            id: detail.companyWorkerId as number,
+            companyId: adminCompany.id
+          },
+          relations: ['worker']
+        });
+
+        if (!companyWorker) {
+          throw new NotFoundException(`Trabajador de compañía con ID ${detail.companyWorkerId} no encontrado o no pertenece a tu compañía`);
+        }
+
+        if (companyWorker.isActive !== 1) {
+          throw new BadRequestException(`El trabajador de compañía con ID ${detail.companyWorkerId} no está activo`);
+        }
+
+        const perc = this.calculatePercentagesAndTime(
+          service,
+          detail.companyWorkerId as number
         );
+        workerPercentage = perc.workerPercentage;
+        companyPercentage = perc.companyPercentage;
+        workerAssigned = perc.workerAssigned;
+        detailTime = perc.time;
 
-        if (workerConflict) {
-          const conflictStart = new Date(workerConflict.startDatetime);
-          const workerName = companyWorker.worker
-            ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
-            : `Trabajador ID: ${companyWorker.id}`;
-          throw new BadRequestException(
-            `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`
+        // Verificar si el trabajador ya tiene una cita que se solape con este horario
+        const detailStartDatetime = detail.detailStartDatetime || createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime;
+        if (detailStartDatetime) {
+          const workerConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
+            detail.companyWorkerId as number,
+            detailStartDatetime,
+            detailTime
           );
+
+          if (workerConflict) {
+            const conflictStart = new Date(workerConflict.startDatetime);
+            const workerName = companyWorker.worker
+              ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+              : `Trabajador ID: ${companyWorker.id}`;
+            throw new BadRequestException(
+              `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`
+            );
+          }
         }
       }
 
@@ -491,9 +511,11 @@ export class SessionService {
 
       totalSessionCost += detailCost;
 
-      const workerName = companyWorker.worker
-        ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
-        : `Trabajador ID: ${companyWorker.id}`;
+      const workerName = companyWorker
+        ? (companyWorker.worker
+            ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+            : `Trabajador ID: ${companyWorker.id}`)
+        : 'Sin asignar';
 
       // Guardar para usar después
       serviceValidations.push({
@@ -513,7 +535,7 @@ export class SessionService {
       calculations.push({
         serviceId: detail.serviceId,
         serviceName: service.name || '',
-        companyWorkerId: detail.companyWorkerId,
+        companyWorkerId: detail.companyWorkerId ?? null,
         workerName: workerName,
         totalCost: detailCost,
         totalTime: detailTime,
@@ -540,11 +562,18 @@ export class SessionService {
       }))
     );
 
+    // Si algún detalle quedó sin trabajador, la cita arranca en estado 8
+    // (pendiente de asignación) salvo que el request especifique otro estado.
+    const hasUnassignedDetail = serviceValidations.some(
+      v => v.detail.companyWorkerId === null || v.detail.companyWorkerId === undefined,
+    );
+    const defaultSessionStatus = hasUnassignedDetail ? 8 : 1;
+
     // 6. Crear datos de la sesión con los totales calculados
     const sessionData: CreateSessionDto = {
       clientId: createSessionWithDetailDto.clientId,
       sessionDatetime: createSessionWithDetailDto.sessionDatetime,
-      sessionStatus: createSessionWithDetailDto.sessionStatus !== undefined ? createSessionWithDetailDto.sessionStatus : 1,
+      sessionStatus: createSessionWithDetailDto.sessionStatus !== undefined ? createSessionWithDetailDto.sessionStatus : defaultSessionStatus,
       totalCost: totalSessionCost,
       totalTime: totalSessionTime,
       iaResponse: createSessionWithDetailDto.iaResponse,
@@ -570,6 +599,11 @@ export class SessionService {
       const existingDetails: SessionDetail[] = [];
 
       for (const validation of serviceValidations) {
+        // Los detalles sin worker no tienen una clave única para comparar;
+        // siempre se consideran "nuevos" y no colisionan con detalles existentes.
+        if (validation.detail.companyWorkerId === null || validation.detail.companyWorkerId === undefined) {
+          continue;
+        }
         const existingDetail = await this.checkExistingSessionDetail(
           existingSession.id,
           validation.detail.serviceId,
@@ -611,10 +645,10 @@ export class SessionService {
     for (const validation of serviceValidations) {
       const { detail, service, companyWorker, calculatedAmounts, detailTime } = validation;
 
-      const sessionDetailData = {
+      const sessionDetailData: DeepPartial<SessionDetail> = {
         cost: calculatedAmounts.cost,
         serviceId: detail.serviceId,
-        companyWorkerId: detail.companyWorkerId,
+        companyWorkerId: (detail.companyWorkerId ?? null) as unknown as number,
         sessionId: session.id,
         startDatetime: detail.detailStartDatetime || session.startDatetime,
         totalTime: detailTime,
@@ -629,17 +663,20 @@ export class SessionService {
         const savedSessionDetail = await this.sessionDetailRepository.save(sessionDetail);
         createdDetails.push(savedSessionDetail);
 
-        // Enviar correos de confirmación en segundo plano (no bloquear la respuesta)
-        this.sendConfirmationEmails(
-          session,
-          savedSessionDetail,
-          createSessionWithDetailDto.clientId,
-          detail.companyWorkerId,
-          detail.serviceId,
-          companyId
-        ).catch((error) => {
-          this.logger.error(`Error enviando correos de confirmación: ${(error as Error).message}`);
-        });
+        // Enviar correos de confirmación en segundo plano (no bloquear la respuesta).
+        // Si el detalle no tiene trabajador asignado, solo se notifica al cliente.
+        if (detail.companyWorkerId !== null && detail.companyWorkerId !== undefined) {
+          this.sendConfirmationEmails(
+            session,
+            savedSessionDetail,
+            createSessionWithDetailDto.clientId,
+            detail.companyWorkerId,
+            detail.serviceId,
+            companyId
+          ).catch((error) => {
+            this.logger.error(`Error enviando correos de confirmación: ${(error as Error).message}`);
+          });
+        }
       } catch (error) {
         // Si falla algún detalle, eliminar todo lo creado
         if (createdDetails.length > 0) {
@@ -1871,7 +1908,7 @@ export class SessionService {
       3: 'Completada',
       4: 'Pagado',
       5: 'Cancelada',
-
+      8: 'Pendiente de asignación de trabajador',
     };
     return statusMap[status] || 'Desconocido';
   }
@@ -2081,6 +2118,341 @@ export class SessionService {
       }
     };
   }
+
+  /**
+   * Reasigna uno o varios trabajadores a los detalles de una cita.
+   * Solo administradores. Valida ownership, solapes (internos + externos) y
+   * duplicados (serviceId + companyWorkerId) en la cita antes de persistir.
+   * Todo se aplica en una transacción: si cualquier asignación falla, no se
+   * guarda nada. Tras persistir, recalcula totalWorker/totalCompany/totalTime
+   * en cada detalle y el totalTime de la cita considerando solapamientos.
+   */
+  async assignWorkersToSession(
+    sessionId: number,
+    dto: AssignWorkersToSessionDto,
+    adminId: number,
+  ): Promise<{
+    message: string;
+    session: { id: number; totalTime: number };
+    updates: Array<{
+      detailId: number;
+      serviceId: number;
+      previousCompanyWorkerId: number;
+      previousWorkerName: string;
+      companyWorkerId: number;
+      workerName: string;
+      cost: number;
+      totalWorker: number;
+      totalCompany: number;
+      totalTime: number;
+      workerPercentage: number;
+      companyPercentage: number;
+      changed: boolean;
+      calculationDetails: string;
+    }>;
+  }> {
+    // 1. Compañía del administrador
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!adminCompany) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
+    }
+
+    // 2. Cita
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      throw new NotFoundException(`Cita con ID ${sessionId} no encontrada`);
+    }
+    if (session.sessionStatus === 5) {
+      throw new BadRequestException('No se puede reasignar trabajadores: la cita está cancelada');
+    }
+
+    // 3. Detalles actuales de la cita
+    const allDetails = await this.sessionDetailRepository.find({
+      where: { sessionId: sessionId },
+    });
+    if (allDetails.length === 0) {
+      throw new NotFoundException(`La cita ${sessionId} no tiene detalles`);
+    }
+
+    // Validar que todos los detalles actuales pertenecen a la compañía del admin
+    const currentWorkerIds = Array.from(new Set(allDetails.map(d => d.companyWorkerId)));
+    const currentWorkers = await this.companyWorkerRepository.find({
+      where: { id: In(currentWorkerIds) },
+      relations: ['worker'],
+    });
+    const currentWorkersById = new Map(currentWorkers.map(cw => [cw.id, cw]));
+    for (const cw of currentWorkers) {
+      if (cw.companyId !== adminCompany.id) {
+        throw new ForbiddenException('No tienes permiso para modificar esta cita');
+      }
+    }
+
+    // 4. Detectar detalleIds duplicados en la request
+    const requestedDetailIds = dto.assignments.map(a => a.detailId);
+    const uniqueRequested = new Set(requestedDetailIds);
+    if (uniqueRequested.size !== requestedDetailIds.length) {
+      throw new BadRequestException('No se puede reasignar el mismo detalle más de una vez en la misma petición');
+    }
+
+    // 5. Precargar los nuevos trabajadores y los servicios implicados
+    const newWorkerIds = Array.from(new Set(dto.assignments.map(a => a.companyWorkerId)));
+    const newCompanyWorkers = await this.companyWorkerRepository.find({
+      where: { id: In(newWorkerIds) },
+      relations: ['worker'],
+    });
+    const newWorkersById = new Map(newCompanyWorkers.map(cw => [cw.id, cw]));
+
+    type Plan = {
+      detail: SessionDetail;
+      newCompanyWorkerId: number;
+      newCompanyWorker: CompanyWorker;
+      service: Service;
+      workerPercentage: number;
+      companyPercentage: number;
+      newTime: number;
+      newAmounts: {
+        cost: number;
+        totalWorker: number;
+        totalCompany: number;
+        calculationDetails: string;
+      };
+      previousCompanyWorkerId: number;
+      previousWorkerName: string;
+      workerName: string;
+      changed: boolean;
+    };
+
+    // 6. Construir y validar el plan por cada asignación
+    const plans = new Map<number, Plan>();
+    for (const assignment of dto.assignments) {
+      const detail = allDetails.find(d => d.id === assignment.detailId);
+      if (!detail) {
+        throw new NotFoundException(
+          `El detalle ${assignment.detailId} no pertenece a la cita ${sessionId}`,
+        );
+      }
+      if (detail.status === 5) {
+        throw new BadRequestException(
+          `El detalle ${assignment.detailId} está cancelado y no puede reasignarse`,
+        );
+      }
+
+      const newCompanyWorker = newWorkersById.get(assignment.companyWorkerId);
+      if (!newCompanyWorker) {
+        throw new NotFoundException(
+          `Trabajador con ID ${assignment.companyWorkerId} no encontrado`,
+        );
+      }
+      if (newCompanyWorker.companyId !== adminCompany.id) {
+        throw new ForbiddenException(
+          `El trabajador ${assignment.companyWorkerId} no pertenece a tu compañía`,
+        );
+      }
+      if (newCompanyWorker.isActive !== 1) {
+        throw new BadRequestException(
+          `El trabajador ${assignment.companyWorkerId} no está activo`,
+        );
+      }
+
+      const service = await this.serviceRepository.findOne({
+        where: { id: detail.serviceId },
+      });
+      if (!service) {
+        throw new NotFoundException(
+          `Servicio con ID ${detail.serviceId} no encontrado`,
+        );
+      }
+      this.validateServicePercentagesAndTime(service);
+
+      // Si el servicio tiene workers habilitados, restringir la asignación a esa lista.
+      if (Array.isArray(service.workers) && service.workers.length > 0) {
+        const isAllowed = service.workers.some(
+          (w: any) => w.id === assignment.companyWorkerId,
+        );
+        if (!isAllowed) {
+          const allowedIds = service.workers.map((w: any) => w.id);
+          const allowedWorkers = await this.companyWorkerRepository.find({
+            where: { id: In(allowedIds) },
+            relations: ['worker'],
+          });
+          const allowedNames = allowedWorkers
+            .map(cw =>
+              cw.worker
+                ? `${cw.worker.name || ''} ${cw.worker.lastName || ''}`.trim() || `Trabajador #${cw.id}`
+                : `Trabajador #${cw.id}`,
+            )
+            .filter(n => n.length > 0);
+          const workerName = newCompanyWorker.worker
+            ? `${newCompanyWorker.worker.name || ''} ${newCompanyWorker.worker.lastName || ''}`.trim()
+            : `Trabajador #${assignment.companyWorkerId}`;
+          const allowedText =
+            allowedNames.length > 0 ? allowedNames.join(', ') : 'ninguno configurado';
+          throw new BadRequestException(
+            `${workerName} no puede realizar el servicio ${service.name}. Trabajadores habilitados: ${allowedText}.`,
+          );
+        }
+      }
+
+      const { workerPercentage, companyPercentage, time: newTime } =
+        this.calculatePercentagesAndTime(service, assignment.companyWorkerId);
+
+      const currentCost = Number(detail.cost || 0);
+      if (currentCost <= 0) {
+        throw new BadRequestException(
+          `El detalle ${assignment.detailId} no tiene un costo válido para recalcular montos`,
+        );
+      }
+
+      const newAmounts = this.calculateAmounts(currentCost, workerPercentage, companyPercentage);
+
+      const previousCompanyWorker = currentWorkersById.get(detail.companyWorkerId);
+      const previousWorkerName = previousCompanyWorker?.worker
+        ? `${previousCompanyWorker.worker.name || ''} ${previousCompanyWorker.worker.lastName || ''}`.trim()
+        : `Trabajador ID: ${detail.companyWorkerId}`;
+      const workerName = newCompanyWorker.worker
+        ? `${newCompanyWorker.worker.name || ''} ${newCompanyWorker.worker.lastName || ''}`.trim()
+        : `Trabajador ID: ${assignment.companyWorkerId}`;
+
+      plans.set(assignment.detailId, {
+        detail,
+        newCompanyWorkerId: assignment.companyWorkerId,
+        newCompanyWorker,
+        service,
+        workerPercentage,
+        companyPercentage,
+        newTime,
+        newAmounts,
+        previousCompanyWorkerId: detail.companyWorkerId,
+        previousWorkerName,
+        workerName,
+        changed: detail.companyWorkerId !== assignment.companyWorkerId,
+      });
+    }
+
+    // 7. Validar duplicados (serviceId + companyWorkerId) en el estado resultante
+    const resultingKeys = new Set<string>();
+    for (const detail of allDetails) {
+      const finalCompanyWorkerId = plans.get(detail.id)?.newCompanyWorkerId ?? detail.companyWorkerId;
+      const key = `${detail.serviceId}:${finalCompanyWorkerId}`;
+      if (resultingKeys.has(key)) {
+        throw new BadRequestException(
+          `Conflicto: el trabajador ${finalCompanyWorkerId} quedaría asignado más de una vez al servicio ${detail.serviceId} en la misma cita`,
+        );
+      }
+      resultingKeys.add(key);
+    }
+
+    // 8. Validar solapes contra otros detalles de la MISMA cita (estado resultante)
+    const finalStateByDetailId = new Map<number, { companyWorkerId: number; startDatetime: Date; totalTime: number }>();
+    for (const detail of allDetails) {
+      const plan = plans.get(detail.id);
+      finalStateByDetailId.set(detail.id, {
+        companyWorkerId: plan?.newCompanyWorkerId ?? detail.companyWorkerId,
+        startDatetime: detail.startDatetime,
+        totalTime: plan?.newTime ?? Number(detail.totalTime || 0),
+      });
+    }
+
+    for (const [detailId, plan] of plans) {
+      const current = finalStateByDetailId.get(detailId)!;
+      if (!current.startDatetime || !current.totalTime) continue;
+      const newStart = new Date(current.startDatetime).getTime();
+      const newEnd = newStart + current.totalTime * 60000;
+
+      for (const [otherId, other] of finalStateByDetailId) {
+        if (otherId === detailId) continue;
+        if (other.companyWorkerId !== current.companyWorkerId) continue;
+        if (!other.startDatetime || !other.totalTime) continue;
+        const existingStart = new Date(other.startDatetime).getTime();
+        const existingEnd = existingStart + other.totalTime * 60000;
+        if (newStart < existingEnd && newEnd > existingStart) {
+          throw new BadRequestException(
+            `El trabajador "${plan.workerName}" tendría dos servicios solapados en la misma cita`,
+          );
+        }
+      }
+    }
+
+    // 9. Validar solapes contra detalles de OTRAS citas
+    for (const [, plan] of plans) {
+      if (!plan.detail.startDatetime || !plan.newTime) continue;
+      const externalConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
+        plan.newCompanyWorkerId,
+        plan.detail.startDatetime,
+        plan.newTime,
+        sessionId,
+      );
+      if (externalConflict) {
+        const conflictStart = new Date(externalConflict.startDatetime);
+        throw new BadRequestException(
+          `El trabajador "${plan.workerName}" ya tiene una cita asignada que se solapa con el horario (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Detalle: ${plan.detail.id}`,
+        );
+      }
+    }
+
+    // 10. Calcular totalTime resultante de la cita (con solapamientos)
+    const newSessionTotalTime = this.calculateRealTotalTime(
+      Array.from(finalStateByDetailId.values())
+        .filter(s => s.startDatetime && s.totalTime)
+        .map(s => ({ startDatetime: s.startDatetime, totalTime: s.totalTime })),
+    );
+
+    // 11. Persistir todo dentro de una transacción
+    await this.sessionRepository.manager.transaction(async (manager) => {
+      const sdRepo = manager.getRepository(SessionDetail);
+      const sRepo = manager.getRepository(Session);
+
+      for (const [detailId, plan] of plans) {
+        await sdRepo
+          .createQueryBuilder()
+          .update(SessionDetail)
+          .set({
+            companyWorkerId: plan.newCompanyWorkerId,
+            totalWorker: plan.newAmounts.totalWorker,
+            totalCompany: plan.newAmounts.totalCompany,
+            totalTime: plan.newTime,
+          })
+          .where('id = :id', { id: detailId })
+          .execute();
+      }
+
+      await sRepo.update({ id: sessionId }, { totalTime: newSessionTotalTime });
+    });
+
+    this.logger.log(
+      `✅ Cita ${sessionId}: reasignaciones aplicadas por admin ${adminId}. ` +
+        `Total de detalles afectados: ${plans.size}. Nuevo totalTime de cita: ${newSessionTotalTime}`,
+    );
+
+    // 12. Respuesta
+    const updates = Array.from(plans.values()).map(plan => ({
+      detailId: plan.detail.id,
+      serviceId: plan.detail.serviceId,
+      previousCompanyWorkerId: plan.previousCompanyWorkerId,
+      previousWorkerName: plan.previousWorkerName,
+      companyWorkerId: plan.newCompanyWorkerId,
+      workerName: plan.workerName,
+      cost: plan.newAmounts.cost,
+      totalWorker: plan.newAmounts.totalWorker,
+      totalCompany: plan.newAmounts.totalCompany,
+      totalTime: plan.newTime,
+      workerPercentage: plan.workerPercentage,
+      companyPercentage: plan.companyPercentage,
+      changed: plan.changed,
+      calculationDetails: plan.newAmounts.calculationDetails,
+    }));
+
+    return {
+      message: 'Trabajadores asignados y montos recalculados exitosamente',
+      session: { id: sessionId, totalTime: newSessionTotalTime },
+      updates,
+    };
+  }
+
   /**
  * Método para actualizar automáticamente el estado de la sesión basado en los estados de sus detalles
  */
@@ -2163,6 +2535,13 @@ export class SessionService {
     const anyCompleted = completedCount > 0;
     const anyFinished = finishedCount > 0;
 
+    // ¿Hay algún detalle activo (no cancelado) sin worker asignado?
+    const anyUnassignedActive = sessionDetails.some(
+      d =>
+        (d.companyWorkerId === null || d.companyWorkerId === undefined) &&
+        d.status !== 5,
+    );
+
     console.log(`📊 Resumen de detalles para sesión ${sessionId}:`);
     console.log(`- Total: ${totalDetails}`);
     console.log(`- Agendados: ${scheduledCount}`);
@@ -2178,8 +2557,16 @@ export class SessionService {
     let reason = '';
 
     // REGLAS DE ACTUALIZACIÓN AUTOMÁTICA:
+    // 0. Si hay detalles activos sin trabajador asignado, y ninguno arrancó
+    //    todavía (no hay in-process/completed/paid) → Sesión PENDIENTE DE
+    //    ASIGNACIÓN (8). En cuanto la cita empieza o se completa, manda la
+    //    lógica normal de estados.
+    if (anyUnassignedActive && !anyInProcess && !anyFinished) {
+      newStatus = 8; // Pendiente de asignación de trabajador
+      reason = 'Hay servicios sin trabajador asignado';
+    }
     // 1. Si TODOS los detalles activos están pagados (4) → Sesión PAGADA (4)
-    if (allPaid) {
+    else if (allPaid) {
       newStatus = 4; // Pagado
       reason = 'Todos los servicios han sido pagados';
     }
@@ -3036,7 +3423,7 @@ export class SessionService {
     calculations?: Array<{
       serviceId: number;
       serviceName: string;
-      companyWorkerId: number;
+      companyWorkerId: number | null;
       workerName: string;
       totalCost: number;
       totalTime: number;
@@ -3152,7 +3539,7 @@ export class SessionService {
     type ServiceValidationType = {
       detail: SessionDetailItemDto;
       service: Service;
-      companyWorker: CompanyWorker;
+      companyWorker: CompanyWorker | null;
       workerPercentage: number;
       companyPercentage: number;
       workerAssigned: boolean;
@@ -3174,7 +3561,7 @@ export class SessionService {
     const calculations: Array<{
       serviceId: number;
       serviceName: string;
-      companyWorkerId: number;
+      companyWorkerId: number | null;
       workerName: string;
       totalCost: number;
       totalTime: number;
@@ -3210,46 +3597,65 @@ export class SessionService {
         );
       }
 
-      const companyWorker = await this.companyWorkerRepository.findOne({
-        where: {
-          id: detail.companyWorkerId,
-          companyId: companyId
-        },
-        relations: ['worker']
-      });
+      // Si no se asignó trabajador, el detalle queda pendiente de asignación.
+      // El DTO garantiza que en ese caso venga offerId; saltamos las
+      // validaciones de disponibilidad/porcentaje por trabajador.
+      const hasWorker =
+        detail.companyWorkerId !== null && detail.companyWorkerId !== undefined;
 
-      if (!companyWorker) {
-        throw new NotFoundException(`Trabajador de compañía con ID ${detail.companyWorkerId} no encontrado`);
-      }
+      let companyWorker: CompanyWorker | null = null;
+      let workerPercentage = 0;
+      let companyPercentage = 100;
+      let workerAssigned = false;
+      let detailTime = Number(service.standardTime) || 0;
 
-      if (companyWorker.isActive !== 1) {
-        throw new BadRequestException(`El trabajador de compañía con ID ${detail.companyWorkerId} no está activo`);
-      }
-
-      // Validar porcentajes del servicio
+      // Validar estructura general de porcentajes/tiempos del servicio siempre.
       this.validateServicePercentagesAndTime(service);
-      const { workerPercentage, companyPercentage, workerAssigned, time: detailTime } = this.calculatePercentagesAndTime(
-        service,
-        detail.companyWorkerId
-      );
 
-      // Verificar si el trabajador ya tiene una cita que se solape con este horario
-      const detailStartDatetime = detail.detailStartDatetime || createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime;
-      if (detailStartDatetime) {
-        const workerConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
-          detail.companyWorkerId,
-          detailStartDatetime,
-          detailTime
+      if (hasWorker) {
+        companyWorker = await this.companyWorkerRepository.findOne({
+          where: {
+            id: detail.companyWorkerId as number,
+            companyId: companyId
+          },
+          relations: ['worker']
+        });
+
+        if (!companyWorker) {
+          throw new NotFoundException(`Trabajador de compañía con ID ${detail.companyWorkerId} no encontrado`);
+        }
+
+        if (companyWorker.isActive !== 1) {
+          throw new BadRequestException(`El trabajador de compañía con ID ${detail.companyWorkerId} no está activo`);
+        }
+
+        const perc = this.calculatePercentagesAndTime(
+          service,
+          detail.companyWorkerId as number
         );
+        workerPercentage = perc.workerPercentage;
+        companyPercentage = perc.companyPercentage;
+        workerAssigned = perc.workerAssigned;
+        detailTime = perc.time;
 
-        if (workerConflict) {
-          const conflictStart = new Date(workerConflict.startDatetime);
-          const workerName = companyWorker.worker
-            ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
-            : `Trabajador ID: ${companyWorker.id}`;
-          throw new BadRequestException(
-            `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`
+        // Verificar si el trabajador ya tiene una cita que se solape con este horario
+        const detailStartDatetime = detail.detailStartDatetime || createSessionWithDetailDto.startDatetime || createSessionWithDetailDto.sessionDatetime;
+        if (detailStartDatetime) {
+          const workerConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
+            detail.companyWorkerId as number,
+            detailStartDatetime,
+            detailTime
           );
+
+          if (workerConflict) {
+            const conflictStart = new Date(workerConflict.startDatetime);
+            const workerName = companyWorker.worker
+              ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+              : `Trabajador ID: ${companyWorker.id}`;
+            throw new BadRequestException(
+              `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`
+            );
+          }
         }
       }
 
@@ -3295,9 +3701,11 @@ export class SessionService {
       const detailCost = calculatedAmounts.cost;
       totalSessionCost += detailCost;
 
-      const workerName = companyWorker.worker
-        ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
-        : `Trabajador ID: ${companyWorker.id}`;
+      const workerName = companyWorker
+        ? (companyWorker.worker
+            ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+            : `Trabajador ID: ${companyWorker.id}`)
+        : 'Sin asignar';
 
       serviceValidations.push({
         detail,
@@ -3316,7 +3724,7 @@ export class SessionService {
       calculations.push({
         serviceId: detail.serviceId,
         serviceName: service.name || '',
-        companyWorkerId: detail.companyWorkerId,
+        companyWorkerId: detail.companyWorkerId ?? null,
         workerName: workerName,
         totalCost: detailCost,
         totalTime: detailTime,
@@ -3343,11 +3751,18 @@ export class SessionService {
       }))
     );
 
+    // Si algún detalle quedó sin trabajador, la cita arranca en estado 8
+    // (pendiente de asignación) salvo que el request especifique otro estado.
+    const hasUnassignedDetailClient = serviceValidations.some(
+      v => v.detail.companyWorkerId === null || v.detail.companyWorkerId === undefined,
+    );
+    const defaultClientSessionStatus = hasUnassignedDetailClient ? 8 : 1;
+
     // 8. Crear datos de la sesión con los totales calculados
     const sessionData: CreateSessionDto = {
       clientId: clientId, // Usar el ID del cliente autenticado
       sessionDatetime: createSessionWithDetailDto.sessionDatetime,
-      sessionStatus: createSessionWithDetailDto.sessionStatus !== undefined ? createSessionWithDetailDto.sessionStatus : 1,
+      sessionStatus: createSessionWithDetailDto.sessionStatus !== undefined ? createSessionWithDetailDto.sessionStatus : defaultClientSessionStatus,
       totalCost: totalSessionCost,
       totalTime: totalSessionTime,
       iaResponse: createSessionWithDetailDto.iaResponse,
@@ -3373,6 +3788,9 @@ export class SessionService {
       const existingDetails: SessionDetail[] = [];
 
       for (const validation of serviceValidations) {
+        if (validation.detail.companyWorkerId === null || validation.detail.companyWorkerId === undefined) {
+          continue;
+        }
         const existingDetail = await this.checkExistingSessionDetail(
           existingSession.id,
           validation.detail.serviceId,
@@ -3422,10 +3840,10 @@ export class SessionService {
     for (const validation of serviceValidations) {
       const { detail, service, companyWorker, calculatedAmounts, detailTime } = validation;
 
-      const sessionDetailData = {
+      const sessionDetailData: DeepPartial<SessionDetail> = {
         cost: calculatedAmounts.cost,
         serviceId: detail.serviceId,
-        companyWorkerId: detail.companyWorkerId,
+        companyWorkerId: (detail.companyWorkerId ?? null) as unknown as number,
         sessionId: session.id,
         startDatetime: detail.detailStartDatetime || session.startDatetime,
         totalTime: detailTime,
@@ -3440,17 +3858,20 @@ export class SessionService {
         const savedSessionDetail = await this.sessionDetailRepository.save(sessionDetail);
         createdDetails.push(savedSessionDetail);
 
-        // Enviar correos de confirmación en segundo plano (no bloquear la respuesta)
-        this.sendConfirmationEmails(
-          session,
-          savedSessionDetail,
-          clientId,
-          detail.companyWorkerId,
-          detail.serviceId,
-          companyId
-        ).catch((error) => {
-          this.logger.error(`Error enviando correos de confirmación: ${(error as Error).message}`);
-        });
+        // Enviar correos de confirmación en segundo plano. Si el detalle no
+        // tiene trabajador asignado, se omite la notificación.
+        if (detail.companyWorkerId !== null && detail.companyWorkerId !== undefined) {
+          this.sendConfirmationEmails(
+            session,
+            savedSessionDetail,
+            clientId,
+            detail.companyWorkerId,
+            detail.serviceId,
+            companyId
+          ).catch((error) => {
+            this.logger.error(`Error enviando correos de confirmación: ${(error as Error).message}`);
+          });
+        }
       } catch (error) {
         // Si falla algún detalle, eliminar todo lo creado
         if (createdDetails.length > 0) {

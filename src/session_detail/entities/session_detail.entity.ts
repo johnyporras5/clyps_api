@@ -12,7 +12,7 @@ export class SessionDetail {
   @PrimaryColumn({ name: 'service_id' })
   serviceId: number;
 
-  @PrimaryColumn({ name: 'company_worker_id' })
+  @Column({ name: 'company_worker_id', nullable: true })
   companyWorkerId: number;
 
   @PrimaryColumn({ name: 'session_id' })

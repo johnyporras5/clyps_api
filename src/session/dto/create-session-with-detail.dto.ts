@@ -1,4 +1,12 @@
-import { IsOptional, IsNumber, IsNotEmpty, IsArray, ValidateNested,IsString } from 'class-validator';
+import {
+  IsOptional,
+  IsNumber,
+  IsNotEmpty,
+  IsArray,
+  ValidateNested,
+  IsString,
+  ValidateIf,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class SessionDetailItemDto {
@@ -6,11 +14,13 @@ export class SessionDetailItemDto {
   @IsNumber()
   serviceId: number;
 
-  @IsNotEmpty()
+  // Puede venir null/undefined cuando la cita se crea sin trabajador asignado.
+  // En ese caso offerId es obligatorio (ver regla debajo).
+  @IsOptional()
   @IsNumber()
-  companyWorkerId: number;
+  companyWorkerId?: number | null;
 
-  
+
   @IsOptional()
   @IsString()
   description?: string;
@@ -26,8 +36,23 @@ export class SessionDetailItemDto {
   @IsNumber()
   detailStatus?: number;
 
-  @IsOptional()
-  @IsNumber()
+  // offerId:
+  //  - si companyWorkerId NO se proporciona → offerId es REQUERIDO y numérico.
+  //  - si companyWorkerId se proporciona → offerId es opcional, pero si se
+  //    envía debe ser numérico.
+  @ValidateIf(
+    (o) =>
+      o.companyWorkerId === null ||
+      o.companyWorkerId === undefined ||
+      (o.offerId !== undefined && o.offerId !== null),
+  )
+  @IsNumber(
+    {},
+    {
+      message:
+        'offerId es requerido y debe ser numérico cuando no se proporciona companyWorkerId',
+    },
+  )
   offerId?: number;
 }
 
@@ -62,9 +87,9 @@ export class CreateSessionWithDetailDto {
 
   @IsOptional()
   @IsString()
-  description?: string; 
+  description?: string;
 
   @IsOptional()
   @IsString()
-  descriptionIA?: string; 
+  descriptionIA?: string;
 }

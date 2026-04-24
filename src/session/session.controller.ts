@@ -11,6 +11,7 @@ import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
+import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -86,6 +87,22 @@ export class SessionController {
   ) {
     const adminId = req.user?.id || req.user?.sub;
     return this.sessionService.updateSessionStatus(+id, updateSessionStatusDto, adminId);
+  }
+
+  /**
+   * Reasigna uno o varios trabajadores a los detalles de una cita y recalcula
+   * los montos correspondientes (totalWorker / totalCompany) de cada detalle
+   * afectado, así como el totalTime de la cita. Solo administradores.
+   */
+  @Patch(':id/assign-workers')
+  @Roles('adm')
+  async assignWorkersToSession(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() assignWorkersDto: AssignWorkersToSessionDto,
+  ) {
+    const adminId = req.user?.id || req.user?.sub;
+    return this.sessionService.assignWorkersToSession(+id, assignWorkersDto, adminId);
   }
 
   @Put('details/:detailId/status')
