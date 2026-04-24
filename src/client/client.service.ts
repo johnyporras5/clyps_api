@@ -4,6 +4,7 @@ import { Repository, Brackets } from 'typeorm';
 import { Client } from './entities/client.entity';
 import { User } from '../user/entities/user.entity';
 import { Company } from '../company/entities/company.entity';
+import { Session } from '../session/entities/session.entity';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { AllowedFolder, FileUploadService } from '../common/services/file_upload.service';
@@ -21,8 +22,23 @@ export class ClientService {
     private userRepository: Repository<User>,
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
+    @InjectRepository(Session)
+    private sessionRepository: Repository<Session>,
     private fileUploadService: FileUploadService,
   ) { }
+
+  /**
+   * Obtiene la fecha de la última cita pasada de un cliente.
+   * Devuelve null si el cliente nunca ha tenido una cita.
+   */
+  private async getLastAppointmentDate(clientId: number): Promise<Date | null> {
+    const lastSession = await this.sessionRepository.findOne({
+      where: { clientId },
+      order: { sessionDatetime: 'DESC' },
+      select: ['sessionDatetime'],
+    });
+    return lastSession?.sessionDatetime ?? null;
+  }
 
   /**
    * Endpoint para listar clientes para un administrador
@@ -93,11 +109,48 @@ export class ClientService {
 
     this.logger.log(`[DEBUG] Total de clientes encontrados: ${result.meta.total}`);
 
-    // 5. Enriquecer datos de respuesta (SIN referencias a isPublic)
+    // 5. Obtener fecha de última cita para cada cliente de la página
+    const lastAppointmentByClient = await this.getLastAppointmentMap(
+      result.data.map(c => c.id),
+    );
+
+    // 6. Enriquecer datos de respuesta (SIN referencias a isPublic)
     return {
-      data: this.enrichClientData(result.data, adminCompanies, adminCompanyIds, adminId),
+      data: this.enrichClientData(
+        result.data,
+        adminCompanies,
+        adminCompanyIds,
+        adminId,
+        lastAppointmentByClient,
+      ),
       meta: result.meta
     };
+  }
+
+  /**
+   * Devuelve un Map<clientId, lastSessionDatetime> para un conjunto de clientes,
+   * usando una sola consulta agregada.
+   */
+  private async getLastAppointmentMap(
+    clientIds: number[],
+  ): Promise<Map<number, Date>> {
+    const map = new Map<number, Date>();
+    if (clientIds.length === 0) return map;
+
+    const rows = await this.sessionRepository
+      .createQueryBuilder('s')
+      .select('s.client_id', 'clientId')
+      .addSelect('MAX(s.session_datetime)', 'lastDate')
+      .where('s.client_id IN (:...clientIds)', { clientIds })
+      .groupBy('s.client_id')
+      .getRawMany();
+
+    for (const row of rows) {
+      if (row.lastDate) {
+        map.set(Number(row.clientId), new Date(row.lastDate));
+      }
+    }
+    return map;
   }
   /**
    * Enriquecer datos del cliente para la respuesta
@@ -106,7 +159,8 @@ export class ClientService {
     clients: Client[],
     adminCompanies: Company[],
     adminCompanyIds: number[],
-    adminId: number
+    adminId: number,
+    lastAppointmentByClient: Map<number, Date> = new Map(),
   ): any[] {
     return clients.map(client => {
       let sharedCompanies: Company[] = [];
@@ -136,6 +190,7 @@ export class ClientService {
         visibility: client.userId === adminId ? 'propio' : 'compartido',
         visibilityReason,
         sharedCompaniesCount: sharedCompanies.length,
+        lastAppointmentDate: lastAppointmentByClient.get(client.id) ?? null,
         // Información adicional útil
         hasAccess: client.userId === adminId || sharedCompanies.length > 0,
         accessibleToAdmin: adminCompanyIds.length > 0 || client.userId === adminId
@@ -269,6 +324,8 @@ export class ClientService {
     // Generar URL completa de la foto
     const photoUrl = await this.getClientPhotoUrl(client.id);
 
+    const lastAppointmentDate = await this.getLastAppointmentDate(client.id);
+
     // Excluir la contraseña del objeto User
     if (client.user) {
       const { password, ...userWithoutPassword } = client.user;
@@ -278,7 +335,8 @@ export class ClientService {
     return {
       ...client,
       photoUrl,
-    };
+      lastAppointmentDate,
+    } as any;
   }
 
 
@@ -296,13 +354,14 @@ export class ClientService {
     }
 
     const photoUrl = await this.getClientPhotoUrl(clientId);
+    const lastAppointmentDate = await this.getLastAppointmentDate(clientId);
 
     if (client.user) {
       const { password, ...userWithoutPassword } = client.user;
       client.user = userWithoutPassword as any;
     }
 
-    return { ...client, photoUrl };
+    return { ...client, photoUrl, lastAppointmentDate } as any;
   }
 
   /**
