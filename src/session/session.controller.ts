@@ -58,19 +58,35 @@ export class SessionController {
   }
 
   @Get()
-  @Roles('adm', 'cli')
+  @Roles('adm')
   async findAll(
     @Request() req,
     @Query() getSessionsDto: GetSessionsDto
   ) {
+    const adminId = req.user.sub;
+    return this.sessionService.findAllSessionsSimple(adminId, getSessionsDto);
+  }
+
+  /**
+   * Obtiene todas las citas de una compañía específica.
+   * Accesible para administradores y clientes (clientes solo si están
+   * asociados a la compañía vía `client.companies`).
+   */
+  @Get('by-company/:companyId')
+  @Roles('adm', 'cli')
+  async findAllByCompany(
+    @Request() req,
+    @Param('companyId') companyId: string,
+    @Query() getSessionsDto: GetSessionsDto,
+  ) {
     const userId = req.user?.id || req.user?.sub;
     const userRole = req.user?.userType;
-
-    if (userRole === 'cli') {
-      return this.sessionService.getSessionsForAuthenticatedClient(userId, getSessionsDto);
-    }
-
-    return this.sessionService.findAllSessionsSimple(userId, getSessionsDto);
+    return this.sessionService.findAllSessionsByCompany(
+      +companyId,
+      getSessionsDto,
+      userId,
+      userRole,
+    );
   }
 
   @Patch(':id')

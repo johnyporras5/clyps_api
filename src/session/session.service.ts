@@ -1914,6 +1914,246 @@ export class SessionService {
     }
   }
 
+  /**
+   * Obtiene todas las citas de una compañía específica.
+   * - Si el rol es 'adm': el usuario debe ser dueño de la compañía.
+   * - Si el rol es 'cli': la compañía debe estar dentro de `client.companies`.
+   */
+  async findAllSessionsByCompany(
+    companyId: number,
+    getSessionsDto: GetSessionsDto,
+    userId: number,
+    userRole: string,
+  ): Promise<PaginationResult<any>> {
+    const company = await this.companyRepository.findOne({
+      where: { id: companyId },
+    });
+    if (!company) {
+      throw new NotFoundException(`Compañía con ID ${companyId} no encontrada`);
+    }
+
+    if (userRole === 'adm') {
+      if (company.userId !== userId) {
+        throw new ForbiddenException('No tienes acceso a las citas de esta compañía');
+      }
+    } else if (userRole === 'cli') {
+      const client = await this.clientRepository.findOne({
+        where: { userId },
+      });
+      if (!client) {
+        throw new NotFoundException('Cliente no encontrado');
+      }
+      const allowed = (client.companies ?? [])
+        .map((v: any) => Number(v))
+        .includes(companyId);
+      if (!allowed) {
+        throw new ForbiddenException('No tienes acceso a las citas de esta compañía');
+      }
+    } else {
+      throw new ForbiddenException('Rol no autorizado');
+    }
+
+    // 1. company_worker_ids activos de la compañía
+    const companyWorkers = await this.companyWorkerRepository.find({
+      where: { companyId, isActive: 1 },
+      select: ['id'],
+    });
+    const companyWorkerIds = companyWorkers.map(cw => cw.id);
+
+    const emptyResult: PaginationResult<any> = {
+      data: [],
+      meta: {
+        page: getSessionsDto.page,
+        limit: getSessionsDto.limit,
+        total: 0,
+        totalPages: 0,
+        hasNext: false,
+        hasPrev: false,
+      },
+    };
+
+    if (companyWorkerIds.length === 0) {
+      return emptyResult;
+    }
+
+    // 2. sessionIds vinculados a la compañía (worker propio o detalle pendiente)
+    const sessionIdsResult = await this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .leftJoin('offer', 'offer', 'offer.id = detail.offer_id')
+      .select('DISTINCT detail.session_id', 'sessionId')
+      .where(
+        '(detail.company_worker_id IN (:...companyWorkerIds) OR (detail.company_worker_id IS NULL AND offer.company_id = :companyId))',
+        { companyWorkerIds, companyId },
+      )
+      .getRawMany();
+
+    const sessionIds = sessionIdsResult.map(r => r.sessionId);
+    if (sessionIds.length === 0) {
+      return emptyResult;
+    }
+
+    // 3. Filtros (mismas reglas que findAllSessionsSimple)
+    const whereConditions: any = { id: In(sessionIds) };
+
+    if (getSessionsDto.date) {
+      const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+      whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
+    } else if (getSessionsDto.today) {
+      const today = new Date();
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+      const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+      whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
+    } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      const startDateStr = getSessionsDto.startDate.split('T')[0].split(' ')[0];
+      const [sy, sm, sd] = startDateStr.split('-').map(Number);
+      const startOfDay = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
+      const endDateStr = getSessionsDto.endDate.split('T')[0].split(' ')[0];
+      const [ey, em, ed] = endDateStr.split('-').map(Number);
+      const endOfDay = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+      whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
+    }
+
+    if (getSessionsDto.onlyScheduled) {
+      whereConditions.sessionStatus = 1;
+    } else if (getSessionsDto.sessionStatus && getSessionsDto.sessionStatus.length > 0) {
+      whereConditions.sessionStatus =
+        getSessionsDto.sessionStatus.length === 1
+          ? getSessionsDto.sessionStatus[0]
+          : In(getSessionsDto.sessionStatus);
+    }
+
+    if (getSessionsDto.clientId) {
+      whereConditions.clientId = getSessionsDto.clientId;
+    }
+
+    let order: any;
+    if (getSessionsDto.today) {
+      order = { sessionDatetime: 'ASC' };
+    } else {
+      switch (getSessionsDto.orderBy) {
+        case 'recent':
+          order = { sessionDatetime: 'DESC' };
+          break;
+        case 'oldest':
+          order = { sessionDatetime: 'ASC' };
+          break;
+        case 'priority':
+          order = { sessionStatus: 'ASC', sessionDatetime: 'ASC' };
+          break;
+        default:
+          order = { sessionDatetime: 'DESC' };
+      }
+    }
+
+    const [sessions, total] = await this.sessionRepository.findAndCount({
+      where: whereConditions,
+      order,
+      skip: (getSessionsDto.page - 1) * getSessionsDto.limit,
+      take: getSessionsDto.limit,
+    });
+
+    // 4. Enriquecimiento (mismo formato que findAllSessionsSimple)
+    const enrichedSessions = await Promise.all(
+      sessions.map(async (session) => {
+        const sessionClient = await this.clientRepository.findOne({
+          where: { id: session.clientId },
+        });
+
+        const sessionDetails = await this.sessionDetailRepository
+          .createQueryBuilder('detail')
+          .leftJoin('offer', 'offer', 'offer.id = detail.offer_id')
+          .where('detail.session_id = :sessionId', { sessionId: session.id })
+          .andWhere(
+            '(detail.company_worker_id IN (:...companyWorkerIds) OR (detail.company_worker_id IS NULL AND offer.company_id = :companyId))',
+            { companyWorkerIds, companyId },
+          )
+          .getMany();
+
+        const services: any[] = [];
+        let totalCost = 0;
+        let totalTime = 0;
+
+        for (const detail of sessionDetails) {
+          const companyWorker = detail.companyWorkerId
+            ? await this.companyWorkerRepository.findOne({
+                where: { id: detail.companyWorkerId },
+                relations: ['worker', 'company'],
+              })
+            : null;
+
+          const service = await this.serviceRepository.findOne({
+            where: { id: detail.serviceId },
+          });
+
+          services.push({
+            detailId: detail.id,
+            serviceId: detail.serviceId,
+            serviceName: service?.name || '',
+            serviceDescription: service?.description || '',
+            serviceCost: Number(detail.cost || 0),
+            serviceTime: detail.totalTime || 0,
+            startDatetime: detail.startDatetime,
+            companyWorkerId: detail.companyWorkerId,
+            workerName: companyWorker?.worker
+              ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+              : '',
+            workerLastName: companyWorker?.worker?.lastName || '',
+            totalWorker: Number(detail.totalWorker || 0),
+            totalCompany: Number(detail.totalCompany || 0),
+            detailStatus: detail.status || 1,
+            detailStatusText: this.getDetailStatusText(detail.status || 1),
+            isExtra: detail.isExtra === true || (detail.isExtra as any) === 1,
+          });
+
+          totalCost += Number(detail.cost || 0);
+          totalTime += Number(detail.totalTime || 0);
+        }
+
+        return {
+          id: session.id,
+          clientId: session.clientId,
+          clientName: sessionClient
+            ? `${sessionClient.name || ''} ${sessionClient.lastName || ''}`.trim()
+            : 'Cliente no encontrado',
+          clientLastName: sessionClient?.lastName || '',
+          clientPicture: sessionClient?.picture
+            ? this.fileUploadService.getFileUrl('client_photo', sessionClient.picture)
+            : null,
+          companyId: company.id,
+          companyName: company.name,
+          sessionDatetime: session.sessionDatetime,
+          sessionStatus: session.sessionStatus,
+          sessionStatusText: this.getSessionStatusText(session.sessionStatus),
+          totalCost,
+          totalTime,
+          startDatetime: session.startDatetime,
+          status: session.status,
+          iaResponse: session.iaResponse,
+          servicesCount: sessionDetails.length,
+          services,
+          extraServices: session.extraServices || [],
+          createdAt: session['createdAt'] || null,
+          updatedAt: session['updatedAt'] || null,
+        };
+      })
+    );
+
+    return {
+      data: enrichedSessions,
+      meta: {
+        page: getSessionsDto.page,
+        limit: getSessionsDto.limit,
+        total,
+        totalPages: Math.ceil(total / getSessionsDto.limit),
+        hasNext: getSessionsDto.page < Math.ceil(total / getSessionsDto.limit),
+        hasPrev: getSessionsDto.page > 1,
+      },
+    };
+  }
+
   private getSessionStatusText(status: number): string {
     const statusMap: Record<number, string> = {
       1: 'Agendado',
