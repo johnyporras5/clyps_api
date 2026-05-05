@@ -58,13 +58,19 @@ export class SessionController {
   }
 
   @Get()
-  @Roles('adm')
+  @Roles('adm', 'cli')
   async findAll(
     @Request() req,
     @Query() getSessionsDto: GetSessionsDto
   ) {
-    const adminId = req.user.sub;
-    return this.sessionService.findAllSessionsSimple(adminId, getSessionsDto);
+    const userId = req.user?.id || req.user?.sub;
+    const userRole = req.user?.userType;
+
+    if (userRole === 'cli') {
+      return this.sessionService.getSessionsForAuthenticatedClient(userId, getSessionsDto);
+    }
+
+    return this.sessionService.findAllSessionsSimple(userId, getSessionsDto);
   }
 
   @Patch(':id')
