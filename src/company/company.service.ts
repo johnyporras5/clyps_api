@@ -61,28 +61,31 @@ export class CompanyService {
   ) { }
 
   /**
-   * Verifica si el trabajador tiene citas activas asociadas en la compañía.
-   * Estados que bloquean: 1 (Agendado), 2 (En proceso), 8 (Pendiente de asignación).
-   * Estados 3 (Completada), 4 (Pagado) y 5 (Cancelada) NO bloquean.
+   * Bloquea la eliminación si el trabajador tiene citas asociadas en la
+   * compañía cuyo estado sea: 1 (Agendado), 2 (En proceso) o 4 (Pagado).
+   * Estados 3 (Completada), 5 (Cancelada) y 8 (Pendiente de asignación) NO bloquean.
    */
   private async assertWorkerHasNoActiveAppointments(
     workerId: number,
     companyId: number,
   ): Promise<void> {
-    const activeStatuses = [1, 2, 8];
+    const blockingStatuses = [1, 2, 4];
 
-    const count = await this.sessionDetailRepository
+    const result = await this.sessionDetailRepository
       .createQueryBuilder('sd')
       .innerJoin('company_worker', 'cw', 'cw.id = sd.company_worker_id')
       .innerJoin('session', 's', 's.id = sd.session_id')
+      .select('COUNT(*)', 'count')
       .where('cw.worker_id = :workerId', { workerId })
       .andWhere('cw.company_id = :companyId', { companyId })
-      .andWhere('s.session_status IN (:...activeStatuses)', { activeStatuses })
-      .getCount();
+      .andWhere('s.session_status IN (:...blockingStatuses)', { blockingStatuses })
+      .getRawOne<{ count: string | number }>();
+
+    const count = result ? Number(result.count) : 0;
 
     if (count > 0) {
       throw new ConflictException(
-        'No se puede eliminar el trabajador porque está asociado a citas activas. Cancela o reasigna las citas antes de eliminarlo.',
+        'No se puede eliminar el trabajador porque tiene citas Agendadas, En proceso o Pagadas. Cancélalas o reasígnalas antes de eliminarlo.',
       );
     }
   }

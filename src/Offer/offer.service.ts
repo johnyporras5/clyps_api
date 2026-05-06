@@ -39,6 +39,13 @@ export class OfferService {
     return offers.map((offer) => this.addLogoUrl(offer));
   }
 
+  async findAll(): Promise<any[]> {
+    const offers = await this.offerRepository.find({
+      relations: ['company', 'serviceOffers', 'serviceOffers.service'],
+    });
+    return offers.map((offer) => this.addLogoUrl(offer));
+  }
+
   async findOne(id: number, adminId: number): Promise<any> {
     const company = await this.getCompanyByAdmin(adminId);
     const offer = await this.offerRepository.findOne({
