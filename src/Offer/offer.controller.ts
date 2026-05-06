@@ -70,6 +70,17 @@ export class OfferController {
   }
 
   /**
+   * Obtener todas las ofertas de todas las compañías
+   * GET /offers/all
+   */
+  @Get('all')
+  @Roles('adm', 'wrk', 'cli')
+  @HttpCode(HttpStatus.OK)
+  async findAll() {
+    return this.offerService.findAll();
+  }
+
+  /**
    * Obtener una oferta específica de la compañía
    * GET /offers/my-company/:id
    */
