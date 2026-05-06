@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
@@ -23,6 +23,8 @@ import { CompanyCategory } from 'src/company_category/entities/company_category.
 import { CompanyFeedback } from 'src/company_feedback/entities/company_feedback.entity';
 import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
 import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.entity';
+import { Session } from 'src/session/entities/session.entity';
+import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 
 
 @Injectable()
@@ -50,9 +52,40 @@ export class CompanyService {
     private workerFeedbackRepository: Repository<WorkerFeedback>,
     @InjectRepository(ServiceFeedback)
     private serviceFeedbackRepository: Repository<ServiceFeedback>,
+    @InjectRepository(Session)
+    private sessionRepository: Repository<Session>,
+    @InjectRepository(SessionDetail)
+    private sessionDetailRepository: Repository<SessionDetail>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
   ) { }
+
+  /**
+   * Verifica si el trabajador tiene citas activas asociadas en la compañía.
+   * Estados que bloquean: 1 (Agendado), 2 (En proceso), 8 (Pendiente de asignación).
+   * Estados 3 (Completada), 4 (Pagado) y 5 (Cancelada) NO bloquean.
+   */
+  private async assertWorkerHasNoActiveAppointments(
+    workerId: number,
+    companyId: number,
+  ): Promise<void> {
+    const activeStatuses = [1, 2, 8];
+
+    const count = await this.sessionDetailRepository
+      .createQueryBuilder('sd')
+      .innerJoin('company_worker', 'cw', 'cw.id = sd.company_worker_id')
+      .innerJoin('session', 's', 's.id = sd.session_id')
+      .where('cw.worker_id = :workerId', { workerId })
+      .andWhere('cw.company_id = :companyId', { companyId })
+      .andWhere('s.session_status IN (:...activeStatuses)', { activeStatuses })
+      .getCount();
+
+    if (count > 0) {
+      throw new ConflictException(
+        'No se puede eliminar el trabajador porque está asociado a citas activas. Cancela o reasigna las citas antes de eliminarlo.',
+      );
+    }
+  }
 
   async findAll(
     options: PaginationOptions
@@ -502,7 +535,10 @@ async updateAdminProfile(
       throw new BadRequestException('Este trabajador ya está temporalmente eliminado');
     }
 
-    // 4. Marcar como temporalmente eliminado
+    // 4. Validar que no tenga citas activas asociadas
+    await this.assertWorkerHasNoActiveAppointments(workerId, company.id);
+
+    // 5. Marcar como temporalmente eliminado
     companyWorker.temporarilyDeleted = true;
     companyWorker.isActive = 0; // Desactivar
     companyWorker.endDate = new Date(); // Establecer fecha de fin
@@ -585,7 +621,10 @@ async updateAdminProfile(
       throw new NotFoundException('Este trabajador no está asignado a tu compañía');
     }
 
-    // 3. Marcar como permanentemente eliminado
+    // 3. Validar que no tenga citas activas asociadas
+    await this.assertWorkerHasNoActiveAppointments(workerId, company.id);
+
+    // 4. Marcar como permanentemente eliminado
     companyWorker.permanentlyDeleted = true;
     companyWorker.temporarilyDeleted = false; // Asegurar que no esté marcado como temporal
     companyWorker.isActive = 0; // Desactivar
