@@ -7,11 +7,13 @@ import { Company } from '../company/entities/company.entity';
 import { Worker } from '../worker/entities/worker.entity';
 import { User } from '../user/entities/user.entity';
 import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
+import { Session } from 'src/session/entities/session.entity';
+import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { CommonModule } from 'src/common/common.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([CompanyWorker, Company, Worker, User,WorkerFeedback]),
+    TypeOrmModule.forFeature([CompanyWorker, Company, Worker, User, WorkerFeedback, Session, SessionDetail]),
     CommonModule
   ],
   controllers: [CompanyWorkerController],
