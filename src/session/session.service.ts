@@ -3717,26 +3717,63 @@ export class SessionService {
       throw new BadRequestException('Debe proporcionar al menos un servicio');
     }
 
-    // 3. Validar que todos los servicios sean de la misma compañía (por simplicidad)
-    const companyWorkerIds = createSessionWithDetailDto.details.map(d => d.companyWorkerId);
-    const uniqueCompanyWorkerIds = [...new Set(companyWorkerIds)];
+    // 3. Determinar la compañía a partir de trabajadores y/u ofertas.
+    //    Cada detalle debe traer companyWorkerId u offerId; si trae solo offerId,
+    //    la compañía se deriva de la oferta.
+    const uniqueCompanyWorkerIds = [
+      ...new Set(
+        createSessionWithDetailDto.details
+          .map((d) => d.companyWorkerId)
+          .filter((id): id is number => id !== null && id !== undefined),
+      ),
+    ];
+    const uniqueOfferIds = [
+      ...new Set(
+        createSessionWithDetailDto.details
+          .map((d) => d.offerId)
+          .filter((id): id is number => id !== null && id !== undefined),
+      ),
+    ];
 
-    // Obtener información de los companyWorkers para validar compañías
-    const companyWorkers = await this.companyWorkerRepository.find({
-      where: { id: In(uniqueCompanyWorkerIds) },
-      relations: ['company']
-    });
+    let companyWorkers: CompanyWorker[] = [];
+    if (uniqueCompanyWorkerIds.length > 0) {
+      companyWorkers = await this.companyWorkerRepository.find({
+        where: { id: In(uniqueCompanyWorkerIds) },
+        relations: ['company'],
+      });
 
-    if (companyWorkers.length === 0) {
-      throw new NotFoundException('No se encontraron los trabajadores especificados');
+      if (companyWorkers.length !== uniqueCompanyWorkerIds.length) {
+        throw new NotFoundException('No se encontraron los trabajadores especificados');
+      }
     }
 
-    // Verificar que todos los trabajadores sean de la misma compañía
-    const companyIds = companyWorkers.map(cw => cw.company?.id).filter(id => id !== undefined);
-    const uniqueCompanyIds = [...new Set(companyIds)];
+    let offers: Offer[] = [];
+    if (uniqueOfferIds.length > 0) {
+      offers = await this.offerRepository.find({
+        where: { id: In(uniqueOfferIds) },
+        relations: ['company'],
+      });
+
+      if (offers.length !== uniqueOfferIds.length) {
+        throw new NotFoundException('No se encontraron las ofertas especificadas');
+      }
+    }
+
+    const companyIdsFromWorkers = companyWorkers
+      .map((cw) => cw.company?.id)
+      .filter((id): id is number => id !== undefined);
+    const companyIdsFromOffers = offers
+      .map((o) => o.companyId)
+      .filter((id): id is number => id !== null && id !== undefined);
+
+    const uniqueCompanyIds = [
+      ...new Set([...companyIdsFromWorkers, ...companyIdsFromOffers]),
+    ];
 
     if (uniqueCompanyIds.length === 0) {
-      throw new BadRequestException('No se pudo determinar la compañía de los trabajadores');
+      throw new BadRequestException(
+        'No se pudo determinar la compañía: cada detalle debe incluir companyWorkerId u offerId',
+      );
     }
 
     if (uniqueCompanyIds.length > 1) {
@@ -3744,7 +3781,10 @@ export class SessionService {
     }
 
     const companyId = uniqueCompanyIds[0];
-    const company = companyWorkers[0]?.company;
+    const company =
+      companyWorkers[0]?.company ??
+      offers[0]?.company ??
+      (await this.companyRepository.findOne({ where: { id: companyId } }));
 
     if (!company) {
       throw new NotFoundException('Compañía no encontrada');
