@@ -8,7 +8,7 @@ export class AutoCancelSessionsTask {
 
   constructor(private readonly sessionService: SessionService) {}
 
-  @Cron('5 12 * * *', {
+  @Cron('50 23 * * *', {
     timeZone: 'America/Caracas',
   })
   async cancelExpiredScheduledSessions() {
