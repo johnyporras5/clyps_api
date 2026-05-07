@@ -1,10 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Brackets } from 'typeorm';
+import { Repository, Brackets, In, MoreThan } from 'typeorm';
 import { Client } from './entities/client.entity';
 import { User } from '../user/entities/user.entity';
 import { Company } from '../company/entities/company.entity';
 import { Session } from '../session/entities/session.entity';
+import { SessionDetail } from '../session_detail/entities/session_detail.entity';
+import { Service } from '../service/entities/service.entity';
+import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { AllowedFolder, FileUploadService } from '../common/services/file_upload.service';
@@ -24,20 +27,92 @@ export class ClientService {
     private companyRepository: Repository<Company>,
     @InjectRepository(Session)
     private sessionRepository: Repository<Session>,
+    @InjectRepository(SessionDetail)
+    private sessionDetailRepository: Repository<SessionDetail>,
+    @InjectRepository(Service)
+    private serviceRepository: Repository<Service>,
+    @InjectRepository(CompanyWorker)
+    private companyWorkerRepository: Repository<CompanyWorker>,
     private fileUploadService: FileUploadService,
   ) { }
 
   /**
-   * Obtiene la fecha de la última cita pasada de un cliente.
-   * Devuelve null si el cliente nunca ha tenido una cita.
+   * Construye el resumen de una sesión (compañía + servicios) para el perfil del cliente.
    */
-  private async getLastAppointmentDate(clientId: number): Promise<Date | null> {
-    const lastSession = await this.sessionRepository.findOne({
-      where: { clientId },
-      order: { sessionDatetime: 'DESC' },
-      select: ['sessionDatetime'],
+  private async buildAppointmentSummary(session: Session): Promise<{
+    sessionId: number;
+    sessionDatetime: Date;
+    sessionStatus: number;
+    companyName: string | null;
+    services: string[];
+  }> {
+    const details = await this.sessionDetailRepository.find({
+      where: { sessionId: session.id },
     });
-    return lastSession?.sessionDatetime ?? null;
+
+    let companyName: string | null = null;
+    const services: string[] = [];
+
+    if (details.length > 0) {
+      const serviceIds = [...new Set(details.map((d) => d.serviceId).filter(Boolean))];
+      const companyWorkerIds = [...new Set(details.map((d) => d.companyWorkerId).filter(Boolean))];
+
+      if (serviceIds.length > 0) {
+        const serviceRows = await this.serviceRepository.find({
+          where: { id: In(serviceIds) },
+          select: ['id', 'name'],
+        });
+        const serviceMap = new Map(serviceRows.map((s) => [s.id, s.name]));
+        for (const d of details) {
+          const name = serviceMap.get(d.serviceId);
+          if (name) services.push(name);
+        }
+      }
+
+      if (companyWorkerIds.length > 0) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: In(companyWorkerIds) },
+          relations: ['company'],
+        });
+        companyName = companyWorker?.company?.name ?? null;
+      }
+    }
+
+    return {
+      sessionId: session.id,
+      sessionDatetime: session.sessionDatetime,
+      sessionStatus: session.sessionStatus,
+      companyName,
+      services,
+    };
+  }
+
+  /**
+   * Última cita completada (sessionStatus 3 = Completada, 4 = Pagada) del cliente.
+   */
+  private async getLastCompletedAppointment(clientId: number) {
+    const session = await this.sessionRepository.findOne({
+      where: { clientId, sessionStatus: In([3, 4]) },
+      order: { sessionDatetime: 'DESC' },
+    });
+    if (!session) return null;
+    return this.buildAppointmentSummary(session);
+  }
+
+  /**
+   * Próxima cita del cliente: futura y no cancelada (status 1 = Agendado, 8 = Pendiente).
+   */
+  private async getNextAppointment(clientId: number) {
+    const session = await this.sessionRepository.findOne({
+      where: {
+        clientId,
+        sessionStatus: In([1, 8]),
+        sessionDatetime: MoreThan(new Date()),
+      },
+      order: { sessionDatetime: 'ASC' },
+    });
+    if (!session) return null;
+    return this.buildAppointmentSummary(session);
   }
 
   /**
@@ -324,7 +399,10 @@ export class ClientService {
     // Generar URL completa de la foto
     const photoUrl = await this.getClientPhotoUrl(client.id);
 
-    const lastAppointmentDate = await this.getLastAppointmentDate(client.id);
+    const [lastAppointment, nextAppointment] = await Promise.all([
+      this.getLastCompletedAppointment(client.id),
+      this.getNextAppointment(client.id),
+    ]);
 
     // Excluir la contraseña del objeto User
     if (client.user) {
@@ -335,7 +413,8 @@ export class ClientService {
     return {
       ...client,
       photoUrl,
-      lastAppointmentDate,
+      lastAppointment,
+      nextAppointment,
     } as any;
   }
 
@@ -354,14 +433,17 @@ export class ClientService {
     }
 
     const photoUrl = await this.getClientPhotoUrl(clientId);
-    const lastAppointmentDate = await this.getLastAppointmentDate(clientId);
+    const [lastAppointment, nextAppointment] = await Promise.all([
+      this.getLastCompletedAppointment(clientId),
+      this.getNextAppointment(clientId),
+    ]);
 
     if (client.user) {
       const { password, ...userWithoutPassword } = client.user;
       client.user = userWithoutPassword as any;
     }
 
-    return { ...client, photoUrl, lastAppointmentDate } as any;
+    return { ...client, photoUrl, lastAppointment, nextAppointment } as any;
   }
 
   /**
