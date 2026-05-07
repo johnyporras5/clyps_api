@@ -4376,7 +4376,13 @@ export class SessionService {
     let adminCompany: any = null;
 
     if (userRole === 'cli') {
-      if (session.clientId !== userId) {
+      const client = await this.clientRepository.findOne({
+        where: { userId }
+      });
+      if (!client) {
+        throw new NotFoundException('Cliente no encontrado');
+      }
+      if (session.clientId !== client.id) {
         throw new ForbiddenException('No tienes permiso para modificar esta sesión');
       }
       // Obtener la compañía a partir de los detalles de la sesión
@@ -5662,7 +5668,13 @@ export class SessionService {
         throw new ForbiddenException('No tienes permiso para modificar esta sesión');
       }
     } else if (userRole === 'cli') {
-      if (session.clientId !== userId) {
+      const client = await this.clientRepository.findOne({
+        where: { userId }
+      });
+      if (!client) {
+        throw new NotFoundException('Cliente no encontrado');
+      }
+      if (session.clientId !== client.id) {
         throw new ForbiddenException('No tienes permiso para modificar esta sesión');
       }
     }
