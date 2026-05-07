@@ -6,11 +6,14 @@ import { AppService } from './app.service';
 import { GeneratedModules } from './generated-modules';
 import { AuthModule } from './auth/auth.module';
 import { CleanupTask } from './tasks/cleanup.task';
+import { AutoCancelSessionsTask } from './tasks/auto-cancel-sessions.task';
 import { VerificationModule } from './verification/verification.module';
 //import { SeedsModule } from './database/seeds/seeds.module';
 import { join } from 'path';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
+import { SessionModule } from './session/session.module';
 import { IAPromptsModule } from './IAprompts/ia_prompts.module';
 //import { TemplatesModule } from './templates/templates.module';
 import { ServiceCategoryModule } from './service_category/service_category.module';
@@ -31,6 +34,7 @@ import { ReportsModule } from './reports/reports.module';
       verboseMemoryLeak: false,
       ignoreErrors: false,
     }),
+    ScheduleModule.forRoot(),
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'assets'),
       serveRoot: '/assets',
@@ -98,9 +102,10 @@ import { ReportsModule } from './reports/reports.module';
     CompanyCategoryModule,
     OfferModule,
     ReportsModule,
+    SessionModule,
 
   ],
   controllers: [AppController],
-  providers: [AppService, CleanupTask],
+  providers: [AppService, CleanupTask, AutoCancelSessionsTask],
 })
 export class AppModule { }

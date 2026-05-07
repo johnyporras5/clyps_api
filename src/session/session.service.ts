@@ -5122,6 +5122,74 @@ export class SessionService {
     }
   }
 
+  /**
+   * Cancela automáticamente todas las citas agendadas (sessionStatus = 1)
+   * cuya fecha programada ya pasó (sessionDatetime < hoy 00:00). Marca la
+   * sesión y todos sus session_detail con status 5 (Cancelado).
+   *
+   * Pensado para ejecutarse en un cron diario a medianoche: si una cita
+   * del día anterior nunca avanzó al siguiente estado, se da por cancelada.
+   *
+   * @returns cantidad de sesiones canceladas y detalles actualizados
+   */
+  async cancelExpiredScheduledSessions(): Promise<{
+    cancelledSessions: number;
+    cancelledDetails: number;
+  }> {
+    const now = new Date();
+
+    const expiredSessions = await this.sessionRepository
+      .createQueryBuilder('session')
+      .where('session.session_status = :status', { status: 1 })
+      .andWhere('session.session_datetime < :now', { now })
+      .getMany();
+
+    if (expiredSessions.length === 0) {
+      return { cancelledSessions: 0, cancelledDetails: 0 };
+    }
+
+    const sessionIds = expiredSessions.map((s) => s.id);
+
+    const queryRunner = this.sessionRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const sessionUpdate = await queryRunner.manager
+        .createQueryBuilder()
+        .update(Session)
+        .set({ sessionStatus: 5 })
+        .whereInIds(sessionIds)
+        .execute();
+
+      const detailUpdate = await queryRunner.manager
+        .createQueryBuilder()
+        .update(SessionDetail)
+        .set({ status: 5 })
+        .where('sessionId IN (:...sessionIds)', { sessionIds })
+        .execute();
+
+      await queryRunner.commitTransaction();
+
+      this.logger.log(
+        `🛑 Auto-cancelación: ${sessionUpdate.affected ?? 0} sesión(es) y ${detailUpdate.affected ?? 0} detalle(s) marcados como cancelados (IDs: ${sessionIds.join(', ')})`,
+      );
+
+      return {
+        cancelledSessions: sessionUpdate.affected ?? 0,
+        cancelledDetails: detailUpdate.affected ?? 0,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `❌ Error en auto-cancelación de citas vencidas: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
 
 
   /**
