@@ -5265,7 +5265,7 @@ export class SessionService {
       .leftJoin('service', 'service', 'service.id = detail.service_id')
       .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
       .leftJoin('worker', 'worker', 'worker.id = companyWorker.worker_id')
-      .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
+      .leftJoin('company', 'company', 'company.id = service.company_id')
       .leftJoin('offer', 'offer', 'offer.id = detail.offer_id')
       .leftJoin(
         'service_offer',
