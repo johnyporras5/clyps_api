@@ -8,6 +8,7 @@ import { Session } from '../session/entities/session.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 import { Service } from '../service/entities/service.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+import { Offer } from '../Offer/entities/offer.entity';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { AllowedFolder, FileUploadService } from '../common/services/file_upload.service';
@@ -33,6 +34,8 @@ export class ClientService {
     private serviceRepository: Repository<Service>,
     @InjectRepository(CompanyWorker)
     private companyWorkerRepository: Repository<CompanyWorker>,
+    @InjectRepository(Offer)
+    private offerRepository: Repository<Offer>,
     private fileUploadService: FileUploadService,
   ) { }
 
@@ -45,17 +48,20 @@ export class ClientService {
     sessionStatus: number;
     companyName: string | null;
     services: string[];
+    offerName: string | null;
   }> {
     const details = await this.sessionDetailRepository.find({
       where: { sessionId: session.id },
     });
 
     let companyName: string | null = null;
+    let offerName: string | null = null;
     const services: string[] = [];
 
     if (details.length > 0) {
       const serviceIds = [...new Set(details.map((d) => d.serviceId).filter(Boolean))];
       const companyWorkerIds = [...new Set(details.map((d) => d.companyWorkerId).filter(Boolean))];
+      const offerIds = [...new Set(details.map((d) => d.offerId).filter(Boolean))];
 
       if (serviceIds.length > 0) {
         const serviceRows = await this.serviceRepository.find({
@@ -69,7 +75,16 @@ export class ClientService {
         }
       }
 
-      if (companyWorkerIds.length > 0) {
+      if (offerIds.length > 0) {
+        const offer = await this.offerRepository.findOne({
+          where: { id: In(offerIds) },
+          relations: ['company'],
+        });
+        offerName = offer?.name ?? null;
+        companyName = offer?.company?.name ?? null;
+      }
+
+      if (!companyName && companyWorkerIds.length > 0) {
         const companyWorker = await this.companyWorkerRepository.findOne({
           where: { id: In(companyWorkerIds) },
           relations: ['company'],
@@ -84,6 +99,7 @@ export class ClientService {
       sessionStatus: session.sessionStatus,
       companyName,
       services,
+      offerName,
     };
   }
 
@@ -103,11 +119,16 @@ export class ClientService {
    * Próxima cita del cliente: futura y no cancelada (status 1 = Agendado, 8 = Pendiente).
    */
   private async getNextAppointment(clientId: number) {
+    // Las sesiones se guardan con hora local Venezuela (UTC-4) como si fuera UTC,
+    // así que "ahora" para la comparación debe estar en el mismo wallclock.
+    const VENEZUELA_OFFSET_MS = 4 * 60 * 60 * 1000;
+    const nowVenezuela = new Date(Date.now() - VENEZUELA_OFFSET_MS);
+
     const session = await this.sessionRepository.findOne({
       where: {
         clientId,
         sessionStatus: In([1, 8]),
-        sessionDatetime: MoreThan(new Date()),
+        sessionDatetime: MoreThan(nowVenezuela),
       },
       order: { sessionDatetime: 'ASC' },
     });
