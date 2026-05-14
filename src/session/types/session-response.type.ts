@@ -20,9 +20,9 @@ export interface SessionDetailResponse {
   serviceId: number;
   serviceName: string;
   serviceDescription: string;
-  companyWorkerId: number;
-  workerName: string;
-  workerLastName: string;
+  companyWorkerId: number | null;
+  workerName: string | null;
+  workerLastName: string | null;
   startDatetime: Date;
   totalTime: number;
   totalWorker: number;

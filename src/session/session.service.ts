@@ -1116,11 +1116,13 @@ export class SessionService {
         where: { id: detail.serviceId }
       });
 
-      // Obtener información del trabajador
-      const companyWorker = await this.companyWorkerRepository.findOne({
-        where: { id: detail.companyWorkerId },
-        relations: ['worker', 'company']
-      });
+      // Obtener información del trabajador (solo si hay companyWorkerId asignado)
+      const companyWorker = detail.companyWorkerId
+        ? await this.companyWorkerRepository.findOne({
+            where: { id: detail.companyWorkerId },
+            relations: ['worker', 'company']
+          })
+        : null;
 
       // Si es el primer detalle, tomar la compañía (asumimos que todos son de la misma compañía)
       if (companyId === 0 && companyWorker?.company) {
@@ -1145,8 +1147,8 @@ export class SessionService {
         serviceName: service?.name || 'Servicio no encontrado',
         serviceDescription: service?.description || '',
         companyWorkerId: detail.companyWorkerId,
-        workerName: companyWorker?.worker?.name || '',
-        workerLastName: companyWorker?.worker?.lastName || '',
+        workerName: companyWorker?.worker?.name ?? null,
+        workerLastName: companyWorker?.worker?.lastName ?? null,
         startDatetime: detail.startDatetime,
         totalTime: detail.totalTime || 0,
         totalWorker: Number(detail.totalWorker || 0),
