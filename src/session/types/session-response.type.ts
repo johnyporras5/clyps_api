@@ -14,6 +14,20 @@ export interface ExtraServiceResponse {
   createdAt: string;
 }
 
+export interface OfferDetailResponse {
+  id: number;
+  name: string;
+  description: string | null;
+  startDate: Date;
+  endDate: Date;
+  status: number;
+  logoUrl: string | null;
+  originalPrice: number;
+  offerPrice: number;
+  discountAmount: number;
+  discountPercentage: number;
+}
+
 export interface SessionDetailResponse {
   id: number;
   cost: number;
@@ -31,8 +45,11 @@ export interface SessionDetailResponse {
   workerPercentage: number;
   companyPercentage: number;
   descriptionWorker?: string;
-
-  
+  isOffer: boolean;
+  offerId: number | null;
+  offer: OfferDetailResponse | null;
+  originalPrice: number;
+  appliedPrice: number;
 }
 
 export interface SessionResponse {

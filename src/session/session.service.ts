@@ -15,7 +15,7 @@ import { EmailService } from '../email/email.service';
 import { PaginationResult } from '../common/dto/pagination.dto';
 import { UpdateSessionDto } from './dto/update-session-and-detail.dto';
 import { GetSessionsDto } from './dto/get-sessions.dto';
-import { SessionResponse, SessionDetailResponse } from './types/session-response.type';
+import { SessionResponse, SessionDetailResponse, OfferDetailResponse } from './types/session-response.type';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto, ExtraServiceItemDto } from './dto/add-extra-services.dto';
@@ -1139,10 +1139,50 @@ export class SessionService {
         companyPercentage = (Number(detail.totalCompany) / Number(detail.cost)) * 100;
       }
 
+      // Obtener información de la oferta (si el detalle tiene offer_id)
+      const hasOffer = detail.offerId !== null && detail.offerId !== undefined;
+      let offerObj: OfferDetailResponse | null = null;
+      const originalPrice = Number(service?.cost ?? 0) || 0;
+      const appliedPrice = Number(detail.cost ?? 0) || 0;
+
+      if (hasOffer) {
+        const offer = await this.offerRepository.findOne({
+          where: { id: detail.offerId }
+        });
+
+        const serviceOffer = await this.serviceOfferRepository.findOne({
+          where: { offerId: detail.offerId, serviceId: detail.serviceId }
+        });
+
+        if (offer) {
+          const offerPrice = Number(serviceOffer?.price ?? 0) || 0;
+          const discountAmount = Math.max(originalPrice - offerPrice, 0);
+          const discountPercentage = originalPrice > 0
+            ? parseFloat(((discountAmount / originalPrice) * 100).toFixed(2))
+            : 0;
+
+          offerObj = {
+            id: offer.id,
+            name: offer.name,
+            description: offer.description ?? null,
+            startDate: offer.startDate,
+            endDate: offer.endDate,
+            status: offer.status,
+            logoUrl: offer.logo
+              ? this.fileUploadService.getFileUrl('offer_logo', offer.logo)
+              : null,
+            originalPrice,
+            offerPrice,
+            discountAmount: parseFloat(discountAmount.toFixed(2)),
+            discountPercentage,
+          };
+        }
+      }
+
       // Agregar detalle al array
       details.push({
         id: detail.id,
-        cost: Number(detail.cost || 0),
+        cost: appliedPrice,
         serviceId: detail.serviceId,
         serviceName: service?.name || 'Servicio no encontrado',
         serviceDescription: service?.description || '',
@@ -1155,11 +1195,16 @@ export class SessionService {
         totalCompany: Number(detail.totalCompany || 0),
         status: detail.status || 1,
         workerPercentage: Number(workerPercentage.toFixed(2)),
-        companyPercentage: Number(companyPercentage.toFixed(2))
+        companyPercentage: Number(companyPercentage.toFixed(2)),
+        isOffer: hasOffer && offerObj !== null,
+        offerId: hasOffer ? detail.offerId : null,
+        offer: offerObj,
+        originalPrice,
+        appliedPrice,
       });
 
       // Acumular totales
-      totalCost += Number(detail.cost || 0);
+      totalCost += appliedPrice;
       totalTime += Number(detail.totalTime || 0);
     }
 
@@ -3299,7 +3344,7 @@ export class SessionService {
         'session.status AS sessionStatusFlag',
         'session.ia_response AS iaResponse',
         'session.updated_at AS sessionUpdatedAt',
-        'session.description_worker AS descriptionWorker',
+        'detail.description_worker AS descriptionWorker',
         'session.description_ia AS descriptionIA',
         'session.description AS description',
         'session.extra_services AS extraServices',
