@@ -5907,4 +5907,311 @@ export class SessionService {
       message: `Servicio extra eliminado exitosamente de la sesión ${sessionId}`
     };
   }
+
+  // =========================================================================
+  // ENDPOINTS PARA EL WORKER AUTENTICADO
+  // =========================================================================
+
+  /**
+   * Helper: resuelve los company_worker ids activos del worker indicado.
+   * Si se pasa `workerId` (admin inspeccionando), se resuelve por ese id.
+   * Si no, se resuelve por el `userId` autenticado (worker viendo lo suyo).
+   */
+  private async resolveWorkerCompanyWorkerIds(
+    userId: number,
+    targetWorkerId?: number,
+  ): Promise<{
+    worker: Worker;
+    companyWorkerIds: number[];
+  }> {
+    const worker = targetWorkerId
+      ? await this.workerRepository.findOne({ where: { id: targetWorkerId } })
+      : await this.workerRepository.findOne({ where: { userId } });
+
+    if (!worker) {
+      throw new NotFoundException('Trabajador no encontrado');
+    }
+
+    const companyWorkers = await this.companyWorkerRepository.find({
+      where: { workerId: worker.id, isActive: 1 },
+    });
+
+    if (companyWorkers.length === 0) {
+      throw new NotFoundException(
+        targetWorkerId
+          ? `El trabajador ${targetWorkerId} no tiene asignaciones activas en ninguna compañía`
+          : 'No tienes asignaciones activas en ninguna compañía',
+      );
+    }
+
+    return { worker, companyWorkerIds: companyWorkers.map(cw => cw.id) };
+  }
+
+  /**
+   * GET /sessions/worker/my-services
+   * Lista de servicios a los que ha sido asignado el worker (histórico desde session_detail)
+   * con contadores agregados (citas totales, completadas, canceladas, ingresos y tiempo).
+   */
+  async getWorkerAssignedServices(
+    userId: number,
+    targetWorkerId?: number,
+  ): Promise<{
+    data: Array<{
+      serviceId: number;
+      serviceName: string;
+      serviceDescription: string | null;
+      totalAppointments: number;
+      totalCompleted: number;
+      totalCancelled: number;
+      totalEarned: number;
+      totalTime: number;
+    }>;
+  }> {
+    const { companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
+      userId,
+      targetWorkerId,
+    );
+
+    const rows = await this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .leftJoin('service', 'service', 'service.id = detail.service_id')
+      .select('detail.service_id', 'serviceId')
+      .addSelect('service.name', 'serviceName')
+      .addSelect('service.description', 'serviceDescription')
+      .addSelect('COUNT(detail.id)', 'totalAppointments')
+      .addSelect(
+        'SUM(CASE WHEN detail.status IN (3, 4) THEN 1 ELSE 0 END)',
+        'totalCompleted',
+      )
+      .addSelect(
+        'SUM(CASE WHEN detail.status = 5 THEN 1 ELSE 0 END)',
+        'totalCancelled',
+      )
+      .addSelect(
+        'SUM(CASE WHEN detail.status IN (3, 4) THEN detail.total_worker ELSE 0 END)',
+        'totalEarned',
+      )
+      .addSelect(
+        'SUM(CASE WHEN detail.status IN (3, 4) THEN detail.total_time ELSE 0 END)',
+        'totalTime',
+      )
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds })
+      .groupBy('detail.service_id')
+      .addGroupBy('service.name')
+      .addGroupBy('service.description')
+      .orderBy('totalAppointments', 'DESC')
+      .getRawMany();
+
+    return {
+      data: rows.map(r => ({
+        serviceId: Number(r.serviceId),
+        serviceName: r.serviceName ?? 'Servicio no encontrado',
+        serviceDescription: r.serviceDescription ?? null,
+        totalAppointments: parseInt(r.totalAppointments, 10) || 0,
+        totalCompleted: parseInt(r.totalCompleted, 10) || 0,
+        totalCancelled: parseInt(r.totalCancelled, 10) || 0,
+        totalEarned: parseFloat(parseFloat(r.totalEarned || '0').toFixed(2)) || 0,
+        totalTime: parseInt(r.totalTime, 10) || 0,
+      })),
+    };
+  }
+
+  /**
+   * GET /sessions/worker/my-clients
+   * Lista paginada de clientes distintos atendidos por el worker autenticado.
+   */
+  async getWorkerClients(
+    userId: number,
+    page: number = 1,
+    limit: number = 10,
+    targetWorkerId?: number,
+  ): Promise<PaginationResult<any>> {
+    const { companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
+      userId,
+      targetWorkerId,
+    );
+
+    const baseQuery = this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .innerJoin('session', 'session', 'session.id = detail.session_id')
+      .leftJoin('client', 'client', 'client.id = session.client_id')
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
+
+    const dataQuery = baseQuery
+      .clone()
+      .select('client.id', 'clientId')
+      .addSelect('client.name', 'clientName')
+      .addSelect('client.last_name', 'clientLastName')
+      .addSelect('client.phone', 'clientPhone')
+      .addSelect('client.email', 'clientEmail')
+      .addSelect('client.picture', 'clientPicture')
+      .addSelect('COUNT(DISTINCT session.id)', 'totalAppointments')
+      .addSelect('MAX(session.session_datetime)', 'lastAppointmentDate')
+      .groupBy('client.id')
+      .addGroupBy('client.name')
+      .addGroupBy('client.last_name')
+      .addGroupBy('client.phone')
+      .addGroupBy('client.email')
+      .addGroupBy('client.picture')
+      .orderBy('lastAppointmentDate', 'DESC')
+      .offset((page - 1) * limit)
+      .limit(limit);
+
+    const rows = await dataQuery.getRawMany();
+
+    const totalRow = await baseQuery
+      .clone()
+      .select('COUNT(DISTINCT session.client_id)', 'total')
+      .getRawOne();
+
+    const total = parseInt(totalRow?.total || '0', 10);
+
+    const data = rows
+      .filter(r => r.clientId !== null && r.clientId !== undefined)
+      .map(r => ({
+        id: Number(r.clientId),
+        name: r.clientName,
+        lastName: r.clientLastName,
+        phone: r.clientPhone,
+        email: r.clientEmail,
+        photoUrl: r.clientPicture
+          ? this.fileUploadService.getFileUrl('client_photo', r.clientPicture)
+          : null,
+        totalAppointments: parseInt(r.totalAppointments, 10) || 0,
+        lastAppointmentDate: r.lastAppointmentDate,
+      }));
+
+    return {
+      data,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  /**
+   * GET /sessions/worker/my-history
+   * Historial paginado de citas COMPLETADAS (status 3/4) o CANCELADAS (status 5)
+   * del worker autenticado. Mismo shape que `my-sessions`.
+   */
+  async getWorkerHistory(
+    userId: number,
+    getSessionsDto: GetSessionsDto,
+    targetWorkerId?: number,
+  ): Promise<PaginationResult<any>> {
+    const filteredDto: GetSessionsDto = {
+      ...getSessionsDto,
+      // Forzar filtro: completadas (3, 4) o canceladas (5)
+      detailStatus: [3, 4, 5],
+    };
+    // Si admin pasa workerId, resolvemos el userId de ese worker para reutilizar
+    // getSessionsForAuthenticatedWorker sin duplicar lógica.
+    if (targetWorkerId) {
+      const worker = await this.workerRepository.findOne({ where: { id: targetWorkerId } });
+      if (!worker) {
+        throw new NotFoundException('Trabajador no encontrado');
+      }
+      return this.getSessionsForAuthenticatedWorker(worker.userId, filteredDto);
+    }
+    return this.getSessionsForAuthenticatedWorker(userId, filteredDto);
+  }
+
+  /**
+   * GET /sessions/worker/income-report
+   * Reporte de ingresos por servicio del worker autenticado (suma total_worker
+   * de detalles con status completado/pagado). Opcionalmente filtrable por rango.
+   */
+  async getWorkerIncomeReport(
+    userId: number,
+    startDate?: string,
+    endDate?: string,
+    targetWorkerId?: number,
+  ): Promise<{
+    range: { startDate: string | null; endDate: string | null };
+    totals: {
+      totalEarned: number;
+      totalSessions: number;
+      totalServices: number;
+      totalTime: number;
+    };
+    byService: Array<{
+      serviceId: number;
+      serviceName: string;
+      sessionsCount: number;
+      totalEarned: number;
+      totalTime: number;
+      averagePerSession: number;
+    }>;
+  }> {
+    const { companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
+      userId,
+      targetWorkerId,
+    );
+
+    const query = this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .innerJoin('session', 'session', 'session.id = detail.session_id')
+      .leftJoin('service', 'service', 'service.id = detail.service_id')
+      .select('detail.service_id', 'serviceId')
+      .addSelect('service.name', 'serviceName')
+      .addSelect('COUNT(detail.id)', 'sessionsCount')
+      .addSelect('SUM(detail.total_worker)', 'totalEarned')
+      .addSelect('SUM(detail.total_time)', 'totalTime')
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds })
+      .andWhere('detail.status IN (:...completedStatus)', { completedStatus: [3, 4] });
+
+    if (startDate && endDate) {
+      query.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+      });
+    } else if (startDate) {
+      query.andWhere('session.session_datetime >= :startDate', { startDate: new Date(startDate) });
+    } else if (endDate) {
+      query.andWhere('session.session_datetime <= :endDate', { endDate: new Date(endDate) });
+    }
+
+    const rows = await query
+      .groupBy('detail.service_id')
+      .addGroupBy('service.name')
+      .orderBy('totalEarned', 'DESC')
+      .getRawMany();
+
+    const byService = rows.map(r => {
+      const sessionsCount = parseInt(r.sessionsCount, 10) || 0;
+      const totalEarned = parseFloat(parseFloat(r.totalEarned || '0').toFixed(2)) || 0;
+      return {
+        serviceId: Number(r.serviceId),
+        serviceName: r.serviceName ?? 'Servicio no encontrado',
+        sessionsCount,
+        totalEarned,
+        totalTime: parseInt(r.totalTime, 10) || 0,
+        averagePerSession:
+          sessionsCount > 0 ? parseFloat((totalEarned / sessionsCount).toFixed(2)) : 0,
+      };
+    });
+
+    const totals = byService.reduce(
+      (acc, s) => {
+        acc.totalEarned += s.totalEarned;
+        acc.totalSessions += s.sessionsCount;
+        acc.totalTime += s.totalTime;
+        return acc;
+      },
+      { totalEarned: 0, totalSessions: 0, totalServices: byService.length, totalTime: 0 },
+    );
+
+    totals.totalEarned = parseFloat(totals.totalEarned.toFixed(2));
+
+    return {
+      range: { startDate: startDate ?? null, endDate: endDate ?? null },
+      totals,
+      byService,
+    };
+  }
 }

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Query, Put, } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Query, Put, BadRequestException, } from '@nestjs/common';
 import { SessionService } from './session.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { CreateSessionWithDetailDto } from './dto/create-session-with-detail.dto';
@@ -251,4 +251,95 @@ async getMySessionsAsClient(
   const userId = req.user?.id || req.user?.sub;
   return this.sessionService.getSessionsForAuthenticatedClient(userId, getSessionsDto);
 }
+
+  /**
+   * Lista de servicios asignados al worker (histórico desde session_detail)
+   * con contadores agregados.
+   * - Worker: ve los suyos (workerId se ignora).
+   * - Admin: debe pasar ?workerId=<id>.
+   */
+  @Get('worker/my-services')
+  @Roles('wrk', 'adm')
+  async getMyAssignedServices(
+    @Request() req,
+    @Query('workerId') workerId?: string,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    const userType = req.user?.userType;
+    const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
+    return this.sessionService.getWorkerAssignedServices(userId, targetWorkerId);
+  }
+
+  /**
+   * Lista paginada de clientes distintos atendidos por el worker.
+   * - Worker: ve los suyos.
+   * - Admin: debe pasar ?workerId=<id>.
+   */
+  @Get('worker/my-clients')
+  @Roles('wrk', 'adm')
+  async getMyClientsAsWorker(
+    @Request() req,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('workerId') workerId?: string,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    const userType = req.user?.userType;
+    const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
+    const pageNum = page ? Math.max(parseInt(page, 10) || 1, 1) : 1;
+    const limitNum = limit ? Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100) : 10;
+    return this.sessionService.getWorkerClients(userId, pageNum, limitNum, targetWorkerId);
+  }
+
+  /**
+   * Historial de citas completadas (status 3/4) o canceladas (status 5).
+   * - Worker: ve los suyos.
+   * - Admin: debe pasar ?workerId=<id>.
+   */
+  @Get('worker/my-history')
+  @Roles('wrk', 'adm')
+  async getMyHistoryAsWorker(
+    @Request() req,
+    @Query() getSessionsDto: GetSessionsDto,
+    @Query('workerId') workerId?: string,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    const userType = req.user?.userType;
+    const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
+    return this.sessionService.getWorkerHistory(userId, getSessionsDto, targetWorkerId);
+  }
+
+  /**
+   * Reporte de ingresos por servicio.
+   * - Worker: ve los suyos.
+   * - Admin: debe pasar ?workerId=<id>.
+   * Filtros opcionales: startDate, endDate (ISO).
+   */
+  @Get('worker/income-report')
+  @Roles('wrk', 'adm')
+  async getMyIncomeReport(
+    @Request() req,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('workerId') workerId?: string,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    const userType = req.user?.userType;
+    const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
+    return this.sessionService.getWorkerIncomeReport(userId, startDate, endDate, targetWorkerId);
+  }
+
+  private resolveTargetWorkerId(
+    userType: string | undefined,
+    workerIdParam: string | undefined,
+  ): number | undefined {
+    if (userType === 'adm') {
+      const parsed = workerIdParam ? parseInt(workerIdParam, 10) : NaN;
+      if (!parsed || isNaN(parsed)) {
+        throw new BadRequestException('El parámetro workerId es requerido para administradores');
+      }
+      return parsed;
+    }
+    return undefined;
+  }
 }
