@@ -5949,8 +5949,10 @@ export class SessionService {
 
   /**
    * GET /sessions/worker/my-services
-   * Lista de servicios a los que ha sido asignado el worker (histórico desde session_detail)
-   * con contadores agregados (citas totales, completadas, canceladas, ingresos y tiempo).
+   * Lista de servicios donde el worker está asignado, leída del catálogo
+   * `service.workers` JSON (fuente de verdad). Adicionalmente cruza con
+   * session_detail para incluir contadores históricos (citas, completadas,
+   * canceladas, ingresos, tiempo).
    */
   async getWorkerAssignedServices(
     userId: number,
@@ -5960,6 +5962,12 @@ export class SessionService {
       serviceId: number;
       serviceName: string;
       serviceDescription: string | null;
+      cost: number;
+      currency: string | null;
+      standardTime: number | null;
+      categoryId: number | null;
+      workerPercentage: number;
+      workerTime: number | null;
       totalAppointments: number;
       totalCompleted: number;
       totalCancelled: number;
@@ -5967,17 +5975,30 @@ export class SessionService {
       totalTime: number;
     }>;
   }> {
-    const { companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
+    const { worker, companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
       userId,
       targetWorkerId,
     );
 
-    const rows = await this.sessionDetailRepository
+    // 1) Catálogo: servicios donde service.workers contiene { id: worker.id }
+    const services = await this.serviceRepository
+      .createQueryBuilder('service')
+      .where(
+        "JSON_CONTAINS(JSON_EXTRACT(service.workers, '$[*].id'), CAST(:workerId AS JSON))",
+        { workerId: worker.id },
+      )
+      .getMany();
+
+    if (services.length === 0) {
+      return { data: [] };
+    }
+
+    const serviceIds = services.map(s => s.id);
+
+    // 2) Contadores históricos desde session_detail (solo para los servicios del catálogo)
+    const aggregates = await this.sessionDetailRepository
       .createQueryBuilder('detail')
-      .leftJoin('service', 'service', 'service.id = detail.service_id')
       .select('detail.service_id', 'serviceId')
-      .addSelect('service.name', 'serviceName')
-      .addSelect('service.description', 'serviceDescription')
       .addSelect('COUNT(detail.id)', 'totalAppointments')
       .addSelect(
         'SUM(CASE WHEN detail.status IN (3, 4) THEN 1 ELSE 0 END)',
@@ -5996,23 +6017,39 @@ export class SessionService {
         'totalTime',
       )
       .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds })
+      .andWhere('detail.service_id IN (:...serviceIds)', { serviceIds })
       .groupBy('detail.service_id')
-      .addGroupBy('service.name')
-      .addGroupBy('service.description')
-      .orderBy('totalAppointments', 'DESC')
       .getRawMany();
 
+    const aggMap = new Map<number, any>();
+    for (const a of aggregates) {
+      aggMap.set(Number(a.serviceId), a);
+    }
+
     return {
-      data: rows.map(r => ({
-        serviceId: Number(r.serviceId),
-        serviceName: r.serviceName ?? 'Servicio no encontrado',
-        serviceDescription: r.serviceDescription ?? null,
-        totalAppointments: parseInt(r.totalAppointments, 10) || 0,
-        totalCompleted: parseInt(r.totalCompleted, 10) || 0,
-        totalCancelled: parseInt(r.totalCancelled, 10) || 0,
-        totalEarned: parseFloat(parseFloat(r.totalEarned || '0').toFixed(2)) || 0,
-        totalTime: parseInt(r.totalTime, 10) || 0,
-      })),
+      data: services.map(s => {
+        const a = aggMap.get(s.id);
+        const workerEntry = Array.isArray(s.workers)
+          ? s.workers.find((w: any) => Number(w?.id) === worker.id)
+          : null;
+
+        return {
+          serviceId: s.id,
+          serviceName: s.name,
+          serviceDescription: s.description ?? null,
+          cost: Number(s.cost ?? 0) || 0,
+          currency: s.currency ?? null,
+          standardTime: s.standardTime ?? null,
+          categoryId: s.categoryId ?? null,
+          workerPercentage: Number(workerEntry?.percentage ?? 0) || 0,
+          workerTime: workerEntry?.time ?? null,
+          totalAppointments: parseInt(a?.totalAppointments, 10) || 0,
+          totalCompleted: parseInt(a?.totalCompleted, 10) || 0,
+          totalCancelled: parseInt(a?.totalCancelled, 10) || 0,
+          totalEarned: parseFloat(parseFloat(a?.totalEarned || '0').toFixed(2)) || 0,
+          totalTime: parseInt(a?.totalTime, 10) || 0,
+        };
+      }),
     };
   }
 
