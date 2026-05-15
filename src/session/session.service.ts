@@ -3350,8 +3350,14 @@ export class SessionService {
         'session.extra_services AS extraServices',
 
         // Campos del cliente
+        'client.id AS clientRealId',
         'client.name AS clientName',
         'client.last_name AS clientLastName',
+        'client.email AS clientEmail',
+        'client.phone AS clientPhone',
+        'client.birth_date AS clientBirthDate',
+        'client.location AS clientLocation',
+        'client.picture AS clientPicture',
 
         // Campos del detalle (servicio asignado al trabajador)
         'detail.id AS detailId',
@@ -3534,6 +3540,20 @@ export class SessionService {
           clientId: detail.clientId,
           clientName: detail.clientName ? `${detail.clientName || ''} ${detail.clientLastName || ''}`.trim() : 'Cliente no encontrado',
           clientLastName: detail.clientLastName || '',
+          // === DATOS DEL CLIENTE ===
+          client: {
+            id: detail.clientRealId || detail.clientId,
+            name: detail.clientName || '',
+            lastName: detail.clientLastName || '',
+            fullName: `${detail.clientName || ''} ${detail.clientLastName || ''}`.trim() || 'Cliente no encontrado',
+            email: detail.clientEmail || null,
+            phone: detail.clientPhone || null,
+            birthDate: detail.clientBirthDate || null,
+            location: detail.clientLocation || null,
+            picture: detail.clientPicture
+              ? this.fileUploadService.getFileUrl('client_photo', detail.clientPicture)
+              : null,
+          },
           sessionDatetime: detail.sessionDatetime,
           sessionStatus: detail.sessionStatus,
           sessionStatusText: this.getSessionStatusText(detail.sessionStatus),
