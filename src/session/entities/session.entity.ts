@@ -15,6 +15,14 @@ export class Session {
   @Column({ name: 'session_status', nullable: true })
   sessionStatus: number;
 
+  /**
+   * Cuando es true, el admin tomó el control del estado de la cita:
+   * los trabajadores no pueden cambiar sus detalles y el auto-sync
+   * (recálculo desde los detalles) queda desactivado.
+   */
+  @Column({ name: 'status_locked', type: 'tinyint', default: 0 })
+  statusLocked: boolean;
+
   @Column({
     name: 'total_cost',
     type: 'decimal',

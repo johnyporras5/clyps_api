@@ -2223,6 +2223,7 @@ export class SessionService {
     message: string;
     session: Session;
     updated: boolean;
+    detailsUpdated: number;
     validationDetails: {
       canUpdate: boolean;
       totalDetails: number;
@@ -2298,18 +2299,57 @@ export class SessionService {
       });
     }
 
-    // 5. Actualizar el estado de la sesión
+    // 5. Actualizar el estado de la cita + propagar a los detalles.
+    //    El admin tiene autoridad total: al cambiar el estado de la cita,
+    //    - se marca la cita como "controlada por el admin" (statusLocked),
+    //    - el nuevo estado se propaga a los detalles ACTIVOS (los cancelados
+    //      en status 5 se mantienen cancelados),
+    //    - desde este momento los trabajadores no pueden cambiar sus detalles
+    //      y el auto-sync deja de recalcular el estado de la cita.
     const previousStatus = session.sessionStatus;
-    session.sessionStatus = updateSessionStatusDto.sessionStatus;
+    const newStatus = updateSessionStatusDto.sessionStatus;
 
-    const updatedSession = await this.sessionRepository.save(session);
+    // Solo se propaga a detalles si el nuevo estado es un estado válido de
+    // detalle (1-5). El estado 8 (pendiente de asignación) es solo de cita.
+    const cascadeToDetails = newStatus >= 1 && newStatus <= 5;
+    let detailsUpdated = 0;
 
-    console.log(`✅ Estado de sesión ${sessionId} actualizado de ${previousStatus} a ${updateSessionStatusDto.sessionStatus}`);
+    const queryRunner = this.sessionRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    let updatedSession: Session;
+    try {
+      session.sessionStatus = newStatus;
+      session.statusLocked = true;
+      updatedSession = await queryRunner.manager.save(session);
+
+      if (cascadeToDetails) {
+        const cascadeResult = await queryRunner.manager
+          .createQueryBuilder()
+          .update(SessionDetail)
+          .set({ status: newStatus })
+          .where('sessionId = :sessionId', { sessionId })
+          .andWhere('status != :cancelled', { cancelled: 5 })
+          .execute();
+        detailsUpdated = cascadeResult.affected || 0;
+      }
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw new BadRequestException(`Error al actualizar el estado de la cita: ${(error as Error).message}`);
+    } finally {
+      await queryRunner.release();
+    }
+
+    console.log(`✅ Estado de sesión ${sessionId} actualizado de ${previousStatus} a ${newStatus}. Detalles propagados: ${detailsUpdated}. Cita bloqueada para trabajadores.`);
 
     return {
-      message: `Estado de sesión actualizado exitosamente de ${this.getSessionStatusText(previousStatus)} a ${this.getSessionStatusText(updateSessionStatusDto.sessionStatus)}`,
+      message: `Estado de cita actualizado de "${this.getSessionStatusText(previousStatus)}" a "${this.getSessionStatusText(newStatus)}". ${detailsUpdated} servicio(s) actualizados. La cita queda bajo control del administrador.`,
       session: updatedSession,
       updated: true,
+      detailsUpdated,
       validationDetails: validationResult
     };
   }
@@ -2347,11 +2387,21 @@ export class SessionService {
       throw new NotFoundException(`Detalle de sesión con ID ${detailId} no encontrado`);
     }
 
-    // 1.1 Estados terminales: si la cita ya está Pagada (4) o Cancelada (5),
-    //     es una decisión final y no se admiten cambios en sus servicios.
     const parentSession = await this.sessionRepository.findOne({
       where: { id: detail.sessionId }
     });
+
+    // 1.1 Si el admin tomó el control de la cita (statusLocked), los detalles
+    //     ya no se pueden modificar por este endpoint: el admin maneja la cita
+    //     a nivel de cita con PUT /sessions/:id/status.
+    if (parentSession?.statusLocked) {
+      throw new BadRequestException(
+        'La cita está bajo control del administrador y sus servicios no se pueden modificar'
+      );
+    }
+
+    // 1.2 Estados terminales: si la cita ya está Pagada (4) o Cancelada (5),
+    //     es una decisión final y no se admiten cambios en sus servicios.
     if (parentSession && (parentSession.sessionStatus === 4 || parentSession.sessionStatus === 5)) {
       throw new BadRequestException(
         `La cita está en estado "${this.getSessionStatusText(parentSession.sessionStatus)}" y no admite cambios en sus servicios`
@@ -2821,15 +2871,19 @@ export class SessionService {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
 
-    // 1.1 Estados terminales: si la cita ya está Pagada (4) o Cancelada (5),
-    //     es una decisión final del admin/sistema y el auto-sync NO la modifica.
-    if (session.sessionStatus === 4 || session.sessionStatus === 5) {
-      console.log(`ℹ️ Sesión ${sessionId} en estado terminal "${this.getSessionStatusText(session.sessionStatus)}", no se recalcula automáticamente`);
+    // 1.1 Si el admin tomó el control de la cita (statusLocked) o la cita está
+    //     en un estado terminal (Pagada 4 / Cancelada 5), el auto-sync NO la
+    //     modifica: el estado de la cita es una decisión firme del admin.
+    if (session.statusLocked || session.sessionStatus === 4 || session.sessionStatus === 5) {
+      const motivo = session.statusLocked
+        ? 'la cita está bajo control del administrador'
+        : `la cita está en estado terminal "${this.getSessionStatusText(session.sessionStatus)}"`;
+      console.log(`ℹ️ Sesión ${sessionId}: ${motivo}, no se recalcula automáticamente`);
       return {
         previousStatus: session.sessionStatus,
         newStatus: session.sessionStatus,
         updated: false,
-        reason: `La cita está en estado terminal "${this.getSessionStatusText(session.sessionStatus)}" y no se recalcula automáticamente`,
+        reason: `No se recalcula automáticamente porque ${motivo}`,
         detailsSummary: {
           total: 0,
           scheduled: 0,
