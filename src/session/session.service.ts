@@ -2217,7 +2217,8 @@ export class SessionService {
   async updateSessionStatus(
     sessionId: number,
     updateSessionStatusDto: UpdateSessionStatusDto,
-    adminId: number
+    userId: number,
+    userRole?: string
   ): Promise<{
     message: string;
     session: Session;
@@ -2231,18 +2232,9 @@ export class SessionService {
       errorMessage?: string;
     };
   }> {
-    console.log(`🔄 Actualizando estado de sesión ${sessionId} a ${updateSessionStatusDto.sessionStatus}`);
+    console.log(`🔄 Actualizando estado de sesión ${sessionId} a ${updateSessionStatusDto.sessionStatus}. Usuario: ${userId}, Rol: ${userRole}`);
 
-    // 1. Verificar permisos
-    const adminCompany = await this.companyRepository.findOne({
-      where: { userId: adminId }
-    });
-
-    if (!adminCompany) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
-    }
-
-    // 2. Buscar la sesión
+    // 1. Buscar la sesión
     const session = await this.sessionRepository.findOne({
       where: { id: sessionId }
     });
@@ -2251,7 +2243,7 @@ export class SessionService {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
 
-    // 3. Verificar que la sesión pertenezca a la compañía del administrador
+    // 2. Buscar los detalles de la sesión
     const sessionDetails = await this.sessionDetailRepository.find({
       where: { sessionId: sessionId }
     });
@@ -2260,21 +2252,76 @@ export class SessionService {
       throw new NotFoundException(`No se encontraron detalles para la sesión ${sessionId}`);
     }
 
-    let sessionBelongsToAdmin = false;
-    for (const detail of sessionDetails) {
-      const companyWorker = await this.companyWorkerRepository.findOne({
-        where: { id: detail.companyWorkerId },
-        relations: ['company']
+    // 3. Verificar permisos según el rol
+    if (userRole === 'adm') {
+      // Administrador: la sesión debe pertenecer a su compañía
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId: userId }
       });
 
-      if (companyWorker?.company?.id === adminCompany.id) {
-        sessionBelongsToAdmin = true;
-        break;
+      if (!adminCompany) {
+        throw new NotFoundException('El administrador no tiene una compañía asignada');
+      }
+
+      let sessionBelongsToAdmin = false;
+      for (const detail of sessionDetails) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: detail.companyWorkerId },
+          relations: ['company']
+        });
+
+        if (companyWorker?.company?.id === adminCompany.id) {
+          sessionBelongsToAdmin = true;
+          break;
+        }
+      }
+
+      if (!sessionBelongsToAdmin) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
       }
     }
+    else if (userRole === 'wrk') {
+      // Trabajador: solo puede mover la cita a En proceso (2), Completada (3) o Cancelada (5)
+      const allowedWorkerStatuses = [2, 3, 5];
+      if (!allowedWorkerStatuses.includes(updateSessionStatusDto.sessionStatus)) {
+        throw new ForbiddenException(
+          'Como trabajador solo puedes marcar la cita como "En proceso" (2), "Completada" (3) o "Cancelada" (5)'
+        );
+      }
 
-    if (!sessionBelongsToAdmin) {
-      throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+      const worker = await this.workerRepository.findOne({
+        where: { userId: userId }
+      });
+
+      if (!worker) {
+        throw new NotFoundException('Trabajador no encontrado');
+      }
+
+      // La cita debe tener al menos un detalle asignado a este trabajador
+      let sessionBelongsToWorker = false;
+      for (const detail of sessionDetails) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: {
+            id: detail.companyWorkerId,
+            workerId: worker.id
+          }
+        });
+
+        if (companyWorker) {
+          if (companyWorker.isActive !== 1) {
+            throw new BadRequestException('No estás activo en esta compañía');
+          }
+          sessionBelongsToWorker = true;
+          break;
+        }
+      }
+
+      if (!sessionBelongsToWorker) {
+        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
+      }
+    }
+    else {
+      throw new ForbiddenException('No tienes permisos para realizar esta acción');
     }
 
     // 4. Validar si se puede actualizar el estado de la sesión
@@ -5085,7 +5132,7 @@ export class SessionService {
   async cancelSession(
     sessionId: number,
     userId: number,
-    userRole: 'adm' | 'cli',
+    userRole: 'adm' | 'cli' | 'wrk',
     cancelDto?: CancelSessionDto,
   ): Promise<{
     message: string;
@@ -5149,6 +5196,37 @@ export class SessionService {
       }
       if (session.clientId !== client.id) {
         throw new ForbiddenException('No puedes cancelar una cita que no te pertenece');
+      }
+    } else if (userRole === 'wrk') {
+      // Verificar que el trabajador tenga al menos un detalle asignado en la cita
+      const worker = await this.workerRepository.findOne({
+        where: { userId },
+      });
+      if (!worker) {
+        throw new NotFoundException('Trabajador no encontrado');
+      }
+
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId },
+      });
+      let sessionBelongsToWorker = false;
+      for (const detail of sessionDetails) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: {
+            id: detail.companyWorkerId,
+            workerId: worker.id,
+          },
+        });
+        if (companyWorker) {
+          if (companyWorker.isActive !== 1) {
+            throw new BadRequestException('No estás activo en esta compañía');
+          }
+          sessionBelongsToWorker = true;
+          break;
+        }
+      }
+      if (!sessionBelongsToWorker) {
+        throw new ForbiddenException('No tienes permiso para cancelar esta sesión');
       }
     }
 

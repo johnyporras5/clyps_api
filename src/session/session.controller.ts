@@ -101,14 +101,15 @@ export class SessionController {
   }
 
   @Put(':id/status')
-  @Roles('adm')
+  @Roles('adm', 'wrk')
   async updateSessionStatus(
     @Request() req,
     @Param('id') id: string,
     @Body() updateSessionStatusDto: UpdateSessionStatusDto
   ) {
-    const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.updateSessionStatus(+id, updateSessionStatusDto, adminId);
+    const userId = req.user?.id || req.user?.sub;
+    const userRole = req.user?.userType;
+    return this.sessionService.updateSessionStatus(+id, updateSessionStatusDto, userId, userRole);
   }
 
   /**
@@ -235,6 +236,18 @@ export class SessionController {
   ) {
     const userId = req.user?.id || req.user?.sub;
     return this.sessionService.cancelSession(+id, userId, 'cli', cancelDto);
+  }
+
+  // ============ CANCELACIÓN POR TRABAJADOR ============
+  @Patch('worker/:id/cancel')
+  @Roles('wrk')
+  async cancelSessionByWorker(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() cancelDto?: CancelSessionDto,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    return this.sessionService.cancelSession(+id, userId, 'wrk', cancelDto);
   }
 
 
