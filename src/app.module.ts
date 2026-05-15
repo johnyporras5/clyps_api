@@ -66,6 +66,8 @@ import { ReportsModule } from './reports/reports.module';
           username: configService.get('DB_USERNAME', 'root'),
           password: configService.get('DB_PASSWORD', ''),
           database: configService.get('DB_DATABASE', 'clyps'),
+          // utf8mb4 permite guardar emojis (caracteres de 4 bytes)
+          charset: 'utf8mb4',
           entities: [__dirname + '/**/*.entity{.ts,.js}'],
           synchronize: false,
           logging: configService.get('NODE_ENV') === 'development',
