@@ -2347,6 +2347,17 @@ export class SessionService {
       throw new NotFoundException(`Detalle de sesión con ID ${detailId} no encontrado`);
     }
 
+    // 1.1 Estados terminales: si la cita ya está Pagada (4) o Cancelada (5),
+    //     es una decisión final y no se admiten cambios en sus servicios.
+    const parentSession = await this.sessionRepository.findOne({
+      where: { id: detail.sessionId }
+    });
+    if (parentSession && (parentSession.sessionStatus === 4 || parentSession.sessionStatus === 5)) {
+      throw new BadRequestException(
+        `La cita está en estado "${this.getSessionStatusText(parentSession.sessionStatus)}" y no admite cambios en sus servicios`
+      );
+    }
+
     // 2. Validar permisos según el rol
     if (userRole === 'adm') {
       // Para administradores: validación original
@@ -2808,6 +2819,24 @@ export class SessionService {
 
     if (!session) {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+    }
+
+    // 1.1 Estados terminales: si la cita ya está Pagada (4) o Cancelada (5),
+    //     es una decisión final del admin/sistema y el auto-sync NO la modifica.
+    if (session.sessionStatus === 4 || session.sessionStatus === 5) {
+      console.log(`ℹ️ Sesión ${sessionId} en estado terminal "${this.getSessionStatusText(session.sessionStatus)}", no se recalcula automáticamente`);
+      return {
+        previousStatus: session.sessionStatus,
+        newStatus: session.sessionStatus,
+        updated: false,
+        reason: `La cita está en estado terminal "${this.getSessionStatusText(session.sessionStatus)}" y no se recalcula automáticamente`,
+        detailsSummary: {
+          total: 0,
+          scheduled: 0,
+          inProcess: 0,
+          completed: 0
+        }
+      };
     }
 
     // 2. Obtener todos los detalles de la sesión
