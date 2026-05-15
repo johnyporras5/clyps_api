@@ -3332,6 +3332,12 @@ export class SessionService {
       .leftJoin('company_worker', 'companyWorker', 'companyWorker.id = detail.company_worker_id')
       .leftJoin('worker', 'worker', 'worker.id = companyWorker.worker_id')
       .leftJoin('company', 'company', 'company.id = companyWorker.company_id')
+      .leftJoin('offer', 'offer', 'offer.id = detail.offer_id')
+      .leftJoin(
+        'service_offer',
+        'serviceOffer',
+        'serviceOffer.offer_id = detail.offer_id AND serviceOffer.service_id = detail.service_id',
+      )
       .select([
         // Campos de la sesión (cita)
         'session.id AS sessionId',
@@ -3368,11 +3374,23 @@ export class SessionService {
         'detail.status AS detailStatus',
         'detail.start_datetime AS detailStartDatetime',
         'detail.is_extra AS isExtra',
+        'detail.offer_id AS detailOfferId',
 
         // Campos del servicio
         'service.id AS serviceId',
         'service.name AS serviceName',
         'service.description AS serviceDescription',
+        'service.cost AS serviceOriginalCost',
+
+        // Campos de la oferta aplicada al detalle (si la hay)
+        'offer.id AS offerId',
+        'offer.name AS offerName',
+        'offer.description AS offerDescription',
+        'offer.start_date AS offerStartDate',
+        'offer.end_date AS offerEndDate',
+        'offer.logo AS offerLogo',
+        'offer.status AS offerStatus',
+        'serviceOffer.price AS offerSpecialPrice',
 
         // Campos del trabajador / compañía
         'companyWorker.id AS companyWorkerId',
@@ -3380,7 +3398,8 @@ export class SessionService {
         'company.name AS companyName',
         'worker.id AS workerId',
         'worker.name AS workerName',
-        'worker.last_name AS workerLastName'
+        'worker.last_name AS workerLastName',
+        'worker.picture AS workerPicture'
       ])
       .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds });
 
@@ -3591,12 +3610,45 @@ export class SessionService {
         companyPercentage = parseFloat(((totalCompany / cost) * 100).toFixed(2));
       }
 
+      // Datos de la oferta aplicada al detalle (si la hay)
+      const originalPrice = parseFloat(detail.serviceOriginalCost) || 0;
+      const offerPrice = parseFloat(detail.offerSpecialPrice) || 0;
+      const hasOffer = detail.detailOfferId !== null && detail.detailOfferId !== undefined;
+      const discountAmount = hasOffer ? Math.max(originalPrice - offerPrice, 0) : 0;
+      const discountPercentage =
+        hasOffer && originalPrice > 0
+          ? parseFloat(((discountAmount / originalPrice) * 100).toFixed(2))
+          : 0;
+
+      const offerObj = hasOffer
+        ? {
+            id: detail.offerId,
+            name: detail.offerName,
+            description: detail.offerDescription,
+            startDate: detail.offerStartDate,
+            endDate: detail.offerEndDate,
+            status: detail.offerStatus,
+            logoUrl: detail.offerLogo
+              ? this.fileUploadService.getFileUrl('offer_logo', detail.offerLogo)
+              : null,
+            originalPrice,
+            offerPrice,
+            discountAmount: parseFloat(discountAmount.toFixed(2)),
+            discountPercentage,
+          }
+        : null;
+
       sessionData.assignedServices.push({
         detailId: detail.detailId,
         serviceId: detail.serviceId,
         serviceName: detail.serviceName || 'Servicio no encontrado',
         serviceDescription: detail.serviceDescription || '',
         cost,
+        originalPrice,
+        appliedPrice: cost,
+        isOffer: hasOffer,
+        offerId: hasOffer ? detail.detailOfferId : null,
+        offer: offerObj,
         totalTime,
         totalWorker,
         totalCompany,
@@ -3608,8 +3660,12 @@ export class SessionService {
         companyName: detail.companyName || 'Compañía no encontrada',
         workerPercentage,
         companyPercentage,
+        workerId: detail.workerId,
         workerName: detail.workerName,
-        workerLastName: detail.workerLastName
+        workerLastName: detail.workerLastName,
+        workerPhotoUrl: detail.workerPicture
+          ? this.fileUploadService.getFileUrl('worker_photo', detail.workerPicture)
+          : null
       });
 
       sessionData.assignedTotalCost += cost;
