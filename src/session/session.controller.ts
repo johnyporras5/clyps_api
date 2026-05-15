@@ -100,16 +100,20 @@ export class SessionController {
     return this.sessionService.updateSessionDates(+id, updateSessionDto, adminId);
   }
 
+  /**
+   * Cambia el estado de la cita completa. Solo administradores.
+   * Los trabajadores NO usan este endpoint: ellos cambian el estado de SU
+   * servicio vía `PUT details/:detailId/status` y la cita se recalcula sola.
+   */
   @Put(':id/status')
-  @Roles('adm', 'wrk')
+  @Roles('adm')
   async updateSessionStatus(
     @Request() req,
     @Param('id') id: string,
     @Body() updateSessionStatusDto: UpdateSessionStatusDto
   ) {
-    const userId = req.user?.id || req.user?.sub;
-    const userRole = req.user?.userType;
-    return this.sessionService.updateSessionStatus(+id, updateSessionStatusDto, userId, userRole);
+    const adminId = req.user?.id || req.user?.sub;
+    return this.sessionService.updateSessionStatus(+id, updateSessionStatusDto, adminId, 'adm');
   }
 
   /**
@@ -236,18 +240,6 @@ export class SessionController {
   ) {
     const userId = req.user?.id || req.user?.sub;
     return this.sessionService.cancelSession(+id, userId, 'cli', cancelDto);
-  }
-
-  // ============ CANCELACIÓN POR TRABAJADOR ============
-  @Patch('worker/:id/cancel')
-  @Roles('wrk')
-  async cancelSessionByWorker(
-    @Request() req,
-    @Param('id') id: string,
-    @Body() cancelDto?: CancelSessionDto,
-  ) {
-    const userId = req.user?.id || req.user?.sub;
-    return this.sessionService.cancelSession(+id, userId, 'wrk', cancelDto);
   }
 
 

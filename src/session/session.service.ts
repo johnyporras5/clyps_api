@@ -2252,76 +2252,36 @@ export class SessionService {
       throw new NotFoundException(`No se encontraron detalles para la sesión ${sessionId}`);
     }
 
-    // 3. Verificar permisos según el rol
-    if (userRole === 'adm') {
-      // Administrador: la sesión debe pertenecer a su compañía
-      const adminCompany = await this.companyRepository.findOne({
-        where: { userId: userId }
-      });
-
-      if (!adminCompany) {
-        throw new NotFoundException('El administrador no tiene una compañía asignada');
-      }
-
-      let sessionBelongsToAdmin = false;
-      for (const detail of sessionDetails) {
-        const companyWorker = await this.companyWorkerRepository.findOne({
-          where: { id: detail.companyWorkerId },
-          relations: ['company']
-        });
-
-        if (companyWorker?.company?.id === adminCompany.id) {
-          sessionBelongsToAdmin = true;
-          break;
-        }
-      }
-
-      if (!sessionBelongsToAdmin) {
-        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
-      }
-    }
-    else if (userRole === 'wrk') {
-      // Trabajador: solo puede mover la cita a En proceso (2), Completada (3) o Cancelada (5)
-      const allowedWorkerStatuses = [2, 3, 5];
-      if (!allowedWorkerStatuses.includes(updateSessionStatusDto.sessionStatus)) {
-        throw new ForbiddenException(
-          'Como trabajador solo puedes marcar la cita como "En proceso" (2), "Completada" (3) o "Cancelada" (5)'
-        );
-      }
-
-      const worker = await this.workerRepository.findOne({
-        where: { userId: userId }
-      });
-
-      if (!worker) {
-        throw new NotFoundException('Trabajador no encontrado');
-      }
-
-      // La cita debe tener al menos un detalle asignado a este trabajador
-      let sessionBelongsToWorker = false;
-      for (const detail of sessionDetails) {
-        const companyWorker = await this.companyWorkerRepository.findOne({
-          where: {
-            id: detail.companyWorkerId,
-            workerId: worker.id
-          }
-        });
-
-        if (companyWorker) {
-          if (companyWorker.isActive !== 1) {
-            throw new BadRequestException('No estás activo en esta compañía');
-          }
-          sessionBelongsToWorker = true;
-          break;
-        }
-      }
-
-      if (!sessionBelongsToWorker) {
-        throw new ForbiddenException('No tienes permiso para modificar esta sesión');
-      }
-    }
-    else {
+    // 3. Verificar permisos: este endpoint es exclusivo de administradores.
+    //    Los trabajadores cambian el estado de SU servicio (detalle), no el de
+    //    la cita completa — la cita se recalcula sola desde los detalles.
+    if (userRole !== 'adm') {
       throw new ForbiddenException('No tienes permisos para realizar esta acción');
+    }
+
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: userId }
+    });
+
+    if (!adminCompany) {
+      throw new NotFoundException('El administrador no tiene una compañía asignada');
+    }
+
+    let sessionBelongsToAdmin = false;
+    for (const detail of sessionDetails) {
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['company']
+      });
+
+      if (companyWorker?.company?.id === adminCompany.id) {
+        sessionBelongsToAdmin = true;
+        break;
+      }
+    }
+
+    if (!sessionBelongsToAdmin) {
+      throw new ForbiddenException('No tienes permiso para modificar esta sesión');
     }
 
     // 4. Validar si se puede actualizar el estado de la sesión
@@ -2447,22 +2407,46 @@ export class SessionService {
       throw new BadRequestException('El estado del detalle debe ser: 1 (Agendado), 2 (En proceso), 3 (Completado), 4 (Pagado) o 5 (Cancelado)');
     }
 
+    // 4.1 El trabajador solo puede mover SU servicio a En proceso (2),
+    //     Completado (3) o Cancelado (5). Agendado (1) y Pagado (4) son del admin.
+    if (userRole === 'wrk') {
+      const allowedWorkerStatuses = [2, 3, 5];
+      if (!allowedWorkerStatuses.includes(updateDetailStatusDto.status)) {
+        throw new ForbiddenException(
+          'Como trabajador solo puedes marcar tu servicio como "En proceso" (2), "Completado" (3) o "Cancelado" (5)'
+        );
+      }
+    }
+
     // 5. Actualizar el detalle
     detail.status = updateDetailStatusDto.status;
     const updatedDetail = await this.sessionDetailRepository.save(detail);
 
     console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status} por ${userRole}`);
 
+    // 6. Sincronizar el estado de la cita según TODOS sus detalles.
+    //    Una cita puede tener varios detalles (servicios / trabajadores distintos).
+    //    Si al cancelar este detalle ya no quedan servicios activos, la cita se
+    //    cancela; si aún quedan detalles activos, la cita NO se cancela y su
+    //    estado se recalcula en función de los detalles restantes.
+    const autoUpdateResult = await this.updateSessionStatusBasedOnDetails(detail.sessionId);
+
     return {
       message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
       detail: updatedDetail,
-      sessionUpdated: false,
-      newSessionStatus: null,
+      sessionUpdated: autoUpdateResult.updated,
+      newSessionStatus: autoUpdateResult.updated ? autoUpdateResult.newStatus : null,
       validation: {
         canUpdateDetail: true,
         detailPreviousStatus: previousStatus,
         sessionId: detail.sessionId
-      }
+      },
+      autoUpdateResult: {
+        previousStatus: autoUpdateResult.previousStatus,
+        newStatus: autoUpdateResult.newStatus,
+        updated: autoUpdateResult.updated,
+        reason: autoUpdateResult.reason,
+      },
     };
   }
 
@@ -5132,7 +5116,7 @@ export class SessionService {
   async cancelSession(
     sessionId: number,
     userId: number,
-    userRole: 'adm' | 'cli' | 'wrk',
+    userRole: 'adm' | 'cli',
     cancelDto?: CancelSessionDto,
   ): Promise<{
     message: string;
@@ -5196,37 +5180,6 @@ export class SessionService {
       }
       if (session.clientId !== client.id) {
         throw new ForbiddenException('No puedes cancelar una cita que no te pertenece');
-      }
-    } else if (userRole === 'wrk') {
-      // Verificar que el trabajador tenga al menos un detalle asignado en la cita
-      const worker = await this.workerRepository.findOne({
-        where: { userId },
-      });
-      if (!worker) {
-        throw new NotFoundException('Trabajador no encontrado');
-      }
-
-      const sessionDetails = await this.sessionDetailRepository.find({
-        where: { sessionId },
-      });
-      let sessionBelongsToWorker = false;
-      for (const detail of sessionDetails) {
-        const companyWorker = await this.companyWorkerRepository.findOne({
-          where: {
-            id: detail.companyWorkerId,
-            workerId: worker.id,
-          },
-        });
-        if (companyWorker) {
-          if (companyWorker.isActive !== 1) {
-            throw new BadRequestException('No estás activo en esta compañía');
-          }
-          sessionBelongsToWorker = true;
-          break;
-        }
-      }
-      if (!sessionBelongsToWorker) {
-        throw new ForbiddenException('No tienes permiso para cancelar esta sesión');
       }
     }
 
