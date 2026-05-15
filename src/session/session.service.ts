@@ -5969,48 +5969,68 @@ export class SessionService {
 
   /**
    * GET /sessions/worker/my-services
-   * Lista de servicios donde el worker está asignado, leída del catálogo
+   * Lista paginada de servicios donde el worker está asignado, leída del catálogo
    * `service.workers` JSON (fuente de verdad). Adicionalmente cruza con
    * session_detail para incluir contadores históricos (citas, completadas,
    * canceladas, ingresos, tiempo).
    */
   async getWorkerAssignedServices(
     userId: number,
+    page: number = 1,
+    limit: number = 10,
     targetWorkerId?: number,
-  ): Promise<{
-    data: Array<{
-      serviceId: number;
-      serviceName: string;
-      serviceDescription: string | null;
-      cost: number;
-      currency: string | null;
-      standardTime: number | null;
-      categoryId: number | null;
-      workerPercentage: number;
-      workerTime: number | null;
-      totalAppointments: number;
-      totalCompleted: number;
-      totalCancelled: number;
-      totalEarned: number;
-      totalTime: number;
-    }>;
-  }> {
+  ): Promise<PaginationResult<{
+    serviceId: number;
+    serviceName: string;
+    serviceDescription: string | null;
+    cost: number;
+    currency: string | null;
+    standardTime: number | null;
+    categoryId: number | null;
+    workerPercentage: number;
+    workerTime: number | null;
+    totalAppointments: number;
+    totalCompleted: number;
+    totalCancelled: number;
+    totalEarned: number;
+    totalTime: number;
+  }>> {
     const { worker, companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
       userId,
       targetWorkerId,
     );
 
     // 1) Catálogo: servicios donde service.workers contiene { id: worker.id }
-    const services = await this.serviceRepository
+    const catalogQuery = this.serviceRepository
       .createQueryBuilder('service')
       .where(
         "JSON_CONTAINS(JSON_EXTRACT(service.workers, '$[*].id'), CAST(:workerId AS JSON))",
         { workerId: worker.id },
       )
+      .orderBy('service.id', 'DESC');
+
+    const total = await catalogQuery.getCount();
+
+    const emptyMeta = {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasNext: page < Math.ceil(total / limit),
+      hasPrev: page > 1,
+    };
+
+    if (total === 0) {
+      return { data: [], meta: emptyMeta };
+    }
+
+    const services = await catalogQuery
+      .skip((page - 1) * limit)
+      .take(limit)
       .getMany();
 
     if (services.length === 0) {
-      return { data: [] };
+      return { data: [], meta: emptyMeta };
     }
 
     const serviceIds = services.map(s => s.id);
@@ -6046,31 +6066,31 @@ export class SessionService {
       aggMap.set(Number(a.serviceId), a);
     }
 
-    return {
-      data: services.map(s => {
-        const a = aggMap.get(s.id);
-        const workerEntry = Array.isArray(s.workers)
-          ? s.workers.find((w: any) => Number(w?.id) === worker.id)
-          : null;
+    const data = services.map(s => {
+      const a = aggMap.get(s.id);
+      const workerEntry = Array.isArray(s.workers)
+        ? s.workers.find((w: any) => Number(w?.id) === worker.id)
+        : null;
 
-        return {
-          serviceId: s.id,
-          serviceName: s.name,
-          serviceDescription: s.description ?? null,
-          cost: Number(s.cost ?? 0) || 0,
-          currency: s.currency ?? null,
-          standardTime: s.standardTime ?? null,
-          categoryId: s.categoryId ?? null,
-          workerPercentage: Number(workerEntry?.percentage ?? 0) || 0,
-          workerTime: workerEntry?.time ?? null,
-          totalAppointments: parseInt(a?.totalAppointments, 10) || 0,
-          totalCompleted: parseInt(a?.totalCompleted, 10) || 0,
-          totalCancelled: parseInt(a?.totalCancelled, 10) || 0,
-          totalEarned: parseFloat(parseFloat(a?.totalEarned || '0').toFixed(2)) || 0,
-          totalTime: parseInt(a?.totalTime, 10) || 0,
-        };
-      }),
-    };
+      return {
+        serviceId: s.id,
+        serviceName: s.name,
+        serviceDescription: s.description ?? null,
+        cost: Number(s.cost ?? 0) || 0,
+        currency: s.currency ?? null,
+        standardTime: s.standardTime ?? null,
+        categoryId: s.categoryId ?? null,
+        workerPercentage: Number(workerEntry?.percentage ?? 0) || 0,
+        workerTime: workerEntry?.time ?? null,
+        totalAppointments: parseInt(a?.totalAppointments, 10) || 0,
+        totalCompleted: parseInt(a?.totalCompleted, 10) || 0,
+        totalCancelled: parseInt(a?.totalCancelled, 10) || 0,
+        totalEarned: parseFloat(parseFloat(a?.totalEarned || '0').toFixed(2)) || 0,
+        totalTime: parseInt(a?.totalTime, 10) || 0,
+      };
+    });
+
+    return { data, meta: emptyMeta };
   }
 
   /**
@@ -6153,19 +6173,62 @@ export class SessionService {
 
   /**
    * GET /sessions/worker/my-history
-   * Historial paginado de citas COMPLETADAS (status 3/4) o CANCELADAS (status 5)
-   * del worker autenticado. Mismo shape que `my-sessions`.
+   * Historial paginado de citas en estados terminales del worker.
+   *
+   * Estados válidos del historial: Completada(3), Pagado(4), Cancelada(5).
+   * Acepta filtros opcionales por estado:
+   *  - `detailStatus`: filtra por estado del DETALLE. Si no se pasa → [3,4,5].
+   *  - `sessionStatus`: filtra por estado de la SESIÓN (cita). Si no se pasa → sin filtro de sesión.
+   * Si se pasan valores fuera de [3,4,5] se lanza BadRequestException.
    */
   async getWorkerHistory(
     userId: number,
     getSessionsDto: GetSessionsDto,
     targetWorkerId?: number,
   ): Promise<PaginationResult<any>> {
+    // Estados terminales permitidos en el historial
+    const HISTORY_STATUSES = [3, 4, 5];
+
+    // Validar detailStatus recibido (si lo hay)
+    if (getSessionsDto.detailStatus && getSessionsDto.detailStatus.length > 0) {
+      const invalid = getSessionsDto.detailStatus.filter(s => !HISTORY_STATUSES.includes(s));
+      if (invalid.length > 0) {
+        throw new BadRequestException(
+          `detailStatus inválido: ${invalid.join(', ')}. El historial sólo admite 3 (Completado), 4 (Pagado) o 5 (Cancelado).`,
+        );
+      }
+    }
+
+    // Validar sessionStatus recibido (si lo hay)
+    if (getSessionsDto.sessionStatus && getSessionsDto.sessionStatus.length > 0) {
+      const invalid = getSessionsDto.sessionStatus.filter(s => !HISTORY_STATUSES.includes(s));
+      if (invalid.length > 0) {
+        throw new BadRequestException(
+          `sessionStatus inválido: ${invalid.join(', ')}. El historial sólo admite 3 (Completada), 4 (Pagada) o 5 (Cancelada).`,
+        );
+      }
+    }
+
+    // detailStatus: lo recibido o, por defecto, todos los terminales
+    const detailStatus =
+      getSessionsDto.detailStatus && getSessionsDto.detailStatus.length > 0
+        ? getSessionsDto.detailStatus
+        : HISTORY_STATUSES;
+
+    // sessionStatus: sólo si el caller lo envió (sino, sin filtro a nivel sesión)
+    const sessionStatus =
+      getSessionsDto.sessionStatus && getSessionsDto.sessionStatus.length > 0
+        ? getSessionsDto.sessionStatus
+        : undefined;
+
     const filteredDto: GetSessionsDto = {
       ...getSessionsDto,
-      // Forzar filtro: completadas (3, 4) o canceladas (5)
-      detailStatus: [3, 4, 5],
+      detailStatus,
+      sessionStatus,
+      // `onlyScheduled` forzaría detail.status=1 y anularía el historial
+      onlyScheduled: false,
     };
+
     // Si admin pasa workerId, resolvemos el userId de ese worker para reutilizar
     // getSessionsForAuthenticatedWorker sin duplicar lógica.
     if (targetWorkerId) {
@@ -6222,15 +6285,26 @@ export class SessionService {
       .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds })
       .andWhere('detail.status IN (:...completedStatus)', { completedStatus: [3, 4] });
 
+    // Normalizar: startDate al inicio del día (00:00:00) y endDate al final (23:59:59.999),
+    // para que el rango sea inclusivo del día completo (ej. "hasta hoy" incluye hoy entero).
+    const toStartOfDay = (d: string): Date => {
+      const [y, m, day] = d.split('T')[0].split(' ')[0].split('-').map(Number);
+      return new Date(y, m - 1, day, 0, 0, 0, 0);
+    };
+    const toEndOfDay = (d: string): Date => {
+      const [y, m, day] = d.split('T')[0].split(' ')[0].split('-').map(Number);
+      return new Date(y, m - 1, day, 23, 59, 59, 999);
+    };
+
     if (startDate && endDate) {
       query.andWhere('session.session_datetime BETWEEN :startDate AND :endDate', {
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
+        startDate: toStartOfDay(startDate),
+        endDate: toEndOfDay(endDate),
       });
     } else if (startDate) {
-      query.andWhere('session.session_datetime >= :startDate', { startDate: new Date(startDate) });
+      query.andWhere('session.session_datetime >= :startDate', { startDate: toStartOfDay(startDate) });
     } else if (endDate) {
-      query.andWhere('session.session_datetime <= :endDate', { endDate: new Date(endDate) });
+      query.andWhere('session.session_datetime <= :endDate', { endDate: toEndOfDay(endDate) });
     }
 
     const rows = await query

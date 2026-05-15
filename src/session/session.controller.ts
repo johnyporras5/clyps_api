@@ -253,8 +253,8 @@ async getMySessionsAsClient(
 }
 
   /**
-   * Lista de servicios asignados al worker (histórico desde session_detail)
-   * con contadores agregados.
+   * Lista paginada de servicios asignados al worker (catálogo service.workers)
+   * con contadores históricos agregados.
    * - Worker: ve los suyos (workerId se ignora).
    * - Admin: debe pasar ?workerId=<id>.
    */
@@ -262,12 +262,16 @@ async getMySessionsAsClient(
   @Roles('wrk', 'adm')
   async getMyAssignedServices(
     @Request() req,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     @Query('workerId') workerId?: string,
   ) {
     const userId = req.user?.id || req.user?.sub;
     const userType = req.user?.userType;
     const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
-    return this.sessionService.getWorkerAssignedServices(userId, targetWorkerId);
+    const pageNum = page ? Math.max(parseInt(page, 10) || 1, 1) : 1;
+    const limitNum = limit ? Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100) : 10;
+    return this.sessionService.getWorkerAssignedServices(userId, pageNum, limitNum, targetWorkerId);
   }
 
   /**
