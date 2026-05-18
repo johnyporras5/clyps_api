@@ -42,6 +42,10 @@ export class SessionDetail {
   @Column({ name: 'description', type: 'text', nullable: true })
   description: string;
 
+  // Motivo de cancelación del servicio (se llena al pasar el detalle a status 5)
+  @Column({ name: 'cancel_reason', type: 'text', nullable: true })
+  cancelReason?: string | null;
+
   // Nuevo campo para identificar servicios extras
   @Column({ name: 'is_extra', default: false })
   isExtra: boolean;

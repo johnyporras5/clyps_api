@@ -2481,6 +2481,13 @@ export class SessionService {
 
     // 5. Actualizar el detalle
     detail.status = updateDetailStatusDto.status;
+
+    // 5.1 Si se cancela el servicio (status 5), registrar el motivo de
+    //     cancelación. Para cualquier otro estado, el motivo no aplica.
+    if (updateDetailStatusDto.status === 5) {
+      detail.cancelReason = updateDetailStatusDto.reason ?? null;
+    }
+
     const updatedDetail = await this.sessionDetailRepository.save(detail);
 
     console.log(`✅ Detalle ${detailId} actualizado de ${previousStatus} a ${updateDetailStatusDto.status} por ${userRole}`);
@@ -5271,16 +5278,20 @@ export class SessionService {
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
+    const reason = cancelDto?.reason ?? null;
+
     try {
-      // 5. Actualizar estado de la sesión a 5 = Cancelada
+      // 5. Actualizar estado de la sesión a 5 = Cancelada + guardar el motivo
       session.sessionStatus = 5;
+      session.cancellationReason = reason;
       const updatedSession = await queryRunner.manager.save(session);
 
       // 6. Actualizar todos los detalles de la sesión a 5 = Cancelado
+      //    y propagar el mismo motivo de cancelación a cada servicio.
       const updateResult = await queryRunner.manager
         .createQueryBuilder()
         .update(SessionDetail)
-        .set({ status: 5 })
+        .set({ status: 5, cancelReason: reason })
         .where('sessionId = :sessionId', { sessionId })
         .execute();
 

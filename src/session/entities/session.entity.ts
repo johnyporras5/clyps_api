@@ -23,6 +23,11 @@ export class Session {
   @Column({ name: 'status_locked', type: 'tinyint', default: 0 })
   statusLocked: boolean;
 
+  // Motivo de cancelación de la cita (se llena cuando el admin o el cliente
+  // cancela la cita completa)
+  @Column({ name: 'cancellation_reason', type: 'text', nullable: true })
+  cancellationReason?: string | null;
+
   @Column({
     name: 'total_cost',
     type: 'decimal',
