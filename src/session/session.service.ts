@@ -1904,6 +1904,46 @@ export class SessionService {
               where: { id: detail.serviceId }
             });
 
+            // Información de la oferta aplicada al detalle (si la hay)
+            const hasOffer = detail.offerId !== null && detail.offerId !== undefined;
+            const originalPrice = Number(service?.cost ?? 0) || 0;
+            const appliedPrice = Number(detail.cost ?? 0) || 0;
+            let offerObj: any = null;
+
+            if (hasOffer) {
+              const offer = await this.offerRepository.findOne({
+                where: { id: detail.offerId }
+              });
+
+              const serviceOffer = await this.serviceOfferRepository.findOne({
+                where: { offerId: detail.offerId, serviceId: detail.serviceId }
+              });
+
+              if (offer) {
+                const offerPrice = Number(serviceOffer?.price ?? 0) || 0;
+                const discountAmount = Math.max(originalPrice - offerPrice, 0);
+                const discountPercentage = originalPrice > 0
+                  ? parseFloat(((discountAmount / originalPrice) * 100).toFixed(2))
+                  : 0;
+
+                offerObj = {
+                  id: offer.id,
+                  name: offer.name,
+                  description: offer.description ?? null,
+                  startDate: offer.startDate,
+                  endDate: offer.endDate,
+                  status: offer.status,
+                  logoUrl: offer.logo
+                    ? this.fileUploadService.getFileUrl('offer_logo', offer.logo)
+                    : null,
+                  originalPrice,
+                  offerPrice,
+                  discountAmount: parseFloat(discountAmount.toFixed(2)),
+                  discountPercentage,
+                };
+              }
+            }
+
             services.push({
               detailId: detail.id,
               serviceId: detail.serviceId,
@@ -1916,6 +1956,11 @@ export class SessionService {
               workerName: companyWorker?.worker ?
                 `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim() : '',
               workerLastName: companyWorker?.worker?.lastName || '',
+              originalPrice,
+              appliedPrice,
+              isOffer: hasOffer && offerObj !== null,
+              offerId: hasOffer ? detail.offerId : null,
+              offer: offerObj,
               totalWorker: Number(detail.totalWorker || 0),
               totalCompany: Number(detail.totalCompany || 0),
               detailStatus: detail.status || 1,
@@ -3571,6 +3616,7 @@ export class SessionService {
         'service.name AS serviceName',
         'service.description AS serviceDescription',
         'service.cost AS serviceOriginalCost',
+        'service.standard_time AS serviceStandardTime',
 
         // Campos de la oferta aplicada al detalle (si la hay)
         'offer.id AS offerId',
@@ -3836,6 +3882,8 @@ export class SessionService {
         serviceId: detail.serviceId,
         serviceName: detail.serviceName || 'Servicio no encontrado',
         serviceDescription: detail.serviceDescription || '',
+        // Tiempo estimado del servicio definido por la compañía (en minutos)
+        estimatedTime: detail.serviceStandardTime != null ? Number(detail.serviceStandardTime) : null,
         cost,
         originalPrice,
         appliedPrice: cost,
@@ -5643,6 +5691,7 @@ export class SessionService {
         'service.name AS serviceName',
         'service.description AS serviceDescription',
         'service.cost AS serviceOriginalCost',
+        'service.standard_time AS serviceStandardTime',
 
         // Campos de la oferta aplicada al detalle (si la hay)
         'offer.id AS offerId',
@@ -5997,6 +6046,8 @@ export class SessionService {
         serviceId: detail.serviceId,
         serviceName: detail.serviceName || 'Servicio no encontrado',
         serviceDescription: detail.serviceDescription || '',
+        // Tiempo estimado del servicio definido por la compañía (en minutos)
+        estimatedTime: detail.serviceStandardTime != null ? Number(detail.serviceStandardTime) : null,
         cost,
         originalPrice,
         appliedPrice: cost,
