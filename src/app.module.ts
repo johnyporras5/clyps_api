@@ -75,11 +75,10 @@ import { ReportsModule } from './reports/reports.module';
           retryAttempts: 1, // Only try once, then let app start - connection will retry in background
           extra: {
             connectionLimit: 10,
-            connectTimeout: 3000, // 3 second timeout - fail fast
-            acquireTimeout: 3000,
-            // Enable connection pool to avoid blocking
-            waitForConnections: false, // Don't wait for connections
-            queueLimit: 0,
+            connectTimeout: 10000, // 10s para establecer la conexión TCP
+            // Esperar a que se libere una conexión en lugar de fallar al instante
+            waitForConnections: true,
+            queueLimit: 0, // cola ilimitada de peticiones en espera
           },
           autoLoadEntities: true,
         };

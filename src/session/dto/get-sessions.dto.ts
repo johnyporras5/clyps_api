@@ -12,7 +12,7 @@ export class GetSessionsDto {
   @Type(() => Number)
   @IsNumber()
   @Min(1)
-  @Max(500)
+  @Max(100)
   limit: number = 10;
 
   @IsOptional()
