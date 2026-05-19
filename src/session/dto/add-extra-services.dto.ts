@@ -44,6 +44,14 @@ export class ExtraServiceItemDto {
 
   @IsOptional()
   @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  descriptionIA?: string;
+
+  @IsOptional()
+  @IsString()
   createdAt?: string; // "2026-02-15T08:45:00.000Z"
 }
 

@@ -656,6 +656,8 @@ export class SessionService {
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
         offerId: detail.offerId ?? undefined,
+        description: detail.description ?? undefined,
+        descriptionIA: detail.descriptionIA ?? undefined,
       };
 
       try {
@@ -1919,6 +1921,9 @@ export class SessionService {
               detailStatus: detail.status || 1,
               detailStatusText: this.getDetailStatusText(detail.status || 1),
               isExtra: detail.isExtra === true || (detail.isExtra as any) === 1,
+              description: detail.description ?? null,
+              descriptionIA: detail.descriptionIA ?? null,
+              descriptionWorker: detail.descriptionWorker ?? null,
               cancelReason: detail.cancelReason ?? null,
               cancelledBy: detail.cancelledBy ?? null,
               cancelledByText: this.getCancelledByText(detail.cancelledBy),
@@ -2168,6 +2173,9 @@ export class SessionService {
             detailStatus: detail.status || 1,
             detailStatusText: this.getDetailStatusText(detail.status || 1),
             isExtra: detail.isExtra === true || (detail.isExtra as any) === 1,
+            description: detail.description ?? null,
+            descriptionIA: detail.descriptionIA ?? null,
+            descriptionWorker: detail.descriptionWorker ?? null,
             cancelReason: detail.cancelReason ?? null,
             cancelledBy: detail.cancelledBy ?? null,
             cancelledByText: this.getCancelledByText(detail.cancelledBy),
@@ -3410,6 +3418,9 @@ export class SessionService {
           statusText: this.getDetailStatusText(detail.status),
           startDatetime: detail.startDatetime,
           updatedAt: detail.updatedAt,
+          description: detail.description ?? null,
+          descriptionIA: detail.descriptionIA ?? null,
+          descriptionWorker: detail.descriptionWorker ?? null,
           cancelReason: detail.cancelReason ?? null,
           cancelledBy: detail.cancelledBy ?? null,
           cancelledByText: this.getCancelledByText(detail.cancelledBy),
@@ -3550,6 +3561,8 @@ export class SessionService {
         'detail.start_datetime AS detailStartDatetime',
         'detail.is_extra AS isExtra',
         'detail.offer_id AS detailOfferId',
+        'detail.description AS detailDescription',
+        'detail.description_ia AS detailDescriptionIA',
         'detail.cancel_reason AS detailCancelReason',
         'detail.cancelled_by AS detailCancelledBy',
 
@@ -3846,6 +3859,8 @@ export class SessionService {
         workerPhotoUrl: detail.workerPicture
           ? this.fileUploadService.getFileUrl('worker_photo', detail.workerPicture)
           : null,
+        description: detail.detailDescription ?? null,
+        descriptionIA: detail.detailDescriptionIA ?? null,
         cancelReason: detail.detailCancelReason ?? null,
         cancelledBy: detail.detailCancelledBy ?? null,
         cancelledByText: this.getCancelledByText(detail.detailCancelledBy),
@@ -4450,6 +4465,8 @@ export class SessionService {
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
         offerId: detail.offerId ?? undefined,
+        description: detail.description ?? undefined,
+        descriptionIA: detail.descriptionIA ?? undefined,
       };
 
       try {
@@ -5131,7 +5148,9 @@ export class SessionService {
           totalWorker: calculatedAmounts.totalWorker,
           totalCompany: calculatedAmounts.totalCompany,
           status: 1, // Agendado por defecto
-          isExtra: true // Marcar como servicio extra
+          isExtra: true, // Marcar como servicio extra
+          description: extraService.description ?? undefined,
+          descriptionIA: extraService.descriptionIA ?? undefined,
         };
 
         const sessionDetail = this.sessionDetailRepository.create(sessionDetailData);
@@ -5180,6 +5199,8 @@ export class SessionService {
           priceOption: es.priceOption,
           price: es.price,
           ...(es.customPrice !== undefined && { customPrice: es.customPrice }),
+          ...(es.description !== undefined && { description: es.description }),
+          ...(es.descriptionIA !== undefined && { descriptionIA: es.descriptionIA }),
           createdAt: es.createdAt || new Date().toISOString()
         };
       });
@@ -5612,6 +5633,8 @@ export class SessionService {
         'detail.start_datetime AS detailStartDatetime',
         'detail.is_extra AS isExtra',
         'detail.offer_id AS detailOfferId',
+        'detail.description AS detailDescription',
+        'detail.description_ia AS detailDescriptionIA',
         'detail.cancel_reason AS detailCancelReason',
         'detail.cancelled_by AS detailCancelledBy',
 
@@ -5990,6 +6013,8 @@ export class SessionService {
         companyPercentage,
         company: companyObj,
         worker: workerObj,
+        description: detail.detailDescription ?? null,
+        descriptionIA: detail.detailDescriptionIA ?? null,
         cancelReason: detail.detailCancelReason ?? null,
         cancelledBy: detail.detailCancelledBy ?? null,
         cancelledByText: this.getCancelledByText(detail.detailCancelledBy),
@@ -6242,6 +6267,7 @@ export class SessionService {
     currency: string | null;
     standardTime: number | null;
     categoryId: number | null;
+    categoryName: string | null;
     workerPercentage: number;
     workerTime: number | null;
     totalAppointments: number;
@@ -6259,6 +6285,7 @@ export class SessionService {
     //    company_worker.id del trabajador (service.workers[].id == company_worker.id).
     const catalogQuery = this.serviceRepository
       .createQueryBuilder('service')
+      .leftJoinAndSelect('service.category', 'category')
       .where(
         new Brackets(qb => {
           companyWorkerIds.forEach((cwId, idx) => {
@@ -6346,6 +6373,7 @@ export class SessionService {
         currency: s.currency ?? null,
         standardTime: s.standardTime ?? null,
         categoryId: s.categoryId ?? null,
+        categoryName: s.category?.name ?? null,
         workerPercentage: Number(workerEntry?.percentage ?? 0) || 0,
         workerTime: workerEntry?.time ?? null,
         totalAppointments: parseInt(a?.totalAppointments, 10) || 0,

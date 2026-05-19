@@ -81,6 +81,8 @@ export class Session {
     priceOption: "default" | "custom" | "free";
     price: number;             // 1500 (calculado según priceOption)
     customPrice?: number;      // Solo si priceOption === "custom"
+    description?: string;      // Descripción del servicio extra
+    descriptionIA?: string;    // Descripción generada por IA
     createdAt: string          // "2026-02-15T08:45:00.000Z"
   }>;
 

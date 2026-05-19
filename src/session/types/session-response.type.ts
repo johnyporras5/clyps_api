@@ -11,6 +11,8 @@ export interface ExtraServiceResponse {
   priceOption: "default" | "custom" | "free";
   price: number;
   customPrice?: number;
+  description?: string;
+  descriptionIA?: string;
   createdAt: string;
 }
 
