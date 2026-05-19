@@ -19,6 +19,7 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Client } from './entities/client.entity';
 import { UpdateClientDto } from './dto/update-client.dto';
+import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -124,6 +125,27 @@ export class ClientController {
       throw new BadRequestException('Debe proporcionar al menos un campo para actualizar');
     }
     return this.clientService.updateClientByAdmin(clientId, updateClientDto, photoFile);
+  }
+
+  /**
+   * Asignar/actualizar el alias que la compañía del admin le da a un cliente.
+   * Cada compañía mantiene su propio alias sin pisar el de otras.
+   * Enviar alias vacío ("") elimina el alias de esa compañía.
+   * PUT /clients/admin/:clientId/alias
+   */
+  @Put('admin/:clientId/alias')
+  @Roles('adm')
+  @UseGuards(RolesGuard)
+  async setClientAlias(
+    @Request() req,
+    @Param('clientId', ParseIntPipe) clientId: number,
+    @Body() setCompanyAliasDto: SetCompanyAliasDto,
+  ): Promise<Client> {
+    const adminId = req.user?.id || req.user?.sub;
+    if (!adminId) {
+      throw new UnauthorizedException('Usuario no autenticado correctamente');
+    }
+    return this.clientService.setCompanyAlias(adminId, clientId, setCompanyAliasDto);
   }
 
 }

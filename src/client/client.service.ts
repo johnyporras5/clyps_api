@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Brackets, In, MoreThan } from 'typeorm';
 import { Client } from './entities/client.entity';
@@ -13,6 +13,7 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { AllowedFolder, FileUploadService } from '../common/services/file_upload.service';
 import { UpdateClientDto } from './dto/update-client.dto';
+import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
 
 @Injectable()
 export class ClientService {
@@ -278,10 +279,19 @@ export class ClientService {
         visibilityReason = 'Cliente visible por herencia de compañía';
       }
 
+      // Alias que alguna de las compañías del admin le puso a este cliente
+      const aliasEntry = (client.companyAliases ?? []).find((a) =>
+        adminCompanyIds.includes(Number(a.companyId)),
+      );
+
       return {
         ...client,
         pictureUrl: client.picture ? this.fileUploadService.getFileUrl('client_photo', client.picture) : null,
         sharedCompanies,
+        alias: aliasEntry?.alias ?? null,
+        displayName: aliasEntry?.alias
+          ? aliasEntry.alias
+          : `${client.name || ''} ${client.lastName || ''}`.trim(),
         isOwner: client.userId === adminId,
         visibility: client.userId === adminId ? 'propio' : 'compartido',
         visibilityReason,
@@ -536,6 +546,53 @@ export class ClientService {
     }
 
     return { ...saved, photoUrl } as any;
+  }
+
+  /**
+   * Asigna (o elimina) el alias que una compañía le da a un cliente.
+   *
+   * El alias es propio de la relación (cliente, compañía): se guarda como un
+   * elemento del array JSON `client.companyAliases`, así que cada compañía
+   * mantiene su alias sin pisar el de las demás.
+   *
+   * @param adminId  Usuario admin autenticado (debe ser dueño de la compañía).
+   * @param clientId Cliente al que se le asigna el alias.
+   * @param dto      { companyId, alias }. Alias vacío => se elimina la entrada.
+   */
+  async setCompanyAlias(
+    adminId: number,
+    clientId: number,
+    dto: SetCompanyAliasDto,
+  ): Promise<Client> {
+    // 1. Verificar que el admin sea dueño de la compañía indicada
+    const company = await this.companyRepository.findOne({
+      where: { id: dto.companyId, userId: adminId },
+    });
+    if (!company) {
+      throw new ForbiddenException(
+        'No tienes acceso a la compañía indicada o no existe',
+      );
+    }
+
+    // 2. Buscar el cliente
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+    });
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    // 3. Upsert del alias para esta compañía, sin tocar el de otras
+    const aliases = (client.companyAliases ?? []).filter(
+      (a) => Number(a.companyId) !== dto.companyId,
+    );
+    const trimmed = (dto.alias ?? '').trim();
+    if (trimmed.length > 0) {
+      aliases.push({ companyId: dto.companyId, alias: trimmed });
+    }
+    client.companyAliases = aliases;
+
+    return this.clientRepository.save(client);
   }
 
   async getClientPhotoUrl(clientId: number): Promise<string> {

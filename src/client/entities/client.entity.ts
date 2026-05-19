@@ -37,6 +37,11 @@ export class Client {
   @Column({ type: 'json', nullable: true })
   companies: number[];
 
+  // Alias del cliente por compañía. Cada admin/compañía guarda su propio
+  // alias sin pisar el de otra: [{ companyId, alias }]
+  @Column({ name: 'company_aliases', type: 'json', nullable: true })
+  companyAliases: { companyId: number; alias: string }[];
+
 
   @Column({ name: 'temporarily_deleted', type: 'boolean', default: false })
   temporarilyDeleted: boolean;
