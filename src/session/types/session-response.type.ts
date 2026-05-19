@@ -44,7 +44,9 @@ export interface SessionDetailResponse {
   status: number;
   workerPercentage: number;
   companyPercentage: number;
-  descriptionWorker?: string;
+  description?: string | null;
+  descriptionIA?: string | null;
+  descriptionWorker?: string | null;
   isOffer: boolean;
   offerId: number | null;
   offer: OfferDetailResponse | null;
@@ -72,8 +74,8 @@ export interface SessionResponse {
   startDatetime: Date;
   status: number;
   iaResponse: any;
-  descriptionIA?: string;
-  description?: string;
+  descriptionIA?: string | null;
+  description?: string | null;
   extraServices?: ExtraServiceResponse[]; createdAt?: Date;
   updatedAt?: Date;
   // Datos de cancelación de la cita (sólo cuando sessionStatus = 5 = Cancelada)
