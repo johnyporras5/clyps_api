@@ -3002,13 +3002,13 @@ export class SessionService {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
 
-    // 1.1 Si el admin tomó el control de la cita (statusLocked) o la cita está
-    //     en un estado terminal (Pagada 4 / Cancelada 5), el auto-sync NO la
-    //     modifica: el estado de la cita es una decisión firme del admin.
-    if (session.statusLocked || session.sessionStatus === 4 || session.sessionStatus === 5) {
-      const motivo = session.statusLocked
-        ? 'la cita está bajo control del administrador'
-        : `la cita está en estado terminal "${this.getSessionStatusText(session.sessionStatus)}"`;
+    // 1.1 Si la cita está en un estado terminal (Pagada 4 / Cancelada 5), el
+    //     auto-sync NO la modifica: es una decisión final.
+    //     Nota: si el admin tomó control (statusLocked) el auto-sync SÍ corre,
+    //     pero solo puede AVANZAR el estado de la cita, nunca retrocederlo
+    //     (ver paso 5.1).
+    if (session.sessionStatus === 4 || session.sessionStatus === 5) {
+      const motivo = `la cita está en estado terminal "${this.getSessionStatusText(session.sessionStatus)}"`;
       console.log(`ℹ️ Sesión ${sessionId}: ${motivo}, no se recalcula automáticamente`);
       return {
         previousStatus: session.sessionStatus,
@@ -3143,6 +3143,22 @@ export class SessionService {
 
     // 5. Solo actualizar si el estado cambió
     let updated = false;
+
+    // 5.1 Si el admin tomó control de la cita (statusLocked), el auto-sync solo
+    //     puede AVANZAR el estado de la cita reflejando el progreso de los
+    //     trabajadores, nunca retrocederlo: la decisión del admin no se deshace.
+    //     La cancelación total (5) se permite siempre, no es un retroceso.
+    const progressionRank: Record<number, number> = { 8: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
+    if (
+      session.statusLocked === true &&
+      newStatus !== previousStatus &&
+      newStatus !== 5 &&
+      (progressionRank[newStatus] ?? 0) < (progressionRank[previousStatus] ?? 0)
+    ) {
+      console.log(`ℹ️ Sesión ${sessionId}: la cita está bajo control del administrador; se omite el retroceso automático ${this.getSessionStatusText(previousStatus)} → ${this.getSessionStatusText(newStatus)}`);
+      newStatus = previousStatus;
+      reason = 'La cita está bajo control del administrador; no se aplica retroceso automático';
+    }
 
     if (newStatus !== previousStatus) {
       session.sessionStatus = newStatus;
