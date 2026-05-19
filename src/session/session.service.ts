@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Between, Not, DeepPartial } from 'typeorm';
+import { Repository, In, Between, Not, DeepPartial, Brackets } from 'typeorm';
 import { Session } from './entities/session.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { CreateSessionWithDetailDto, SessionDetailItemDto } from './dto/create-session-with-detail.dto';
@@ -6176,17 +6176,28 @@ export class SessionService {
     totalEarned: number;
     totalTime: number;
   }>> {
-    const { worker, companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
+    const { companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
       userId,
       targetWorkerId,
     );
 
-    // 1) Catálogo: servicios donde service.workers contiene { id: worker.id }
+    // 1) Catálogo: servicios donde service.workers contiene alguno de los
+    //    company_worker.id del trabajador (service.workers[].id == company_worker.id).
     const catalogQuery = this.serviceRepository
       .createQueryBuilder('service')
       .where(
-        "JSON_CONTAINS(JSON_EXTRACT(service.workers, '$[*].id'), CAST(:workerId AS JSON))",
-        { workerId: worker.id },
+        new Brackets(qb => {
+          companyWorkerIds.forEach((cwId, idx) => {
+            const param = `cwId${idx}`;
+            const condition =
+              `JSON_CONTAINS(JSON_EXTRACT(service.workers, '$[*].id'), CAST(:${param} AS JSON))`;
+            if (idx === 0) {
+              qb.where(condition, { [param]: cwId });
+            } else {
+              qb.orWhere(condition, { [param]: cwId });
+            }
+          });
+        }),
       )
       .orderBy('service.id', 'DESC');
 
@@ -6250,7 +6261,7 @@ export class SessionService {
     const data = services.map(s => {
       const a = aggMap.get(s.id);
       const workerEntry = Array.isArray(s.workers)
-        ? s.workers.find((w: any) => Number(w?.id) === worker.id)
+        ? s.workers.find((w: any) => companyWorkerIds.includes(Number(w?.id)))
         : null;
 
       return {
