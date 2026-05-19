@@ -46,6 +46,11 @@ export class SessionDetail {
   @Column({ name: 'cancel_reason', type: 'text', nullable: true })
   cancelReason?: string | null;
 
+  // Quién canceló el servicio: 'adm' (administrador), 'cli' (cliente),
+  // 'wrk' (trabajador) o 'system' (auto-cancelación por cita vencida).
+  @Column({ name: 'cancelled_by', type: 'varchar', length: 20, nullable: true })
+  cancelledBy?: string | null;
+
   // Nuevo campo para identificar servicios extras
   @Column({ name: 'is_extra', default: false })
   isExtra: boolean;

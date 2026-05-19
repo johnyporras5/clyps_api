@@ -1201,6 +1201,9 @@ export class SessionService {
         offer: offerObj,
         originalPrice,
         appliedPrice,
+        cancelReason: detail.cancelReason ?? null,
+        cancelledBy: detail.cancelledBy ?? null,
+        cancelledByText: this.getCancelledByText(detail.cancelledBy),
       });
 
       // Acumular totales
@@ -1244,6 +1247,9 @@ export class SessionService {
       updatedAt: (session as any).updatedAt || null,
       // description: session.description,
       //descriptionIA: session.descriptionIA,
+      cancellationReason: session.cancellationReason ?? null,
+      cancelledBy: session.cancelledBy ?? null,
+      cancelledByText: this.getCancelledByText(session.cancelledBy),
       details: details, // Incluir todos los detalles
 
     };
@@ -1909,7 +1915,10 @@ export class SessionService {
               totalCompany: Number(detail.totalCompany || 0),
               detailStatus: detail.status || 1,
               detailStatusText: this.getDetailStatusText(detail.status || 1),
-              isExtra: detail.isExtra === true || (detail.isExtra as any) === 1
+              isExtra: detail.isExtra === true || (detail.isExtra as any) === 1,
+              cancelReason: detail.cancelReason ?? null,
+              cancelledBy: detail.cancelledBy ?? null,
+              cancelledByText: this.getCancelledByText(detail.cancelledBy),
             });
 
             totalCost += Number(detail.cost || 0);
@@ -1936,6 +1945,9 @@ export class SessionService {
           servicesCount: sessionDetails.length,
           services: services,
           extraServices: session.extraServices || [],
+          cancellationReason: session.cancellationReason ?? null,
+          cancelledBy: session.cancelledBy ?? null,
+          cancelledByText: this.getCancelledByText(session.cancelledBy),
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
         };
@@ -2153,6 +2165,9 @@ export class SessionService {
             detailStatus: detail.status || 1,
             detailStatusText: this.getDetailStatusText(detail.status || 1),
             isExtra: detail.isExtra === true || (detail.isExtra as any) === 1,
+            cancelReason: detail.cancelReason ?? null,
+            cancelledBy: detail.cancelledBy ?? null,
+            cancelledByText: this.getCancelledByText(detail.cancelledBy),
           });
 
           totalCost += Number(detail.cost || 0);
@@ -2182,6 +2197,9 @@ export class SessionService {
           servicesCount: sessionDetails.length,
           services,
           extraServices: session.extraServices || [],
+          cancellationReason: session.cancellationReason ?? null,
+          cancelledBy: session.cancelledBy ?? null,
+          cancelledByText: this.getCancelledByText(session.cancelledBy),
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
         };
@@ -2211,6 +2229,22 @@ export class SessionService {
       8: 'Pendiente de asignación de trabajador',
     };
     return statusMap[status] || 'Desconocido';
+  }
+
+  /**
+   * Traduce el código de quién canceló a un texto legible.
+   * 'adm' = Administrador, 'cli' = Cliente, 'wrk' = Trabajador,
+   * 'system' = auto-cancelación por cita vencida.
+   */
+  private getCancelledByText(cancelledBy?: string | null): string | null {
+    if (!cancelledBy) return null;
+    const map: Record<string, string> = {
+      adm: 'Administrador',
+      cli: 'Cliente',
+      wrk: 'Trabajador',
+      system: 'Sistema (cita vencida)',
+    };
+    return map[cancelledBy] || cancelledBy;
   }
 
 
@@ -2322,13 +2356,17 @@ export class SessionService {
     try {
       session.sessionStatus = newStatus;
       session.statusLocked = true;
+      // Si el admin cancela la cita completa, registrar que la canceló él.
+      if (newStatus === 5) {
+        session.cancelledBy = 'adm';
+      }
       updatedSession = await queryRunner.manager.save(session);
 
       if (cascadeToDetails) {
         const cascadeResult = await queryRunner.manager
           .createQueryBuilder()
           .update(SessionDetail)
-          .set({ status: newStatus })
+          .set(newStatus === 5 ? { status: newStatus, cancelledBy: 'adm' } : { status: newStatus })
           .where('sessionId = :sessionId', { sessionId })
           .andWhere('status != :cancelled', { cancelled: 5 })
           .execute();
@@ -2483,9 +2521,10 @@ export class SessionService {
     detail.status = updateDetailStatusDto.status;
 
     // 5.1 Si se cancela el servicio (status 5), registrar el motivo de
-    //     cancelación. Para cualquier otro estado, el motivo no aplica.
+    //     cancelación y quién lo canceló. Para cualquier otro estado, no aplica.
     if (updateDetailStatusDto.status === 5) {
       detail.cancelReason = updateDetailStatusDto.reason ?? null;
+      detail.cancelledBy = userRole;
     }
 
     const updatedDetail = await this.sessionDetailRepository.save(detail);
@@ -2497,7 +2536,7 @@ export class SessionService {
     //    Si al cancelar este detalle ya no quedan servicios activos, la cita se
     //    cancela; si aún quedan detalles activos, la cita NO se cancela y su
     //    estado se recalcula en función de los detalles restantes.
-    const autoUpdateResult = await this.updateSessionStatusBasedOnDetails(detail.sessionId);
+    const autoUpdateResult = await this.updateSessionStatusBasedOnDetails(detail.sessionId, userRole);
 
     return {
       message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
@@ -2855,7 +2894,7 @@ export class SessionService {
   /**
  * Método para actualizar automáticamente el estado de la sesión basado en los estados de sus detalles
  */
-  private async updateSessionStatusBasedOnDetails(sessionId: number): Promise<{
+  private async updateSessionStatusBasedOnDetails(sessionId: number, cancelledBy?: string): Promise<{
     previousStatus: number;
     newStatus: number;
     updated: boolean;
@@ -3022,6 +3061,11 @@ export class SessionService {
 
     if (newStatus !== previousStatus) {
       session.sessionStatus = newStatus;
+      // Si la cita queda cancelada porque todos sus servicios se cancelaron,
+      // registrar quién provocó la cancelación (el autor del último detalle).
+      if (newStatus === 5) {
+        session.cancelledBy = cancelledBy ?? session.cancelledBy ?? null;
+      }
       await this.sessionRepository.save(session);
       updated = true;
 
@@ -3362,7 +3406,10 @@ export class SessionService {
           status: detail.status,
           statusText: this.getDetailStatusText(detail.status),
           startDatetime: detail.startDatetime,
-          updatedAt: detail.updatedAt
+          updatedAt: detail.updatedAt,
+          cancelReason: detail.cancelReason ?? null,
+          cancelledBy: detail.cancelledBy ?? null,
+          cancelledByText: this.getCancelledByText(detail.cancelledBy),
         };
       })
     );
@@ -3383,6 +3430,8 @@ export class SessionService {
       // description: session.description,
       //  descriptionIA: session.descriptionIA,
       extraServices: session.extraServices,
+      // cancellationReason y cancelledBy provienen del spread de `session`
+      cancelledByText: this.getCancelledByText(session.cancelledBy),
     };
 
     return {
@@ -3475,6 +3524,8 @@ export class SessionService {
         'session.description_ia AS descriptionIA',
         'session.description AS description',
         'session.extra_services AS extraServices',
+        'session.cancellation_reason AS sessionCancellationReason',
+        'session.cancelled_by AS sessionCancelledBy',
 
         // Campos del cliente
         'client.id AS clientRealId',
@@ -3496,6 +3547,8 @@ export class SessionService {
         'detail.start_datetime AS detailStartDatetime',
         'detail.is_extra AS isExtra',
         'detail.offer_id AS detailOfferId',
+        'detail.cancel_reason AS detailCancelReason',
+        'detail.cancelled_by AS detailCancelledBy',
 
         // Campos del servicio
         'service.id AS serviceId',
@@ -3706,6 +3759,9 @@ export class SessionService {
           descriptionIA: detail.descriptionIA,
           description: detail.description,
           extraServices: detail.extraServices,
+          cancellationReason: detail.sessionCancellationReason ?? null,
+          cancelledBy: detail.sessionCancelledBy ?? null,
+          cancelledByText: this.getCancelledByText(detail.sessionCancelledBy),
           createdAt: detail.sessionUpdatedAt,
           // === SERVICIOS ASIGNADOS A ESTE TRABAJADOR ===
           assignedServices: [],
@@ -3786,7 +3842,10 @@ export class SessionService {
         workerLastName: detail.workerLastName,
         workerPhotoUrl: detail.workerPicture
           ? this.fileUploadService.getFileUrl('worker_photo', detail.workerPicture)
-          : null
+          : null,
+        cancelReason: detail.detailCancelReason ?? null,
+        cancelledBy: detail.detailCancelledBy ?? null,
+        cancelledByText: this.getCancelledByText(detail.detailCancelledBy),
       });
 
       sessionData.assignedTotalCost += cost;
@@ -5282,16 +5341,18 @@ export class SessionService {
 
     try {
       // 5. Actualizar estado de la sesión a 5 = Cancelada + guardar el motivo
+      //    y registrar quién la canceló (admin o cliente).
       session.sessionStatus = 5;
       session.cancellationReason = reason;
+      session.cancelledBy = userRole;
       const updatedSession = await queryRunner.manager.save(session);
 
       // 6. Actualizar todos los detalles de la sesión a 5 = Cancelado
-      //    y propagar el mismo motivo de cancelación a cada servicio.
+      //    y propagar el mismo motivo de cancelación y autor a cada servicio.
       const updateResult = await queryRunner.manager
         .createQueryBuilder()
         .update(SessionDetail)
-        .set({ status: 5, cancelReason: reason })
+        .set({ status: 5, cancelReason: reason, cancelledBy: userRole })
         .where('sessionId = :sessionId', { sessionId })
         .execute();
 
@@ -5446,14 +5507,14 @@ export class SessionService {
       const sessionUpdate = await queryRunner.manager
         .createQueryBuilder()
         .update(Session)
-        .set({ sessionStatus: 5 })
+        .set({ sessionStatus: 5, cancelledBy: 'system' })
         .whereInIds(sessionIds)
         .execute();
 
       const detailUpdate = await queryRunner.manager
         .createQueryBuilder()
         .update(SessionDetail)
-        .set({ status: 5 })
+        .set({ status: 5, cancelledBy: 'system' })
         .where('sessionId IN (:...sessionIds)', { sessionIds })
         .execute();
 
@@ -5535,6 +5596,8 @@ export class SessionService {
         'session.description_ia AS descriptionIA',
         'session.description AS description',
         'session.extra_services AS extraServices',
+        'session.cancellation_reason AS sessionCancellationReason',
+        'session.cancelled_by AS sessionCancelledBy',
 
         // Campos del detalle (servicio)
         'detail.id AS detailId',
@@ -5546,6 +5609,8 @@ export class SessionService {
         'detail.start_datetime AS detailStartDatetime',
         'detail.is_extra AS isExtra',
         'detail.offer_id AS detailOfferId',
+        'detail.cancel_reason AS detailCancelReason',
+        'detail.cancelled_by AS detailCancelledBy',
 
         // Campos del servicio
         'service.id AS serviceId',
@@ -5799,6 +5864,9 @@ export class SessionService {
           descriptionIA: detail.descriptionIA,
           description: detail.description,
           extraServices: detail.extraServices,
+          cancellationReason: detail.sessionCancellationReason ?? null,
+          cancelledBy: detail.sessionCancelledBy ?? null,
+          cancelledByText: this.getCancelledByText(detail.sessionCancelledBy),
           createdAt: detail.sessionUpdatedAt,
 
           // Servicios de la sesión
@@ -5919,6 +5987,9 @@ export class SessionService {
         companyPercentage,
         company: companyObj,
         worker: workerObj,
+        cancelReason: detail.detailCancelReason ?? null,
+        cancelledBy: detail.detailCancelledBy ?? null,
+        cancelledByText: this.getCancelledByText(detail.detailCancelledBy),
       });
 
       sessionData.totalCost += cost;

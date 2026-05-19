@@ -28,6 +28,11 @@ export class Session {
   @Column({ name: 'cancellation_reason', type: 'text', nullable: true })
   cancellationReason?: string | null;
 
+  // Quién canceló la cita: 'adm' (administrador), 'cli' (cliente),
+  // 'wrk' (trabajador) o 'system' (auto-cancelación por cita vencida).
+  @Column({ name: 'cancelled_by', type: 'varchar', length: 20, nullable: true })
+  cancelledBy?: string | null;
+
   @Column({
     name: 'total_cost',
     type: 'decimal',

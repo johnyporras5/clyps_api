@@ -50,6 +50,10 @@ export interface SessionDetailResponse {
   offer: OfferDetailResponse | null;
   originalPrice: number;
   appliedPrice: number;
+  // Datos de cancelación del servicio (sólo cuando status = 5 = Cancelado)
+  cancelReason?: string | null;
+  cancelledBy?: string | null;
+  cancelledByText?: string | null;
 }
 
 export interface SessionResponse {
@@ -72,6 +76,10 @@ export interface SessionResponse {
   description?: string;
   extraServices?: ExtraServiceResponse[]; createdAt?: Date;
   updatedAt?: Date;
+  // Datos de cancelación de la cita (sólo cuando sessionStatus = 5 = Cancelada)
+  cancellationReason?: string | null;
+  cancelledBy?: string | null;
+  cancelledByText?: string | null;
   details: SessionDetailResponse[];
 
 }
