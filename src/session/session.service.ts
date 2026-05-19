@@ -2485,12 +2485,14 @@ export class SessionService {
       where: { id: detail.sessionId }
     });
 
-    // 1.1 Si el admin tomó el control de la cita (statusLocked), los detalles
-    //     ya no se pueden modificar por este endpoint: el admin maneja la cita
-    //     a nivel de cita con PUT /sessions/:id/status.
-    if (parentSession?.statusLocked) {
+    // 1.1 Si el admin tomó el control de la cita (statusLocked):
+    //     - el ADMIN gestiona el estado a nivel de cita con
+    //       PUT /sessions/:id/status, así que no toca detalles por este endpoint;
+    //     - el TRABAJADOR sí puede seguir actualizando su servicio, pero solo
+    //       para AVANZAR el estado, nunca para retrocederlo (ver paso 4.2).
+    if (parentSession?.statusLocked && userRole === 'adm') {
       throw new BadRequestException(
-        'La cita está bajo control del administrador y sus servicios no se pueden modificar'
+        'La cita está bajo control del administrador. Gestiona su estado con PUT /sessions/:id/status'
       );
     }
 
@@ -2569,6 +2571,33 @@ export class SessionService {
       if (!allowedWorkerStatuses.includes(updateDetailStatusDto.status)) {
         throw new ForbiddenException(
           'Como trabajador solo puedes marcar tu servicio como "En proceso" (2), "Completado" (3) o "Cancelado" (5)'
+        );
+      }
+    }
+
+    // 4.2 Si el admin ya tomó control de la cita (statusLocked), el trabajador
+    //     solo puede AVANZAR el estado de su servicio, nunca retrocederlo.
+    //     Cancelar (5) solo se permite mientras el servicio siga "Agendado" (1);
+    //     una vez iniciado, cancelarlo es decisión del administrador.
+    if (userRole === 'wrk' && parentSession?.statusLocked) {
+      const progression = [1, 2, 3, 4]; // orden normal de avance
+      const target = updateDetailStatusDto.status;
+
+      if (previousStatus === 5) {
+        throw new ForbiddenException(
+          'La cita está bajo control del administrador y este servicio ya está cancelado; no se puede modificar'
+        );
+      }
+
+      if (target === 5) {
+        if (previousStatus !== 1) {
+          throw new ForbiddenException(
+            `La cita está bajo control del administrador. Solo puedes cancelar tu servicio mientras esté "Agendado"; el tuyo está "${this.getDetailStatusText(previousStatus)}"`
+          );
+        }
+      } else if (progression.indexOf(target) < progression.indexOf(previousStatus)) {
+        throw new ForbiddenException(
+          `La cita está bajo control del administrador. No puedes retroceder tu servicio de "${this.getDetailStatusText(previousStatus)}" a "${this.getDetailStatusText(target)}"; solo puedes avanzarlo`
         );
       }
     }
