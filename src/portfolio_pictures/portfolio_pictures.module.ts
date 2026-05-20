@@ -3,10 +3,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { PortfolioPicturesService } from './portfolio_pictures.service';
 import { PortfolioPicturesController } from './portfolio_pictures.controller';
 import { PortfolioPictures } from './entities/portfolio_pictures.entity';
+import { Worker } from '../worker/entities/worker.entity';
 import { CommonModule } from 'src/common/common.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([PortfolioPictures]),CommonModule],
+  imports: [TypeOrmModule.forFeature([PortfolioPictures, Worker]), CommonModule],
   providers: [PortfolioPicturesService],
   controllers: [PortfolioPicturesController],
   exports: [PortfolioPicturesService],

@@ -34,8 +34,8 @@ export class PortfolioPicturesController {
     @UploadedFile() file: Express.Multer.File,
     @Request() req,
   ) {
-    const workerId = req.user.sub; // o req.user.sub si el token contiene workerId
-    return this.service.create(file, workerId);
+    const userId = req.user.sub; // JWT `sub` = user.id (no worker.id)
+    return this.service.create(file, userId);
   }
 
   /**
@@ -46,8 +46,8 @@ export class PortfolioPicturesController {
     @Request() req,
     @Query() paginationDto: PaginationDto,
   ) {
-    const workerId = req.user.sub;
-    return this.service.findAllByWorker(workerId, paginationDto);
+    const userId = req.user.sub;
+    return this.service.findAllByUser(userId, paginationDto);
   }
 
   /**
@@ -58,8 +58,8 @@ export class PortfolioPicturesController {
     @Request() req,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    const workerId = req.user.sub;
-    return this.service.findOne(id, workerId);
+    const userId = req.user.sub;
+    return this.service.findOne(id, userId);
   }
 
   /**
@@ -72,8 +72,8 @@ export class PortfolioPicturesController {
     @Request() req,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    const workerId = req.user.sub;
-    return this.service.update(id, file, workerId);
+    const userId = req.user.sub;
+    return this.service.update(id, file, userId);
   }
 
   /**
@@ -85,13 +85,13 @@ export class PortfolioPicturesController {
     @Request() req,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    const workerId = req.user.sub;
-    await this.service.remove(id, workerId);
+    const userId = req.user.sub;
+    await this.service.remove(id, userId);
   }
 
   /**
    * (Opcional) Obtener imágenes de cualquier worker por su ID
-   * Útil para perfiles públicos
+   * Útil para perfiles públicos. Aquí `workerId` SÍ es el id real del Worker.
    */
   @Get('worker/:workerId')
   async findByWorkerId(

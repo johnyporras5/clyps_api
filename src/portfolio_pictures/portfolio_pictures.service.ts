@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException,Logger  } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PortfolioPictures } from './entities/portfolio_pictures.entity';
+import { Worker } from '../worker/entities/worker.entity';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
@@ -9,28 +10,51 @@ import { PortfolioPictureWithUrl } from './types/portfolio-picture-with-url.type
 
 @Injectable()
 export class PortfolioPicturesService {
-   private readonly logger = new Logger(PortfolioPicturesService.name);
-  private readonly FOLDER = 'portfolio'; 
+  private readonly logger = new Logger(PortfolioPicturesService.name);
+  private readonly FOLDER = 'portfolio';
+
   constructor(
     @InjectRepository(PortfolioPictures)
     private repository: Repository<PortfolioPictures>,
+    @InjectRepository(Worker)
+    private workerRepository: Repository<Worker>,
     private fileUploadService: FileUploadService,
-
   ) {}
 
-/**
-   * Subir una nueva imagen al portafolio de un trabajador
+  /**
+   * Resuelve el `worker.id` real a partir del `user.id` (sub del JWT).
+   * El token JWT contiene el id del usuario, no el del trabajador.
+   */
+  private async resolveWorkerIdFromUser(userId: number): Promise<number> {
+    const worker = await this.workerRepository.findOne({
+      where: { userId },
+      select: ['id'],
+    });
+
+    if (!worker) {
+      throw new NotFoundException(
+        `No se encontró un perfil de worker para el usuario ${userId}`,
+      );
+    }
+
+    return worker.id;
+  }
+
+  /**
+   * Subir una nueva imagen al portafolio del trabajador autenticado
    */
   async create(
     file: Express.Multer.File,
-    workerId: number,
+    userId: number,
   ): Promise<PortfolioPictureWithUrl> {
     try {
+      const workerId = await this.resolveWorkerIdFromUser(userId);
+
       // Guardar archivo físico
       const fileInfo = await this.fileUploadService.saveFile(
         file,
-        this.FOLDER,        // 'worker_photo'
-        'worker',           // entityType
+        this.FOLDER,
+        'worker',
         workerId,
       );
 
@@ -42,19 +66,33 @@ export class PortfolioPicturesService {
 
       const saved = await this.repository.save(picture);
 
-      // Retornar con URL
       return {
         ...saved,
         pictureUrl: fileInfo.fileUrl,
       };
     } catch (error) {
-      this.logger.error(`Error al crear imagen de portafolio: ${error.message}`, error.stack);
-      throw new Error(`No se pudo guardar la imagen: ${error.message}`);
+      this.logger.error(
+        `Error al crear imagen de portafolio: ${error.message}`,
+        error.stack,
+      );
+      throw error;
     }
   }
 
   /**
-   * Obtener todas las imágenes de un worker con paginación
+   * Obtener todas las imágenes del trabajador autenticado con paginación
+   */
+  async findAllByUser(
+    userId: number,
+    paginationDto: PaginationDto,
+  ): Promise<PaginationResult<PortfolioPictureWithUrl>> {
+    const workerId = await this.resolveWorkerIdFromUser(userId);
+    return this.findAllByWorker(workerId, paginationDto);
+  }
+
+  /**
+   * Obtener todas las imágenes de un worker (por workerId real) con paginación.
+   * Útil para perfiles públicos donde ya se conoce el workerId.
    */
   async findAllByWorker(
     workerId: number,
@@ -79,9 +117,11 @@ export class PortfolioPicturesService {
   }
 
   /**
-   * Obtener una imagen específica (verifica propiedad)
+   * Obtener una imagen específica (verifica propiedad por usuario autenticado)
    */
-  async findOne(id: number, workerId: number): Promise<PortfolioPictureWithUrl> {
+  async findOne(id: number, userId: number): Promise<PortfolioPictureWithUrl> {
+    const workerId = await this.resolveWorkerIdFromUser(userId);
+
     const picture = await this.repository.findOne({
       where: { id, workerId },
     });
@@ -102,10 +142,18 @@ export class PortfolioPicturesService {
   async update(
     id: number,
     file: Express.Multer.File,
-    workerId: number,
+    userId: number,
   ): Promise<PortfolioPictureWithUrl> {
+    const workerId = await this.resolveWorkerIdFromUser(userId);
+
     // 1. Verificar que existe y pertenece al worker
-    const existing = await this.findOne(id, workerId); // lanza 404 si no existe
+    const existing = await this.repository.findOne({
+      where: { id, workerId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Imagen con ID ${id} no encontrada`);
+    }
 
     // 2. Eliminar archivo anterior
     await this.fileUploadService.deleteFile(this.FOLDER, existing.picture);
@@ -131,7 +179,9 @@ export class PortfolioPicturesService {
   /**
    * Eliminar una imagen (archivo + registro)
    */
-  async remove(id: number, workerId: number): Promise<void> {
+  async remove(id: number, userId: number): Promise<void> {
+    const workerId = await this.resolveWorkerIdFromUser(userId);
+
     const picture = await this.repository.findOne({
       where: { id, workerId },
     });
