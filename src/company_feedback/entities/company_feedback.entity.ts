@@ -29,6 +29,8 @@ export class CompanyFeedback {
   @Column({ name: 'company_id', type: 'int' })
   companyId: number;
 
+  client?: any;
+
   @Column({ name: 'client_id', type: 'int', nullable: true })
   clientId?: number | null;
 }

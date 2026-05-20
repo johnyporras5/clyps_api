@@ -10,7 +10,9 @@ import { CompanyFeedback } from './entities/company_feedback.entity';
 import { CreateCompanyFeedbackDto } from './dto/create-company_feedback.dto';
 import { UpdateCompanyFeedbackDto } from './dto/update-company_feedback.dto';
 import { Company } from '../company/entities/company.entity';
+import { Client } from '../client/entities/client.entity';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
+import { FileUploadService } from '../common/services/file_upload.service';
 
 @Injectable()
 export class CompanyFeedbackService {
@@ -20,6 +22,8 @@ export class CompanyFeedbackService {
 
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
+
+    private fileUploadService: FileUploadService,
   ) { }
 
 
@@ -91,11 +95,22 @@ export class CompanyFeedbackService {
     // 2. Construir query builder para los feedbacks de esa compañía
     const queryBuilder: SelectQueryBuilder<CompanyFeedback> = this.companyFeedbackRepository
       .createQueryBuilder('feedback')
+      .leftJoinAndMapOne('feedback.client', Client, 'client', 'client.userId = feedback.clientId')
       .where('feedback.companyId = :companyId', { companyId: company.id })
       .orderBy('feedback.datetime', 'DESC');
 
-    // 3. Paginar y retornar
-    return paginate<CompanyFeedback>(queryBuilder, { page, limit });
+    // 3. Paginar
+    const result = await paginate<CompanyFeedback>(queryBuilder, { page, limit });
+
+    // 4. Agregar pictureUrl al cliente
+    result.data = result.data.map((feedback) => {
+      if (feedback.client?.picture) {
+        feedback.client.pictureUrl = this.fileUploadService.getFileUrl('client_photo', feedback.client.picture);
+      }
+      return feedback;
+    });
+
+    return result;
   }
 
 
