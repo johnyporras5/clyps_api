@@ -194,7 +194,24 @@ async findMyFeedbacks(
     );
   }
 
-  // 2. Reutilizar el método findByWorker para obtener las reseñas paginadas
-  return this.findByWorker(worker.id, page, limit);
+  // 2. Query con join al Client para hidratar la respuesta
+  const queryBuilder = this.workerFeedbackRepository
+    .createQueryBuilder('feedback')
+    .leftJoinAndMapOne('feedback.client', Client, 'client', 'client.userId = feedback.clientId')
+    .where('feedback.workerId = :workerId', { workerId: worker.id })
+    .orderBy('feedback.datetime', 'DESC');
+
+  // 3. Paginar
+  const result = await paginate<WorkerFeedback>(queryBuilder, { page, limit });
+
+  // 4. Agregar pictureUrl al cliente
+  result.data = result.data.map((feedback) => {
+    if (feedback.client?.picture) {
+      feedback.client.pictureUrl = this.fileUploadService.getFileUrl('client_photo', feedback.client.picture);
+    }
+    return feedback;
+  });
+
+  return result;
 }
 }
