@@ -1653,6 +1653,43 @@ export class SessionService {
         this.logger.log(`✅ Correo de notificación enviado al trabajador: ${workerInfo.email}`);
       }
 
+      // Notificación al administrador de la empresa
+      if (company?.userId) {
+        const adminUser = await this.userRepository.findOne({
+          where: { id: company.userId }
+        });
+
+        if (adminUser?.email) {
+          await this.emailService.sendSessionNotificationToAdmin(
+            adminUser.email,
+            company.managerName || adminUser.username || 'Administrador',
+            {
+              date: formattedDate.date,
+              time: formattedDate.time,
+              serviceName: service?.name || 'Servicio',
+              serviceCost: detailCost,
+              serviceDuration: detailDuration
+            },
+            {
+              name: clientInfo.name,
+              email: clientInfo.email,
+              phone: clientInfo.phone
+            },
+            {
+              name: workerInfo.name,
+              email: workerInfo.email,
+              phone: workerInfo.phone
+            },
+            {
+              name: company?.name || '',
+              address: company?.location || '',
+              email: company?.email || ''
+            }
+          );
+          this.logger.log(`✅ Correo de notificación enviado al administrador: ${adminUser.email}`);
+        }
+      }
+
     } catch (error) {
       this.logger.error(`❌ Error enviando correos de confirmación: ${(error as Error).message}`, (error as Error).stack);
     }

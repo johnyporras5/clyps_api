@@ -65,8 +65,18 @@ async findOne(id: number, userId?: number, userType?: string): Promise<PhotoWith
   const userWithoutPassword = this.excludePasswordFromUser(worker.user);
   const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
 
+  const companyWorkerWhere: any = { workerId: id };
+  if (userType === 'adm' && userId) {
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId },
+    });
+    if (adminCompany) {
+      companyWorkerWhere.companyId = adminCompany.id;
+    }
+  }
+
   const companyWorker = await this.companyWorkerRepository.findOne({
-    where: { workerId: id },
+    where: companyWorkerWhere,
     relations: ['company'],
   });
 

@@ -520,20 +520,23 @@ async updateAdminProfile(
       throw new NotFoundException('No tienes una compañía asignada');
     }
 
-    // 2. Buscar la asignación específica del trabajador en la compañía
+    // 2. Buscar la asignación sin filtros de eliminación para diagnosticar el estado real
     const companyWorker = await this.companyWorkerRepository.findOne({
       where: {
         workerId: workerId,
         companyId: company.id,
-        permanentlyDeleted: false // No incluir los permanentemente eliminados
       }
     });
 
     if (!companyWorker) {
-      throw new NotFoundException('Este trabajador no está asignado a tu compañía o ya fue eliminado');
+      throw new NotFoundException('Este trabajador no está asignado a tu compañía');
     }
 
-    // 3. Verificar si ya está temporalmente eliminado
+    // 3. Verificar estados de eliminación explícitamente
+    if (companyWorker.permanentlyDeleted) {
+      throw new BadRequestException('Este trabajador ya fue eliminado permanentemente');
+    }
+
     if (companyWorker.temporarilyDeleted) {
       throw new BadRequestException('Este trabajador ya está temporalmente eliminado');
     }
@@ -622,6 +625,10 @@ async updateAdminProfile(
 
     if (!companyWorker) {
       throw new NotFoundException('Este trabajador no está asignado a tu compañía');
+    }
+
+    if (companyWorker.permanentlyDeleted) {
+      throw new BadRequestException('Este trabajador ya fue eliminado permanentemente');
     }
 
     // 3. Validar que no tenga citas activas asociadas

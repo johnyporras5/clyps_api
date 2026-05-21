@@ -186,6 +186,47 @@ export class EmailService {
         );
     }
 
+    async sendSessionNotificationToAdmin(
+        adminEmail: string,
+        adminName: string,
+        sessionData: {
+            date: string;
+            time: string;
+            serviceName: string;
+            serviceCost: number;
+            serviceDuration: number;
+        },
+        clientInfo: {
+            name: string;
+            email?: string;
+            phone?: string;
+        },
+        workerInfo: {
+            name: string;
+            email?: string;
+            phone?: string;
+        },
+        companyInfo: {
+            name: string;
+            address?: string;
+            email?: string;
+        }
+    ): Promise<boolean> {
+        const html = this.getSessionAdminNotificationTemplate(
+            adminName,
+            sessionData,
+            clientInfo,
+            workerInfo,
+            companyInfo
+        );
+
+        return this.sendEmail(
+            adminEmail,
+            `📋 Nueva cita agendada - ${sessionData.date}`,
+            html
+        );
+    }
+
     formatSessionDate(date: Date): { date: string; time: string } {
         const sessionDate = new Date(date);
 
@@ -3952,6 +3993,158 @@ export class EmailService {
       </p>
     </div>
     <div class="footer">
+      <p>© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
+      <p style="opacity:0.8;">Sistema de Gestión de Citas Profesional</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+    }
+
+    private getSessionAdminNotificationTemplate(
+        adminName: string,
+        sessionData: {
+            date: string;
+            time: string;
+            serviceName: string;
+            serviceCost: number;
+            serviceDuration: number;
+        },
+        clientInfo: {
+            name: string;
+            email?: string;
+            phone?: string;
+        },
+        workerInfo: {
+            name: string;
+            email?: string;
+            phone?: string;
+        },
+        companyInfo: {
+            name: string;
+            address?: string;
+            email?: string;
+        }
+    ): string {
+        const formattedCost = new Intl.NumberFormat('es-ES', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(Number(sessionData.serviceCost) || 0);
+
+        return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nueva cita agendada - CLYPS</title>
+  <style>
+    body { margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, sans-serif; color:#334155; }
+    .container { max-width:620px; margin:30px auto; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.08); border:1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); color:#fff; padding:35px 40px; text-align:center; }
+    .logo { font-size:32px; font-weight:700; margin:0 0 6px; letter-spacing:0.5px; }
+    .header-tag { display:inline-block; background:rgba(255,255,255,0.15); color:#fff; padding:6px 14px; border-radius:20px; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:1px; margin-top:8px; }
+    .content { padding:40px; }
+    .greeting { font-size:22px; font-weight:600; color:#0f172a; margin:0 0 10px; }
+    .intro { color:#475569; margin:0 0 25px; font-size:15px; line-height:1.6; }
+    .badge { display:inline-block; background:#dbeafe; color:#1e40af; padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; margin-bottom:15px; }
+    .summary-card { background: linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%); border-radius:12px; padding:25px; margin:20px 0 30px; border:1px solid #c7d2fe; text-align:center; }
+    .summary-date { font-size:20px; font-weight:700; color:#1e3a8a; margin:0; }
+    .summary-time { font-size:32px; font-weight:700; color:#4f46e5; margin:6px 0 0; }
+    .section-title { font-size:14px; font-weight:700; color:#1e3a8a; text-transform:uppercase; letter-spacing:1px; margin:30px 0 12px; padding-bottom:8px; border-bottom:2px solid #e0e7ff; }
+    .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .info-card { background:#f8fafc; border-radius:10px; padding:16px 18px; border:1px solid #e2e8f0; border-left:4px solid #4f46e5; }
+    .info-label { font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:1px; font-weight:700; margin-bottom:6px; }
+    .info-value { font-size:15px; font-weight:600; color:#0f172a; word-break:break-word; }
+    .info-sub { font-size:13px; color:#64748b; margin-top:4px; word-break:break-word; }
+    .full-card { background:#f8fafc; border-radius:10px; padding:16px 18px; border:1px solid #e2e8f0; border-left:4px solid #4f46e5; margin-top:14px; }
+    .service-box { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius:10px; padding:20px; margin-top:14px; border:1px solid #fcd34d; }
+    .service-name { font-size:18px; font-weight:700; color:#78350f; margin:0 0 12px; }
+    .service-meta { display:flex; gap:25px; flex-wrap:wrap; font-size:14px; color:#92400e; }
+    .service-meta strong { color:#78350f; }
+    .footer { background:#f8fafc; padding:25px 40px; text-align:center; color:#64748b; font-size:13px; border-top:1px solid #e2e8f0; }
+    .footer p { margin:5px 0; }
+    @media screen and (max-width: 600px) {
+      .info-grid { grid-template-columns:1fr; }
+      .content { padding:25px 20px; }
+      .header { padding:25px 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="logo">CLYPS</h1>
+      <p style="margin:0; opacity:0.9; font-size:14px;">Panel de Administración</p>
+      <span class="header-tag">📋 Notificación interna</span>
+    </div>
+    <div class="content">
+      <span class="badge">Nueva cita agendada</span>
+      <h2 class="greeting">Hola ${adminName},</h2>
+      <p class="intro">
+        Se ha registrado una nueva cita en <strong>${companyInfo.name || 'tu empresa'}</strong>.
+        A continuación encontrarás toda la información de la reserva:
+      </p>
+
+      <div class="summary-card">
+        <p class="summary-date">📅 ${sessionData.date}</p>
+        <p class="summary-time">🕐 ${sessionData.time}</p>
+      </div>
+
+      <div class="section-title">Servicio</div>
+      <div class="service-box">
+        <div class="service-name">💼 ${sessionData.serviceName}</div>
+        <div class="service-meta">
+          <span>💰 <strong>$${formattedCost}</strong></span>
+          <span>⏱️ <strong>${sessionData.serviceDuration} min</strong></span>
+        </div>
+      </div>
+
+      <div class="section-title">Cliente</div>
+      <div class="info-grid">
+        <div class="info-card">
+          <div class="info-label">👤 Nombre</div>
+          <div class="info-value">${clientInfo.name || '—'}</div>
+        </div>
+        <div class="info-card">
+          <div class="info-label">📞 Teléfono</div>
+          <div class="info-value">${clientInfo.phone || '—'}</div>
+        </div>
+      </div>
+      ${clientInfo.email ? `
+      <div class="full-card">
+        <div class="info-label">✉️ Email</div>
+        <div class="info-value">${clientInfo.email}</div>
+      </div>` : ''}
+
+      <div class="section-title">Trabajador asignado</div>
+      <div class="info-grid">
+        <div class="info-card">
+          <div class="info-label">🧑‍💼 Nombre</div>
+          <div class="info-value">${workerInfo.name || '—'}</div>
+        </div>
+        <div class="info-card">
+          <div class="info-label">📞 Teléfono</div>
+          <div class="info-value">${workerInfo.phone || '—'}</div>
+        </div>
+      </div>
+      ${workerInfo.email ? `
+      <div class="full-card">
+        <div class="info-label">✉️ Email</div>
+        <div class="info-value">${workerInfo.email}</div>
+      </div>` : ''}
+
+      <div class="section-title">Empresa</div>
+      <div class="full-card">
+        <div class="info-label">🏢 Nombre</div>
+        <div class="info-value">${companyInfo.name || '—'}</div>
+        ${companyInfo.address ? `<div class="info-sub">📍 ${companyInfo.address}</div>` : ''}
+        ${companyInfo.email ? `<div class="info-sub">✉️ ${companyInfo.email}</div>` : ''}
+      </div>
+    </div>
+    <div class="footer">
+      <p>Este correo se envía automáticamente al administrador de la empresa.</p>
       <p>© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
       <p style="opacity:0.8;">Sistema de Gestión de Citas Profesional</p>
     </div>
