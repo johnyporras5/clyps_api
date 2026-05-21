@@ -509,7 +509,7 @@ async updateAdminProfile(
 */
   async temporarilyRemoveWorkerFromCompany(
     adminId: number,
-    workerId: number
+    companyWorkerId: number
   ): Promise<{ message: string; canRestore: boolean }> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
@@ -520,10 +520,10 @@ async updateAdminProfile(
       throw new NotFoundException('No tienes una compañía asignada');
     }
 
-    // 2. Buscar la asignación sin filtros de eliminación para diagnosticar el estado real
+    // 2. Buscar la asignación por PK y verificar que pertenece a la compañía del admin
     const companyWorker = await this.companyWorkerRepository.findOne({
       where: {
-        workerId: workerId,
+        id: companyWorkerId,
         companyId: company.id,
       }
     });
@@ -542,7 +542,7 @@ async updateAdminProfile(
     }
 
     // 4. Validar que no tenga citas activas asociadas
-    await this.assertWorkerHasNoActiveAppointments(workerId, company.id);
+    await this.assertWorkerHasNoActiveAppointments(companyWorker.workerId, company.id);
 
     // 5. Marcar como temporalmente eliminado
     companyWorker.temporarilyDeleted = true;
@@ -564,7 +564,7 @@ async updateAdminProfile(
 
   async restoreTemporarilyRemovedWorker(
     adminId: number,
-    workerId: number
+    companyWorkerId: number
   ): Promise<{ message: string }> {
     const company = await this.companyRepository.findOne({
       where: { userId: adminId }
@@ -576,15 +576,21 @@ async updateAdminProfile(
 
     const companyWorker = await this.companyWorkerRepository.findOne({
       where: {
-        workerId: workerId,
+        id: companyWorkerId,
         companyId: company.id,
-        temporarilyDeleted: true,
-        permanentlyDeleted: false
       }
     });
 
     if (!companyWorker) {
-      throw new NotFoundException('No se encontró un trabajador temporalmente eliminado con estos datos');
+      throw new NotFoundException('Este trabajador no está asignado a tu compañía');
+    }
+
+    if (companyWorker.permanentlyDeleted) {
+      throw new BadRequestException('Este trabajador fue eliminado permanentemente y no se puede restaurar');
+    }
+
+    if (!companyWorker.temporarilyDeleted) {
+      throw new BadRequestException('Este trabajador no está temporalmente eliminado');
     }
 
     // Restaurar el trabajador
@@ -604,7 +610,7 @@ async updateAdminProfile(
    */
   async permanentlyRemoveWorkerFromCompany(
     adminId: number,
-    workerId: number
+    companyWorkerId: number
   ): Promise<{ message: string; canRestore: boolean }> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
@@ -615,10 +621,10 @@ async updateAdminProfile(
       throw new NotFoundException('No tienes una compañía asignada');
     }
 
-    // 2. Buscar la asignación específica del trabajador en la compañía
+    // 2. Buscar la asignación por PK y verificar que pertenece a la compañía del admin
     const companyWorker = await this.companyWorkerRepository.findOne({
       where: {
-        workerId: workerId,
+        id: companyWorkerId,
         companyId: company.id
       }
     });
@@ -632,7 +638,7 @@ async updateAdminProfile(
     }
 
     // 3. Validar que no tenga citas activas asociadas
-    await this.assertWorkerHasNoActiveAppointments(workerId, company.id);
+    await this.assertWorkerHasNoActiveAppointments(companyWorker.workerId, company.id);
 
     // 4. Marcar como permanentemente eliminado
     companyWorker.permanentlyDeleted = true;

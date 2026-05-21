@@ -124,43 +124,43 @@ export class CompanyController {
   /**
   * Endpoint para eliminar temporalmente un trabajador (puede restaurarse)
   */
-  @Delete('workers/:workerId/temporary')
+  @Delete('workers/:companyWorkerId/temporary')
   @UseGuards(RolesGuard)
   @Roles('adm')
   async temporarilyRemoveWorker(
-    @Param('workerId', ParseIntPipe) workerId: number,
+    @Param('companyWorkerId', ParseIntPipe) companyWorkerId: number,
     @Req() req: any
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
-    return this.companyService.temporarilyRemoveWorkerFromCompany(adminId, workerId);
+    return this.companyService.temporarilyRemoveWorkerFromCompany(adminId, companyWorkerId);
   }
 
   /**
    * Endpoint para eliminar permanentemente un trabajador (no puede restaurarse)
    */
-  @Delete('workers/:workerId/permanent')
+  @Delete('workers/:companyWorkerId/permanent')
   @UseGuards(RolesGuard)
   @Roles('adm')
   async permanentlyRemoveWorker(
-    @Param('workerId', ParseIntPipe) workerId: number,
+    @Param('companyWorkerId', ParseIntPipe) companyWorkerId: number,
     @Req() req: any
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
-    return this.companyService.permanentlyRemoveWorkerFromCompany(adminId, workerId);
+    return this.companyService.permanentlyRemoveWorkerFromCompany(adminId, companyWorkerId);
   }
 
   /**
    * Endpoint para restaurar un trabajador temporalmente eliminado
    */
-  @Put('workers/:workerId/restore')
+  @Put('workers/:companyWorkerId/restore')
   @UseGuards(RolesGuard)
   @Roles('adm')
   async restoreWorker(
-    @Param('workerId', ParseIntPipe) workerId: number,
+    @Param('companyWorkerId', ParseIntPipe) companyWorkerId: number,
     @Req() req: any
   ): Promise<{ message: string }> {
     const adminId = req.user.sub;
-    return this.companyService.restoreTemporarilyRemovedWorker(adminId, workerId);
+    return this.companyService.restoreTemporarilyRemovedWorker(adminId, companyWorkerId);
   }
 
   /**
