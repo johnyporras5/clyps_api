@@ -1,13 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 import { Service } from '../service/entities/service.entity';
 import { Company } from '../company/entities/company.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
 
 @Injectable()
 export class ReportsService {
+  private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'worker_photo';
+
   constructor(
     @InjectRepository(SessionDetail)
     private sessionDetailRepository: Repository<SessionDetail>,
@@ -17,6 +20,8 @@ export class ReportsService {
     private companyRepository: Repository<Company>,
     @InjectRepository(CompanyWorker)
     private companyWorkerRepository: Repository<CompanyWorker>,
+    @Inject(FileUploadService)
+    private fileUploadService: FileUploadService,
   ) {}
 
   async getIncomeByServices(
@@ -208,7 +213,9 @@ export class ReportsService {
       return {
         companyWorkerId: parseInt(r.companyWorkerId),
         name: workerName,
-        image: cw?.worker?.picture || null,
+        image: cw?.worker?.picture
+          ? this.fileUploadService.getFileUrl(this.WORKER_PHOTO_FOLDER, cw.worker.picture)
+          : null,
         totalIncome: parseFloat(income.toFixed(2)),
         servicesCount: parseInt(r.servicesCount),
         percentage: totalIncome > 0
