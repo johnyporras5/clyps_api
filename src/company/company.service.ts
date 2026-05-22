@@ -429,6 +429,7 @@ async updateAdminProfile(
   // Solo actualizar los campos que vienen en el DTO (no undefined)
   if (updateAdminProfileDto.name !== undefined) updateData.name = updateAdminProfileDto.name;
   if (updateAdminProfileDto.location !== undefined) updateData.location = updateAdminProfileDto.location;
+  if (updateAdminProfileDto.address !== undefined) updateData.address = updateAdminProfileDto.address;
   if (updateAdminProfileDto.email !== undefined) updateData.email = updateAdminProfileDto.email;
   if (updateAdminProfileDto.phone !== undefined) updateData.phone = updateAdminProfileDto.phone;
   if (updateAdminProfileDto.description !== undefined) updateData.description = updateAdminProfileDto.description;
@@ -1157,6 +1158,7 @@ async updateAdminProfile(
       name: company.name,
       description: company.description,
       location: company.location,
+      address: company.address,
       email: company.email,
       phone: company.phone,
       managerName: company.managerName,

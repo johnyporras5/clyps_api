@@ -11,6 +11,10 @@ export class CreateCompanyDto {
   location?: string;
 
   @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
   @IsEmail()
   email?: string;
 

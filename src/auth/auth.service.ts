@@ -129,6 +129,7 @@ export class AuthService {
       userId: savedUser.id,
       logo: logoFileName,
       phone: registerDto.phone,
+      location: registerDto.location,
     };
 
     await this.companyService.create(companyData);

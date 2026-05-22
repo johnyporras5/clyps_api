@@ -11,6 +11,10 @@ export class UpdateCompanyDto {
   location?: string;
 
   @IsOptional()
+  @IsString()
+  address?: string;
+
+  @IsOptional()
   @IsEmail()
   email?: string;
 

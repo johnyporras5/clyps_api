@@ -24,6 +24,11 @@ export class RegisterAdminDto {
   phone?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  location?: string;
+
+  @IsOptional()
   @Transform(({ value }) => {
     if (value === undefined || value === null) return undefined;
 

@@ -147,6 +147,7 @@ export class ServiceService {
       id: company.id,
       name: company.name,
       location: company.location,
+      address: company.address,
       email: company.email,
       description: company.description,
       managerName: company.managerName,

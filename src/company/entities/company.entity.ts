@@ -13,8 +13,11 @@ export class Company {
   @Column({ name: 'name', length: 145, nullable: true })
   name: string;
 
-  @Column({ name: 'location', length: 145, nullable: true })
+  @Column({ name: 'location', length: 255, nullable: true })
   location: string;
+
+  @Column({ name: 'address', length: 255, nullable: true })
+  address: string;
 
   @Column({ name: 'email', length: 145, nullable: true })
   email: string;
