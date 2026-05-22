@@ -6356,6 +6356,7 @@ export class SessionService {
   ): Promise<{
     worker: Worker;
     companyWorkerIds: number[];
+    companyIds: number[];
   }> {
     const worker = targetWorkerId
       ? await this.workerRepository.findOne({ where: { id: targetWorkerId } })
@@ -6377,7 +6378,11 @@ export class SessionService {
       );
     }
 
-    return { worker, companyWorkerIds: companyWorkers.map(cw => cw.id) };
+    return {
+      worker,
+      companyWorkerIds: companyWorkers.map(cw => cw.id),
+      companyIds: [...new Set(companyWorkers.map(cw => cw.companyId))],
+    };
   }
 
   /**
@@ -6530,7 +6535,7 @@ export class SessionService {
     limit: number = 10,
     targetWorkerId?: number,
   ): Promise<PaginationResult<any>> {
-    const { companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
+    const { companyWorkerIds, companyIds } = await this.resolveWorkerCompanyWorkerIds(
       userId,
       targetWorkerId,
     );
@@ -6570,20 +6575,48 @@ export class SessionService {
 
     const total = parseInt(totalRow?.total || '0', 10);
 
+    // Alias que la compañía del worker le puso al cliente.
+    // Un worker pertenece a una sola compañía, así que tomamos el alias cuya
+    // companyId coincida con la de su asignación activa.
+    const workerCompanyId = companyIds[0] ?? null;
+    const pageClientIds = rows
+      .map(r => Number(r.clientId))
+      .filter(id => Number.isFinite(id));
+    const aliasByClient = new Map<number, string | null>();
+    if (pageClientIds.length > 0 && workerCompanyId !== null) {
+      const aliasRows = await this.clientRepository.find({
+        where: { id: In(pageClientIds) },
+        select: ['id', 'companyAliases'],
+      });
+      for (const c of aliasRows) {
+        const entry = (c.companyAliases ?? []).find(
+          a => Number(a.companyId) === workerCompanyId,
+        );
+        aliasByClient.set(c.id, entry?.alias ?? null);
+      }
+    }
+
     const data = rows
       .filter(r => r.clientId !== null && r.clientId !== undefined)
-      .map(r => ({
-        id: Number(r.clientId),
-        name: r.clientName,
-        lastName: r.clientLastName,
-        phone: r.clientPhone,
-        email: r.clientEmail,
-        photoUrl: r.clientPicture
-          ? this.fileUploadService.getFileUrl('client_photo', r.clientPicture)
-          : null,
-        totalAppointments: parseInt(r.totalAppointments, 10) || 0,
-        lastAppointmentDate: r.lastAppointmentDate,
-      }));
+      .map(r => {
+        const alias = aliasByClient.get(Number(r.clientId)) ?? null;
+        return {
+          id: Number(r.clientId),
+          name: r.clientName,
+          lastName: r.clientLastName,
+          phone: r.clientPhone,
+          email: r.clientEmail,
+          alias,
+          displayName: alias
+            ? alias
+            : `${r.clientName || ''} ${r.clientLastName || ''}`.trim(),
+          photoUrl: r.clientPicture
+            ? this.fileUploadService.getFileUrl('client_photo', r.clientPicture)
+            : null,
+          totalAppointments: parseInt(r.totalAppointments, 10) || 0,
+          lastAppointmentDate: r.lastAppointmentDate,
+        };
+      });
 
     return {
       data,
