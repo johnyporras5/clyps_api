@@ -164,25 +164,23 @@ export class AuthService {
   }
 
   /**
-   * Genera una contraseña segura automáticamente
+   * Genera una contraseña simple (solo letras y números, sin caracteres ambiguos)
    */
-  private generateRandomPassword(length: number = 12): string {
-    const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const lowercase = 'abcdefghijklmnopqrstuvwxyz';
-    const numbers = '0123456789';
-    const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
+  private generateRandomPassword(length: number = 8): string {
+    const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lowercase = 'abcdefghijkmnpqrstuvwxyz';
+    const numbers = '23456789';
 
-    const allChars = uppercase + lowercase + numbers + symbols;
+    const allChars = uppercase + lowercase + numbers;
     let password = '';
 
-    // Asegurar al menos un carácter de cada tipo
+    // Asegurar al menos una mayúscula, minúscula y número
     password += uppercase.charAt(Math.floor(Math.random() * uppercase.length));
     password += lowercase.charAt(Math.floor(Math.random() * lowercase.length));
     password += numbers.charAt(Math.floor(Math.random() * numbers.length));
-    password += symbols.charAt(Math.floor(Math.random() * symbols.length));
 
     // Completar el resto de la longitud
-    for (let i = 4; i < length; i++) {
+    for (let i = 3; i < length; i++) {
       password += allChars.charAt(Math.floor(Math.random() * allChars.length));
     }
 
@@ -261,7 +259,7 @@ export class AuthService {
       }
 
       // Generar contraseña automáticamente
-      generatedPassword = this.generateRandomPassword(12);
+      generatedPassword = this.generateRandomPassword(8);
 
       // Encriptar contraseña generada
       const hashedPassword = await bcrypt.hash(generatedPassword, 10);
@@ -479,7 +477,7 @@ export class AuthService {
 
       // Si el cliente envió contraseña, úsala; si no, generar aleatoria y enviar por correo.
       const clientProvidedPassword = !!registerDto.password;
-      const passwordToUse = registerDto.password || this.generateRandomPassword(12);
+      const passwordToUse = registerDto.password || this.generateRandomPassword(8);
       if (!clientProvidedPassword) {
         generatedPassword = passwordToUse;
       }
@@ -749,7 +747,7 @@ export class AuthService {
         throw new ConflictException('El nombre de usuario ya está en uso');
       }
 
-      generatedPassword = this.generateRandomPassword(12);
+      generatedPassword = this.generateRandomPassword(8);
       const hashedPassword = await bcrypt.hash(generatedPassword, 10);
 
       const newUser = this.userRepository.create({
