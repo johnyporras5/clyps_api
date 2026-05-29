@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Brackets, In, MoreThan } from 'typeorm';
 import { Client } from './entities/client.entity';
@@ -11,9 +17,13 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { Offer } from '../Offer/entities/offer.entity';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
-import { AllowedFolder, FileUploadService } from '../common/services/file_upload.service';
+import {
+  AllowedFolder,
+  FileUploadService,
+} from '../common/services/file_upload.service';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
+import { FindAllClientsDto } from './dto/find-all-clients.dto';
 
 @Injectable()
 export class ClientService {
@@ -38,7 +48,7 @@ export class ClientService {
     @InjectRepository(Offer)
     private offerRepository: Repository<Offer>,
     private fileUploadService: FileUploadService,
-  ) { }
+  ) {}
 
   /**
    * Construye el resumen de una sesión (compañía + servicios) para el perfil del cliente.
@@ -60,9 +70,15 @@ export class ClientService {
     const services: string[] = [];
 
     if (details.length > 0) {
-      const serviceIds = [...new Set(details.map((d) => d.serviceId).filter(Boolean))];
-      const companyWorkerIds = [...new Set(details.map((d) => d.companyWorkerId).filter(Boolean))];
-      const offerIds = [...new Set(details.map((d) => d.offerId).filter(Boolean))];
+      const serviceIds = [
+        ...new Set(details.map((d) => d.serviceId).filter(Boolean)),
+      ];
+      const companyWorkerIds = [
+        ...new Set(details.map((d) => d.companyWorkerId).filter(Boolean)),
+      ];
+      const offerIds = [
+        ...new Set(details.map((d) => d.offerId).filter(Boolean)),
+      ];
 
       if (serviceIds.length > 0) {
         const serviceRows = await this.serviceRepository.find({
@@ -142,29 +158,34 @@ export class ClientService {
    * @param adminId ID del usuario administrador autenticado
    * @param options Opciones de paginación
    * @returns Lista paginada de clientes
-   * 
+   *
    * Lógica de visibilidad:
    * - Cliente PÚBLICO (isPublic = 1): Visible para CUALQUIER admin logueado
    * - Cliente PRIVADO (isPublic = 0): Solo visible para admins cuyas compañías están en el array companies del cliente
    */
   async findAllByAdminCompanies(
     adminId: number,
-    options: PaginationDto
+    options: FindAllClientsDto,
   ): Promise<PaginationResult<any>> {
-    this.logger.log(`=== SERVICE: LISTANDO CLIENTES PARA ADMIN ID: ${adminId} ===`);
+    this.logger.log(
+      `=== SERVICE: LISTANDO CLIENTES PARA ADMIN ID: ${adminId} ===`,
+    );
 
     await this.validateUserExists(adminId);
 
     // 1. Obtener las compañías del admin (si las tiene)
     const adminCompanies = await this.companyRepository.find({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
-    const adminCompanyIds = adminCompanies.map(company => company.id);
-    this.logger.log(`[DEBUG] IDs de compañías del admin ${adminId}: ${adminCompanyIds}`);
+    const adminCompanyIds = adminCompanies.map((company) => company.id);
+    this.logger.log(
+      `[DEBUG] IDs de compañías del admin ${adminId}: ${adminCompanyIds}`,
+    );
 
     // 2. Construir query con la nueva lógica (SIN isPublic)
-    const queryBuilder = this.clientRepository.createQueryBuilder('client')
+    const queryBuilder = this.clientRepository
+      .createQueryBuilder('client')
       .leftJoinAndSelect('client.user', 'user')
       .where('client.isActive = :isActive', { isActive: 1 });
 
@@ -176,39 +197,60 @@ export class ClientService {
       // Admin CON compañías: Puede ver:
       // a) Clientes que él creó
       // b) Clientes que comparten compañías con el admin
-      queryBuilder.andWhere(new Brackets(qb => {
-        // Condición para clientes que el admin creó
-        qb.where('client.userId = :adminId', { adminId })
+      queryBuilder.andWhere(
+        new Brackets((qb) => {
+          // Condición para clientes que el admin creó
+          qb.where('client.userId = :adminId', { adminId })
 
-          // O condición para clientes que comparten compañías
-          .orWhere(new Brackets(sharedQb => {
-            const companyConditions = adminCompanyIds.map((companyId, index) =>
-              `JSON_CONTAINS(client.companies, :companyId${index})`
-            ).join(' OR ');
+            // O condición para clientes que comparten compañías
+            .orWhere(
+              new Brackets((sharedQb) => {
+                const companyConditions = adminCompanyIds
+                  .map(
+                    (companyId, index) =>
+                      `JSON_CONTAINS(client.companies, :companyId${index})`,
+                  )
+                  .join(' OR ');
 
-            if (companyConditions) {
-              sharedQb.where(`(${companyConditions})`);
-            }
-          }));
-      }));
+                if (companyConditions) {
+                  sharedQb.where(`(${companyConditions})`);
+                }
+              }),
+            );
+        }),
+      );
 
       // Asignar parámetros para cada compañía
       adminCompanyIds.forEach((companyId, index) => {
-        queryBuilder.setParameter(`companyId${index}`, JSON.stringify(companyId));
+        queryBuilder.setParameter(
+          `companyId${index}`,
+          JSON.stringify(companyId),
+        );
       });
     }
 
-    // 4. Aplicar paginación
-    const result = await paginate(
-      queryBuilder,
-      { page: options.page, limit: options.limit }
-    );
+    // 3.b Filtro por nombre (igual que /workers): name, last_name o concat
+    if (options.name && options.name.trim() !== '') {
+      const searchTerm = `%${options.name.trim()}%`;
+      queryBuilder.andWhere(
+        "(client.name LIKE :search OR client.last_name LIKE :search OR CONCAT(client.name, ' ', client.last_name) LIKE :search)",
+        { search: searchTerm },
+      );
+    }
 
-    this.logger.log(`[DEBUG] Total de clientes encontrados: ${result.meta.total}`);
+    // 4. Aplicar paginación
+    const result = await paginate(queryBuilder, {
+      page: options.page,
+      limit: options.limit,
+    });
+
+    this.logger.log(
+      `[DEBUG] Total de clientes encontrados: ${result.meta.total}`,
+    );
 
     // 5. Obtener fecha de última cita para cada cliente de la página
     const lastAppointmentByClient = await this.getLastAppointmentMap(
-      result.data.map(c => c.id),
+      result.data.map((c) => c.id),
     );
 
     // 6. Enriquecer datos de respuesta (SIN referencias a isPublic)
@@ -220,7 +262,7 @@ export class ClientService {
         adminId,
         lastAppointmentByClient,
       ),
-      meta: result.meta
+      meta: result.meta,
     };
   }
 
@@ -259,14 +301,14 @@ export class ClientService {
     adminId: number,
     lastAppointmentByClient: Map<number, Date> = new Map(),
   ): any[] {
-    return clients.map(client => {
+    return clients.map((client) => {
       let sharedCompanies: Company[] = [];
       let visibilityReason = '';
 
       // Determinar compañías compartidas
       if (client.companies && client.companies.length > 0) {
-        sharedCompanies = adminCompanies.filter(company =>
-          client.companies.includes(company.id)
+        sharedCompanies = adminCompanies.filter((company) =>
+          client.companies.includes(company.id),
         );
       }
 
@@ -286,7 +328,9 @@ export class ClientService {
 
       return {
         ...client,
-        pictureUrl: client.picture ? this.fileUploadService.getFileUrl('client_photo', client.picture) : null,
+        pictureUrl: client.picture
+          ? this.fileUploadService.getFileUrl('client_photo', client.picture)
+          : null,
         sharedCompanies,
         alias: aliasEntry?.alias ?? null,
         displayName: aliasEntry?.alias
@@ -299,7 +343,8 @@ export class ClientService {
         lastAppointmentDate: lastAppointmentByClient.get(client.id) ?? null,
         // Información adicional útil
         hasAccess: client.userId === adminId || sharedCompanies.length > 0,
-        accessibleToAdmin: adminCompanyIds.length > 0 || client.userId === adminId
+        accessibleToAdmin:
+          adminCompanyIds.length > 0 || client.userId === adminId,
       };
     });
   }
@@ -310,10 +355,11 @@ export class ClientService {
   private async validateUserExists(userId: number): Promise<void> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
-      throw new BadRequestException(`Error: Usuario con ID ${userId} no encontrado`);
+      throw new BadRequestException(
+        `Error: Usuario con ID ${userId} no encontrado`,
+      );
     }
   }
-
 
   async updateProfileWithPhoto(
     userId: number,
@@ -327,7 +373,9 @@ export class ClientService {
     });
 
     if (!client) {
-      throw new NotFoundException(`Perfil de cliente para el usuario ${userId} no encontrado`);
+      throw new NotFoundException(
+        `Perfil de cliente para el usuario ${userId} no encontrado`,
+      );
     }
 
     // 2. Procesar foto si se envía
@@ -390,7 +438,9 @@ export class ClientService {
         try {
           value = JSON.parse(value);
         } catch {
-          throw new BadRequestException('El campo companies debe ser un array JSON válido');
+          throw new BadRequestException(
+            'El campo companies debe ser un array JSON válido',
+          );
         }
       }
 
@@ -400,10 +450,13 @@ export class ClientService {
     // 5. Ignorar campos restringidos (id, userId, user)
     const restrictedFields = ['id', 'userId', 'user'];
     const attemptedRestrictedUpdates = Object.keys(updateClientDto).filter(
-      (key) => restrictedFields.includes(key) && updateClientDto[key] !== undefined,
+      (key) =>
+        restrictedFields.includes(key) && updateClientDto[key] !== undefined,
     );
     if (attemptedRestrictedUpdates.length > 0) {
-      this.logger.warn(`Intento de modificación de campos restringidos ignorado: ${attemptedRestrictedUpdates}`);
+      this.logger.warn(
+        `Intento de modificación de campos restringidos ignorado: ${attemptedRestrictedUpdates}`,
+      );
     }
 
     // 6. Aplicar cambios y guardar
@@ -411,12 +464,11 @@ export class ClientService {
     return await this.clientRepository.save(client);
   }
 
-
   /**
- * Obtener perfil del cliente por userId (para el cliente autenticado)
- * @param userId ID del usuario cliente
- * @returns Cliente con URL de foto y usuario sin contraseña
- */
+   * Obtener perfil del cliente por userId (para el cliente autenticado)
+   * @param userId ID del usuario cliente
+   * @returns Cliente con URL de foto y usuario sin contraseña
+   */
   async findByUserId(userId: number): Promise<Client & { photoUrl: string }> {
     const client = await this.clientRepository.findOne({
       where: { userId },
@@ -424,7 +476,9 @@ export class ClientService {
     });
 
     if (!client) {
-      throw new NotFoundException(`Perfil de cliente para el usuario ${userId} no encontrado`);
+      throw new NotFoundException(
+        `Perfil de cliente para el usuario ${userId} no encontrado`,
+      );
     }
 
     // Generar URL completa de la foto
@@ -449,11 +503,12 @@ export class ClientService {
     } as any;
   }
 
-
   /**
    * Obtener perfil de un cliente por su clientId (para el administrador)
    */
-  async findByClientId(clientId: number): Promise<Client & { photoUrl: string }> {
+  async findByClientId(
+    clientId: number,
+  ): Promise<Client & { photoUrl: string }> {
     const client = await this.clientRepository.findOne({
       where: { id: clientId },
       relations: ['user'],
@@ -504,7 +559,10 @@ export class ClientService {
         );
 
         if (client.picture) {
-          await this.fileUploadService.deleteFile(this.CLIENT_PHOTO_FOLDER, client.picture);
+          await this.fileUploadService.deleteFile(
+            this.CLIENT_PHOTO_FOLDER,
+            client.picture,
+          );
         }
 
         updateClientDto.picture = photoInfo.fileName;
@@ -516,18 +574,31 @@ export class ClientService {
 
     // Actualizar username en la entidad User si se proporcionó
     if (updateClientDto.username !== undefined && client.user) {
-      await this.userRepository.update(client.user.id, { username: updateClientDto.username });
+      await this.userRepository.update(client.user.id, {
+        username: updateClientDto.username,
+      });
       client.user.username = updateClientDto.username;
     }
 
-    const allowedFields = ['name', 'lastName', 'email', 'phone', 'birthDate', 'location', 'isActive', 'picture'];
+    const allowedFields = [
+      'name',
+      'lastName',
+      'email',
+      'phone',
+      'birthDate',
+      'location',
+      'isActive',
+      'picture',
+    ];
     const updates: Partial<Client> = {};
 
     Object.keys(updateClientDto).forEach((key) => {
-      if (!allowedFields.includes(key) || updateClientDto[key] === undefined) return;
+      if (!allowedFields.includes(key) || updateClientDto[key] === undefined)
+        return;
 
       let value = updateClientDto[key];
-      if (key === 'birthDate' && typeof value === 'string') value = new Date(value);
+      if (key === 'birthDate' && typeof value === 'string')
+        value = new Date(value);
       if (key === 'isActive' && value !== undefined) value = Number(value);
 
       updates[key] = value;
@@ -537,7 +608,10 @@ export class ClientService {
     const saved = await this.clientRepository.save(client);
 
     const photoUrl = saved.picture
-      ? this.fileUploadService.getFileUrl(this.CLIENT_PHOTO_FOLDER, saved.picture)
+      ? this.fileUploadService.getFileUrl(
+          this.CLIENT_PHOTO_FOLDER,
+          saved.picture,
+        )
       : '';
 
     if (saved.user) {
@@ -597,7 +671,7 @@ export class ClientService {
 
   async getClientPhotoUrl(clientId: number): Promise<string> {
     const client = await this.clientRepository.findOne({
-      where: { id: clientId }
+      where: { id: clientId },
     });
     if (!client) {
       throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
@@ -607,7 +681,7 @@ export class ClientService {
     }
     return this.fileUploadService.getFileUrl(
       this.CLIENT_PHOTO_FOLDER,
-      client.picture
+      client.picture,
     );
   }
 }

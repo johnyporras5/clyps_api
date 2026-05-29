@@ -1,7 +1,12 @@
-import { IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import {
+  IsOptional,
+  IsEmail,
+  IsString,
+  IsBoolean,
+  IsNumber,
+} from 'class-validator';
 
 export class UpdateCalendarDto {
-
   @IsOptional()
   calendarDetail?: any;
 

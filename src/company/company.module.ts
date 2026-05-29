@@ -40,4 +40,4 @@ import { SessionDetail } from 'src/session_detail/entities/session_detail.entity
   controllers: [CompanyController],
   exports: [CompanyService],
 })
-export class CompanyModule { }
+export class CompanyModule {}

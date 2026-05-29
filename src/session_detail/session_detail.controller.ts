@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Put,
+  Delete,
+  ParseIntPipe,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { SessionDetailService } from './session_detail.service';
 import { SessionDetail } from './entities/session_detail.entity';
 import { CreateSessionDetailDto } from './dto/create-session_detail.dto';
@@ -19,7 +29,9 @@ export class SessionDetailController {
   }
 
   @Post()
-  async create(@Body() createSessionDetailDto: CreateSessionDetailDto): Promise<SessionDetail> {
+  async create(
+    @Body() createSessionDetailDto: CreateSessionDetailDto,
+  ): Promise<SessionDetail> {
     return this.SessionDetailService.create(createSessionDetailDto);
   }
 

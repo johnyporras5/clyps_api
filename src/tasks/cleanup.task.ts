@@ -6,7 +6,7 @@ import { VerificationService } from '../verification/verification.service';
 export class CleanupTask {
   private readonly logger = new Logger(CleanupTask.name);
 
-  constructor(private verificationService: VerificationService) { }
+  constructor(private verificationService: VerificationService) {}
 
   // ✅ Ejecutar cada 30 minutos para limpiar códigos expirados
   @Cron(CronExpression.EVERY_30_MINUTES)
@@ -15,10 +15,10 @@ export class CleanupTask {
       const deletedCount = await this.verificationService.cleanupExpiredCodes();
 
       if (deletedCount > 0) {
-        this.logger.log(`🧹 Eliminados ${deletedCount} códigos de verificación expirados`);
+        this.logger.log(
+          `🧹 Eliminados ${deletedCount} códigos de verificación expirados`,
+        );
       }
-
-
     } catch (error) {
       this.logger.error('Error limpiando códigos expirados:', error);
     }

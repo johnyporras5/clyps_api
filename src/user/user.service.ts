@@ -34,7 +34,7 @@ export class UserService {
     if (!User) {
       throw new NotFoundException(`User with id ${id} not found`);
     }
-    
+
     Object.assign(User, updateUserDto);
     return await this.UserRepository.save(User);
   }

@@ -1,4 +1,12 @@
-import { IsOptional, IsIn, IsDateString, IsNumber, Min, Max, IsArray } from 'class-validator';
+import {
+  IsOptional,
+  IsIn,
+  IsDateString,
+  IsNumber,
+  Min,
+  Max,
+  IsArray,
+} from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
 export class GetSessionsDto {
@@ -30,7 +38,7 @@ export class GetSessionsDto {
   @IsOptional()
   @IsDateString()
   date?: string;
-  
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -48,7 +56,7 @@ export class GetSessionsDto {
     const arr = Array.isArray(value)
       ? value.map(toNum)
       : String(value).split(',').map(toNum);
-    return arr.filter(n => !isNaN(n));
+    return arr.filter((n) => !isNaN(n));
   })
   @IsArray()
   @IsNumber({}, { each: true })
@@ -61,7 +69,7 @@ export class GetSessionsDto {
     const arr = Array.isArray(value)
       ? value.map(toNum)
       : String(value).split(',').map(toNum);
-    return arr.filter(n => !isNaN(n));
+    return arr.filter((n) => !isNaN(n));
   })
   @IsArray()
   @IsNumber({}, { each: true })

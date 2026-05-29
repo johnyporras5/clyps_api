@@ -1,5 +1,15 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsNotEmpty, IsString, MinLength, IsOptional, MaxLength, IsArray, ArrayMaxSize, ArrayUnique } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsString,
+  MinLength,
+  IsOptional,
+  MaxLength,
+  IsArray,
+  ArrayMaxSize,
+  ArrayUnique,
+} from 'class-validator';
 
 export class RegisterAdminDto {
   @IsString()
@@ -49,9 +59,9 @@ export class RegisterAdminDto {
         }
       }
 
-      return trimmed.split(',').map(item =>
-        item.trim().replace(/^["']|["']$/g, '')
-      );
+      return trimmed
+        .split(',')
+        .map((item) => item.trim().replace(/^["']|["']$/g, ''));
     }
 
     return value;
@@ -62,5 +72,4 @@ export class RegisterAdminDto {
   @IsString({ each: true })
   @MaxLength(145, { each: true })
   categories?: string[];
-
 }

@@ -1,4 +1,14 @@
-import { IsOptional, IsString, IsDate, Length, IsEmail, IsNotEmpty, IsJSON, IsNumber,IsIn } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsDate,
+  Length,
+  IsEmail,
+  IsNotEmpty,
+  IsJSON,
+  IsNumber,
+  IsIn,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class RegisterWorkerDto {

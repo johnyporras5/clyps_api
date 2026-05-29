@@ -10,7 +10,9 @@ import {
   UseGuards,
   UnauthorizedException,
   Req,
-  UploadedFile, UseInterceptors, BadRequestException
+  UploadedFile,
+  UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
 import { WorkerService } from './worker.service';
 import { Worker } from './entities/worker.entity';
@@ -23,18 +25,16 @@ import { FindAllWorkersDto } from './dto/find-all-workers.dto';
 import { PaginationResult } from '../common/utils/pagination.util';
 import { FileInterceptor } from '@nestjs/platform-express';
 
-
-
 @Controller('workers')
 export class WorkerController {
-  constructor(private readonly workerService: WorkerService) { }
+  constructor(private readonly workerService: WorkerService) {}
 
   // Obtener un worker por ID (cualquier usuario autenticado)
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   async findOne(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<Worker> {
     // El usuario solo puede ver su propio perfil, a menos que sea admin
     const userId = req.user.sub;
@@ -49,7 +49,7 @@ export class WorkerController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateWorkerDto: UpdateWorkerDto,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<Worker> {
     const userId = req.user.sub;
     return this.workerService.update(id, updateWorkerDto, userId);
@@ -64,7 +64,9 @@ export class WorkerController {
 
     // Asegurarse que el usuario es de tipo 'wrk' (trabajador)
     if (userType !== 'wrk') {
-      throw new UnauthorizedException('Solo los trabajadores pueden acceder a este perfil');
+      throw new UnauthorizedException(
+        'Solo los trabajadores pueden acceder a este perfil',
+      );
     }
 
     return this.workerService.findByUserId(userId);
@@ -88,16 +90,23 @@ export class WorkerController {
     const adminId = req.user.sub;
     const hasUpdates = Object.keys(dto).some((k) => dto[k] !== undefined);
     if (!hasUpdates && !photoFile) {
-      throw new BadRequestException('Debe proporcionar al menos un campo para actualizar');
+      throw new BadRequestException(
+        'Debe proporcionar al menos un campo para actualizar',
+      );
     }
-    return this.workerService.updateWorkerByAdmin(workerId, adminId, dto, photoFile);
+    return this.workerService.updateWorkerByAdmin(
+      workerId,
+      adminId,
+      dto,
+      photoFile,
+    );
   }
 
   /**
- * Actualizar perfil del trabajador autenticado con o sin foto
- * PUT /workers/profile/update-with-photo
- * Solo trabajadores
- */
+   * Actualizar perfil del trabajador autenticado con o sin foto
+   * PUT /workers/profile/update-with-photo
+   * Solo trabajadores
+   */
   @Put('profile/update-with-photo')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('wrk')
@@ -110,13 +119,20 @@ export class WorkerController {
     const userId = req.user.sub;
     const userType = req.user.userType;
 
-
     // Validar que al menos un campo sea proporcionado
-    const hasUpdates = Object.keys(updateWorkerDto).some(key => updateWorkerDto[key] !== undefined);
+    const hasUpdates = Object.keys(updateWorkerDto).some(
+      (key) => updateWorkerDto[key] !== undefined,
+    );
     if (!hasUpdates && !photoFile) {
-      throw new BadRequestException('Debe proporcionar al menos un campo para actualizar');
+      throw new BadRequestException(
+        'Debe proporcionar al menos un campo para actualizar',
+      );
     }
 
-    return this.workerService.updateProfileWithPhoto(userId, updateWorkerDto, photoFile);
+    return this.workerService.updateProfileWithPhoto(
+      userId,
+      updateWorkerDto,
+      photoFile,
+    );
   }
 }

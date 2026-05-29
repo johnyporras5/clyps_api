@@ -17,32 +17,51 @@ export class UserVerificationCodesService {
   }
 
   async findOne(id: number): Promise<UserVerificationCodes> {
-    const UserVerificationCodes = await this.UserVerificationCodesRepository.findOne({ where: { id } });
+    const UserVerificationCodes =
+      await this.UserVerificationCodesRepository.findOne({ where: { id } });
     if (!UserVerificationCodes) {
-      throw new NotFoundException(`UserVerificationCodes with id ${id} not found`);
+      throw new NotFoundException(
+        `UserVerificationCodes with id ${id} not found`,
+      );
     }
     return UserVerificationCodes;
   }
 
-  async create(createUserVerificationCodesDto: CreateUserVerificationCodesDto): Promise<UserVerificationCodes> {
-    const UserVerificationCodes = this.UserVerificationCodesRepository.create(createUserVerificationCodesDto);
-    return await this.UserVerificationCodesRepository.save(UserVerificationCodes);
+  async create(
+    createUserVerificationCodesDto: CreateUserVerificationCodesDto,
+  ): Promise<UserVerificationCodes> {
+    const UserVerificationCodes = this.UserVerificationCodesRepository.create(
+      createUserVerificationCodesDto,
+    );
+    return await this.UserVerificationCodesRepository.save(
+      UserVerificationCodes,
+    );
   }
 
-  async update(id: number, updateUserVerificationCodesDto: UpdateUserVerificationCodesDto): Promise<UserVerificationCodes> {
-    const UserVerificationCodes = await this.UserVerificationCodesRepository.findOne({ where: { id } });
+  async update(
+    id: number,
+    updateUserVerificationCodesDto: UpdateUserVerificationCodesDto,
+  ): Promise<UserVerificationCodes> {
+    const UserVerificationCodes =
+      await this.UserVerificationCodesRepository.findOne({ where: { id } });
     if (!UserVerificationCodes) {
-      throw new NotFoundException(`UserVerificationCodes with id ${id} not found`);
+      throw new NotFoundException(
+        `UserVerificationCodes with id ${id} not found`,
+      );
     }
-    
+
     Object.assign(UserVerificationCodes, updateUserVerificationCodesDto);
-    return await this.UserVerificationCodesRepository.save(UserVerificationCodes);
+    return await this.UserVerificationCodesRepository.save(
+      UserVerificationCodes,
+    );
   }
 
   async remove(id: number): Promise<void> {
     const result = await this.UserVerificationCodesRepository.delete(id);
     if (result.affected === 0) {
-      throw new NotFoundException(`UserVerificationCodes with id ${id} not found`);
+      throw new NotFoundException(
+        `UserVerificationCodes with id ${id} not found`,
+      );
     }
   }
 }

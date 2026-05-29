@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, ParseIntPipe, ParseUUIDPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Put,
+  Delete,
+  ParseIntPipe,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { CalendarService } from './calendar.service';
 import { Calendar } from './entities/calendar.entity';
 import { CreateCalendarDto } from './dto/create-calendar.dto';
@@ -19,7 +29,9 @@ export class CalendarController {
   }
 
   @Post()
-  async create(@Body() createCalendarDto: CreateCalendarDto): Promise<Calendar> {
+  async create(
+    @Body() createCalendarDto: CreateCalendarDto,
+  ): Promise<Calendar> {
     return this.CalendarService.create(createCalendarDto);
   }
 

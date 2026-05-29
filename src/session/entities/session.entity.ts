@@ -1,8 +1,14 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 
 @Entity('session')
 export class Session {
-
   @PrimaryGeneratedColumn()
   id: number;
 
@@ -41,8 +47,8 @@ export class Session {
     nullable: true,
     transformer: {
       to: (value: number) => value,
-      from: (value: string) => parseFloat(value)
-    }
+      from: (value: string) => parseFloat(value),
+    },
   })
   totalCost: number;
 
@@ -67,24 +73,21 @@ export class Session {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-
   @Column({ name: 'extra_services', type: 'json', nullable: true })
   extraServices?: Array<{
-    sessionDetailId: number;  // ID del SessionDetail creado
-    serviceId: number;         // 2 (FK)
-    serviceName: string;       // "Barba" 
-    providerId: number;        // 1 (puede ser diferente al main)
-    providerName: string;      // "Daniel Durán"
-    date: string;              // "2026-02-15"
-    time: string;              // "9:30 AM"
-    durationMinutes: number;   // 15
-    priceOption: "default" | "custom" | "free";
-    price: number;             // 1500 (calculado según priceOption)
-    customPrice?: number;      // Solo si priceOption === "custom"
-    description?: string;      // Descripción del servicio extra
-    descriptionIA?: string;    // Descripción generada por IA
-    createdAt: string          // "2026-02-15T08:45:00.000Z"
+    sessionDetailId: number; // ID del SessionDetail creado
+    serviceId: number; // 2 (FK)
+    serviceName: string; // "Barba"
+    providerId: number; // 1 (puede ser diferente al main)
+    providerName: string; // "Daniel Durán"
+    date: string; // "2026-02-15"
+    time: string; // "9:30 AM"
+    durationMinutes: number; // 15
+    priceOption: 'default' | 'custom' | 'free';
+    price: number; // 1500 (calculado según priceOption)
+    customPrice?: number; // Solo si priceOption === "custom"
+    description?: string; // Descripción del servicio extra
+    descriptionIA?: string; // Descripción generada por IA
+    createdAt: string; // "2026-02-15T08:45:00.000Z"
   }>;
-
-
 }

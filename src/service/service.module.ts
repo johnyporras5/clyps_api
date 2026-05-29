@@ -16,7 +16,18 @@ import { CommonModule } from 'src/common/common.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Service,Company,CompanyWorker,Worker,ServiceCategory,ServiceOffer,SessionDetail,CalendarCompany,CompanyFeedback,WorkerFeedback]),
+    TypeOrmModule.forFeature([
+      Service,
+      Company,
+      CompanyWorker,
+      Worker,
+      ServiceCategory,
+      ServiceOffer,
+      SessionDetail,
+      CalendarCompany,
+      CompanyFeedback,
+      WorkerFeedback,
+    ]),
     CommonModule,
   ],
   providers: [ServiceService],

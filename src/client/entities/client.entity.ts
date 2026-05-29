@@ -1,9 +1,15 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, OneToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  Column,
+  OneToOne,
+  JoinColumn,
+} from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 
 @Entity('client')
 export class Client {
-
   @PrimaryGeneratedColumn()
   id: number;
 
@@ -41,7 +47,6 @@ export class Client {
   // alias sin pisar el de otra: [{ companyId, alias }]
   @Column({ name: 'company_aliases', type: 'json', nullable: true })
   companyAliases: { companyId: number; alias: string }[];
-
 
   @Column({ name: 'temporarily_deleted', type: 'boolean', default: false })
   temporarilyDeleted: boolean;

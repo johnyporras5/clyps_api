@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -14,23 +18,25 @@ export class VerificationService {
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private configService: ConfigService,
-  ) { }
+  ) {}
 
   /**
    * Obtener código de verificación activo para un usuario
    */
-  async getActiveVerificationCode(userId: number): Promise<UserVerificationCodes | null> {
+  async getActiveVerificationCode(
+    userId: number,
+  ): Promise<UserVerificationCodes | null> {
     const now = new Date();
-    
+
     // Buscar códigos activos (no expirados y no usados) para este usuario
     const activeCode = await this.verificationCodeRepository.findOne({
       where: {
         userId,
         codeType: 'email_verification',
         used: 0,
-        expiresAt: MoreThan(now) // Código no expirado
+        expiresAt: MoreThan(now), // Código no expirado
       },
-      order: { expiresAt: 'DESC' } // Tomar el más reciente
+      order: { expiresAt: 'DESC' }, // Tomar el más reciente
     });
 
     return activeCode;
@@ -39,9 +45,9 @@ export class VerificationService {
   /**
    * Obtener estado del código de verificación
    */
-  async getVerificationCodeStatus(userId: number): Promise<{ 
-    hasActiveCode: boolean; 
-    expiresAt?: Date; 
+  async getVerificationCodeStatus(userId: number): Promise<{
+    hasActiveCode: boolean;
+    expiresAt?: Date;
     secondsRemaining?: number;
   }> {
     const now = new Date();
@@ -50,7 +56,7 @@ export class VerificationService {
         userId,
         codeType: 'email_verification',
         used: 0,
-        expiresAt: MoreThan(now)
+        expiresAt: MoreThan(now),
       },
     });
 
@@ -58,12 +64,14 @@ export class VerificationService {
       return { hasActiveCode: false };
     }
 
-    const secondsRemaining = Math.floor((activeCode.expiresAt.getTime() - now.getTime()) / 1000);
+    const secondsRemaining = Math.floor(
+      (activeCode.expiresAt.getTime() - now.getTime()) / 1000,
+    );
 
     return {
       hasActiveCode: true,
       expiresAt: activeCode.expiresAt,
-      secondsRemaining
+      secondsRemaining,
     };
   }
 
@@ -84,14 +92,17 @@ export class VerificationService {
   /**
    * Método privado para generar cualquier tipo de código
    */
-  private async generateCode(userId: number, codeType: string): Promise<string> {
+  private async generateCode(
+    userId: number,
+    codeType: string,
+  ): Promise<string> {
     await this.cleanupExpiredCodes();
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
 
     const expiresAt = new Date();
     const expirationMinutes = parseInt(
-      this.configService.get('VERIFICATION_CODE_EXPIRES_MINUTES') || '15'
+      this.configService.get('VERIFICATION_CODE_EXPIRES_MINUTES') || '15',
     );
     expiresAt.setMinutes(expiresAt.getMinutes() + expirationMinutes);
 
@@ -105,7 +116,9 @@ export class VerificationService {
 
     await this.verificationCodeRepository.save(verificationCode);
 
-    console.log(`📧 Código de ${codeType} ${code} generado para usuario ${userId}, expira a las ${expiresAt.toLocaleTimeString()}`);
+    console.log(
+      `📧 Código de ${codeType} ${code} generado para usuario ${userId}, expira a las ${expiresAt.toLocaleTimeString()}`,
+    );
 
     return code;
   }
@@ -127,7 +140,11 @@ export class VerificationService {
   /**
    * Método privado para verificar cualquier tipo de código
    */
-  private async verifyCodeByType(email: string, code: string, codeType: string): Promise<boolean> {
+  private async verifyCodeByType(
+    email: string,
+    code: string,
+    codeType: string,
+  ): Promise<boolean> {
     const user = await this.userRepository.findOne({ where: { email } });
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
@@ -164,7 +181,9 @@ export class VerificationService {
 
     // Verificar expiración
     const now = new Date();
-    console.log(`⏰ Verificando expiración: Ahora ${now}, Expira ${verificationCode.expiresAt}`);
+    console.log(
+      `⏰ Verificando expiración: Ahora ${now}, Expira ${verificationCode.expiresAt}`,
+    );
 
     if (now > verificationCode.expiresAt) {
       await this.verificationCodeRepository.delete(verificationCode.id);
@@ -182,14 +201,20 @@ export class VerificationService {
       await this.userRepository.save(user);
     }
 
-    console.log(`✅ Código de ${codeType} verificado exitosamente para ${email}`);
+    console.log(
+      `✅ Código de ${codeType} verificado exitosamente para ${email}`,
+    );
     return true;
   }
 
   /**
    * Verificar código por userId (para usar directamente desde AuthService)
    */
-  async verifyCodeByUserId(userId: number, code: string, codeType: string): Promise<boolean> {
+  async verifyCodeByUserId(
+    userId: number,
+    code: string,
+    codeType: string,
+  ): Promise<boolean> {
     const verificationCode = await this.verificationCodeRepository.findOne({
       where: {
         userId,
@@ -276,20 +301,25 @@ export class VerificationService {
     const deletedCount = result.affected || 0;
 
     if (deletedCount > 0) {
-      console.log(`🧹 Eliminados ${deletedCount} códigos expirados a las ${now.toLocaleTimeString()}`);
+      console.log(
+        `🧹 Eliminados ${deletedCount} códigos expirados a las ${now.toLocaleTimeString()}`,
+      );
     }
 
     return deletedCount;
   }
 
-  async cleanupExpiredCodesForUser(userId: number, codeType?: string): Promise<number> {
+  async cleanupExpiredCodesForUser(
+    userId: number,
+    codeType?: string,
+  ): Promise<number> {
     const now = new Date();
     let query = this.verificationCodeRepository
       .createQueryBuilder()
       .delete()
       .where('user_id = :userId AND expires_at < :now', {
         userId,
-        now
+        now,
       });
 
     if (codeType) {
@@ -301,13 +331,19 @@ export class VerificationService {
     const deletedCount = result.affected || 0;
 
     if (deletedCount > 0) {
-      console.log(`🧹 Eliminados ${deletedCount} códigos expirados para usuario ${userId}${codeType ? ` (tipo: ${codeType})` : ''}`);
+      console.log(
+        `🧹 Eliminados ${deletedCount} códigos expirados para usuario ${userId}${codeType ? ` (tipo: ${codeType})` : ''}`,
+      );
     }
 
     return deletedCount;
   }
 
-  async checkCodeStatus(email: string, code: string, codeType?: string): Promise<any> {
+  async checkCodeStatus(
+    email: string,
+    code: string,
+    codeType?: string,
+  ): Promise<any> {
     const user = await this.userRepository.findOne({ where: { email } });
     if (!user) {
       return { error: 'Usuario no encontrado' };
@@ -339,7 +375,11 @@ export class VerificationService {
       created: verificationCode.createdAt,
       expires: verificationCode.expiresAt,
       used: verificationCode.used,
-      secondsRemaining: isExpired ? 0 : Math.floor((verificationCode.expiresAt.getTime() - now.getTime()) / 1000)
+      secondsRemaining: isExpired
+        ? 0
+        : Math.floor(
+            (verificationCode.expiresAt.getTime() - now.getTime()) / 1000,
+          ),
     };
   }
 }

@@ -76,6 +76,14 @@ RUN echo '#!/bin/sh' > /entrypoint.sh && \
     echo 'NODE_PORT=${PORT:-4000}' >> /entrypoint.sh && \
     echo 'sed -i "s/server 127.0.0.1:4000/server 127.0.0.1:$NODE_PORT/g" /etc/nginx/nginx.conf' >> /entrypoint.sh && \
     echo 'echo "Updated nginx to proxy to port $NODE_PORT"' >> /entrypoint.sh && \
+    echo '# Run database migrations before starting the app (fail fast if migrations fail)' >> /entrypoint.sh && \
+    echo 'if [ "${SKIP_MIGRATIONS}" != "true" ]; then' >> /entrypoint.sh && \
+    echo '  echo "Running database migrations..."' >> /entrypoint.sh && \
+    echo '  cd /app && npm run migration:run:prod' >> /entrypoint.sh && \
+    echo '  echo "Migrations finished successfully"' >> /entrypoint.sh && \
+    echo 'else' >> /entrypoint.sh && \
+    echo '  echo "SKIP_MIGRATIONS=true -> skipping migrations"' >> /entrypoint.sh && \
+    echo 'fi' >> /entrypoint.sh && \
     echo 'exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf' >> /entrypoint.sh && \
     chmod +x /entrypoint.sh
 

@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, UnauthorizedException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ServiceCategory } from './entities/service_category.entity';
@@ -16,8 +21,11 @@ export class ServiceCategoryService {
   ) {}
 
   private async getCompanyOrFail(adminId: number): Promise<Company> {
-    const company = await this.companyRepository.findOne({ where: { userId: adminId } });
-    if (!company) throw new UnauthorizedException('No tienes una compañía asignada');
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company)
+      throw new UnauthorizedException('No tienes una compañía asignada');
     return company;
   }
 
@@ -35,11 +43,15 @@ export class ServiceCategoryService {
       where: { id, companyId: company.id },
       relations: ['services'],
     });
-    if (!category) throw new NotFoundException(`Category with id ${id} not found`);
+    if (!category)
+      throw new NotFoundException(`Category with id ${id} not found`);
     return category;
   }
 
-  async create(dto: CreateServiceCategoryDto, adminId: number): Promise<ServiceCategory> {
+  async create(
+    dto: CreateServiceCategoryDto,
+    adminId: number,
+  ): Promise<ServiceCategory> {
     const company = await this.getCompanyOrFail(adminId);
     const category = this.categoryRepository.create({
       name: dto.name,
@@ -50,10 +62,17 @@ export class ServiceCategoryService {
     return this.categoryRepository.save(category);
   }
 
-  async update(id: number, dto: UpdateServiceCategoryDto, adminId: number): Promise<ServiceCategory> {
+  async update(
+    id: number,
+    dto: UpdateServiceCategoryDto,
+    adminId: number,
+  ): Promise<ServiceCategory> {
     const company = await this.getCompanyOrFail(adminId);
-    const category = await this.categoryRepository.findOne({ where: { id, companyId: company.id } });
-    if (!category) throw new NotFoundException(`Category with id ${id} not found`);
+    const category = await this.categoryRepository.findOne({
+      where: { id, companyId: company.id },
+    });
+    if (!category)
+      throw new NotFoundException(`Category with id ${id} not found`);
     Object.assign(category, dto);
     return this.categoryRepository.save(category);
   }
@@ -64,7 +83,8 @@ export class ServiceCategoryService {
       where: { id, companyId: company.id },
       relations: ['services'],
     });
-    if (!category) throw new NotFoundException(`Categoría con id ${id} no encontrada`);
+    if (!category)
+      throw new NotFoundException(`Categoría con id ${id} no encontrada`);
     if (category.services?.length > 0) {
       throw new ConflictException(
         `No se puede eliminar la categoría "${category.name}" porque tiene ${category.services.length} servicio(s) asociado(s). Reasigna o elimina los servicios primero.`,

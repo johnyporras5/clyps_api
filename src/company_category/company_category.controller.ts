@@ -23,7 +23,9 @@ import { Roles } from '../auth/decorators/roles.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('adm')
 export class CompanyCategoryController {
-  constructor(private readonly companyCategoryService: CompanyCategoryService) {}
+  constructor(
+    private readonly companyCategoryService: CompanyCategoryService,
+  ) {}
 
   @Get()
   findAll(@Req() req: any) {

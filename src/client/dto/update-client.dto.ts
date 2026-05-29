@@ -1,8 +1,19 @@
-import { IsOptional, IsEmail, IsString, IsIn, IsNumber, IsArray, Min, Max, IsInt, Length, IsDate } from 'class-validator';
+import {
+  IsOptional,
+  IsEmail,
+  IsString,
+  IsIn,
+  IsNumber,
+  IsArray,
+  Min,
+  Max,
+  IsInt,
+  Length,
+  IsDate,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class UpdateClientDto {
-
   @IsOptional()
   @IsString()
   username?: string;
@@ -31,7 +42,6 @@ export class UpdateClientDto {
   @IsString()
   picture?: string;
 
-
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -46,6 +56,4 @@ export class UpdateClientDto {
   @IsArray()
   @IsInt({ each: true })
   companies?: number[] = [];*/
-
-
 }

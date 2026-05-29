@@ -1,7 +1,13 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsEmail,
+  IsString,
+  IsBoolean,
+  IsNumber,
+} from 'class-validator';
 
 export class CreateCalendarDto {
-
   @IsOptional()
   calendarDetail?: any;
 

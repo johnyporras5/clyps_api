@@ -11,8 +11,7 @@ import {
   HttpStatus,
   UseGuards,
   Req,
-  Query
-
+  Query,
 } from '@nestjs/common';
 import { CompanyWorkerService } from './company_worker.service';
 import { CompanyWorker } from './entities/company_worker.entity';
@@ -26,9 +25,7 @@ import { CompanyWorkersPaginationDto } from './dto/company-workers-pagination.dt
 
 @Controller('company-workers')
 export class CompanyWorkerController {
-  constructor(
-    private readonly companyWorkerService: CompanyWorkerService,
-  ) { }
+  constructor(private readonly companyWorkerService: CompanyWorkerService) {}
 
   // ==================== ENDPOINTS CRUD BÁSICOS ====================
 
@@ -67,7 +64,9 @@ export class CompanyWorkerController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('adm')
   @HttpCode(HttpStatus.CREATED)
-  async create(@Body() createCompanyWorkerDto: CreateCompanyWorkerDto): Promise<CompanyWorker> {
+  async create(
+    @Body() createCompanyWorkerDto: CreateCompanyWorkerDto,
+  ): Promise<CompanyWorker> {
     return this.companyWorkerService.create(createCompanyWorkerDto);
   }
 
@@ -86,7 +85,11 @@ export class CompanyWorkerController {
     @Body() updateCompanyWorkerDto: UpdateCompanyWorkerDto,
   ): Promise<CompanyWorker> {
     const adminId = req.user.sub;
-    return this.companyWorkerService.updateWorkerInCompany(workerId, adminId, updateCompanyWorkerDto);
+    return this.companyWorkerService.updateWorkerInCompany(
+      workerId,
+      adminId,
+      updateCompanyWorkerDto,
+    );
   }
 
   /**
@@ -104,7 +107,11 @@ export class CompanyWorkerController {
     @Body() updateCompanyWorkerDto: UpdateCompanyWorkerDto,
   ): Promise<CompanyWorker> {
     const adminId = req.user.sub;
-    return this.companyWorkerService.updateWorkerByUserId(userId, adminId, updateCompanyWorkerDto);
+    return this.companyWorkerService.updateWorkerByUserId(
+      userId,
+      adminId,
+      updateCompanyWorkerDto,
+    );
   }
 
   // ==================== ENDPOINTS ESPECÍFICOS DE GESTIÓN ====================
@@ -167,10 +174,10 @@ export class CompanyWorkerController {
   }
 
   /**
-    * Obtener trabajadores de mi compañía con filtro por nombre
-    * GET /company-workers/my-company/workers
-    * Solo administradores
-    */
+   * Obtener trabajadores de mi compañía con filtro por nombre
+   * GET /company-workers/my-company/workers
+   * Solo administradores
+   */
   @Get('my-company/workers')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('adm')
@@ -183,9 +190,7 @@ export class CompanyWorkerController {
 
     return await this.companyWorkerService.getCompanyWorkersWithNameFilterPaginated(
       adminId,
-      paginationDto
+      paginationDto,
     );
   }
-
 }
-

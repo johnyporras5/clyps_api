@@ -1,10 +1,16 @@
-import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column, JoinColumn, ManyToOne } from 'typeorm';
-import { Worker } from '../../worker/entities/worker.entity'; 
-import { Company } from '../../company/entities/company.entity'; 
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  Column,
+  JoinColumn,
+  ManyToOne,
+} from 'typeorm';
+import { Worker } from '../../worker/entities/worker.entity';
+import { Company } from '../../company/entities/company.entity';
 
 @Entity('company_worker')
 export class CompanyWorker {
-
   @PrimaryGeneratedColumn()
   id: number;
 
@@ -32,7 +38,7 @@ export class CompanyWorker {
   @Column({ name: 'calendar', type: 'json', nullable: true })
   calendar: any;
 
-   @Column({ name: 'temporarily_deleted', type: 'boolean', default: false })
+  @Column({ name: 'temporarily_deleted', type: 'boolean', default: false })
   temporarilyDeleted: boolean;
 
   @Column({ name: 'permanently_deleted', type: 'boolean', default: false })

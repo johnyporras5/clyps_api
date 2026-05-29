@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, UnauthorizedException, BadRequestException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+  BadRequestException,
+  Inject,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Service } from './entities/service.entity';
@@ -7,14 +13,21 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { Company } from '../company/entities/company.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Worker } from '../worker/entities/worker.entity';
-import { paginate, PaginationOptions, PaginationResult } from '../common/utils/pagination.util';
+import {
+  paginate,
+  PaginationOptions,
+  PaginationResult,
+} from '../common/utils/pagination.util';
 import { ServiceCategory } from '../service_category/entities/service_category.entity';
 import { ServiceOffer } from '../Offer/entities/service-offer.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
 import { CompanyFeedback } from '../company_feedback/entities/company_feedback.entity';
 import { WorkerFeedback } from '../worker_feedback/entities/worker_feedback.entity';
-import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
+import {
+  FileUploadService,
+  AllowedFolder,
+} from '../common/services/file_upload.service';
 
 @Injectable()
 export class ServiceService {
@@ -43,18 +56,18 @@ export class ServiceService {
     private workerFeedbackRepository: Repository<WorkerFeedback>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
-  ) { }
+  ) {}
 
   /**
-    * Obtener todos los servicios de una compañía con información completa de workers (paginado)
-    */
+   * Obtener todos los servicios de una compañía con información completa de workers (paginado)
+   */
   async findAllByCompanyWithWorkers(
     adminId: number,
-    paginationOptions: PaginationOptions
+    paginationOptions: PaginationOptions & { name?: string },
   ): Promise<PaginationResult<any>> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -67,24 +80,37 @@ export class ServiceService {
       .leftJoinAndSelect('service.category', 'category')
       .where('service.companyId = :companyId', { companyId: company.id });
 
+    // 2.b Filtro por nombre (igual que /workers): LIKE sobre service.name
+    if (paginationOptions.name && paginationOptions.name.trim() !== '') {
+      queryBuilder.andWhere('service.name LIKE :search', {
+        search: `%${paginationOptions.name.trim()}%`,
+      });
+    }
+
     // 3. Aplicar paginación
-    const paginatedServices = await paginate<Service>(queryBuilder, paginationOptions);
+    const paginatedServices = await paginate<Service>(
+      queryBuilder,
+      paginationOptions,
+    );
 
     // 4. Enriquecer cada servicio con información de workers
     const enrichedData = await Promise.all(
       paginatedServices.data.map(async (service) => {
-        const workersInfo = await this.getWorkersInfoForService(service.workers, company.id);
+        const workersInfo = await this.getWorkersInfoForService(
+          service.workers,
+          company.id,
+        );
         return {
           ...service,
-          workersInfo
+          workersInfo,
         };
-      })
+      }),
     );
 
     // 5. Devolver resultado paginado con datos enriquecidos
     return {
       ...paginatedServices,
-      data: enrichedData
+      data: enrichedData,
     };
   }
   /**
@@ -95,7 +121,9 @@ export class ServiceService {
     companyId: number,
     paginationOptions: PaginationOptions,
   ): Promise<PaginationResult<any> & { company: any }> {
-    const company = await this.companyRepository.findOne({ where: { id: companyId } });
+    const company = await this.companyRepository.findOne({
+      where: { id: companyId },
+    });
     if (!company) {
       throw new NotFoundException(`Company with id ${companyId} not found`);
     }
@@ -106,11 +134,17 @@ export class ServiceService {
       .where('service.companyId = :companyId', { companyId })
       .andWhere('service.status = 1');
 
-    const paginatedServices = await paginate<Service>(queryBuilder, paginationOptions);
+    const paginatedServices = await paginate<Service>(
+      queryBuilder,
+      paginationOptions,
+    );
 
     const enrichedData = await Promise.all(
       paginatedServices.data.map(async (service) => {
-        const workersInfo = await this.getWorkersInfoForService(service.workers, companyId);
+        const workersInfo = await this.getWorkersInfoForService(
+          service.workers,
+          companyId,
+        );
         return { ...service, workersInfo };
       }),
     );
@@ -123,7 +157,11 @@ export class ServiceService {
     if (calendar?.calendarDetail) {
       let detail = calendar.calendarDetail;
       if (typeof detail === 'string') {
-        try { detail = JSON.parse(detail); } catch { /* ignore */ }
+        try {
+          detail = JSON.parse(detail);
+        } catch {
+          /* ignore */
+        }
       }
       schedule = detail;
     }
@@ -136,12 +174,13 @@ export class ServiceService {
       .andWhere('f.stars IS NOT NULL')
       .getRawOne<{ avg: string; count: string }>();
 
-    const companyRating = companyRatingRaw && companyRatingRaw.avg
-      ? {
-          average: Number(Number(companyRatingRaw.avg).toFixed(2)),
-          total: Number(companyRatingRaw.count),
-        }
-      : { average: 0, total: 0 };
+    const companyRating =
+      companyRatingRaw && companyRatingRaw.avg
+        ? {
+            average: Number(Number(companyRatingRaw.avg).toFixed(2)),
+            total: Number(companyRatingRaw.count),
+          }
+        : { average: 0, total: 0 };
 
     const companyInfo = {
       id: company.id,
@@ -172,7 +211,7 @@ export class ServiceService {
   async findOneWithWorkers(id: number, adminId: number): Promise<any> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -183,20 +222,25 @@ export class ServiceService {
     const service = await this.serviceRepository.findOne({
       where: {
         id: id,
-        companyId: company.id
-      }
+        companyId: company.id,
+      },
     });
 
     if (!service) {
-      throw new NotFoundException(`Service with id ${id} not found or you don't have permission`);
+      throw new NotFoundException(
+        `Service with id ${id} not found or you don't have permission`,
+      );
     }
 
     // 3. Obtener información de workers
-    const workersInfo = await this.getWorkersInfoForService(service.workers, company.id);
+    const workersInfo = await this.getWorkersInfoForService(
+      service.workers,
+      company.id,
+    );
 
     return {
       ...service,
-      workersInfo
+      workersInfo,
     };
   }
 
@@ -254,7 +298,9 @@ export class ServiceService {
       percentage: number;
     }>;
   }> {
-    const service = await this.serviceRepository.findOne({ where: { id: serviceId } });
+    const service = await this.serviceRepository.findOne({
+      where: { id: serviceId },
+    });
     if (!service) {
       throw new NotFoundException(`Service with id ${serviceId} not found`);
     }
@@ -313,7 +359,10 @@ export class ServiceService {
           if (!row) return null;
 
           const pictureURL = row.picture
-            ? this.fileUploadService.getFileUrl(this.WORKER_PHOTO_FOLDER, row.picture)
+            ? this.fileUploadService.getFileUrl(
+                this.WORKER_PHOTO_FOLDER,
+                row.picture,
+              )
             : '';
 
           return {
@@ -344,13 +393,16 @@ export class ServiceService {
   /**
    * Obtener información completa de workers asignados a un servicio
    */
-  private async getWorkersInfoForService(workersAssignments: Array<{ id: number, percentage: number }>, companyId: number): Promise<any[]> {
+  private async getWorkersInfoForService(
+    workersAssignments: Array<{ id: number; percentage: number }>,
+    companyId: number,
+  ): Promise<any[]> {
     if (!workersAssignments || workersAssignments.length === 0) {
       return [];
     }
 
     // Extraer solo los IDs para la consulta
-    const workerIds = workersAssignments.map(w => w.id);
+    const workerIds = workersAssignments.map((w) => w.id);
 
     // Obtener información de company_worker con relaciones
     const companyWorkers = await this.companyWorkerRepository
@@ -364,10 +416,13 @@ export class ServiceService {
 
     // Obtener ratings agregados por worker
     const workerEntityIds = companyWorkers
-      .map(cw => cw.worker?.id)
+      .map((cw) => cw.worker?.id)
       .filter((wid): wid is number => typeof wid === 'number');
 
-    const workerRatingMap = new Map<number, { average: number; total: number }>();
+    const workerRatingMap = new Map<
+      number,
+      { average: number; total: number }
+    >();
     if (workerEntityIds.length > 0) {
       const workerRatings = await this.workerFeedbackRepository
         .createQueryBuilder('f')
@@ -388,14 +443,16 @@ export class ServiceService {
     }
 
     // Combinar la información de la base de datos con los porcentajes del servicio
-    return workersAssignments.map(workerAssignment => {
-      const companyWorker = companyWorkers.find(cw => cw.id === workerAssignment.id);
+    return workersAssignments.map((workerAssignment) => {
+      const companyWorker = companyWorkers.find(
+        (cw) => cw.id === workerAssignment.id,
+      );
 
       if (!companyWorker) {
         return {
           id: workerAssignment.id,
           percentage: workerAssignment.percentage,
-          error: 'Worker not found or not active'
+          error: 'Worker not found or not active',
         };
       }
 
@@ -411,7 +468,7 @@ export class ServiceService {
           userType: companyWorker.worker.user.userType,
           emailVerified: companyWorker.worker.user.emailVerified,
           lastLogin: companyWorker.worker.user.lastLogin,
-          lastLogout: companyWorker.worker.user.lastLogout
+          lastLogout: companyWorker.worker.user.lastLogout,
         },
         workerInfo: {
           id: companyWorker.worker.id,
@@ -419,19 +476,25 @@ export class ServiceService {
           lastName: companyWorker.worker.lastName,
           picture: companyWorker.worker.picture,
           pictureUrl: companyWorker.worker.picture
-            ? this.fileUploadService.getFileUrl(this.WORKER_PHOTO_FOLDER, companyWorker.worker.picture)
+            ? this.fileUploadService.getFileUrl(
+                this.WORKER_PHOTO_FOLDER,
+                companyWorker.worker.picture,
+              )
             : null,
           phone: companyWorker.worker.phone,
           address: companyWorker.worker.address,
-          rating: workerRatingMap.get(companyWorker.worker.id) || { average: 0, total: 0 },
+          rating: workerRatingMap.get(companyWorker.worker.id) || {
+            average: 0,
+            total: 0,
+          },
         },
         companyWorkerInfo: {
           startDate: companyWorker.startDate,
           endDate: companyWorker.endDate,
           isActive: companyWorker.isActive,
           servicesDetail: companyWorker.servicesDetail,
-          calendar: companyWorker.calendar
-        }
+          calendar: companyWorker.calendar,
+        },
       };
     });
   }
@@ -440,10 +503,13 @@ export class ServiceService {
    * Crear un servicio (solo administradores)
    * Valida que los workers asignados pertenezcan a la compañía del admin
    */
-  async create(createServiceDto: CreateServiceDto, adminId: number): Promise<any> {
+  async create(
+    createServiceDto: CreateServiceDto,
+    adminId: number,
+  ): Promise<any> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -452,14 +518,17 @@ export class ServiceService {
 
     // 2. Validar workers si se proporcionan
     if (createServiceDto.workers && createServiceDto.workers.length > 0) {
-      await this.validateWorkersBelongToCompany(createServiceDto.workers, company.id);
+      await this.validateWorkersBelongToCompany(
+        createServiceDto.workers,
+        company.id,
+      );
     }
 
     // 3. Crear el servicio con el companyId del administrador
     const serviceData = {
       ...createServiceDto,
       companyId: company.id,
-      workers: createServiceDto.workers || []
+      workers: createServiceDto.workers || [],
     };
 
     const service = this.serviceRepository.create(serviceData);
@@ -472,10 +541,14 @@ export class ServiceService {
   /**
    * Actualizar un servicio (solo administradores)
    */
-  async update(id: number, updateServiceDto: UpdateServiceDto, adminId: number): Promise<any> {
+  async update(
+    id: number,
+    updateServiceDto: UpdateServiceDto,
+    adminId: number,
+  ): Promise<any> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -486,17 +559,22 @@ export class ServiceService {
     const service = await this.serviceRepository.findOne({
       where: {
         id: id,
-        companyId: company.id
-      }
+        companyId: company.id,
+      },
     });
 
     if (!service) {
-      throw new NotFoundException(`Service with id ${id} not found or you don't have permission`);
+      throw new NotFoundException(
+        `Service with id ${id} not found or you don't have permission`,
+      );
     }
 
     // 3. Validar workers si se proporcionan en la actualización
     if (updateServiceDto.workers && updateServiceDto.workers.length > 0) {
-      await this.validateWorkersBelongToCompany(updateServiceDto.workers, company.id);
+      await this.validateWorkersBelongToCompany(
+        updateServiceDto.workers,
+        company.id,
+      );
     }
 
     // 4. Actualizar el servicio
@@ -513,7 +591,7 @@ export class ServiceService {
   async remove(id: number, adminId: number): Promise<void> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -524,21 +602,25 @@ export class ServiceService {
     const service = await this.serviceRepository.findOne({
       where: {
         id: id,
-        companyId: company.id
-      }
+        companyId: company.id,
+      },
     });
 
     if (!service) {
-      throw new NotFoundException(`Service with id ${id} not found or you don't have permission`);
+      throw new NotFoundException(
+        `Service with id ${id} not found or you don't have permission`,
+      );
     }
 
     // 3. Verificar que el servicio no tenga sessions asociadas
     const sessionDetailCount = await this.sessionDetailRepository.count({
-      where: { serviceId: id }
+      where: { serviceId: id },
     });
 
     if (sessionDetailCount > 0) {
-      throw new BadRequestException('No se puede eliminar el servicio porque tiene sesiones asociadas');
+      throw new BadRequestException(
+        'No se puede eliminar el servicio porque tiene sesiones asociadas',
+      );
     }
 
     // 4. Eliminar service_offers relacionados
@@ -557,7 +639,7 @@ export class ServiceService {
   async inactivate(id: number, adminId: number): Promise<any> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -568,12 +650,14 @@ export class ServiceService {
     const service = await this.serviceRepository.findOne({
       where: {
         id: id,
-        companyId: company.id
-      }
+        companyId: company.id,
+      },
     });
 
     if (!service) {
-      throw new NotFoundException(`Service with id ${id} not found or you don't have permission`);
+      throw new NotFoundException(
+        `Service with id ${id} not found or you don't have permission`,
+      );
     }
 
     // 3. Inactivar el servicio
@@ -589,35 +673,35 @@ export class ServiceService {
    */
   private async validateWorkersBelongToCompany(
     workers: Array<{ id: number; percentage: number }>,
-    companyId: number
+    companyId: number,
   ): Promise<void> {
     if (!workers || workers.length === 0) return;
 
-    const workerIds = workers.map(w => w.id);
+    const workerIds = workers.map((w) => w.id);
 
     const validCompanyWorkers = await this.companyWorkerRepository.find({
       where: {
         id: In(workerIds),
         companyId: companyId,
-        isActive: 1
+        isActive: 1,
       },
-      select: ['id']
+      select: ['id'],
     });
 
-    const validIds = validCompanyWorkers.map(cw => cw.id);
-    const invalidIds = workerIds.filter(id => !validIds.includes(id));
+    const validIds = validCompanyWorkers.map((cw) => cw.id);
+    const invalidIds = workerIds.filter((id) => !validIds.includes(id));
 
     if (invalidIds.length > 0) {
       throw new BadRequestException(
-        `Los siguientes workers no pertenecen a tu compañía o no están activos: ${invalidIds.join(', ')}`
+        `Los siguientes workers no pertenecen a tu compañía o no están activos: ${invalidIds.join(', ')}`,
       );
     }
 
     // Validar que los porcentajes sean válidos
-    workers.forEach(worker => {
+    workers.forEach((worker) => {
       if (worker.percentage < 0 || worker.percentage > 100) {
         throw new BadRequestException(
-          `El porcentaje para el worker ${worker.id} debe estar entre 0 y 100`
+          `El porcentaje para el worker ${worker.id} debe estar entre 0 y 100`,
         );
       }
     });
@@ -637,7 +721,4 @@ export class ServiceService {
     }
     return service;
   }
-
-
-  
 }

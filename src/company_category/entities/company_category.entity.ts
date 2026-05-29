@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
 
 @Entity('company_category')
@@ -12,7 +18,9 @@ export class CompanyCategory {
   @Column({ name: 'company_id', nullable: false })
   companyId: number;
 
-  @ManyToOne(() => Company, (company) => company.categories, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Company, (company) => company.categories, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'company_id' })
   company: Company;
 }

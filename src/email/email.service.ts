@@ -4,312 +4,352 @@ import { Resend } from 'resend';
 
 @Injectable()
 export class EmailService {
-    private readonly logger = new Logger(EmailService.name);
-    private resend: Resend;
-    private readonly fromEmail: string;
+  private readonly logger = new Logger(EmailService.name);
+  private resend: Resend;
+  private readonly fromEmail: string;
 
-    constructor(private configService: ConfigService) {
-        const apiKey = this.configService.get('RESEND_API_KEY');
-        const domain = this.configService.get('RESEND_DOMAIN', 'example.com');
+  constructor(private configService: ConfigService) {
+    const apiKey = this.configService.get('RESEND_API_KEY');
+    const domain = this.configService.get('RESEND_DOMAIN', 'example.com');
 
-        if (!apiKey) {
-            this.logger.error('RESEND_API_KEY no está configurada en las variables de entorno');
-            return;
-        }
-
-        this.resend = new Resend(apiKey);
-        this.fromEmail = this.configService.get('RESEND_FROM_EMAIL', `Your App <no-reply@${domain}>`);
-        this.logger.log(`Resend inicializado correctamente con dominio: ${domain}`);
+    if (!apiKey) {
+      this.logger.error(
+        'RESEND_API_KEY no está configurada en las variables de entorno',
+      );
+      return;
     }
 
-    async sendVerificationCode(email: string, code: string, username: string): Promise<boolean> {
-        return this.sendCodeEmail(email, code, username, 'Verifica tu cuenta', this.getVerificationEmailTemplate(username, code));
-    }
+    this.resend = new Resend(apiKey);
+    this.fromEmail = this.configService.get(
+      'RESEND_FROM_EMAIL',
+      `Your App <no-reply@${domain}>`,
+    );
+    this.logger.log(`Resend inicializado correctamente con dominio: ${domain}`);
+  }
 
-    async sendPasswordResetCode(email: string, code: string, username: string): Promise<boolean> {
-        return this.sendCodeEmail(email, code, username, 'Restablecer contraseña', this.getPasswordResetEmailTemplate(username, code));
-    }
+  async sendVerificationCode(
+    email: string,
+    code: string,
+    username: string,
+  ): Promise<boolean> {
+    return this.sendCodeEmail(
+      email,
+      code,
+      username,
+      'Verifica tu cuenta',
+      this.getVerificationEmailTemplate(username, code),
+    );
+  }
 
-    private async sendCodeEmail(email: string, code: string, username: string, subject: string, html: string): Promise<boolean> {
-        try {
-            if (!this.resend) {
-                this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
-                return false;
-            }
+  async sendPasswordResetCode(
+    email: string,
+    code: string,
+    username: string,
+  ): Promise<boolean> {
+    return this.sendCodeEmail(
+      email,
+      code,
+      username,
+      'Restablecer contraseña',
+      this.getPasswordResetEmailTemplate(username, code),
+    );
+  }
 
-            this.logger.log(`Enviando código ${code} a ${email}`);
-
-            const { data, error } = await this.resend.emails.send({
-                from: this.fromEmail,
-                to: email,
-                subject,
-                html,
-            });
-
-            if (error) {
-                this.logger.error('Error de Resend:', error);
-                return false;
-            }
-
-            this.logger.log(`✅ Email (${subject}) enviado exitosamente`);
-            return true;
-        } catch (error) {
-            this.logger.error('Error inesperado enviando email:', error);
-            return false;
-        }
-    }
-
-    async sendPasswordChangedNotification(email: string, username: string): Promise<boolean> {
-        try {
-            if (!this.resend) {
-                this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
-                return false;
-            }
-
-            this.logger.log(`Enviando notificación de cambio de contraseña a ${email}`);
-
-            const { data, error } = await this.resend.emails.send({
-                from: this.fromEmail,
-                to: email,
-                subject: 'Contraseña cambiada',
-                html: this.getPasswordChangedEmailTemplate(username),
-            });
-
-            if (error) {
-                this.logger.error('Error de Resend al enviar notificación:', error);
-                return false;
-            }
-
-            this.logger.log('✅ Notificación de cambio de contraseña enviada');
-            return true;
-        } catch (error) {
-            this.logger.error('Error inesperado enviando notificación:', error);
-            return false;
-        }
-    }
-    async sendEmail(to: string, subject: string, html: string): Promise<boolean> {
-        try {
-            if (!this.resend) {
-                this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
-                return false;
-            }
-
-            this.logger.log(`Enviando email a ${to} con asunto: ${subject}`);
-
-            const { data, error } = await this.resend.emails.send({
-                from: this.fromEmail,
-                to: to,
-                subject: subject,
-                html: html,
-            });
-
-            if (error) {
-                this.logger.error('Error de Resend:', error);
-                return false;
-            }
-
-            this.logger.log(`✅ Email enviado exitosamente a ${to}`);
-            return true;
-        } catch (error) {
-            this.logger.error('Error inesperado enviando email:', error);
-            return false;
-        }
-    }
-
-    async sendSessionConfirmationToClient(
-        clientEmail: string,
-        clientName: string,
-        sessionData: {
-            date: string;
-            time: string;
-            serviceName: string;
-            serviceCost: number;
-            serviceDuration: number;
-        },
-        workerInfo: {
-            name: string;
-            phone?: string;
-        },
-        companyInfo: {
-            name: string;
-            address?: string;
-            email?: string;
-        }
-    ): Promise<boolean> {
-        const html = this.getSessionConfirmationTemplate(
-            clientName,
-            sessionData,
-            workerInfo,
-            companyInfo
+  private async sendCodeEmail(
+    email: string,
+    code: string,
+    username: string,
+    subject: string,
+    html: string,
+  ): Promise<boolean> {
+    try {
+      if (!this.resend) {
+        this.logger.error(
+          'Resend no está inicializado. Verifica RESEND_API_KEY',
         );
+        return false;
+      }
 
-        return this.sendEmail(
-            clientEmail,
-            `Confirmación de cita - ${sessionData.date}`,
-            html
-        );
+      this.logger.log(`Enviando código ${code} a ${email}`);
+
+      const { data, error } = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: email,
+        subject,
+        html,
+      });
+
+      if (error) {
+        this.logger.error('Error de Resend:', error);
+        return false;
+      }
+
+      this.logger.log(`✅ Email (${subject}) enviado exitosamente`);
+      return true;
+    } catch (error) {
+      this.logger.error('Error inesperado enviando email:', error);
+      return false;
     }
+  }
 
-    async sendSessionNotificationToWorker(
-        workerEmail: string,
-        workerName: string,
-        sessionData: {
-            date: string;
-            time: string;
-            serviceName: string;
-            clientName: string;
-            clientPhone?: string;
-            serviceCost: number;
-            serviceDuration: number;
-        },
-        clientInfo: {
-            name: string;
-            phone?: string;
-        },
-        companyInfo: {
-            name: string;
-            address?: string;
-            email?: string;
-        }
-    ): Promise<boolean> {
-        const html = this.getSessionNotificationTemplate(
-            workerName,
-            sessionData,
-            clientInfo,
-            companyInfo
+  async sendPasswordChangedNotification(
+    email: string,
+    username: string,
+  ): Promise<boolean> {
+    try {
+      if (!this.resend) {
+        this.logger.error(
+          'Resend no está inicializado. Verifica RESEND_API_KEY',
         );
+        return false;
+      }
 
-        return this.sendEmail(
-            workerEmail,
-            `Nueva cita asignada - ${sessionData.date}`,
-            html
-        );
+      this.logger.log(
+        `Enviando notificación de cambio de contraseña a ${email}`,
+      );
+
+      const { data, error } = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: email,
+        subject: 'Contraseña cambiada',
+        html: this.getPasswordChangedEmailTemplate(username),
+      });
+
+      if (error) {
+        this.logger.error('Error de Resend al enviar notificación:', error);
+        return false;
+      }
+
+      this.logger.log('✅ Notificación de cambio de contraseña enviada');
+      return true;
+    } catch (error) {
+      this.logger.error('Error inesperado enviando notificación:', error);
+      return false;
     }
-
-    async sendSessionNotificationToAdmin(
-        adminEmail: string,
-        adminName: string,
-        sessionData: {
-            date: string;
-            time: string;
-            serviceName: string;
-            serviceCost: number;
-            serviceDuration: number;
-        },
-        clientInfo: {
-            name: string;
-            email?: string;
-            phone?: string;
-        },
-        workerInfo: {
-            name: string;
-            email?: string;
-            phone?: string;
-        },
-        companyInfo: {
-            name: string;
-            address?: string;
-            email?: string;
-        }
-    ): Promise<boolean> {
-        const html = this.getSessionAdminNotificationTemplate(
-            adminName,
-            sessionData,
-            clientInfo,
-            workerInfo,
-            companyInfo
+  }
+  async sendEmail(to: string, subject: string, html: string): Promise<boolean> {
+    try {
+      if (!this.resend) {
+        this.logger.error(
+          'Resend no está inicializado. Verifica RESEND_API_KEY',
         );
+        return false;
+      }
 
-        return this.sendEmail(
-            adminEmail,
-            `📋 Nueva cita agendada - ${sessionData.date}`,
-            html
-        );
+      this.logger.log(`Enviando email a ${to} con asunto: ${subject}`);
+
+      const { data, error } = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: to,
+        subject: subject,
+        html: html,
+      });
+
+      if (error) {
+        this.logger.error('Error de Resend:', error);
+        return false;
+      }
+
+      this.logger.log(`✅ Email enviado exitosamente a ${to}`);
+      return true;
+    } catch (error) {
+      this.logger.error('Error inesperado enviando email:', error);
+      return false;
     }
+  }
 
-    formatSessionDate(date: Date): { date: string; time: string } {
-        const sessionDate = new Date(date);
+  async sendSessionConfirmationToClient(
+    clientEmail: string,
+    clientName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      serviceCost: number;
+      serviceDuration: number;
+    },
+    workerInfo: {
+      name: string;
+      phone?: string;
+    },
+    companyInfo: {
+      name: string;
+      address?: string;
+      email?: string;
+    },
+  ): Promise<boolean> {
+    const html = this.getSessionConfirmationTemplate(
+      clientName,
+      sessionData,
+      workerInfo,
+      companyInfo,
+    );
 
-        const dateStr = sessionDate.toLocaleDateString('es-ES', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
+    return this.sendEmail(
+      clientEmail,
+      `Confirmación de cita - ${sessionData.date}`,
+      html,
+    );
+  }
 
-        const timeStr = sessionDate.toLocaleTimeString('es-ES', {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+  async sendSessionNotificationToWorker(
+    workerEmail: string,
+    workerName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      clientName: string;
+      clientPhone?: string;
+      serviceCost: number;
+      serviceDuration: number;
+    },
+    clientInfo: {
+      name: string;
+      phone?: string;
+    },
+    companyInfo: {
+      name: string;
+      address?: string;
+      email?: string;
+    },
+  ): Promise<boolean> {
+    const html = this.getSessionNotificationTemplate(
+      workerName,
+      sessionData,
+      clientInfo,
+      companyInfo,
+    );
 
-        return {
-            date: dateStr.charAt(0).toUpperCase() + dateStr.slice(1),
-            time: timeStr
-        };
-    }
+    return this.sendEmail(
+      workerEmail,
+      `Nueva cita asignada - ${sessionData.date}`,
+      html,
+    );
+  }
 
+  async sendSessionNotificationToAdmin(
+    adminEmail: string,
+    adminName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      serviceCost: number;
+      serviceDuration: number;
+    },
+    clientInfo: {
+      name: string;
+      email?: string;
+      phone?: string;
+    },
+    workerInfo: {
+      name: string;
+      email?: string;
+      phone?: string;
+    },
+    companyInfo: {
+      name: string;
+      address?: string;
+      email?: string;
+    },
+  ): Promise<boolean> {
+    const html = this.getSessionAdminNotificationTemplate(
+      adminName,
+      sessionData,
+      clientInfo,
+      workerInfo,
+      companyInfo,
+    );
 
+    return this.sendEmail(
+      adminEmail,
+      `📋 Nueva cita agendada - ${sessionData.date}`,
+      html,
+    );
+  }
 
-    // ============ CANCELACIÓN DE CITAS ============
+  formatSessionDate(date: Date): { date: string; time: string } {
+    const sessionDate = new Date(date);
 
-    /**
-     * Envía correo de cancelación al cliente
-     */
-    async sendSessionCancellationToClient(
-        clientEmail: string,
-        clientName: string,
-        sessionData: {
-            date: string;
-            time: string;
-            reason: string;
-        },
-        companyInfo: {
-            name: string;
-            email?: string;
-            address?: string;
-        }
-    ): Promise<boolean> {
-        const html = this.getSessionCancellationClientTemplate(
-            clientName,
-            sessionData,
-            companyInfo
-        );
+    const dateStr = sessionDate.toLocaleDateString('es-ES', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
 
-        return this.sendEmail(
-            clientEmail,
-            `❌ Cita cancelada - ${sessionData.date}`,
-            html
-        );
-    }
+    const timeStr = sessionDate.toLocaleTimeString('es-ES', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
 
-    /**
-     * Envía correo de cancelación al trabajador
-     */
-    async sendSessionCancellationToWorker(
-        workerEmail: string,
-        workerName: string,
-        sessionData: {
-            date: string;
-            time: string;
-            serviceName: string;
-            clientName: string;
-            reason: string;
-        }
-    ): Promise<boolean> {
-        const html = this.getSessionCancellationWorkerTemplate(
-            workerName,
-            sessionData
-        );
+    return {
+      date: dateStr.charAt(0).toUpperCase() + dateStr.slice(1),
+      time: timeStr,
+    };
+  }
 
-        return this.sendEmail(
-            workerEmail,
-            `❌ Cita cancelada - ${sessionData.date}`,
-            html
-        );
-    }
+  // ============ CANCELACIÓN DE CITAS ============
 
-    private getVerificationEmailTemplate(username: string, code: string): string {
-        return `
+  /**
+   * Envía correo de cancelación al cliente
+   */
+  async sendSessionCancellationToClient(
+    clientEmail: string,
+    clientName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      reason: string;
+    },
+    companyInfo: {
+      name: string;
+      email?: string;
+      address?: string;
+    },
+  ): Promise<boolean> {
+    const html = this.getSessionCancellationClientTemplate(
+      clientName,
+      sessionData,
+      companyInfo,
+    );
+
+    return this.sendEmail(
+      clientEmail,
+      `❌ Cita cancelada - ${sessionData.date}`,
+      html,
+    );
+  }
+
+  /**
+   * Envía correo de cancelación al trabajador
+   */
+  async sendSessionCancellationToWorker(
+    workerEmail: string,
+    workerName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      clientName: string;
+      reason: string;
+    },
+  ): Promise<boolean> {
+    const html = this.getSessionCancellationWorkerTemplate(
+      workerName,
+      sessionData,
+    );
+
+    return this.sendEmail(
+      workerEmail,
+      `❌ Cita cancelada - ${sessionData.date}`,
+      html,
+    );
+  }
+
+  private getVerificationEmailTemplate(username: string, code: string): string {
+    return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -692,10 +732,13 @@ export class EmailService {
       </body>
       </html>
     `;
-    }
+  }
 
-    private getPasswordResetEmailTemplate(username: string, code: string): string {
-        return `
+  private getPasswordResetEmailTemplate(
+    username: string,
+    code: string,
+  ): string {
+    return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -1144,10 +1187,10 @@ export class EmailService {
       </body>
       </html>
     `;
-    }
+  }
 
-    private getPasswordChangedEmailTemplate(username: string): string {
-        return `
+  private getPasswordChangedEmailTemplate(username: string): string {
+    return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -1512,13 +1555,13 @@ export class EmailService {
                   <div class="timestamp" style="background-color: #f8fafc; border-radius: 8px; padding: 18px; text-align: center; margin: 25px 0; font-size: 14.5px; color: #475569; border: 1px solid #e2e8f0; line-height: 1.5;">
                       <strong>Fecha y Hora del Cambio:</strong><br>
                       ${new Date().toLocaleString('es-ES', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        })}
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
                   </div>
                   
                   <!-- SECCIÓN DE DESCARGA DE APP -->
@@ -1586,62 +1629,72 @@ export class EmailService {
       </body>
       </html>
     `;
-    }
+  }
 
-    async sendWorkerCredentials(
-        email: string,
-        username: string,
-        password: string,
-        companyName: string
-    ): Promise<boolean> {
-        return this.sendCredentialsEmail(
-            email,
-            username,
-            password,
-            companyName,
-            'Bienvenido a CLYPS - Tus Credenciales de Acceso',
-            this.getWorkerCredentialsTemplate(username, password, companyName)
+  async sendWorkerCredentials(
+    email: string,
+    username: string,
+    password: string,
+    companyName: string,
+  ): Promise<boolean> {
+    return this.sendCredentialsEmail(
+      email,
+      username,
+      password,
+      companyName,
+      'Bienvenido a CLYPS - Tus Credenciales de Acceso',
+      this.getWorkerCredentialsTemplate(username, password, companyName),
+    );
+  }
+
+  private async sendCredentialsEmail(
+    email: string,
+    username: string,
+    password: string,
+    companyName: string,
+    subject: string,
+    html: string,
+  ): Promise<boolean> {
+    try {
+      if (!this.resend) {
+        this.logger.error(
+          'Resend no está inicializado. Verifica RESEND_API_KEY',
         );
+        return false;
+      }
+
+      this.logger.log(
+        `Enviando credenciales a ${email} para la compañía ${companyName}`,
+      );
+
+      const { data, error } = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: email,
+        subject,
+        html,
+      });
+
+      if (error) {
+        this.logger.error('Error de Resend:', error);
+        return false;
+      }
+
+      this.logger.log(
+        `✅ Credenciales enviadas exitosamente a ${email} para la compañía ${companyName}`,
+      );
+      return true;
+    } catch (error) {
+      this.logger.error('Error inesperado enviando credenciales:', error);
+      return false;
     }
+  }
 
-    private async sendCredentialsEmail(
-        email: string,
-        username: string,
-        password: string,
-        companyName: string,
-        subject: string,
-        html: string
-    ): Promise<boolean> {
-        try {
-            if (!this.resend) {
-                this.logger.error('Resend no está inicializado. Verifica RESEND_API_KEY');
-                return false;
-            }
-
-            this.logger.log(`Enviando credenciales a ${email} para la compañía ${companyName}`);
-
-            const { data, error } = await this.resend.emails.send({
-                from: this.fromEmail,
-                to: email,
-                subject,
-                html,
-            });
-
-            if (error) {
-                this.logger.error('Error de Resend:', error);
-                return false;
-            }
-
-            this.logger.log(`✅ Credenciales enviadas exitosamente a ${email} para la compañía ${companyName}`);
-            return true;
-        } catch (error) {
-            this.logger.error('Error inesperado enviando credenciales:', error);
-            return false;
-        }
-    }
-
-    private getWorkerCredentialsTemplate(username: string, password: string, companyName: string): string {
-        return `
+  private getWorkerCredentialsTemplate(
+    username: string,
+    password: string,
+    companyName: string,
+  ): string {
+    return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -2335,21 +2388,28 @@ export class EmailService {
       </body>
       </html>
     `;
-    }
+  }
 
-    async sendClientCredentials(email: string, username: string, password: string): Promise<boolean> {
-        return this.sendCredentialsEmail(
-            email,
-            username,
-            password,
-            'CLYPS',
-            'Bienvenido a CLYPS - Tus Credenciales de Acceso',
-            this.getClientCredentialsTemplate(username, password)
-        );
-    }
+  async sendClientCredentials(
+    email: string,
+    username: string,
+    password: string,
+  ): Promise<boolean> {
+    return this.sendCredentialsEmail(
+      email,
+      username,
+      password,
+      'CLYPS',
+      'Bienvenido a CLYPS - Tus Credenciales de Acceso',
+      this.getClientCredentialsTemplate(username, password),
+    );
+  }
 
-    private getClientCredentialsTemplate(username: string, password: string): string {
-        return `
+  private getClientCredentialsTemplate(
+    username: string,
+    password: string,
+  ): string {
+    return `
       <!DOCTYPE html>
       <html>
       <head>
@@ -2691,28 +2751,28 @@ export class EmailService {
       </body>
       </html>
     `;
-    }
+  }
 
-    private getSessionConfirmationTemplate(
-        clientName: string,
-        sessionData: {
-            date: string;
-            time: string;
-            serviceName: string;
-            serviceCost: number;
-            serviceDuration: number;
-        },
-        workerInfo: {
-            name: string;
-            phone?: string;
-        },
-        companyInfo: {
-            name: string;
-            address?: string;
-            email?: string;
-        }
-    ): string {
-        return `
+  private getSessionConfirmationTemplate(
+    clientName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      serviceCost: number;
+      serviceDuration: number;
+    },
+    workerInfo: {
+      name: string;
+      phone?: string;
+    },
+    companyInfo: {
+      name: string;
+      address?: string;
+      email?: string;
+    },
+  ): string {
+    return `
     <!DOCTYPE html>
     <html>
     <head>
@@ -3171,28 +3231,40 @@ export class EmailService {
                         <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Compañía:</span>
                         <span class="info-value" style="color: #475569;">${companyInfo.name}</span>
                     </div>
-                    ${companyInfo.address ? `
+                    ${
+                      companyInfo.address
+                        ? `
                     <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
                         <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Dirección:</span>
                         <span class="info-value" style="color: #475569;">${companyInfo.address}</span>
                     </div>
-                    ` : ''}
-                    ${companyInfo.email ? `
+                    `
+                        : ''
+                    }
+                    ${
+                      companyInfo.email
+                        ? `
                     <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
                         <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Email de la compañia:</span>
                         <span class="info-value" style="color: #475569;">${companyInfo.email}</span>
                     </div>
-                    ` : ''}
+                    `
+                        : ''
+                    }
                     <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
                         <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Profesional:</span>
                         <span class="info-value" style="color: #475569;">${workerInfo.name}</span>
                     </div>
-                    ${workerInfo.phone ? `
+                    ${
+                      workerInfo.phone
+                        ? `
                     <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
                         <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Teléfono:</span>
                         <span class="info-value" style="color: #475569;">${workerInfo.phone}</span>
                     </div>
-                    ` : ''}
+                    `
+                        : ''
+                    }
                 </div>
                 
                 <div class="reminder-card" style="background-color: #fff7ed; border-radius: 8px; padding: 25px; margin: 25px 0; border: 1px solid #fdba74;">
@@ -3261,31 +3333,30 @@ export class EmailService {
     </body>
     </html>
   `;
-    }
+  }
 
-
-    private getSessionNotificationTemplate(
-        workerName: string,
-        sessionData: {
-            date: string;
-            time: string;
-            serviceName: string;
-            clientName: string;
-            clientPhone?: string;
-            serviceCost: number;
-            serviceDuration: number;
-        },
-        clientInfo: {
-            name: string;
-            phone?: string;
-        },
-        companyInfo: {
-            name: string;
-            address?: string;
-            email?: string;
-        }
-    ): string {
-        return `
+  private getSessionNotificationTemplate(
+    workerName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      clientName: string;
+      clientPhone?: string;
+      serviceCost: number;
+      serviceDuration: number;
+    },
+    clientInfo: {
+      name: string;
+      phone?: string;
+    },
+    companyInfo: {
+      name: string;
+      address?: string;
+      email?: string;
+    },
+  ): string {
+    return `
     <!DOCTYPE html>
     <html>
     <head>
@@ -3744,22 +3815,30 @@ export class EmailService {
                         <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Cliente:</span>
                         <span class="info-value" style="color: #475569;">${clientInfo.name}</span>
                     </div>
-                    ${clientInfo.phone ? `
+                    ${
+                      clientInfo.phone
+                        ? `
                     <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
                         <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Teléfono:</span>
                         <span class="info-value" style="color: #475569;">${clientInfo.phone}</span>
                     </div>
-                    ` : ''}
+                    `
+                        : ''
+                    }
                     <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
                         <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Compañía:</span>
                         <span class="info-value" style="color: #475569;">${companyInfo.name}</span>
                     </div>
-                    ${companyInfo.address ? `
+                    ${
+                      companyInfo.address
+                        ? `
                     <div class="info-item" style="margin-bottom: 12px; line-height: 1.5;">
                         <span class="info-label" style="font-weight: 600; color: #0369a1; display: inline-block; width: 120px;">Dirección:</span>
                         <span class="info-value" style="color: #475569;">${companyInfo.address}</span>
                     </div>
-                    ` : ''}
+                    `
+                        : ''
+                    }
                 </div>
                 
                 <div class="reminder-card" style="background-color: #fff7ed; border-radius: 8px; padding: 25px; margin: 25px 0; border: 1px solid #fdba74;">
@@ -3828,18 +3907,17 @@ export class EmailService {
     </body>
     </html>
   `;
-    }
+  }
 
-
-    /**
- * Plantilla para correo de cancelación al cliente
- */
-    private getSessionCancellationClientTemplate(
-        clientName: string,
-        sessionData: { date: string; time: string; reason: string },
-        companyInfo: { name: string; email?: string; address?: string }
-    ): string {
-        return `
+  /**
+   * Plantilla para correo de cancelación al cliente
+   */
+  private getSessionCancellationClientTemplate(
+    clientName: string,
+    sessionData: { date: string; time: string; reason: string },
+    companyInfo: { name: string; email?: string; address?: string },
+  ): string {
+    return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -3910,22 +3988,22 @@ export class EmailService {
 </body>
 </html>
   `;
-    }
+  }
 
-    /**
-     * Plantilla para correo de cancelación al trabajador
-     */
-    private getSessionCancellationWorkerTemplate(
-        workerName: string,
-        sessionData: {
-            date: string;
-            time: string;
-            serviceName: string;
-            clientName: string;
-            reason: string;
-        }
-    ): string {
-        return `
+  /**
+   * Plantilla para correo de cancelación al trabajador
+   */
+  private getSessionCancellationWorkerTemplate(
+    workerName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      clientName: string;
+      reason: string;
+    },
+  ): string {
+    return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -4000,39 +4078,39 @@ export class EmailService {
 </body>
 </html>
   `;
-    }
+  }
 
-    private getSessionAdminNotificationTemplate(
-        adminName: string,
-        sessionData: {
-            date: string;
-            time: string;
-            serviceName: string;
-            serviceCost: number;
-            serviceDuration: number;
-        },
-        clientInfo: {
-            name: string;
-            email?: string;
-            phone?: string;
-        },
-        workerInfo: {
-            name: string;
-            email?: string;
-            phone?: string;
-        },
-        companyInfo: {
-            name: string;
-            address?: string;
-            email?: string;
-        }
-    ): string {
-        const formattedCost = new Intl.NumberFormat('es-ES', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2
-        }).format(Number(sessionData.serviceCost) || 0);
+  private getSessionAdminNotificationTemplate(
+    adminName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      serviceCost: number;
+      serviceDuration: number;
+    },
+    clientInfo: {
+      name: string;
+      email?: string;
+      phone?: string;
+    },
+    workerInfo: {
+      name: string;
+      email?: string;
+      phone?: string;
+    },
+    companyInfo: {
+      name: string;
+      address?: string;
+      email?: string;
+    },
+  ): string {
+    const formattedCost = new Intl.NumberFormat('es-ES', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(sessionData.serviceCost) || 0);
 
-        return `
+    return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -4112,11 +4190,15 @@ export class EmailService {
           <div class="info-value">${clientInfo.phone || '—'}</div>
         </div>
       </div>
-      ${clientInfo.email ? `
+      ${
+        clientInfo.email
+          ? `
       <div class="full-card">
         <div class="info-label">✉️ Email</div>
         <div class="info-value">${clientInfo.email}</div>
-      </div>` : ''}
+      </div>`
+          : ''
+      }
 
       <div class="section-title">Trabajador asignado</div>
       <div class="info-grid">
@@ -4129,11 +4211,15 @@ export class EmailService {
           <div class="info-value">${workerInfo.phone || '—'}</div>
         </div>
       </div>
-      ${workerInfo.email ? `
+      ${
+        workerInfo.email
+          ? `
       <div class="full-card">
         <div class="info-label">✉️ Email</div>
         <div class="info-value">${workerInfo.email}</div>
-      </div>` : ''}
+      </div>`
+          : ''
+      }
 
       <div class="section-title">Empresa</div>
       <div class="full-card">
@@ -4152,5 +4238,5 @@ export class EmailService {
 </body>
 </html>
   `;
-    }
+  }
 }

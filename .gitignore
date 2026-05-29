@@ -55,3 +55,7 @@ pids
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# DigitalOcean App Spec backups (local-only, may contain secret references)
+app-actual-backup.yaml
+app-*.backup.yaml

@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsString, MaxLength, IsBoolean, IsOptional } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+  IsBoolean,
+  IsOptional,
+} from 'class-validator';
 
 export class CreateServiceCategoryDto {
   @IsNotEmpty()

@@ -7,8 +7,8 @@ import { TokenBlacklistService } from '../services/token_blacklist.service';
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    private configService: ConfigService,    
-    private tokenBlacklistService: TokenBlacklistService, 
+    private configService: ConfigService,
+    private tokenBlacklistService: TokenBlacklistService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -22,18 +22,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // Verificar si el token está en la blacklist
     const authHeader = request.headers['authorization'];
     const token = this.tokenBlacklistService.extractTokenFromHeader(authHeader);
-    
+
     if (token) {
-      const isBlacklisted = await this.tokenBlacklistService.isTokenBlacklisted(token);
+      const isBlacklisted =
+        await this.tokenBlacklistService.isTokenBlacklisted(token);
       if (isBlacklisted) {
         throw new UnauthorizedException('Token inválido o sesión expirada');
       }
     }
 
-    return { 
-      sub: payload.sub, 
+    return {
+      sub: payload.sub,
       email: payload.email,
-      userType: payload.userType 
+      userType: payload.userType,
     };
   }
 }

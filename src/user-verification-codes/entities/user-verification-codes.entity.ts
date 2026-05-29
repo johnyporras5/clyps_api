@@ -1,4 +1,11 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 
 @Entity('user_verification_codes')
@@ -22,14 +29,14 @@ export class UserVerificationCodes {
     name: 'code_type',
     type: 'varchar',
     length: 50,
-    default: 'email_verification'
+    default: 'email_verification',
   })
   codeType: string;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @ManyToOne(() => User, user => user.verificationCodes)
+  @ManyToOne(() => User, (user) => user.verificationCodes)
   @JoinColumn({ name: 'user_id' })
   user: User;
 }

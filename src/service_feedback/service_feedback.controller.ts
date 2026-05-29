@@ -26,7 +26,9 @@ import { Roles } from '../auth/decorators/roles.decorator';
 @Controller('servicefeedbacks')
 @UseGuards(JwtAuthGuard)
 export class ServiceFeedbackController {
-  constructor(private readonly serviceFeedbackService: ServiceFeedbackService) {}
+  constructor(
+    private readonly serviceFeedbackService: ServiceFeedbackService,
+  ) {}
 
   // =============================================
   // Crear feedback para un servicio (cliente)
@@ -86,7 +88,9 @@ export class ServiceFeedbackController {
   // =============================================
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  async findOne(@Param('id', ParseIntPipe) id: number): Promise<ServiceFeedback> {
+  async findOne(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ServiceFeedback> {
     return this.serviceFeedbackService.findOne(id);
   }
 
@@ -102,7 +106,12 @@ export class ServiceFeedbackController {
   ): Promise<ServiceFeedback> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;
-    return this.serviceFeedbackService.update(id, updateDto, requesterUserId, requesterUserType);
+    return this.serviceFeedbackService.update(
+      id,
+      updateDto,
+      requesterUserId,
+      requesterUserType,
+    );
   }
 
   // =============================================
@@ -117,7 +126,11 @@ export class ServiceFeedbackController {
   ): Promise<{ message: string }> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;
-    await this.serviceFeedbackService.remove(id, requesterUserId, requesterUserType);
+    await this.serviceFeedbackService.remove(
+      id,
+      requesterUserId,
+      requesterUserType,
+    );
     return { message: 'Feedback eliminado correctamente' };
   }
 }

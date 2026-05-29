@@ -7,9 +7,12 @@ import { Worker } from '../worker/entities/worker.entity';
 import { CommonModule } from 'src/common/common.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([PortfolioPictures, Worker]), CommonModule],
+  imports: [
+    TypeOrmModule.forFeature([PortfolioPictures, Worker]),
+    CommonModule,
+  ],
   providers: [PortfolioPicturesService],
   controllers: [PortfolioPicturesController],
   exports: [PortfolioPicturesService],
 })
-export class PortfolioPicturesModule { }
+export class PortfolioPicturesModule {}

@@ -1,7 +1,13 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsEmail,
+  IsString,
+  IsBoolean,
+  IsNumber,
+} from 'class-validator';
 
 export class CreateSessionDto {
-
   @IsOptional()
   @IsNumber()
   clientId?: number;
@@ -30,7 +36,7 @@ export class CreateSessionDto {
   @IsOptional()
   @IsNumber()
   status?: number;
-  
+
   @IsOptional()
   @IsString()
   description?: string;

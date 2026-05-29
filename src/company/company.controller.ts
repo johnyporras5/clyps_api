@@ -32,21 +32,21 @@ import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
 @Controller('companys')
 @UseGuards(JwtAuthGuard)
 export class CompanyController {
-  constructor(private readonly companyService: CompanyService) { }
+  constructor(private readonly companyService: CompanyService) {}
 
   @Get()
   async findAll(
-    @Query() paginationDto: PaginationDto
+    @Query() paginationDto: PaginationDto,
   ): Promise<PaginationResult<CompanyWithLogoUrl>> {
     return this.companyService.findAll({
       page: paginationDto.page,
-      limit: paginationDto.limit
+      limit: paginationDto.limit,
     });
   }
 
   @Get('filter')
   async findByFilters(
-    @Query() dto: GetCompaniesFilterDto
+    @Query() dto: GetCompaniesFilterDto,
   ): Promise<PaginationResult<CompanyWithLogoUrl>> {
     return this.companyService.findByFilters(dto);
   }
@@ -68,24 +68,18 @@ export class CompanyController {
   }
 
   @Get(':id')
-  async findOne(
-    @Param('id', ParseIntPipe) id: number
-  ): Promise<any> {
+  async findOne(@Param('id', ParseIntPipe) id: number): Promise<any> {
     return this.companyService.findOne(id);
   }
 
   @Get('admin/profile')
-  async getAdminProfile(
-    @Req() req
-  ): Promise<CompanyWithLogoUrl> {
+  async getAdminProfile(@Req() req): Promise<CompanyWithLogoUrl> {
     const userId = req.user.sub;
     return this.companyService.findByUserId(userId);
   }
 
   @Post()
-  async create(
-    @Body() createCompanyDto: CreateCompanyDto
-  ): Promise<Company> {
+  async create(@Body() createCompanyDto: CreateCompanyDto): Promise<Company> {
     return this.companyService.create(createCompanyDto);
   }
 
@@ -98,41 +92,40 @@ export class CompanyController {
   }
 
   @Delete(':id')
-  async remove(
-    @Param('id', ParseIntPipe) id: number
-  ): Promise<void> {
+  async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return this.companyService.remove(id);
   }
-
 
   @Put('admin/profile')
   @UseInterceptors(FileInterceptor('logo'))
   async updateAdminProfile(
     @Req() req,
     @Body() updateAdminProfileDto: UpdateAdminProfileDto,
-    @UploadedFile() logoFile?: Express.Multer.File
+    @UploadedFile() logoFile?: Express.Multer.File,
   ): Promise<CompanyWithLogoUrl> {
     const userId = req.user.sub;
     return this.companyService.updateAdminProfile(
       userId,
       updateAdminProfileDto,
-      logoFile
+      logoFile,
     );
   }
 
-
   /**
-  * Endpoint para eliminar temporalmente un trabajador (puede restaurarse)
-  */
+   * Endpoint para eliminar temporalmente un trabajador (puede restaurarse)
+   */
   @Delete('workers/:companyWorkerId/temporary')
   @UseGuards(RolesGuard)
   @Roles('adm')
   async temporarilyRemoveWorker(
     @Param('companyWorkerId', ParseIntPipe) companyWorkerId: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
-    return this.companyService.temporarilyRemoveWorkerFromCompany(adminId, companyWorkerId);
+    return this.companyService.temporarilyRemoveWorkerFromCompany(
+      adminId,
+      companyWorkerId,
+    );
   }
 
   /**
@@ -143,10 +136,13 @@ export class CompanyController {
   @Roles('adm')
   async permanentlyRemoveWorker(
     @Param('companyWorkerId', ParseIntPipe) companyWorkerId: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
-    return this.companyService.permanentlyRemoveWorkerFromCompany(adminId, companyWorkerId);
+    return this.companyService.permanentlyRemoveWorkerFromCompany(
+      adminId,
+      companyWorkerId,
+    );
   }
 
   /**
@@ -157,10 +153,13 @@ export class CompanyController {
   @Roles('adm')
   async restoreWorker(
     @Param('companyWorkerId', ParseIntPipe) companyWorkerId: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<{ message: string }> {
     const adminId = req.user.sub;
-    return this.companyService.restoreTemporarilyRemovedWorker(adminId, companyWorkerId);
+    return this.companyService.restoreTemporarilyRemovedWorker(
+      adminId,
+      companyWorkerId,
+    );
   }
 
   /**
@@ -170,25 +169,27 @@ export class CompanyController {
   @UseGuards(RolesGuard)
   @Roles('adm')
   async getTemporarilyRemovedWorkers(
-    @Req() req: any
+    @Req() req: any,
   ): Promise<CompanyWorker[]> {
     const adminId = req.user.sub;
     return this.companyService.getTemporarilyRemovedWorkers(adminId);
   }
 
-
   /**
-  * Endpoint para eliminar temporalmente un cliente (puede restaurarse)
-  */
+   * Endpoint para eliminar temporalmente un cliente (puede restaurarse)
+   */
   @Delete('clients/:clientId/temporary')
   @UseGuards(RolesGuard)
   @Roles('adm')
   async temporarilyRemoveClient(
     @Param('clientId', ParseIntPipe) clientId: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
-    return this.companyService.temporarilyRemoveClientFromCompany(adminId, clientId);
+    return this.companyService.temporarilyRemoveClientFromCompany(
+      adminId,
+      clientId,
+    );
   }
 
   /**
@@ -199,10 +200,13 @@ export class CompanyController {
   @Roles('adm')
   async permanentlyRemoveClient(
     @Param('clientId', ParseIntPipe) clientId: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
-    return this.companyService.permanentlyRemoveClientFromCompany(adminId, clientId);
+    return this.companyService.permanentlyRemoveClientFromCompany(
+      adminId,
+      clientId,
+    );
   }
 
   /**
@@ -213,10 +217,13 @@ export class CompanyController {
   @Roles('adm')
   async restoreClient(
     @Param('clientId', ParseIntPipe) clientId: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<{ message: string }> {
     const adminId = req.user.sub;
-    return this.companyService.restoreTemporarilyRemovedClient(adminId, clientId);
+    return this.companyService.restoreTemporarilyRemovedClient(
+      adminId,
+      clientId,
+    );
   }
 
   /**
@@ -225,9 +232,7 @@ export class CompanyController {
   @Get('clients/temporarily-removed')
   @UseGuards(RolesGuard)
   @Roles('adm')
-  async getTemporarilyRemovedClients(
-    @Req() req: any
-  ): Promise<Client[]> {
+  async getTemporarilyRemovedClients(@Req() req: any): Promise<Client[]> {
     const adminId = req.user.sub;
     return this.companyService.getTemporarilyRemovedClients(adminId);
   }

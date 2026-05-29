@@ -12,7 +12,9 @@ export class AutoCancelSessionsTask {
     timeZone: 'America/Caracas',
   })
   async cancelExpiredScheduledSessions() {
-    this.logger.log('⏰ Ejecutando auto-cancelación de citas agendadas vencidas...');
+    this.logger.log(
+      '⏰ Ejecutando auto-cancelación de citas agendadas vencidas...',
+    );
     try {
       const result = await this.sessionService.cancelExpiredScheduledSessions();
       if (result.cancelledSessions > 0) {

@@ -1,7 +1,7 @@
 export interface ServiceWorker {
   id: number;
   percentage?: number;
-  time?: number
+  time?: number;
 }
 
 export interface ServiceWorkerWithInfo extends ServiceWorker {

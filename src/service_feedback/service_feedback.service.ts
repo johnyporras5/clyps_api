@@ -31,7 +31,12 @@ export class ServiceFeedbackService {
     const feedback = await this.serviceFeedbackRepository
       .createQueryBuilder('feedback')
       .leftJoinAndSelect('feedback.service', 'service')
-      .leftJoinAndMapOne('feedback.client', Client, 'client', 'client.userId = feedback.clientId')
+      .leftJoinAndMapOne(
+        'feedback.client',
+        Client,
+        'client',
+        'client.userId = feedback.clientId',
+      )
       .where('feedback.id = :id', { id })
       .getOne();
 
@@ -40,7 +45,10 @@ export class ServiceFeedbackService {
     }
 
     if (feedback.client?.picture) {
-      feedback.client.pictureUrl = this.fileUploadService.getFileUrl('client_photo', feedback.client.picture);
+      feedback.client.pictureUrl = this.fileUploadService.getFileUrl(
+        'client_photo',
+        feedback.client.picture,
+      );
     }
 
     return feedback;
@@ -51,7 +59,9 @@ export class ServiceFeedbackService {
     serviceId: number,
     clientId?: number,
   ): Promise<ServiceFeedback> {
-    const service = await this.serviceRepository.findOne({ where: { id: serviceId } });
+    const service = await this.serviceRepository.findOne({
+      where: { id: serviceId },
+    });
     if (!service) {
       throw new NotFoundException(`Service with id ${serviceId} not found`);
     }
@@ -77,7 +87,9 @@ export class ServiceFeedbackService {
     requesterUserId?: number,
     requesterUserType?: string,
   ): Promise<ServiceFeedback> {
-    const feedback = await this.serviceFeedbackRepository.findOne({ where: { id } });
+    const feedback = await this.serviceFeedbackRepository.findOne({
+      where: { id },
+    });
     if (!feedback) {
       throw new NotFoundException(`ServiceFeedback with id ${id} not found`);
     }
@@ -88,10 +100,15 @@ export class ServiceFeedbackService {
       requesterUserId !== feedback.clientId &&
       requesterUserType !== 'adm'
     ) {
-      throw new ForbiddenException('No tienes permiso para actualizar este feedback');
+      throw new ForbiddenException(
+        'No tienes permiso para actualizar este feedback',
+      );
     }
 
-    if (updateDto.stars !== undefined && (updateDto.stars < 1 || updateDto.stars > 5)) {
+    if (
+      updateDto.stars !== undefined &&
+      (updateDto.stars < 1 || updateDto.stars > 5)
+    ) {
       throw new BadRequestException('stars must be between 1 and 5');
     }
 
@@ -104,7 +121,9 @@ export class ServiceFeedbackService {
     requesterUserId?: number,
     requesterUserType?: string,
   ): Promise<void> {
-    const feedback = await this.serviceFeedbackRepository.findOne({ where: { id } });
+    const feedback = await this.serviceFeedbackRepository.findOne({
+      where: { id },
+    });
     if (!feedback) {
       throw new NotFoundException(`ServiceFeedback with id ${id} not found`);
     }
@@ -115,7 +134,9 @@ export class ServiceFeedbackService {
       requesterUserId !== feedback.clientId &&
       requesterUserType !== 'adm'
     ) {
-      throw new ForbiddenException('No tienes permiso para eliminar este feedback');
+      throw new ForbiddenException(
+        'No tienes permiso para eliminar este feedback',
+      );
     }
 
     const result = await this.serviceFeedbackRepository.delete(id);
@@ -129,23 +150,37 @@ export class ServiceFeedbackService {
     page = 1,
     limit = 10,
   ): Promise<PaginationResult<ServiceFeedback>> {
-    const service = await this.serviceRepository.findOne({ where: { id: serviceId } });
+    const service = await this.serviceRepository.findOne({
+      where: { id: serviceId },
+    });
     if (!service) {
       throw new NotFoundException(`Service with id ${serviceId} not found`);
     }
 
-    const queryBuilder: SelectQueryBuilder<ServiceFeedback> = this.serviceFeedbackRepository
-      .createQueryBuilder('feedback')
-      .leftJoinAndSelect('feedback.service', 'service')
-      .leftJoinAndMapOne('feedback.client', Client, 'client', 'client.userId = feedback.clientId')
-      .where('feedback.serviceId = :serviceId', { serviceId })
-      .orderBy('feedback.datetime', 'DESC');
+    const queryBuilder: SelectQueryBuilder<ServiceFeedback> =
+      this.serviceFeedbackRepository
+        .createQueryBuilder('feedback')
+        .leftJoinAndSelect('feedback.service', 'service')
+        .leftJoinAndMapOne(
+          'feedback.client',
+          Client,
+          'client',
+          'client.userId = feedback.clientId',
+        )
+        .where('feedback.serviceId = :serviceId', { serviceId })
+        .orderBy('feedback.datetime', 'DESC');
 
-    const result = await paginate<ServiceFeedback>(queryBuilder, { page, limit });
+    const result = await paginate<ServiceFeedback>(queryBuilder, {
+      page,
+      limit,
+    });
 
     result.data = result.data.map((feedback) => {
       if (feedback.client?.picture) {
-        feedback.client.pictureUrl = this.fileUploadService.getFileUrl('client_photo', feedback.client.picture);
+        feedback.client.pictureUrl = this.fileUploadService.getFileUrl(
+          'client_photo',
+          feedback.client.picture,
+        );
       }
       return feedback;
     });
@@ -176,16 +211,27 @@ export class ServiceFeedbackService {
     const queryBuilder = this.serviceFeedbackRepository
       .createQueryBuilder('feedback')
       .leftJoinAndSelect('feedback.service', 'service')
-      .leftJoinAndMapOne('feedback.client', Client, 'client', 'client.userId = feedback.clientId')
+      .leftJoinAndMapOne(
+        'feedback.client',
+        Client,
+        'client',
+        'client.userId = feedback.clientId',
+      )
       .where(`feedback.serviceId IN (${serviceIdsSubQuery.getQuery()})`)
       .setParameters(serviceIdsSubQuery.getParameters())
       .orderBy('feedback.datetime', 'DESC');
 
-    const result = await paginate<ServiceFeedback>(queryBuilder, { page, limit });
+    const result = await paginate<ServiceFeedback>(queryBuilder, {
+      page,
+      limit,
+    });
 
     result.data = result.data.map((feedback) => {
       if (feedback.client?.picture) {
-        feedback.client.pictureUrl = this.fileUploadService.getFileUrl('client_photo', feedback.client.picture);
+        feedback.client.pictureUrl = this.fileUploadService.getFileUrl(
+          'client_photo',
+          feedback.client.picture,
+        );
       }
       return feedback;
     });

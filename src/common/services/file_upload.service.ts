@@ -1,7 +1,16 @@
-import { Injectable, BadRequestException, Logger, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  Inject,
+} from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 
 export type AllowedFolder =
   | 'client_photo'
@@ -35,10 +44,12 @@ export class FileUploadService {
 
   constructor(
     @Inject(ConfigService)
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
   ) {
     // Obtener la URL base desde las variables de entorno con valor por defecto
-    this.assetsBaseUrl = this.configService.get<string>('ASSETS_BASE_URL') || 'http://localhost:4000/assets';
+    this.assetsBaseUrl =
+      this.configService.get<string>('ASSETS_BASE_URL') ||
+      'http://localhost:4000/assets';
     this.bucket = this.configService.get<string>('DO_SPACES_BUCKET') || 'clyps';
 
     // Verificar si se debe usar Digital Ocean Spaces
@@ -62,7 +73,9 @@ export class FileUploadService {
       this.logger.log(`📦 Bucket: ${this.bucket}`);
       this.logger.log(`🌐 URL base: ${this.assetsBaseUrl}`);
     } else {
-      this.logger.warn(`⚠️ Digital Ocean Spaces no configurado, modo local deshabilitado`);
+      this.logger.warn(
+        `⚠️ Digital Ocean Spaces no configurado, modo local deshabilitado`,
+      );
     }
   }
 
@@ -70,17 +83,21 @@ export class FileUploadService {
     file: Express.Multer.File,
     folder: AllowedFolder,
     entityType: string,
-    entityId: number
+    entityId: number,
   ): Promise<FileInfo> {
     try {
       // Validar que la carpeta sea permitida
       if (!this.allowedFolders.includes(folder)) {
-        throw new BadRequestException(`Carpeta '${folder}' no permitida. Carpetas permitidas: ${this.allowedFolders.join(', ')}`);
+        throw new BadRequestException(
+          `Carpeta '${folder}' no permitida. Carpetas permitidas: ${this.allowedFolders.join(', ')}`,
+        );
       }
 
       // Validar que sea una imagen
       if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-        this.logger.error(`❌ Tipo de archivo no permitido: ${file.mimetype || 'sin mimetype'}`);
+        this.logger.error(
+          `❌ Tipo de archivo no permitido: ${file.mimetype || 'sin mimetype'}`,
+        );
         throw new BadRequestException('Solo se permiten archivos de imagen');
       }
 
@@ -103,7 +120,9 @@ export class FileUploadService {
         await this.s3Client.send(command);
         this.logger.log(`☁️ Archivo subido a Spaces: ${key}`);
       } else {
-        throw new BadRequestException('Digital Ocean Spaces no está configurado');
+        throw new BadRequestException(
+          'Digital Ocean Spaces no está configurado',
+        );
       }
 
       // Generar URL completa
@@ -115,7 +134,7 @@ export class FileUploadService {
       return {
         fileName,
         fileUrl,
-        filePath: key
+        filePath: key,
       };
     } catch (error) {
       this.logger.error(`❌ Error al guardar el archivo: ${error.message}`);
@@ -124,7 +143,9 @@ export class FileUploadService {
         throw error;
       }
 
-      throw new BadRequestException(`Error al guardar el archivo: ${error.message}`);
+      throw new BadRequestException(
+        `Error al guardar el archivo: ${error.message}`,
+      );
     }
   }
 
@@ -164,7 +185,7 @@ export class FileUploadService {
       'image/png': '.png',
       'image/gif': '.gif',
       'image/webp': '.webp',
-      'image/svg+xml': '.svg'
+      'image/svg+xml': '.svg',
     };
 
     return mimeToExt[mimeType] || '.jpg';

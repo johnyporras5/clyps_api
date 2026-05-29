@@ -1,4 +1,17 @@
-import { IsOptional, IsString, IsDate, Length, IsNotEmpty, IsEmail, IsNumber, IsIn, IsArray, Min, Max, IsInt } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsDate,
+  Length,
+  IsNotEmpty,
+  IsEmail,
+  IsNumber,
+  IsIn,
+  IsArray,
+  Min,
+  Max,
+  IsInt,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class RegisterClientDto {
@@ -42,5 +55,4 @@ export class RegisterClientDto {
   @IsOptional()
   @IsString()
   location?: string;
-
 }
