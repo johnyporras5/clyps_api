@@ -16,7 +16,7 @@ feature/*  ──PR──▶  development  ──PR──▶  main  ──auto d
 
 ## Workflows
 
-- `.github/workflows/ci.yml` — corre en cualquier PR hacia `development`/`main` y en push a esas ramas. Levanta un MySQL 8 efímero, instala, builda, corre las migraciones contra esa BD y ejecuta tests.
+- `.github/workflows/ci.yml` — corre en cualquier PR hacia `development`/`main` y en push a esas ramas. Lint + build + tests. **No** corre migraciones contra una BD efímera porque las migraciones del proyecto asumen que existen tablas creadas originalmente con `synchronize: true` y no pueden bootstrappear desde una BD vacía. La validación de migraciones ocurre al arrancar el contenedor en producción.
 - `.github/workflows/cd.yml` — corre sólo en push a `main`: buildea la imagen Docker, la publica en GHCR y dispara un deploy en DO.
 
 ## Cómo se corren las migraciones en producción
