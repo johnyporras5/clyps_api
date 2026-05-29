@@ -13,12 +13,15 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { WorkerFeedbackService } from './worker_feedback.service';
+import {
+  WorkerFeedbackService,
+  WorkerFeedbackPaginatedResult,
+} from './worker_feedback.service';
 import { WorkerFeedback } from './entities/worker_feedback.entity';
 import { CreateWorkerFeedbackDto } from './dto/create-worker_feedback.dto';
 import { UpdateWorkerFeedbackDto } from './dto/update-worker_feedback.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { paginate, PaginationResult } from '../common/utils/pagination.util';
+import { PaginationResult } from '../common/utils/pagination.util';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -70,7 +73,7 @@ export class WorkerFeedbackController {
   async findMyFeedbacks(
     @Req() req: any,
     @Query() paginationDto: PaginationDto,
-  ): Promise<PaginationResult<WorkerFeedback>> {
+  ): Promise<WorkerFeedbackPaginatedResult> {
     const userId = req.user?.sub; // ID del usuario autenticado
     return this.workerFeedbackService.findMyFeedbacks(
       userId,
@@ -89,7 +92,7 @@ export class WorkerFeedbackController {
   async findAllPaginated(
     @Query() paginationDto: PaginationDto,
     @Req() req: any,
-  ): Promise<PaginationResult<WorkerFeedback>> {
+  ): Promise<WorkerFeedbackPaginatedResult> {
     const userId = req.user?.sub; // ID del usuario admin (desde el JWT)
     return this.workerFeedbackService.findAllByAdminCompany(
       userId,

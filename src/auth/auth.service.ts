@@ -354,7 +354,6 @@ export class AuthService {
 
       const newWorker = this.workerRepository.create({
         name: registerDto.name,
-        lastName: registerDto.lastName,
         phone: registerDto.phone,
         address: registerDto.address,
         birthdate: registerDto.birthdate,

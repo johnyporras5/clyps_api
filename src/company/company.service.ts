@@ -237,7 +237,6 @@ export class CompanyService {
         return {
           id: w.id,
           name: w.name,
-          lastName: w.lastName,
           phone: w.phone,
           description: w.description,
           location: w.location,
@@ -1231,7 +1230,6 @@ export class CompanyService {
       workersByCompany.get(cw.companyId)!.push({
         id: w.id,
         name: w.name,
-        lastName: w.lastName,
         phone: w.phone,
         description: w.description,
         location: w.location,

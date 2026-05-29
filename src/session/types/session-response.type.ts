@@ -37,7 +37,6 @@ export interface SessionDetailResponse {
   serviceDescription: string;
   companyWorkerId: number | null;
   workerName: string | null;
-  workerLastName: string | null;
   startDatetime: Date;
   totalTime: number;
   totalWorker: number;
