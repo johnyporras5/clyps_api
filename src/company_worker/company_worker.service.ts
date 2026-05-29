@@ -403,10 +403,7 @@ export class CompanyWorkerService {
     // 4. Aplicar filtro por nombre si se proporciona
     if (name && name.trim() !== '') {
       const searchTerm = `%${name.trim()}%`;
-      queryBuilder.andWhere(
-        'worker.name LIKE :search',
-        { search: searchTerm },
-      );
+      queryBuilder.andWhere('worker.name LIKE :search', { search: searchTerm });
     }
 
     // 5. Usar la función paginate
@@ -496,10 +493,9 @@ export class CompanyWorkerService {
     // Aplicar filtro por nombre si existe
     if (name && name.trim() !== '') {
       const searchTerm = `%${name.trim()}%`;
-      countQueryBuilder.andWhere(
-        'worker.name LIKE :search',
-        { search: searchTerm },
-      );
+      countQueryBuilder.andWhere('worker.name LIKE :search', {
+        search: searchTerm,
+      });
     }
 
     // Contar trabajadores únicos

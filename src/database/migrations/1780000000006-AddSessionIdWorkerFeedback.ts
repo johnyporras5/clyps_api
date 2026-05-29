@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddSessionIdWorkerFeedback1780000000006
-  implements MigrationInterface
-{
+export class AddSessionIdWorkerFeedback1780000000006 implements MigrationInterface {
   name = 'AddSessionIdWorkerFeedback1780000000006';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

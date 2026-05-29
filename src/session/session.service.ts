@@ -1879,8 +1879,7 @@ export class SessionService {
 
     return {
       email: user?.email || '',
-      name:
-        (worker.name || '').trim() || user?.username || 'Trabajador',
+      name: (worker.name || '').trim() || user?.username || 'Trabajador',
       phone: worker.phone || '',
     };
   }

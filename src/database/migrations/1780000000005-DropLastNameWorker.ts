@@ -8,9 +8,7 @@ export class DropLastNameWorker1780000000005 implements MigrationInterface {
     await queryRunner.query(
       "UPDATE `worker` SET `name` = TRIM(CONCAT(COALESCE(`name`, ''), ' ', COALESCE(`last_name`, ''))) WHERE `last_name` IS NOT NULL AND `last_name` <> ''",
     );
-    await queryRunner.query(
-      'ALTER TABLE `worker` DROP COLUMN `last_name`',
-    );
+    await queryRunner.query('ALTER TABLE `worker` DROP COLUMN `last_name`');
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

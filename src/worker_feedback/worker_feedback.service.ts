@@ -272,7 +272,8 @@ export class WorkerFeedbackService {
 
     // 5. Hidratar pictureUrls, servicios prestados y stats agregadas
     await this.hydrateFeedbacks(result.data);
-    const stats = await this.computeStatsForWorkerIdsSubQuery(workerIdsSubQuery);
+    const stats =
+      await this.computeStatsForWorkerIdsSubQuery(workerIdsSubQuery);
 
     return { ...result, stats };
   }
@@ -371,11 +372,7 @@ export class WorkerFeedbackService {
       serviceId: number;
     }> = await this.sessionDetailRepository
       .createQueryBuilder('sd')
-      .innerJoin(
-        CompanyWorker,
-        'cw',
-        'cw.id = sd.companyWorkerId',
-      )
+      .innerJoin(CompanyWorker, 'cw', 'cw.id = sd.companyWorkerId')
       .select('sd.session_id', 'sessionId')
       .addSelect('cw.worker_id', 'workerId')
       .addSelect('sd.service_id', 'serviceId')
@@ -486,7 +483,8 @@ export class WorkerFeedbackService {
       }
     }
     stats.totalFeedbacks = total;
-    stats.averageStars = total === 0 ? 0 : Number((weighted / total).toFixed(2));
+    stats.averageStars =
+      total === 0 ? 0 : Number((weighted / total).toFixed(2));
     return stats;
   }
 
