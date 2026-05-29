@@ -14,7 +14,7 @@
     "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "lint:check": "eslint \"{src,apps,libs,test}/**/*.ts\"",
-    "prepare": "husky",
+    "prepare": "husky || true",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
