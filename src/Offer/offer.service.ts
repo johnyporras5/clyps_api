@@ -40,22 +40,29 @@ export class OfferService {
     paginationOptions: PaginationOptions,
   ): Promise<PaginationResult<any>> {
     const company = await this.getCompanyByAdmin(adminId);
+    const { page, limit } = paginationOptions;
+    const skip = (page - 1) * limit;
 
-    const queryBuilder = this.offerRepository
-      .createQueryBuilder('offer')
-      .leftJoinAndSelect('offer.serviceOffers', 'serviceOffers')
-      .leftJoinAndSelect('serviceOffers.service', 'service')
-      .where('offer.companyId = :companyId', { companyId: company.id })
-      .orderBy('offer.id', 'DESC');
+    const [offers, total] = await this.offerRepository.findAndCount({
+      where: { companyId: company.id },
+      relations: ['serviceOffers', 'serviceOffers.service'],
+      order: { id: 'DESC' },
+      skip,
+      take: limit,
+    });
 
-    const paginatedOffers = await paginate<Offer>(
-      queryBuilder,
-      paginationOptions,
-    );
+    const totalPages = Math.ceil(total / limit);
 
     return {
-      ...paginatedOffers,
-      data: paginatedOffers.data.map((offer) => this.addLogoUrl(offer)),
+      data: offers.map((offer) => this.addLogoUrl(offer)),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
     };
   }
 
@@ -222,11 +229,49 @@ export class OfferService {
   }
 
   /**
-   * Obtener todos los servicios en ofertas activas y vigentes de la compañía del admin.
+   * Obtener todos los servicios en ofertas activas y vigentes de la compañía del admin (paginado).
    */
-  async findActiveServiceOffers(adminId: number): Promise<any[]> {
+  async findActiveServiceOffers(
+    adminId: number,
+    paginationOptions: PaginationOptions,
+  ): Promise<PaginationResult<any>> {
     const company = await this.getCompanyByAdmin(adminId);
-    return this.fetchActiveServiceOffersByCompanyId(company.id);
+    const today = new Date();
+
+    const offerQuery = this.offerRepository
+      .createQueryBuilder('offer')
+      .where('offer.companyId = :companyId', { companyId: company.id })
+      .andWhere('offer.status = 1')
+      .andWhere('offer.startDate <= :today', { today })
+      .andWhere('offer.endDate >= :today', { today })
+      .andWhere((qb) => {
+        const sub = qb
+          .subQuery()
+          .select('1')
+          .from(ServiceOffer, 'so')
+          .innerJoin('so.service', 'service')
+          .where('so.offerId = offer.id')
+          .andWhere('service.status = 1')
+          .getQuery();
+        return `EXISTS ${sub}`;
+      })
+      .orderBy('offer.id', 'ASC');
+
+    const paginated = await paginate<Offer>(offerQuery, paginationOptions);
+
+    if (paginated.data.length === 0) {
+      return { ...paginated, data: [] };
+    }
+
+    const offerIds = paginated.data.map((o) => o.id);
+    const grouped = await this.groupActiveServiceOffersByIds(offerIds);
+
+    return {
+      ...paginated,
+      data: paginated.data
+        .map((o) => grouped.get(o.id))
+        .filter((g): g is any => Boolean(g)),
+    };
   }
 
   /**
@@ -316,6 +361,68 @@ export class OfferService {
   }
 
   // ==================== MÉTODOS PRIVADOS ====================
+
+  private async groupActiveServiceOffersByIds(
+    offerIds: number[],
+  ): Promise<Map<number, any>> {
+    const serviceOffers = await this.serviceOfferRepository
+      .createQueryBuilder('so')
+      .innerJoinAndSelect('so.offer', 'offer')
+      .innerJoinAndSelect('so.service', 'service')
+      .where('so.offerId IN (:...offerIds)', { offerIds })
+      .andWhere('service.status = 1')
+      .orderBy('offer.id', 'ASC')
+      .addOrderBy('service.name', 'ASC')
+      .getMany();
+
+    const offerMap = new Map<number, any>();
+
+    for (const so of serviceOffers) {
+      const offer = so.offer;
+      const service = so.service;
+
+      if (!offerMap.has(offer.id)) {
+        offerMap.set(offer.id, {
+          offerId: offer.id,
+          offerName: offer.name,
+          offerLogo: offer.logo,
+          offerLogoUrl: offer.logo
+            ? this.fileUploadService.getFileUrl('offer_logo', offer.logo)
+            : null,
+          offerDescription: offer.description,
+          startDate: offer.startDate,
+          endDate: offer.endDate,
+          services: [],
+        });
+      }
+
+      const originalPrice = Number(service.cost) || 0;
+      const offerPrice = Number(so.price) || 0;
+      const discount =
+        originalPrice > 0
+          ? Number(
+              (((originalPrice - offerPrice) / originalPrice) * 100).toFixed(2),
+            )
+          : 0;
+
+      offerMap.get(offer.id).services.push({
+        serviceOfferId: so.id,
+        serviceId: service.id,
+        serviceName: service.name,
+        serviceDescription: service.description,
+        originalPrice,
+        offerPrice,
+        discount,
+        standardTime: service.standardTime,
+        currency: service.currency,
+        workers: service.workers,
+        percentage: service.percentage,
+        offerId: offer.id,
+      });
+    }
+
+    return offerMap;
+  }
 
   private addLogoUrl(offer: Offer): any {
     return {

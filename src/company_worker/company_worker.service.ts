@@ -473,7 +473,10 @@ export class CompanyWorkerService {
     const skip = (page - 1) * limit;
 
     // 1. Obtener los datos paginados
-    const data = await queryBuilder.skip(skip).take(limit).getRawMany();
+    // NOTA: usamos offset/limit (no skip/take) porque el query usa GROUP BY +
+    // getRawMany(). skip/take aplica paginación vía subquery sobre la entidad
+    // y no respeta el LIMIT en queries raw con grouping.
+    const data = await queryBuilder.offset(skip).limit(limit).getRawMany();
 
     // 2. Crear una consulta de conteo separada
     const countQueryBuilder = this.workerRepository
