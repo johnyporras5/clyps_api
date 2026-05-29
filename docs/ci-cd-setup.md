@@ -1,11 +1,13 @@
 # CI/CD setup
 
+Todo está definido en código. No requiere configuración manual de DigitalOcean.
+
 ## Flujo de ramas
 
 ```
 feature/*  ──PR──▶  development  ──PR──▶  main  ──auto deploy──▶  DigitalOcean
                        │                    │
-                       └─ CI (tests)        └─ CI + CD (build, push, deploy con migraciones)
+                       └─ CI (tests)        └─ CI + CD (build, push, trigger)
 ```
 
 - `feature/*` y `fix/*`: ramas de trabajo. Se mergean a `development` via PR.
@@ -14,77 +16,63 @@ feature/*  ──PR──▶  development  ──PR──▶  main  ──auto d
 
 ## Workflows
 
-- `.github/workflows/ci.yml` — corre en cualquier PR hacia `development`/`main` y en push a esas ramas.
-- `.github/workflows/cd.yml` — corre sólo en push a `main` (después de un merge).
+- `.github/workflows/ci.yml` — corre en cualquier PR hacia `development`/`main` y en push a esas ramas. Levanta un MySQL 8 efímero, instala, builda, corre las migraciones contra esa BD y ejecuta tests.
+- `.github/workflows/cd.yml` — corre sólo en push a `main`: buildea la imagen Docker, la publica en GHCR y dispara un deploy en DO.
 
-## Migraciones
+## Cómo se corren las migraciones en producción
 
-Las migraciones corren en un **Pre-Deploy Job** de DigitalOcean App Platform (`.do/app.yaml`).
-Esto significa: cuando se dispara un deploy, DO primero corre `npm run migration:run:prod` contra la BD de prod
-desde la red interna de DO (no necesita whitelist de IP), y sólo si el job termina sin error, levanta la app nueva.
-Si las migraciones fallan, el deploy se aborta y queda corriendo la versión anterior.
+Las migraciones se ejecutan **al arrancar el contenedor**, antes de que se levante la app. Está implementado en el `entrypoint.sh` del `Dockerfile`:
 
-El script `migration:run:prod` usa las migraciones compiladas en `dist/database/migrations/*.js` (no `ts-node`),
-porque la imagen de producción no incluye `src/`.
+```sh
+# Run database migrations before starting the app (fail fast if migrations fail)
+if [ "${SKIP_MIGRATIONS}" != "true" ]; then
+  echo "Running database migrations..."
+  cd /app && npm run migration:run:prod
+  echo "Migrations finished successfully"
+fi
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+```
 
-## Secrets que necesitas configurar
+Comportamiento:
+- Cada vez que arranca el contenedor en producción, primero corre `migration:run:prod` (migraciones compiladas en `dist/database/migrations/*.js`).
+- Si una migración falla, el script sale con error y el contenedor no arranca → DO marca el deploy como fallido y mantiene la versión anterior corriendo → **no se rompe prod**.
+- Las migraciones son idempotentes (TypeORM guarda en la tabla `migrations` cuáles ya corrieron), así que reiniciar el contenedor no causa problemas.
+- Si necesitas desactivarlas temporalmente, agrega la env var `SKIP_MIGRATIONS=true` en DO.
 
-### En GitHub (Settings → Secrets and variables → Actions → New repository secret)
+## Secrets en GitHub
+
+Necesarios para el workflow CD (Settings → Secrets and variables → Actions):
 
 | Secret | Para qué |
 |---|---|
-| `DIGITALOCEAN_ACCESS_TOKEN` | Token personal de DO con permiso sobre la app. Crear en DO → API → Personal access tokens (scope `apps:read` y `apps:write`). |
-| `DIGITALOCEAN_APP_ID` | UUID de tu app en DO. Lo obtienes con `doctl apps list` o en la URL del panel: `cloud.digitalocean.com/apps/<APP_ID>`. |
+| `DIGITALOCEAN_ACCESS_TOKEN` | Token personal de DO con scopes `app read/create/update` |
+| `DIGITALOCEAN_APP_ID` | UUID de la app en DO |
 
-`GITHUB_TOKEN` no hay que configurarlo — GitHub lo provee automáticamente para push a GHCR.
+`GITHUB_TOKEN` lo provee automáticamente GitHub para push a GHCR.
 
-### En DigitalOcean App Platform (Settings → App-Level Environment Variables)
+## Secrets / Env vars en DigitalOcean
 
-Marcar todos como **Encrypted**:
+Se configuran en el panel de DO → App → Settings → App-Level Environment Variables (marcar `Encrypt` en todas las sensibles):
 
-| Variable | Valor |
-|---|---|
-| `DB_HOST` | host de tu MySQL gestionado (interno de DO si lo tienes en la misma cuenta) |
-| `DB_PORT` | `3306` (o el que corresponda) |
-| `DB_USERNAME` | usuario de la BD |
-| `DB_PASSWORD` | password |
-| `DB_DATABASE` | nombre de la BD |
+`DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`, `NODE_ENV=production`, `PORT=4000`,
+más las que ya estés usando: `JWT_SECRET`, `JWT_EXPIRES_IN`, `RESEND_API_KEY`, `RESEND_DOMAIN`, `RESEND_FROM_EMAIL`,
+`ASSETS_BASE_URL`, `DO_SPACES_*`, `OPENAI_API_KEY`, etc.
 
-Además los secretos de la app que ya estés usando: `JWT_SECRET`, `RESEND_API_KEY`, `AWS_*`, etc.
-
-## Cómo aplicar el `app.yaml`
-
-Una sola vez, sincronizar el spec con tu app existente:
-
-```bash
-# Instalar doctl: https://docs.digitalocean.com/reference/doctl/how-to/install/
-doctl auth init
-
-# Encuentra el ID de tu app
-doctl apps list
-
-# Aplicar el spec (reemplaza <APP_ID>)
-doctl apps update <APP_ID> --spec .do/app.yaml
-```
-
-Despues, cada push a `main` disparará el flujo: tests → build → deploy → migraciones → app nueva.
-
-> ⚠️ El `app.yaml` actual incluye solo lo mínimo (api + job de migración + envs de BD). Si tu app actual tiene
-> dominios personalizados, alertas, workers extra, etc., revisa con `doctl apps spec get <APP_ID>` el spec actual
-> y mergea las diferencias antes de aplicar.
-
-## Cómo probar localmente que las migraciones del CI funcionan
+## Probar el flujo localmente
 
 ```bash
 # Levantar MySQL local
 npm run docker:up
 
-# En otra terminal:
-NODE_ENV=development npm run migration:run
+# Build de la imagen como en prod
+docker build -t clyps-api .
+
+# Correr con env file de prueba (las migraciones se ejecutan automáticamente al arrancar)
+docker run --rm -p 3001:81 --env-file .env clyps-api
 ```
 
 ## Si necesitas agregar staging más adelante
 
-1. Crea una segunda DO App apuntando a la rama `development` (con su propia BD).
-2. Duplica `.do/app.yaml` como `.do/app.staging.yaml` y cambia `branch: development`.
-3. Añade un job en `cd.yml` que dispare en push a `development` con `DIGITALOCEAN_STAGING_APP_ID`.
+1. Crear una segunda DO App apuntando a la rama `development` (con su propia BD).
+2. Agregar un nuevo job en `cd.yml` que se dispare en push a `development` con secrets propios (`DIGITALOCEAN_STAGING_APP_ID`, etc.).
+3. Las migraciones de staging corren automáticamente igual que en prod (vía entrypoint del contenedor).
