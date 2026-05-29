@@ -10,7 +10,16 @@ import { Client } from 'src/client/entities/client.entity';
 import { CommonModule } from 'src/common/common.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([WorkerFeedback, Worker, Company, CompanyWorker, Client]), CommonModule],
+  imports: [
+    TypeOrmModule.forFeature([
+      WorkerFeedback,
+      Worker,
+      Company,
+      CompanyWorker,
+      Client,
+    ]),
+    CommonModule,
+  ],
   providers: [WorkerFeedbackService],
   controllers: [WorkerFeedbackController],
   exports: [WorkerFeedbackService],

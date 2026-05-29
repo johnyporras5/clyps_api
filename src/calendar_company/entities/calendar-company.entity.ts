@@ -1,11 +1,11 @@
-import { 
-  Entity, 
-  PrimaryGeneratedColumn, 
-  Column, 
-  CreateDateColumn, 
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
   UpdateDateColumn,
   ManyToOne,
-  JoinColumn 
+  JoinColumn,
 } from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
 
@@ -23,7 +23,7 @@ export class CalendarCompany {
   @Column({ name: 'company_id' })
   companyId: number;
 
-   @ManyToOne(() => Company, (company) => company.calendars)
+  @ManyToOne(() => Company, (company) => company.calendars)
   @JoinColumn({ name: 'company_id' })
   company: Company;
 }

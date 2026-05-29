@@ -13,9 +13,20 @@ import { Offer } from 'src/Offer/entities/offer.entity';
 import { FileUploadService } from '../common/services/file_upload.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Client, User, Company, Session, SessionDetail, Service, CompanyWorker, Offer])],
+  imports: [
+    TypeOrmModule.forFeature([
+      Client,
+      User,
+      Company,
+      Session,
+      SessionDetail,
+      Service,
+      CompanyWorker,
+      Offer,
+    ]),
+  ],
   providers: [ClientService, FileUploadService],
   controllers: [ClientController],
   exports: [ClientService],
 })
-export class ClientModule { }
+export class ClientModule {}

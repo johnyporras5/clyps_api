@@ -1,7 +1,14 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsBoolean, IsNumber, IsDateString } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsEmail,
+  IsString,
+  IsBoolean,
+  IsNumber,
+  IsDateString,
+} from 'class-validator';
 
 export class CreateCompanyDto {
-
   @IsOptional()
   @IsString()
   name?: string;

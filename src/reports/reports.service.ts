@@ -5,7 +5,10 @@ import { SessionDetail } from '../session_detail/entities/session_detail.entity'
 import { Service } from '../service/entities/service.entity';
 import { Company } from '../company/entities/company.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
-import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
+import {
+  FileUploadService,
+  AllowedFolder,
+} from '../common/services/file_upload.service';
 
 @Injectable()
 export class ReportsService {
@@ -37,7 +40,9 @@ export class ReportsService {
     });
 
     if (!company) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
     }
 
     // 2. Obtener los servicios de la compañía
@@ -55,7 +60,14 @@ export class ReportsService {
           currency: services[0]?.currency || 'USD',
         },
         services: [],
-        meta: { page, limit, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+          hasNext: false,
+          hasPrev: false,
+        },
       };
     }
 
@@ -102,9 +114,10 @@ export class ReportsService {
         serviceName: service?.name || 'Servicio eliminado',
         totalIncome: parseFloat(income.toFixed(2)),
         servicesCount: parseInt(r.servicesCount),
-        percentage: totalIncome > 0
-          ? parseFloat(((income / totalIncome) * 100).toFixed(2))
-          : 0,
+        percentage:
+          totalIncome > 0
+            ? parseFloat(((income / totalIncome) * 100).toFixed(2))
+            : 0,
         currency: service?.currency || services[0]?.currency || 'USD',
       };
     });
@@ -140,7 +153,9 @@ export class ReportsService {
     });
 
     if (!company) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
     }
 
     // 2. Obtener los workers de la compañía
@@ -159,7 +174,14 @@ export class ReportsService {
           currency: 'USD',
         },
         employees: [],
-        meta: { page, limit, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+          hasNext: false,
+          hasPrev: false,
+        },
       };
     }
 
@@ -214,13 +236,17 @@ export class ReportsService {
         companyWorkerId: parseInt(r.companyWorkerId),
         name: workerName,
         image: cw?.worker?.picture
-          ? this.fileUploadService.getFileUrl(this.WORKER_PHOTO_FOLDER, cw.worker.picture)
+          ? this.fileUploadService.getFileUrl(
+              this.WORKER_PHOTO_FOLDER,
+              cw.worker.picture,
+            )
           : null,
         totalIncome: parseFloat(income.toFixed(2)),
         servicesCount: parseInt(r.servicesCount),
-        percentage: totalIncome > 0
-          ? parseFloat(((income / totalIncome) * 100).toFixed(2))
-          : 0,
+        percentage:
+          totalIncome > 0
+            ? parseFloat(((income / totalIncome) * 100).toFixed(2))
+            : 0,
         currency,
       };
     });

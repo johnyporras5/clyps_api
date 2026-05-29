@@ -34,10 +34,15 @@ export class ClientFavoriteCompanyService {
     return client.id;
   }
 
-  async addFavorite(userId: number, companyId: number): Promise<ClientFavoriteCompany> {
+  async addFavorite(
+    userId: number,
+    companyId: number,
+  ): Promise<ClientFavoriteCompany> {
     const clientId = await this.getClientIdByUserId(userId);
 
-    const company = await this.companyRepository.findOne({ where: { id: companyId } });
+    const company = await this.companyRepository.findOne({
+      where: { id: companyId },
+    });
     if (!company) {
       throw new NotFoundException(`Company with id ${companyId} not found`);
     }
@@ -56,7 +61,10 @@ export class ClientFavoriteCompanyService {
   async removeFavorite(userId: number, companyId: number): Promise<void> {
     const clientId = await this.getClientIdByUserId(userId);
 
-    const result = await this.favoriteRepository.delete({ clientId, companyId });
+    const result = await this.favoriteRepository.delete({
+      clientId,
+      companyId,
+    });
     if (result.affected === 0) {
       throw new NotFoundException('La compañía no está en favoritos');
     }
@@ -69,13 +77,17 @@ export class ClientFavoriteCompanyService {
   ): Promise<PaginationResult<ClientFavoriteCompany>> {
     const clientId = await this.getClientIdByUserId(userId);
 
-    const queryBuilder: SelectQueryBuilder<ClientFavoriteCompany> = this.favoriteRepository
-      .createQueryBuilder('favorite')
-      .leftJoinAndSelect('favorite.company', 'company')
-      .where('favorite.clientId = :clientId', { clientId })
-      .orderBy('favorite.createdAt', 'DESC');
+    const queryBuilder: SelectQueryBuilder<ClientFavoriteCompany> =
+      this.favoriteRepository
+        .createQueryBuilder('favorite')
+        .leftJoinAndSelect('favorite.company', 'company')
+        .where('favorite.clientId = :clientId', { clientId })
+        .orderBy('favorite.createdAt', 'DESC');
 
-    const result = await paginate<ClientFavoriteCompany>(queryBuilder, { page, limit });
+    const result = await paginate<ClientFavoriteCompany>(queryBuilder, {
+      page,
+      limit,
+    });
 
     const dataWithLogoUrl = result.data.map((favorite) => {
       const company = favorite.company;
@@ -91,9 +103,14 @@ export class ClientFavoriteCompanyService {
     return { ...result, data: dataWithLogoUrl };
   }
 
-  async isFavorite(userId: number, companyId: number): Promise<{ isFavorite: boolean }> {
+  async isFavorite(
+    userId: number,
+    companyId: number,
+  ): Promise<{ isFavorite: boolean }> {
     const clientId = await this.getClientIdByUserId(userId);
-    const count = await this.favoriteRepository.count({ where: { clientId, companyId } });
+    const count = await this.favoriteRepository.count({
+      where: { clientId, companyId },
+    });
     return { isFavorite: count > 0 };
   }
 }

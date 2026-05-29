@@ -13,16 +13,22 @@ export class TokenBlacklistService {
     private blacklistedTokenRepository: Repository<BlacklistedToken>,
     private jwtService: JwtService,
     private configService: ConfigService,
-  ) { }
+  ) {}
 
   /**
    * Agregar token a la blacklist
    */
-  async addToBlacklist(token: string, userId?: number, reason?: string): Promise<BlacklistedToken> {
+  async addToBlacklist(
+    token: string,
+    userId?: number,
+    reason?: string,
+  ): Promise<BlacklistedToken> {
     try {
       // Decodificar el token para obtener su expiración
-      const decoded = this.jwtService.decode(token) as any;
-      const expiresAt = decoded?.exp ? decoded.exp * 1000 : Date.now() + 24 * 60 * 60 * 1000; // Default 24h
+      const decoded = this.jwtService.decode(token);
+      const expiresAt = decoded?.exp
+        ? decoded.exp * 1000
+        : Date.now() + 24 * 60 * 60 * 1000; // Default 24h
 
       // Crear registro en blacklist
       const blacklistedToken = this.blacklistedTokenRepository.create({
@@ -92,7 +98,10 @@ export class TokenBlacklistService {
   /**
    * Forzar logout de un usuario (invalidar todos sus tokens)
    */
-  async forceLogoutUser(userId: number, reason: string = 'force_logout'): Promise<number> {
+  async forceLogoutUser(
+    userId: number,
+    reason: string = 'force_logout',
+  ): Promise<number> {
     const result = await this.blacklistedTokenRepository
       .createQueryBuilder()
       .update(BlacklistedToken)
@@ -135,7 +144,9 @@ export class TokenBlacklistService {
   /**
    * Obtener tokens activos (no expirados) de un usuario
    */
-  async getActiveBlacklistedTokens(userId: number): Promise<BlacklistedToken[]> {
+  async getActiveBlacklistedTokens(
+    userId: number,
+  ): Promise<BlacklistedToken[]> {
     const now = Date.now();
 
     return await this.blacklistedTokenRepository.find({

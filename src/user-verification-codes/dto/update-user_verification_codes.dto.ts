@@ -1,13 +1,17 @@
-import { IsOptional, IsEmail, IsString, IsBoolean, IsNumber } from 'class-validator';
+import {
+  IsOptional,
+  IsEmail,
+  IsString,
+  IsBoolean,
+  IsNumber,
+} from 'class-validator';
 
 export class UpdateUserVerificationCodesDto {
-
   @IsNumber()
   userId?: number;
 
   @IsString()
   code?: string;
-
 
   expiresAt?: Date;
 

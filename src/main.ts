@@ -38,15 +38,23 @@ console.error('🔍 __dirname:', __dirname);
 try {
   const result = config({ path: envPath });
   if (result.error) {
-    console.error('⚠️  Warning: Could not load .env file:', result.error.message);
+    console.error(
+      '⚠️  Warning: Could not load .env file:',
+      result.error.message,
+    );
     console.error('⚠️  Will use environment variables from system/container');
   } else {
     console.error('✅ .env file loaded successfully');
     // Log which variables were loaded (without showing values)
     const loadedVars = Object.keys(result.parsed || {});
-    const dbVars = loadedVars.filter(v => v.startsWith('DB_') || v === 'PORT' || v === 'NODE_ENV');
+    const dbVars = loadedVars.filter(
+      (v) => v.startsWith('DB_') || v === 'PORT' || v === 'NODE_ENV',
+    );
     if (dbVars.length > 0) {
-      console.error(`📋 Loaded ${dbVars.length} variables from .env:`, dbVars.join(', '));
+      console.error(
+        `📋 Loaded ${dbVars.length} variables from .env:`,
+        dbVars.join(', '),
+      );
     }
   }
 } catch (error) {
@@ -89,11 +97,19 @@ async function bootstrap() {
     console.log('═══════════════════════════════════════════════════════');
     console.log(`NODE_ENV: ${process.env.NODE_ENV || 'NOT SET'}`);
     console.log(`PORT: ${process.env.PORT || 'NOT SET (default: 4000)'}`); // CAMBIADO: 4000
-    console.log(`DB_HOST: ${process.env.DB_HOST || 'NOT SET (default: localhost)'}`);
+    console.log(
+      `DB_HOST: ${process.env.DB_HOST || 'NOT SET (default: localhost)'}`,
+    );
     console.log(`DB_PORT: ${process.env.DB_PORT || 'NOT SET (default: 3306)'}`);
-    console.log(`DB_USERNAME: ${process.env.DB_USERNAME ? '***SET***' : 'NOT SET'}`);
-    console.log(`DB_PASSWORD: ${process.env.DB_PASSWORD ? '***SET***' : 'NOT SET'}`);
-    console.log(`DB_DATABASE: ${process.env.DB_DATABASE || 'NOT SET (default: projectdb)'}`); // CAMBIADO
+    console.log(
+      `DB_USERNAME: ${process.env.DB_USERNAME ? '***SET***' : 'NOT SET'}`,
+    );
+    console.log(
+      `DB_PASSWORD: ${process.env.DB_PASSWORD ? '***SET***' : 'NOT SET'}`,
+    );
+    console.log(
+      `DB_DATABASE: ${process.env.DB_DATABASE || 'NOT SET (default: projectdb)'}`,
+    ); // CAMBIADO
     console.log('═══════════════════════════════════════════════════════');
 
     // Validate critical environment variables
@@ -104,14 +120,22 @@ async function bootstrap() {
     if (!process.env.DB_DATABASE) missingVars.push('DB_DATABASE');
 
     if (missingVars.length > 0) {
-      console.warn(`⚠️  WARNING: Missing environment variables: ${missingVars.join(', ')}`);
-      console.warn(`⚠️  App will attempt to start but database connection may fail`);
-      console.warn(`⚠️  Please set these in Digital Ocean App Platform: Settings > Environment Variables`);
+      console.warn(
+        `⚠️  WARNING: Missing environment variables: ${missingVars.join(', ')}`,
+      );
+      console.warn(
+        `⚠️  App will attempt to start but database connection may fail`,
+      );
+      console.warn(
+        `⚠️  Please set these in Digital Ocean App Platform: Settings > Environment Variables`,
+      );
     } else {
       console.log(`✅ All required database environment variables are set`);
     }
 
-    console.log(`📊 Database connection will use: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 3306}`);
+    console.log(
+      `📊 Database connection will use: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 3306}`,
+    );
 
     // Create app with timeout to prevent hanging on database connection
     const createAppPromise = NestFactory.create(AppModule, {
@@ -121,19 +145,22 @@ async function bootstrap() {
 
     // Set a 15 second timeout for app creation - fail fast if database is blocking
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('App creation timeout after 15s')), 15000)
+      setTimeout(
+        () => reject(new Error('App creation timeout after 15s')),
+        15000,
+      ),
     );
 
     let app;
     try {
-
-      app = await Promise.race([createAppPromise, timeoutPromise]) as any;
+      app = (await Promise.race([createAppPromise, timeoutPromise])) as any;
 
       app.enableCors();
     } catch (timeoutError) {
-
-      if (timeoutError instanceof Error && timeoutError.message.includes('timeout')) {
-
+      if (
+        timeoutError instanceof Error &&
+        timeoutError.message.includes('timeout')
+      ) {
         console.error('⚠️ App creation timed out');
 
         app = await NestFactory.create(AppModule, {
@@ -142,21 +169,21 @@ async function bootstrap() {
         });
 
         app.enableCors();
-
       } else {
         throw timeoutError;
       }
-
     }
 
-    app.useGlobalPipes(new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: {
-        enableImplicitConversion: true,
-      },
-    }));
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        transformOptions: {
+          enableImplicitConversion: true,
+        },
+      }),
+    );
 
     const port = process.env.PORT ?? 4000; // CAMBIADO: 4000
     console.log(`🌐 Starting HTTP server on port ${port}...`);
@@ -174,7 +201,9 @@ async function bootstrap() {
       if (reason instanceof Error) {
         console.error('Error stack:', reason.stack);
       }
-      console.error('⚠️  App will continue running despite unhandled rejection');
+      console.error(
+        '⚠️  App will continue running despite unhandled rejection',
+      );
       // Don't exit - let the app keep running
     });
 
@@ -190,7 +219,9 @@ async function bootstrap() {
     });
 
     console.error(`🌐 Attempting to listen on port ${port}...`);
-    console.error(`🌐 PORT environment variable: ${process.env.PORT || 'NOT SET (using default 4000)'}`); // CAMBIADO
+    console.error(
+      `🌐 PORT environment variable: ${process.env.PORT || 'NOT SET (using default 4000)'}`,
+    ); // CAMBIADO
 
     await app.listen(port, '0.0.0.0');
 
@@ -203,14 +234,22 @@ async function bootstrap() {
     if (address && typeof address === 'object') {
       console.error(`✅ Verified: Server is listening on port ${address.port}`);
       if (address.port !== Number(port)) {
-        console.error(`⚠️  WARNING: Port mismatch! Expected ${port}, but listening on ${address.port}`);
+        console.error(
+          `⚠️  WARNING: Port mismatch! Expected ${port}, but listening on ${address.port}`,
+        );
       }
     }
     console.error(`✅ Application is running on: http://0.0.0.0:${port}`);
     console.error(`✅ Test endpoint: http://0.0.0.0:${port}/ping`);
-    console.error(`✅ Health check available at: http://0.0.0.0:${port}/health`);
-    console.error(`✅ Debug endpoints available at: http://0.0.0.0:${port}/debug/status`);
-    console.error(`⚠️  Database connection will retry in background if not available`);
+    console.error(
+      `✅ Health check available at: http://0.0.0.0:${port}/health`,
+    );
+    console.error(
+      `✅ Debug endpoints available at: http://0.0.0.0:${port}/debug/status`,
+    );
+    console.error(
+      `⚠️  Database connection will retry in background if not available`,
+    );
 
     // Log startup completion - use console.error so it shows in Digital Ocean logs
     console.error('═══════════════════════════════════════════════════════');
@@ -223,26 +262,42 @@ async function bootstrap() {
 
     // Keep the process alive and log periodically to verify it's running
     setInterval(() => {
-      console.log(`💓 Heartbeat: App still running (uptime: ${Math.floor(process.uptime())}s)`);
+      console.log(
+        `💓 Heartbeat: App still running (uptime: ${Math.floor(process.uptime())}s)`,
+      );
     }, 30000); // Every 30 seconds
 
     // Log a message after 10 seconds to confirm app is still running
     setTimeout(() => {
-      console.log(`✅ App has been running for 10 seconds - startup successful`);
+      console.log(
+        `✅ App has been running for 10 seconds - startup successful`,
+      );
     }, 10000);
   } catch (error) {
     console.error('❌ Failed to start application');
     console.error('❌ Error type:', error?.constructor?.name || typeof error);
-    console.error('❌ Error message:', error instanceof Error ? error.message : String(error));
-    console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    console.error(
+      '❌ Error message:',
+      error instanceof Error ? error.message : String(error),
+    );
+    console.error(
+      '❌ Error stack:',
+      error instanceof Error ? error.stack : 'No stack trace',
+    );
 
     if (error instanceof Error) {
       if (error.message.includes('timeout')) {
-        console.error('⚠️  App creation timed out - database connection may be slow');
-        console.error('⚠️  The app may still be initializing. Check logs for database connection status.');
+        console.error(
+          '⚠️  App creation timed out - database connection may be slow',
+        );
+        console.error(
+          '⚠️  The app may still be initializing. Check logs for database connection status.',
+        );
       }
       if (error.message.includes('Cannot find module')) {
-        console.error('⚠️  Module not found - check if build completed successfully');
+        console.error(
+          '⚠️  Module not found - check if build completed successfully',
+        );
         console.error('⚠️  Expected path: dist/src/main.js');
       }
     }

@@ -28,10 +28,12 @@ export class WorkerFeedbackService {
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
     private fileUploadService: FileUploadService,
-  ) { }
+  ) {}
 
   async findOne(id: number): Promise<WorkerFeedback> {
-    const feedback = await this.workerFeedbackRepository.findOne({ where: { id } });
+    const feedback = await this.workerFeedbackRepository.findOne({
+      where: { id },
+    });
     if (!feedback) {
       throw new NotFoundException(`WorkerFeedback with id ${id} not found`);
     }
@@ -42,9 +44,15 @@ export class WorkerFeedbackService {
    * Crea un feedback para el workerId dado.
    * clientId debe venir del token en el controlador.
    */
-  async create(createDto: CreateWorkerFeedbackDto, workerId: number, clientId?: number): Promise<WorkerFeedback> {
+  async create(
+    createDto: CreateWorkerFeedbackDto,
+    workerId: number,
+    clientId?: number,
+  ): Promise<WorkerFeedback> {
     // Validar existencia del worker
-    const worker = await this.workerRepository.findOne({ where: { id: workerId } });
+    const worker = await this.workerRepository.findOne({
+      where: { id: workerId },
+    });
     if (!worker) {
       throw new NotFoundException(`Worker with id ${workerId} not found`);
     }
@@ -65,18 +73,35 @@ export class WorkerFeedbackService {
     return await this.workerFeedbackRepository.save(feedback);
   }
 
-  async update(id: number, updateDto: UpdateWorkerFeedbackDto, requesterUserId?: number, requesterUserType?: string): Promise<WorkerFeedback> {
-    const feedback = await this.workerFeedbackRepository.findOne({ where: { id } });
+  async update(
+    id: number,
+    updateDto: UpdateWorkerFeedbackDto,
+    requesterUserId?: number,
+    requesterUserType?: string,
+  ): Promise<WorkerFeedback> {
+    const feedback = await this.workerFeedbackRepository.findOne({
+      where: { id },
+    });
     if (!feedback) {
       throw new NotFoundException(`WorkerFeedback with id ${id} not found`);
     }
 
     // Permisos: solo el autor (clientId) o admin puede actualizar
-    if (requesterUserId && feedback.clientId && requesterUserId !== feedback.clientId && requesterUserType !== 'adm') {
-      throw new ForbiddenException('No tienes permiso para actualizar este feedback');
+    if (
+      requesterUserId &&
+      feedback.clientId &&
+      requesterUserId !== feedback.clientId &&
+      requesterUserType !== 'adm'
+    ) {
+      throw new ForbiddenException(
+        'No tienes permiso para actualizar este feedback',
+      );
     }
 
-    if (updateDto.stars !== undefined && (updateDto.stars < 1 || updateDto.stars > 5)) {
+    if (
+      updateDto.stars !== undefined &&
+      (updateDto.stars < 1 || updateDto.stars > 5)
+    ) {
       throw new BadRequestException('stars must be between 1 and 5');
     }
 
@@ -84,15 +109,28 @@ export class WorkerFeedbackService {
     return await this.workerFeedbackRepository.save(feedback);
   }
 
-  async remove(id: number, requesterUserId?: number, requesterUserType?: string): Promise<void> {
-    const feedback = await this.workerFeedbackRepository.findOne({ where: { id } });
+  async remove(
+    id: number,
+    requesterUserId?: number,
+    requesterUserType?: string,
+  ): Promise<void> {
+    const feedback = await this.workerFeedbackRepository.findOne({
+      where: { id },
+    });
     if (!feedback) {
       throw new NotFoundException(`WorkerFeedback with id ${id} not found`);
     }
 
     // Permisos: solo autor o admin puede borrar
-    if (requesterUserId && feedback.clientId && requesterUserId !== feedback.clientId && requesterUserType !== 'adm') {
-      throw new ForbiddenException('No tienes permiso para eliminar este feedback');
+    if (
+      requesterUserId &&
+      feedback.clientId &&
+      requesterUserId !== feedback.clientId &&
+      requesterUserType !== 'adm'
+    ) {
+      throw new ForbiddenException(
+        'No tienes permiso para eliminar este feedback',
+      );
     }
 
     const result = await this.workerFeedbackRepository.delete(id);
@@ -107,23 +145,28 @@ export class WorkerFeedbackService {
     limit = 10,
   ): Promise<PaginationResult<WorkerFeedback>> {
     // Verificar que el worker existe
-    const worker = await this.workerRepository.findOne({ where: { id: workerId } });
+    const worker = await this.workerRepository.findOne({
+      where: { id: workerId },
+    });
     if (!worker) {
       throw new NotFoundException(`Worker with id ${workerId} not found`);
     }
 
     // Crear query builder con filtro y orden
-    const queryBuilder: SelectQueryBuilder<WorkerFeedback> = this.workerFeedbackRepository
-      .createQueryBuilder('feedback')
-      .where('feedback.workerId = :workerId', { workerId })
-      .orderBy('feedback.datetime', 'DESC');
+    const queryBuilder: SelectQueryBuilder<WorkerFeedback> =
+      this.workerFeedbackRepository
+        .createQueryBuilder('feedback')
+        .where('feedback.workerId = :workerId', { workerId })
+        .orderBy('feedback.datetime', 'DESC');
 
     // Delegar la paginación al helper
-    const paginationResult = await paginate<WorkerFeedback>(queryBuilder, { page, limit });
+    const paginationResult = await paginate<WorkerFeedback>(queryBuilder, {
+      page,
+      limit,
+    });
 
     return paginationResult;
   }
-
 
   /**
    * Lista todas las reseñas de los barberos que pertenecen a la compañía del admin autenticado.
@@ -153,18 +196,29 @@ export class WorkerFeedbackService {
     const queryBuilder = this.workerFeedbackRepository
       .createQueryBuilder('feedback')
       .leftJoinAndSelect('feedback.worker', 'worker')
-      .leftJoinAndMapOne('feedback.client', Client, 'client', 'client.userId = feedback.clientId')
+      .leftJoinAndMapOne(
+        'feedback.client',
+        Client,
+        'client',
+        'client.userId = feedback.clientId',
+      )
       .where(`feedback.workerId IN (${workerIdsSubQuery.getQuery()})`)
       .setParameters(workerIdsSubQuery.getParameters())
       .orderBy('feedback.datetime', 'DESC');
 
     // 4. Paginar usando el helper
-    const result = await paginate<WorkerFeedback>(queryBuilder, { page, limit });
+    const result = await paginate<WorkerFeedback>(queryBuilder, {
+      page,
+      limit,
+    });
 
     // 5. Agregar pictureUrl al cliente
     result.data = result.data.map((feedback) => {
       if (feedback.client?.picture) {
-        feedback.client.pictureUrl = this.fileUploadService.getFileUrl('client_photo', feedback.client.picture);
+        feedback.client.pictureUrl = this.fileUploadService.getFileUrl(
+          'client_photo',
+          feedback.client.picture,
+        );
       }
       return feedback;
     });
@@ -173,45 +227,56 @@ export class WorkerFeedbackService {
   }
 
   /**
- * Obtiene todas las reseñas del worker autenticado mediante su userId.
- * @param userId - ID del usuario (extraído del token)
- * @param page - Número de página
- * @param limit - Elementos por página
- */
-async findMyFeedbacks(
-  userId: number,
-  page = 1,
-  limit = 10,
-): Promise<PaginationResult<WorkerFeedback>> {
-  // 1. Buscar el worker asociado al userId
-  const worker = await this.workerRepository.findOne({
-    where: { userId },
-  });
+   * Obtiene todas las reseñas del worker autenticado mediante su userId.
+   * @param userId - ID del usuario (extraído del token)
+   * @param page - Número de página
+   * @param limit - Elementos por página
+   */
+  async findMyFeedbacks(
+    userId: number,
+    page = 1,
+    limit = 10,
+  ): Promise<PaginationResult<WorkerFeedback>> {
+    // 1. Buscar el worker asociado al userId
+    const worker = await this.workerRepository.findOne({
+      where: { userId },
+    });
 
-  if (!worker) {
-    throw new NotFoundException(
-      `No se encontró un perfil de worker para el usuario ${userId}`,
-    );
-  }
-
-  // 2. Query con join al Client para hidratar la respuesta
-  const queryBuilder = this.workerFeedbackRepository
-    .createQueryBuilder('feedback')
-    .leftJoinAndMapOne('feedback.client', Client, 'client', 'client.userId = feedback.clientId')
-    .where('feedback.workerId = :workerId', { workerId: worker.id })
-    .orderBy('feedback.datetime', 'DESC');
-
-  // 3. Paginar
-  const result = await paginate<WorkerFeedback>(queryBuilder, { page, limit });
-
-  // 4. Agregar pictureUrl al cliente
-  result.data = result.data.map((feedback) => {
-    if (feedback.client?.picture) {
-      feedback.client.pictureUrl = this.fileUploadService.getFileUrl('client_photo', feedback.client.picture);
+    if (!worker) {
+      throw new NotFoundException(
+        `No se encontró un perfil de worker para el usuario ${userId}`,
+      );
     }
-    return feedback;
-  });
 
-  return result;
-}
+    // 2. Query con join al Client para hidratar la respuesta
+    const queryBuilder = this.workerFeedbackRepository
+      .createQueryBuilder('feedback')
+      .leftJoinAndMapOne(
+        'feedback.client',
+        Client,
+        'client',
+        'client.userId = feedback.clientId',
+      )
+      .where('feedback.workerId = :workerId', { workerId: worker.id })
+      .orderBy('feedback.datetime', 'DESC');
+
+    // 3. Paginar
+    const result = await paginate<WorkerFeedback>(queryBuilder, {
+      page,
+      limit,
+    });
+
+    // 4. Agregar pictureUrl al cliente
+    result.data = result.data.map((feedback) => {
+      if (feedback.client?.picture) {
+        feedback.client.pictureUrl = this.fileUploadService.getFileUrl(
+          'client_photo',
+          feedback.client.picture,
+        );
+      }
+      return feedback;
+    });
+
+    return result;
+  }
 }

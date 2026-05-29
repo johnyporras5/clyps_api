@@ -1,4 +1,17 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Query, Put, BadRequestException, } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Request,
+  Query,
+  Put,
+  BadRequestException,
+} from '@nestjs/common';
 import { SessionService } from './session.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { CreateSessionWithDetailDto } from './dto/create-session-with-detail.dto';
@@ -16,7 +29,7 @@ import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SessionController {
-  constructor(private readonly sessionService: SessionService) { }
+  constructor(private readonly sessionService: SessionService) {}
 
   @Post()
   @Roles('adm')
@@ -29,12 +42,12 @@ export class SessionController {
   @Roles('adm')
   async createSessionWithDetail(
     @Request() req,
-    @Body() createSessionWithDetailDto: CreateSessionWithDetailDto
+    @Body() createSessionWithDetailDto: CreateSessionWithDetailDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
     return this.sessionService.createSessionWithDetail(
       createSessionWithDetailDto,
-      adminId
+      adminId,
     );
   }
 
@@ -43,26 +56,24 @@ export class SessionController {
     return this.sessionService.findOneWithDetails(+id);
   }
   /**
-    * Obtiene los detalles de una sesión (cita) con validación de permisos.
-    * Ahora accesible para administradores, trabajadores y clientes autenticados.
-    */
+   * Obtiene los detalles de una sesión (cita) con validación de permisos.
+   * Ahora accesible para administradores, trabajadores y clientes autenticados.
+   */
   @Get(':id/details')
   @Roles('adm', 'wrk', 'cli')
-  async getSessionDetails(
-    @Request() req,
-    @Param('id') id: string
-  ) {
+  async getSessionDetails(@Request() req, @Param('id') id: string) {
     const userId = req.user?.id || req.user?.sub;
     const userRole = req.user?.userType;
-    return this.sessionService.getSessionDetailsWithValidation(+id, userId, userRole);
+    return this.sessionService.getSessionDetailsWithValidation(
+      +id,
+      userId,
+      userRole,
+    );
   }
 
   @Get()
   @Roles('adm')
-  async findAll(
-    @Request() req,
-    @Query() getSessionsDto: GetSessionsDto
-  ) {
+  async findAll(@Request() req, @Query() getSessionsDto: GetSessionsDto) {
     const adminId = req.user.sub;
     return this.sessionService.findAllSessionsSimple(adminId, getSessionsDto);
   }
@@ -94,10 +105,14 @@ export class SessionController {
   async update(
     @Request() req,
     @Param('id') id: string,
-    @Body() updateSessionDto: UpdateSessionDto
+    @Body() updateSessionDto: UpdateSessionDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.updateSessionDates(+id, updateSessionDto, adminId);
+    return this.sessionService.updateSessionDates(
+      +id,
+      updateSessionDto,
+      adminId,
+    );
   }
 
   /**
@@ -110,10 +125,15 @@ export class SessionController {
   async updateSessionStatus(
     @Request() req,
     @Param('id') id: string,
-    @Body() updateSessionStatusDto: UpdateSessionStatusDto
+    @Body() updateSessionStatusDto: UpdateSessionStatusDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.updateSessionStatus(+id, updateSessionStatusDto, adminId, 'adm');
+    return this.sessionService.updateSessionStatus(
+      +id,
+      updateSessionStatusDto,
+      adminId,
+      'adm',
+    );
   }
 
   /**
@@ -129,7 +149,11 @@ export class SessionController {
     @Body() assignWorkersDto: AssignWorkersToSessionDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.assignWorkersToSession(+id, assignWorkersDto, adminId);
+    return this.sessionService.assignWorkersToSession(
+      +id,
+      assignWorkersDto,
+      adminId,
+    );
   }
 
   @Put('details/:detailId/status')
@@ -137,11 +161,16 @@ export class SessionController {
   async updateDetailStatus(
     @Request() req,
     @Param('detailId') detailId: string,
-    @Body() updateDetailStatusDto: UpdateDetailStatusDto
+    @Body() updateDetailStatusDto: UpdateDetailStatusDto,
   ) {
     const userId = req.user?.id || req.user?.sub;
     const userRole = req.user?.userType;
-    return this.sessionService.updateDetailStatus(+detailId, updateDetailStatusDto, userId, userRole);
+    return this.sessionService.updateDetailStatus(
+      +detailId,
+      updateDetailStatusDto,
+      userId,
+      userRole,
+    );
   }
 
   @Delete(':id')
@@ -149,51 +178,44 @@ export class SessionController {
     return this.sessionService.removeSessionWithDetails(+id);
   }
 
-
   @Get('worker/my-sessions')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('wrk')
-
-  async getMySessions(
-    @Request() req,
-    @Query() getSessionsDto: GetSessionsDto
-  ) {
+  async getMySessions(@Request() req, @Query() getSessionsDto: GetSessionsDto) {
     // req.user contiene la información del usuario autenticado
     const userId = req.user.sub;
     return await this.sessionService.getSessionsForAuthenticatedWorker(
       userId,
-      getSessionsDto
+      getSessionsDto,
     );
   }
-
 
   @Post('client/create')
   @Roles('cli')
   async createSessionByClient(
     @Request() req,
-    @Body() createSessionWithDetailDto: CreateSessionWithDetailDto
+    @Body() createSessionWithDetailDto: CreateSessionWithDetailDto,
   ) {
     const userId = req.user?.id || req.user?.sub;
-    return this.sessionService.createSessionByClient(createSessionWithDetailDto, userId);
+    return this.sessionService.createSessionByClient(
+      createSessionWithDetailDto,
+      userId,
+    );
   }
 
   @Post(':id/sync-status')
   @Roles('adm')
-  async syncSessionStatus(
-    @Request() req,
-    @Param('id') id: string
-  ) {
+  async syncSessionStatus(@Request() req, @Param('id') id: string) {
     const adminId = req.user?.id || req.user?.sub;
     return this.sessionService.syncSessionStatusFromDetails(+id, adminId);
   }
-
 
   @Post(':id/extra-services')
   @Roles('adm', 'cli')
   async addExtraServices(
     @Request() req,
     @Param('id') id: string,
-    @Body() addExtraServicesDto: AddExtraServicesDto
+    @Body() addExtraServicesDto: AddExtraServicesDto,
   ) {
     const userId = req.user?.id || req.user?.sub;
     const userRole = req.user?.userType;
@@ -201,7 +223,7 @@ export class SessionController {
       +id,
       addExtraServicesDto,
       userId,
-      userRole
+      userRole,
     );
   }
 
@@ -214,9 +236,13 @@ export class SessionController {
   ) {
     const userId = req.user?.id || req.user?.sub;
     const userRole = req.user?.userType;
-    return this.sessionService.removeExtraServiceFromSession(+id, +detailId, userId, userRole);
+    return this.sessionService.removeExtraServiceFromSession(
+      +id,
+      +detailId,
+      userId,
+      userRole,
+    );
   }
-
 
   // ============ CANCELACIÓN POR ADMIN ============
   @Patch(':id/cancel')
@@ -242,20 +268,22 @@ export class SessionController {
     return this.sessionService.cancelSession(+id, userId, 'cli', cancelDto);
   }
 
-
   /**
- * Obtiene todas las citas del cliente autenticado.
- * Permite filtros por fecha, estado y paginación.
- */
-@Get('client/my-sessions')
-@Roles('cli')
-async getMySessionsAsClient(
-  @Request() req,
-  @Query() getSessionsDto: GetSessionsDto
-) {
-  const userId = req.user?.id || req.user?.sub;
-  return this.sessionService.getSessionsForAuthenticatedClient(userId, getSessionsDto);
-}
+   * Obtiene todas las citas del cliente autenticado.
+   * Permite filtros por fecha, estado y paginación.
+   */
+  @Get('client/my-sessions')
+  @Roles('cli')
+  async getMySessionsAsClient(
+    @Request() req,
+    @Query() getSessionsDto: GetSessionsDto,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    return this.sessionService.getSessionsForAuthenticatedClient(
+      userId,
+      getSessionsDto,
+    );
+  }
 
   /**
    * Lista paginada de servicios asignados al worker (catálogo service.workers)
@@ -275,8 +303,15 @@ async getMySessionsAsClient(
     const userType = req.user?.userType;
     const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
     const pageNum = page ? Math.max(parseInt(page, 10) || 1, 1) : 1;
-    const limitNum = limit ? Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100) : 10;
-    return this.sessionService.getWorkerAssignedServices(userId, pageNum, limitNum, targetWorkerId);
+    const limitNum = limit
+      ? Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100)
+      : 10;
+    return this.sessionService.getWorkerAssignedServices(
+      userId,
+      pageNum,
+      limitNum,
+      targetWorkerId,
+    );
   }
 
   /**
@@ -296,8 +331,15 @@ async getMySessionsAsClient(
     const userType = req.user?.userType;
     const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
     const pageNum = page ? Math.max(parseInt(page, 10) || 1, 1) : 1;
-    const limitNum = limit ? Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100) : 10;
-    return this.sessionService.getWorkerClients(userId, pageNum, limitNum, targetWorkerId);
+    const limitNum = limit
+      ? Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100)
+      : 10;
+    return this.sessionService.getWorkerClients(
+      userId,
+      pageNum,
+      limitNum,
+      targetWorkerId,
+    );
   }
 
   /**
@@ -315,7 +357,11 @@ async getMySessionsAsClient(
     const userId = req.user?.id || req.user?.sub;
     const userType = req.user?.userType;
     const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
-    return this.sessionService.getWorkerHistory(userId, getSessionsDto, targetWorkerId);
+    return this.sessionService.getWorkerHistory(
+      userId,
+      getSessionsDto,
+      targetWorkerId,
+    );
   }
 
   /**
@@ -335,7 +381,12 @@ async getMySessionsAsClient(
     const userId = req.user?.id || req.user?.sub;
     const userType = req.user?.userType;
     const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
-    return this.sessionService.getWorkerIncomeReport(userId, startDate, endDate, targetWorkerId);
+    return this.sessionService.getWorkerIncomeReport(
+      userId,
+      startDate,
+      endDate,
+      targetWorkerId,
+    );
   }
 
   private resolveTargetWorkerId(
@@ -345,7 +396,9 @@ async getMySessionsAsClient(
     if (userType === 'adm') {
       const parsed = workerIdParam ? parseInt(workerIdParam, 10) : NaN;
       if (!parsed || isNaN(parsed)) {
-        throw new BadRequestException('El parámetro workerId es requerido para administradores');
+        throw new BadRequestException(
+          'El parámetro workerId es requerido para administradores',
+        );
       }
       return parsed;
     }

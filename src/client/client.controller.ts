@@ -31,10 +31,10 @@ export class ClientController {
 
   /**
    * Endpoint principal para listar clientes según las reglas de visibilidad
-   * 
+   *
    * Reglas:
    * 1. Clientes PÚBLICOS: Visibles para TODOS los administradores logueados
-   * 2. Clientes PRIVADOS: Solo visibles para administradores cuyas compañías 
+   * 2. Clientes PRIVADOS: Solo visibles para administradores cuyas compañías
    *    están en el array 'companies' del cliente
    * 3. Admin sin compañías: Solo puede ver clientes públicos
    */
@@ -45,16 +45,18 @@ export class ClientController {
   ) {
     // Extraer adminId del token JWT (soporta tanto 'id' como 'sub')
     const adminId = req.user?.id || req.user?.sub;
-    
+
     if (!adminId) {
       throw new UnauthorizedException('Usuario no autenticado correctamente');
     }
-    
-    return await this.clientService.findAllByAdminCompanies(adminId, paginationDto);
+
+    return await this.clientService.findAllByAdminCompanies(
+      adminId,
+      paginationDto,
+    );
   }
 
-
-   /**
+  /**
    * Actualizar perfil del cliente autenticado (con foto opcional)
    * Ruta y lógica idéntica a WorkerController
    */
@@ -74,15 +76,20 @@ export class ClientController {
       (key) => updateClientDto[key] !== undefined,
     );
     if (!hasUpdates && !photoFile) {
-      throw new BadRequestException('Debe proporcionar al menos un campo para actualizar');
+      throw new BadRequestException(
+        'Debe proporcionar al menos un campo para actualizar',
+      );
     }
 
     // Delegar toda la lógica al servicio
-    return this.clientService.updateProfileWithPhoto(userId, updateClientDto, photoFile);
+    return this.clientService.updateProfileWithPhoto(
+      userId,
+      updateClientDto,
+      photoFile,
+    );
   }
 
-
-   @Get('profile')
+  @Get('profile')
   @Roles('cli') // Solo usuarios tipo cliente
   async getProfile(@Req() req: any): Promise<any> {
     const userId = req.user?.sub || req.user?.id;
@@ -122,9 +129,15 @@ export class ClientController {
       (key) => updateClientDto[key] !== undefined,
     );
     if (!hasUpdates && !photoFile) {
-      throw new BadRequestException('Debe proporcionar al menos un campo para actualizar');
+      throw new BadRequestException(
+        'Debe proporcionar al menos un campo para actualizar',
+      );
     }
-    return this.clientService.updateClientByAdmin(clientId, updateClientDto, photoFile);
+    return this.clientService.updateClientByAdmin(
+      clientId,
+      updateClientDto,
+      photoFile,
+    );
   }
 
   /**
@@ -145,7 +158,10 @@ export class ClientController {
     if (!adminId) {
       throw new UnauthorizedException('Usuario no autenticado correctamente');
     }
-    return this.clientService.setCompanyAlias(adminId, clientId, setCompanyAliasDto);
+    return this.clientService.setCompanyAlias(
+      adminId,
+      clientId,
+      setCompanyAliasDto,
+    );
   }
-
 }

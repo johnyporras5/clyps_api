@@ -1,4 +1,11 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
 import { ServiceOffer } from './service-offer.entity';
 
@@ -40,6 +47,8 @@ export class Offer {
   @JoinColumn({ name: 'company_id' })
   company: Company;
 
-  @OneToMany(() => ServiceOffer, (serviceOffer) => serviceOffer.offer, { cascade: true })
+  @OneToMany(() => ServiceOffer, (serviceOffer) => serviceOffer.offer, {
+    cascade: true,
+  })
   serviceOffers: ServiceOffer[];
 }

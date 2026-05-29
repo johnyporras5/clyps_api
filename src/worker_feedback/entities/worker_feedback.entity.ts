@@ -22,7 +22,9 @@ export class WorkerFeedback {
   @CreateDateColumn({ name: 'datetime', type: 'timestamp' })
   datetime: Date;
 
-  @ManyToOne(() => Worker, (worker) => worker.feedbacks, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Worker, (worker) => worker.feedbacks, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'worker_id' })
   worker: Worker;
 

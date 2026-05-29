@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, Inject, BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  Inject,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
@@ -10,7 +16,7 @@ import { CompanyWithLogoUrl } from './types/company-with-logo-url.type';
 import {
   paginate,
   PaginationOptions,
-  PaginationResult
+  PaginationResult,
 } from '../common/utils/pagination.util';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
@@ -25,7 +31,6 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.entity';
 import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
-
 
 @Injectable()
 export class CompanyService {
@@ -58,7 +63,7 @@ export class CompanyService {
     private sessionDetailRepository: Repository<SessionDetail>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
-  ) { }
+  ) {}
 
   /**
    * Bloquea la eliminación si el trabajador tiene citas asociadas en la
@@ -78,7 +83,9 @@ export class CompanyService {
       .select('COUNT(*)', 'count')
       .where('cw.worker_id = :workerId', { workerId })
       .andWhere('cw.company_id = :companyId', { companyId })
-      .andWhere('s.session_status IN (:...blockingStatuses)', { blockingStatuses })
+      .andWhere('s.session_status IN (:...blockingStatuses)', {
+        blockingStatuses,
+      })
       .getRawOne<{ count: string | number }>();
 
     const count = result ? Number(result.count) : 0;
@@ -91,25 +98,24 @@ export class CompanyService {
   }
 
   async findAll(
-    options: PaginationOptions
+    options: PaginationOptions,
   ): Promise<PaginationResult<CompanyWithLogoUrl>> {
-    const paginationResult = await paginate(
-      this.companyRepository,
-      options
-    );
+    const paginationResult = await paginate(this.companyRepository, options);
 
     // Transformar los datos para incluir logoUrl
-    const dataWithLogoUrl = paginationResult.data.map(company => {
+    const dataWithLogoUrl = paginationResult.data.map((company) => {
       const companyWithLogo: CompanyWithLogoUrl = {
         ...company,
-        logoUrl: company.logo ? this.fileUploadService.getFileUrl('company_logo', company.logo) : null
+        logoUrl: company.logo
+          ? this.fileUploadService.getFileUrl('company_logo', company.logo)
+          : null,
       };
       return companyWithLogo;
     });
 
     return {
       ...paginationResult,
-      data: dataWithLogoUrl
+      data: dataWithLogoUrl,
     };
   }
 
@@ -138,7 +144,9 @@ export class CompanyService {
         },
       }),
       this.serviceRepository.find({ where: { companyId: id } }),
-      this.serviceCategoryRepository.find({ where: { companyId: id, isActive: true } }),
+      this.serviceCategoryRepository.find({
+        where: { companyId: id, isActive: true },
+      }),
       this.companyCategoryRepository.find({ where: { companyId: id } }),
       this.companyFeedbackRepository
         .createQueryBuilder('f')
@@ -153,9 +161,9 @@ export class CompanyService {
     ]);
 
     const workerIds = companyWorkers
-      .map(cw => cw.worker?.id)
+      .map((cw) => cw.worker?.id)
       .filter((wid): wid is number => typeof wid === 'number');
-    const serviceIds = services.map(s => s.id);
+    const serviceIds = services.map((s) => s.id);
 
     const [workerRatings, serviceRatings] = await Promise.all([
       workerIds.length
@@ -182,14 +190,20 @@ export class CompanyService {
         : Promise.resolve([]),
     ]);
 
-    const workerRatingMap = new Map<number, { average: number; total: number }>();
+    const workerRatingMap = new Map<
+      number,
+      { average: number; total: number }
+    >();
     for (const r of workerRatings) {
       workerRatingMap.set(Number(r.workerId), {
         average: Number(Number(r.avg).toFixed(2)),
         total: Number(r.count),
       });
     }
-    const serviceRatingMap = new Map<number, { average: number; total: number }>();
+    const serviceRatingMap = new Map<
+      number,
+      { average: number; total: number }
+    >();
     for (const r of serviceRatings) {
       serviceRatingMap.set(Number(r.serviceId), {
         average: Number(Number(r.avg).toFixed(2)),
@@ -201,7 +215,11 @@ export class CompanyService {
     if (calendars.length > 0) {
       let detail = calendars[0].calendarDetail;
       if (typeof detail === 'string') {
-        try { detail = JSON.parse(detail); } catch { /* ignore */ }
+        try {
+          detail = JSON.parse(detail);
+        } catch {
+          /* ignore */
+        }
       }
       calendarDetail = detail;
     }
@@ -212,8 +230,8 @@ export class CompanyService {
     }
 
     const workers = companyWorkers
-      .filter(cw => cw.worker)
-      .map(cw => {
+      .filter((cw) => cw.worker)
+      .map((cw) => {
         const w = cw.worker;
         const rating = workerRatingMap.get(w.id) || { average: 0, total: 0 };
         return {
@@ -233,7 +251,7 @@ export class CompanyService {
         };
       });
 
-    const servicesData = services.map(s => {
+    const servicesData = services.map((s) => {
       const cat = s.categoryId ? categoryById.get(s.categoryId) : null;
       const rating = serviceRatingMap.get(s.id) || { average: 0, total: 0 };
       return {
@@ -251,17 +269,18 @@ export class CompanyService {
       };
     });
 
-    const categories = companyCategories.map(cc => ({
+    const categories = companyCategories.map((cc) => ({
       id: cc.id,
       name: cc.name,
     }));
 
-    const rating = companyRatingRaw && companyRatingRaw.avg
-      ? {
-          average: Number(Number(companyRatingRaw.avg).toFixed(2)),
-          total: Number(companyRatingRaw.count),
-        }
-      : { average: 0, total: 0 };
+    const rating =
+      companyRatingRaw && companyRatingRaw.avg
+        ? {
+            average: Number(Number(companyRatingRaw.avg).toFixed(2)),
+            total: Number(companyRatingRaw.count),
+          }
+        : { average: 0, total: 0 };
 
     const userWithoutPassword = user
       ? (() => {
@@ -279,7 +298,7 @@ export class CompanyService {
       calendarDetail,
       schedule: calendarDetail,
       categories,
-      serviceCategories: serviceCategories.map(sc => ({
+      serviceCategories: serviceCategories.map((sc) => ({
         id: sc.id,
         name: sc.name,
         description: sc.description,
@@ -291,57 +310,64 @@ export class CompanyService {
     };
   }
 
-async findByUserId(userId: number): Promise<CompanyWithLogoUrl> {
-  const company = await this.companyRepository.findOne({
-    where: { userId },
-    relations: ['categories'],
-  });
-
-  if (!company) {
-    throw new NotFoundException(`Company for user with id ${userId} not found`);
-  }
-
-  // Obtener los datos del usuario
-  const user = await this.userRepository.findOne({
-    where: { id: userId }
-  });
-
-  if (!user) {
-    throw new NotFoundException(`User with id ${userId} not found`);
-  }
-
-  // ✅ OBTENER EL CALENDARIO (ya parseado como objeto)
-  let calendarDetail = null;
-  try {
-    const calendar = await this.calendarCompanyRepository.findOne({
-      where: { companyId: company.id }
+  async findByUserId(userId: number): Promise<CompanyWithLogoUrl> {
+    const company = await this.companyRepository.findOne({
+      where: { userId },
+      relations: ['categories'],
     });
-    if (calendar) {
-      calendarDetail = calendar.calendarDetail; // TypeORM automáticamente parsea JSON
+
+    if (!company) {
+      throw new NotFoundException(
+        `Company for user with id ${userId} not found`,
+      );
     }
-  } catch (error) {
-    console.error('❌ Error al obtener el calendario:', error);
+
+    // Obtener los datos del usuario
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with id ${userId} not found`);
+    }
+
+    // ✅ OBTENER EL CALENDARIO (ya parseado como objeto)
+    let calendarDetail = null;
+    try {
+      const calendar = await this.calendarCompanyRepository.findOne({
+        where: { companyId: company.id },
+      });
+      if (calendar) {
+        calendarDetail = calendar.calendarDetail; // TypeORM automáticamente parsea JSON
+      }
+    } catch (error) {
+      console.error('❌ Error al obtener el calendario:', error);
+    }
+
+    // Excluir el password del usuario por seguridad
+    const { password, ...userWithoutPassword } = user;
+
+    const companyWithLogo: CompanyWithLogoUrl = {
+      ...company,
+      logoUrl: company.logo
+        ? this.fileUploadService.getFileUrl('company_logo', company.logo)
+        : null,
+      calendarDetail: calendarDetail, // ✅ Objeto JSON, no string
+      user: userWithoutPassword,
+    };
+
+    return companyWithLogo;
   }
-
-  // Excluir el password del usuario por seguridad
-  const { password, ...userWithoutPassword } = user;
-
-  const companyWithLogo: CompanyWithLogoUrl = {
-    ...company,
-    logoUrl: company.logo ? this.fileUploadService.getFileUrl('company_logo', company.logo) : null,
-    calendarDetail: calendarDetail, // ✅ Objeto JSON, no string
-    user: userWithoutPassword
-  };
-
-  return companyWithLogo;
-}
 
   async create(createCompanyDto: CreateCompanyDto): Promise<Company> {
     const company = this.companyRepository.create(createCompanyDto);
     return await this.companyRepository.save(company);
   }
 
-  async update(id: number, updateCompanyDto: UpdateCompanyDto): Promise<CompanyWithLogoUrl> {
+  async update(
+    id: number,
+    updateCompanyDto: UpdateCompanyDto,
+  ): Promise<CompanyWithLogoUrl> {
     const company = await this.companyRepository.findOne({ where: { id } });
     if (!company) {
       throw new NotFoundException(`Company with id ${id} not found`);
@@ -352,8 +378,9 @@ async findByUserId(userId: number): Promise<CompanyWithLogoUrl> {
 
     const companyWithLogo: CompanyWithLogoUrl = {
       ...updatedCompany,
-      logoUrl: updatedCompany.logo ? this.fileUploadService.getFileUrl('company_logo', updatedCompany.logo) : null,
-
+      logoUrl: updatedCompany.logo
+        ? this.fileUploadService.getFileUrl('company_logo', updatedCompany.logo)
+        : null,
     };
 
     return companyWithLogo;
@@ -376,145 +403,165 @@ async findByUserId(userId: number): Promise<CompanyWithLogoUrl> {
     }
   }
 
-
   /**
-  * Método único para actualizar el perfil del administrador
-  * Maneja tanto los datos como el logo en una sola operación
-  */
-/**
- * Método único para actualizar el perfil del administrador
- * Maneja tanto los datos como el logo y el calendario en una sola operación
- */
-async updateAdminProfile(
-  userId: number,
-  updateAdminProfileDto: UpdateAdminProfileDto,
-  logoFile?: Express.Multer.File
-): Promise<CompanyWithLogoUrl> {
-  // Buscar la compañía del admin
-  const company = await this.companyRepository.findOne({
-    where: { userId }
-  });
+   * Método único para actualizar el perfil del administrador
+   * Maneja tanto los datos como el logo en una sola operación
+   */
+  /**
+   * Método único para actualizar el perfil del administrador
+   * Maneja tanto los datos como el logo y el calendario en una sola operación
+   */
+  async updateAdminProfile(
+    userId: number,
+    updateAdminProfileDto: UpdateAdminProfileDto,
+    logoFile?: Express.Multer.File,
+  ): Promise<CompanyWithLogoUrl> {
+    // Buscar la compañía del admin
+    const company = await this.companyRepository.findOne({
+      where: { userId },
+    });
 
-  if (!company) {
-    throw new NotFoundException('No se encontró la compañía para este administrador');
-  }
-
-  // Si se envía un logo, procesarlo
-  if (logoFile) {
-    try {
-      // Eliminar el logo anterior si existe
-      if (company.logo) {
-        await this.fileUploadService.deleteFile('company_logo', company.logo);
-      }
-
-      // Subir nuevo logo
-      const logoInfo = await this.fileUploadService.saveFile(
-        logoFile,
-        'company_logo',
-        'company',
-        userId
+    if (!company) {
+      throw new NotFoundException(
+        'No se encontró la compañía para este administrador',
       );
-
-      // Actualizar el nombre del logo en la compañía
-      company.logo = logoInfo.fileName;
-    } catch (error) {
-      console.error('❌ Error al procesar el logo:', error);
-      throw new BadRequestException('Error al procesar el logo. Asegúrate de que sea una imagen válida.');
     }
-  }
 
-  // Actualizar campos del DTO
-  const updateData: Partial<Company> = {};
-  
-  // Solo actualizar los campos que vienen en el DTO (no undefined)
-  if (updateAdminProfileDto.name !== undefined) updateData.name = updateAdminProfileDto.name;
-  if (updateAdminProfileDto.location !== undefined) updateData.location = updateAdminProfileDto.location;
-  if (updateAdminProfileDto.address !== undefined) updateData.address = updateAdminProfileDto.address;
-  if (updateAdminProfileDto.email !== undefined) updateData.email = updateAdminProfileDto.email;
-  if (updateAdminProfileDto.phone !== undefined) updateData.phone = updateAdminProfileDto.phone;
-  if (updateAdminProfileDto.description !== undefined) updateData.description = updateAdminProfileDto.description;
-  if (updateAdminProfileDto.managerName !== undefined) updateData.managerName = updateAdminProfileDto.managerName;
-  if (updateAdminProfileDto.instagramUrl !== undefined) updateData.instagramUrl = updateAdminProfileDto.instagramUrl;
-  if (updateAdminProfileDto.tiktokUrl !== undefined) updateData.tiktokUrl = updateAdminProfileDto.tiktokUrl;
-  if (updateAdminProfileDto.facebookUrl !== undefined) updateData.facebookUrl = updateAdminProfileDto.facebookUrl;
-  if (updateAdminProfileDto.birthDate !== undefined) updateData.birthDate = new Date(updateAdminProfileDto.birthDate);
+    // Si se envía un logo, procesarlo
+    if (logoFile) {
+      try {
+        // Eliminar el logo anterior si existe
+        if (company.logo) {
+          await this.fileUploadService.deleteFile('company_logo', company.logo);
+        }
 
-  // Aplicar actualizaciones
-  Object.assign(company, updateData);
-  const updatedCompany = await this.companyRepository.save(company);
+        // Subir nuevo logo
+        const logoInfo = await this.fileUploadService.saveFile(
+          logoFile,
+          'company_logo',
+          'company',
+          userId,
+        );
 
-  //  MANEJAR ACTUALIZACIÓN DEL CALENDARIO
-  let calendarDetail = null;
-  
-  if (updateAdminProfileDto.calendarDetail !== undefined) {
-    try {
-      //  PARSEAR el JSON si viene como string desde form-data
-      let parsedCalendarDetail = updateAdminProfileDto.calendarDetail;
-      if (typeof updateAdminProfileDto.calendarDetail === 'string') {
-        parsedCalendarDetail = JSON.parse(updateAdminProfileDto.calendarDetail);
+        // Actualizar el nombre del logo en la compañía
+        company.logo = logoInfo.fileName;
+      } catch (error) {
+        console.error('❌ Error al procesar el logo:', error);
+        throw new BadRequestException(
+          'Error al procesar el logo. Asegúrate de que sea una imagen válida.',
+        );
       }
+    }
 
-      // Buscar si ya existe un calendario para esta compañía
-      let calendarCompany = await this.calendarCompanyRepository.findOne({
-        where: { companyId: company.id }
-      });
+    // Actualizar campos del DTO
+    const updateData: Partial<Company> = {};
 
-      if (calendarCompany) {
-        // Si existe, actualizar solo el calendarDetail
-        calendarCompany.calendarDetail = parsedCalendarDetail;
-        await this.calendarCompanyRepository.save(calendarCompany);
-        calendarDetail = calendarCompany.calendarDetail;
-        console.log(`✅ Calendario actualizado para la compañía ${company.id}`);
-      } else {
-        // Si no existe, crear uno nuevo
-        const newCalendar = this.calendarCompanyRepository.create({
-          companyId: company.id,
-          calendarDetail: parsedCalendarDetail,
+    // Solo actualizar los campos que vienen en el DTO (no undefined)
+    if (updateAdminProfileDto.name !== undefined)
+      updateData.name = updateAdminProfileDto.name;
+    if (updateAdminProfileDto.location !== undefined)
+      updateData.location = updateAdminProfileDto.location;
+    if (updateAdminProfileDto.address !== undefined)
+      updateData.address = updateAdminProfileDto.address;
+    if (updateAdminProfileDto.email !== undefined)
+      updateData.email = updateAdminProfileDto.email;
+    if (updateAdminProfileDto.phone !== undefined)
+      updateData.phone = updateAdminProfileDto.phone;
+    if (updateAdminProfileDto.description !== undefined)
+      updateData.description = updateAdminProfileDto.description;
+    if (updateAdminProfileDto.managerName !== undefined)
+      updateData.managerName = updateAdminProfileDto.managerName;
+    if (updateAdminProfileDto.instagramUrl !== undefined)
+      updateData.instagramUrl = updateAdminProfileDto.instagramUrl;
+    if (updateAdminProfileDto.tiktokUrl !== undefined)
+      updateData.tiktokUrl = updateAdminProfileDto.tiktokUrl;
+    if (updateAdminProfileDto.facebookUrl !== undefined)
+      updateData.facebookUrl = updateAdminProfileDto.facebookUrl;
+    if (updateAdminProfileDto.birthDate !== undefined)
+      updateData.birthDate = new Date(updateAdminProfileDto.birthDate);
+
+    // Aplicar actualizaciones
+    Object.assign(company, updateData);
+    const updatedCompany = await this.companyRepository.save(company);
+
+    //  MANEJAR ACTUALIZACIÓN DEL CALENDARIO
+    let calendarDetail = null;
+
+    if (updateAdminProfileDto.calendarDetail !== undefined) {
+      try {
+        //  PARSEAR el JSON si viene como string desde form-data
+        let parsedCalendarDetail = updateAdminProfileDto.calendarDetail;
+        if (typeof updateAdminProfileDto.calendarDetail === 'string') {
+          parsedCalendarDetail = JSON.parse(
+            updateAdminProfileDto.calendarDetail,
+          );
+        }
+
+        // Buscar si ya existe un calendario para esta compañía
+        const calendarCompany = await this.calendarCompanyRepository.findOne({
+          where: { companyId: company.id },
         });
-        const savedCalendar = await this.calendarCompanyRepository.save(newCalendar);
-        calendarDetail = savedCalendar.calendarDetail;
-        console.log(`✅ Calendario creado para la compañía ${company.id}`);
+
+        if (calendarCompany) {
+          // Si existe, actualizar solo el calendarDetail
+          calendarCompany.calendarDetail = parsedCalendarDetail;
+          await this.calendarCompanyRepository.save(calendarCompany);
+          calendarDetail = calendarCompany.calendarDetail;
+          console.log(
+            `✅ Calendario actualizado para la compañía ${company.id}`,
+          );
+        } else {
+          // Si no existe, crear uno nuevo
+          const newCalendar = this.calendarCompanyRepository.create({
+            companyId: company.id,
+            calendarDetail: parsedCalendarDetail,
+          });
+          const savedCalendar =
+            await this.calendarCompanyRepository.save(newCalendar);
+          calendarDetail = savedCalendar.calendarDetail;
+          console.log(`✅ Calendario creado para la compañía ${company.id}`);
+        }
+      } catch (error) {
+        console.error('❌ Error al actualizar el calendario:', error);
+        // No lanzamos excepción para no bloquear la actualización del perfil
       }
-    } catch (error) {
-      console.error('❌ Error al actualizar el calendario:', error);
-      // No lanzamos excepción para no bloquear la actualización del perfil
-    }
-  } else {
-    // Si no se envió calendarDetail en el DTO, buscar el existente
-    try {
-      const existingCalendar = await this.calendarCompanyRepository.findOne({
-        where: { companyId: company.id }
-      });
-      if (existingCalendar) {
-        calendarDetail = existingCalendar.calendarDetail;
+    } else {
+      // Si no se envió calendarDetail en el DTO, buscar el existente
+      try {
+        const existingCalendar = await this.calendarCompanyRepository.findOne({
+          where: { companyId: company.id },
+        });
+        if (existingCalendar) {
+          calendarDetail = existingCalendar.calendarDetail;
+        }
+      } catch (error) {
+        console.error('❌ Error al obtener el calendario existente:', error);
       }
-    } catch (error) {
-      console.error('❌ Error al obtener el calendario existente:', error);
     }
+
+    // ✅ INCLUIR calendarDetail EN LA RESPUESTA (ya parseado como objeto)
+    const companyWithLogo: CompanyWithLogoUrl = {
+      ...updatedCompany,
+      logoUrl: updatedCompany.logo
+        ? this.fileUploadService.getFileUrl('company_logo', updatedCompany.logo)
+        : null,
+      calendarDetail: calendarDetail, // ✅ Ya es un objeto, no un string
+    };
+
+    return companyWithLogo;
   }
-
-  // ✅ INCLUIR calendarDetail EN LA RESPUESTA (ya parseado como objeto)
-  const companyWithLogo: CompanyWithLogoUrl = {
-    ...updatedCompany,
-    logoUrl: updatedCompany.logo ? this.fileUploadService.getFileUrl('company_logo', updatedCompany.logo) : null,
-    calendarDetail: calendarDetail, // ✅ Ya es un objeto, no un string
-  };
-
-  return companyWithLogo;
-}
-
 
   /**
-* Eliminación temporal de trabajador - para poder reconectarlo después
-* Solo marca el registro como temporalmente eliminado, manteniendo los datos
-*/
+   * Eliminación temporal de trabajador - para poder reconectarlo después
+   * Solo marca el registro como temporalmente eliminado, manteniendo los datos
+   */
   async temporarilyRemoveWorkerFromCompany(
     adminId: number,
-    companyWorkerId: number
+    companyWorkerId: number,
   ): Promise<{ message: string; canRestore: boolean }> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -526,24 +573,33 @@ async updateAdminProfile(
       where: {
         id: companyWorkerId,
         companyId: company.id,
-      }
+      },
     });
 
     if (!companyWorker) {
-      throw new NotFoundException('Este trabajador no está asignado a tu compañía');
+      throw new NotFoundException(
+        'Este trabajador no está asignado a tu compañía',
+      );
     }
 
     // 3. Verificar estados de eliminación explícitamente
     if (companyWorker.permanentlyDeleted) {
-      throw new BadRequestException('Este trabajador ya fue eliminado permanentemente');
+      throw new BadRequestException(
+        'Este trabajador ya fue eliminado permanentemente',
+      );
     }
 
     if (companyWorker.temporarilyDeleted) {
-      throw new BadRequestException('Este trabajador ya está temporalmente eliminado');
+      throw new BadRequestException(
+        'Este trabajador ya está temporalmente eliminado',
+      );
     }
 
     // 4. Validar que no tenga citas activas asociadas
-    await this.assertWorkerHasNoActiveAppointments(companyWorker.workerId, company.id);
+    await this.assertWorkerHasNoActiveAppointments(
+      companyWorker.workerId,
+      company.id,
+    );
 
     // 5. Marcar como temporalmente eliminado
     companyWorker.temporarilyDeleted = true;
@@ -553,8 +609,9 @@ async updateAdminProfile(
     await this.companyWorkerRepository.save(companyWorker);
 
     return {
-      message: 'Trabajador eliminado temporalmente de la compañía. Puedes restaurarlo cuando lo necesites.',
-      canRestore: true
+      message:
+        'Trabajador eliminado temporalmente de la compañía. Puedes restaurarlo cuando lo necesites.',
+      canRestore: true,
     };
   }
 
@@ -565,10 +622,10 @@ async updateAdminProfile(
 
   async restoreTemporarilyRemovedWorker(
     adminId: number,
-    companyWorkerId: number
+    companyWorkerId: number,
   ): Promise<{ message: string }> {
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -579,19 +636,25 @@ async updateAdminProfile(
       where: {
         id: companyWorkerId,
         companyId: company.id,
-      }
+      },
     });
 
     if (!companyWorker) {
-      throw new NotFoundException('Este trabajador no está asignado a tu compañía');
+      throw new NotFoundException(
+        'Este trabajador no está asignado a tu compañía',
+      );
     }
 
     if (companyWorker.permanentlyDeleted) {
-      throw new BadRequestException('Este trabajador fue eliminado permanentemente y no se puede restaurar');
+      throw new BadRequestException(
+        'Este trabajador fue eliminado permanentemente y no se puede restaurar',
+      );
     }
 
     if (!companyWorker.temporarilyDeleted) {
-      throw new BadRequestException('Este trabajador no está temporalmente eliminado');
+      throw new BadRequestException(
+        'Este trabajador no está temporalmente eliminado',
+      );
     }
 
     // Restaurar el trabajador
@@ -602,7 +665,7 @@ async updateAdminProfile(
     await this.companyWorkerRepository.save(companyWorker);
 
     return {
-      message: 'Trabajador restaurado exitosamente en la compañía.'
+      message: 'Trabajador restaurado exitosamente en la compañía.',
     };
   }
   /**
@@ -611,11 +674,11 @@ async updateAdminProfile(
    */
   async permanentlyRemoveWorkerFromCompany(
     adminId: number,
-    companyWorkerId: number
+    companyWorkerId: number,
   ): Promise<{ message: string; canRestore: boolean }> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -626,20 +689,27 @@ async updateAdminProfile(
     const companyWorker = await this.companyWorkerRepository.findOne({
       where: {
         id: companyWorkerId,
-        companyId: company.id
-      }
+        companyId: company.id,
+      },
     });
 
     if (!companyWorker) {
-      throw new NotFoundException('Este trabajador no está asignado a tu compañía');
+      throw new NotFoundException(
+        'Este trabajador no está asignado a tu compañía',
+      );
     }
 
     if (companyWorker.permanentlyDeleted) {
-      throw new BadRequestException('Este trabajador ya fue eliminado permanentemente');
+      throw new BadRequestException(
+        'Este trabajador ya fue eliminado permanentemente',
+      );
     }
 
     // 3. Validar que no tenga citas activas asociadas
-    await this.assertWorkerHasNoActiveAppointments(companyWorker.workerId, company.id);
+    await this.assertWorkerHasNoActiveAppointments(
+      companyWorker.workerId,
+      company.id,
+    );
 
     // 4. Marcar como permanentemente eliminado
     companyWorker.permanentlyDeleted = true;
@@ -650,8 +720,9 @@ async updateAdminProfile(
     await this.companyWorkerRepository.save(companyWorker);
 
     return {
-      message: 'Trabajador eliminado permanentemente de la compañía. No podrá ser restaurado.',
-      canRestore: false
+      message:
+        'Trabajador eliminado permanentemente de la compañía. No podrá ser restaurado.',
+      canRestore: false,
     };
   }
 
@@ -659,10 +730,10 @@ async updateAdminProfile(
    * Obtener lista de trabajadores temporalmente eliminados
    */
   async getTemporarilyRemovedWorkers(
-    adminId: number
+    adminId: number,
   ): Promise<CompanyWorker[]> {
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -673,12 +744,11 @@ async updateAdminProfile(
       where: {
         companyId: company.id,
         temporarilyDeleted: true,
-        permanentlyDeleted: false
+        permanentlyDeleted: false,
       },
-      relations: ['worker']
+      relations: ['worker'],
     });
   }
-
 
   /**
    * Eliminación temporal de cliente - para poder reconectarlo después
@@ -686,11 +756,11 @@ async updateAdminProfile(
    */
   async temporarilyRemoveClientFromCompany(
     adminId: number,
-    clientId: number
+    clientId: number,
   ): Promise<{ message: string; canRestore: boolean }> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -701,23 +771,29 @@ async updateAdminProfile(
     const client = await this.clientRepository.findOne({
       where: {
         id: clientId,
-        permanentlyDeleted: false // No incluir los permanentemente eliminados
-      }
+        permanentlyDeleted: false, // No incluir los permanentemente eliminados
+      },
     });
 
     if (!client) {
-      throw new NotFoundException('Cliente no encontrado o ya fue eliminado permanentemente');
+      throw new NotFoundException(
+        'Cliente no encontrado o ya fue eliminado permanentemente',
+      );
     }
 
     // 3. Verificar que el cliente está asociado a la compañía del admin
     // Los clientes se asocian a través del array 'companies'
     if (!client.companies || !client.companies.includes(company.id)) {
-      throw new NotFoundException('Este cliente no está asociado a tu compañía');
+      throw new NotFoundException(
+        'Este cliente no está asociado a tu compañía',
+      );
     }
 
     // 4. Verificar si ya está temporalmente eliminado
     if (client.temporarilyDeleted) {
-      throw new BadRequestException('Este cliente ya está temporalmente eliminado');
+      throw new BadRequestException(
+        'Este cliente ya está temporalmente eliminado',
+      );
     }
 
     // 5. Marcar como temporalmente eliminado
@@ -727,8 +803,9 @@ async updateAdminProfile(
     await this.clientRepository.save(client);
 
     return {
-      message: 'Cliente eliminado temporalmente. Puedes restaurarlo cuando lo necesites.',
-      canRestore: true
+      message:
+        'Cliente eliminado temporalmente. Puedes restaurarlo cuando lo necesites.',
+      canRestore: true,
     };
   }
 
@@ -737,10 +814,10 @@ async updateAdminProfile(
    */
   async restoreTemporarilyRemovedClient(
     adminId: number,
-    clientId: number
+    clientId: number,
   ): Promise<{ message: string }> {
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -751,17 +828,21 @@ async updateAdminProfile(
       where: {
         id: clientId,
         temporarilyDeleted: true,
-        permanentlyDeleted: false
-      }
+        permanentlyDeleted: false,
+      },
     });
 
     if (!client) {
-      throw new NotFoundException('No se encontró un cliente temporalmente eliminado con estos datos');
+      throw new NotFoundException(
+        'No se encontró un cliente temporalmente eliminado con estos datos',
+      );
     }
 
     // Verificar que el cliente está asociado a la compañía del admin
     if (!client.companies || !client.companies.includes(company.id)) {
-      throw new NotFoundException('Este cliente no está asociado a tu compañía');
+      throw new NotFoundException(
+        'Este cliente no está asociado a tu compañía',
+      );
     }
 
     // Restaurar el cliente
@@ -771,7 +852,7 @@ async updateAdminProfile(
     await this.clientRepository.save(client);
 
     return {
-      message: 'Cliente restaurado exitosamente.'
+      message: 'Cliente restaurado exitosamente.',
     };
   }
 
@@ -781,11 +862,11 @@ async updateAdminProfile(
    */
   async permanentlyRemoveClientFromCompany(
     adminId: number,
-    clientId: number
+    clientId: number,
   ): Promise<{ message: string; canRestore: boolean }> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -794,7 +875,7 @@ async updateAdminProfile(
 
     // 2. Buscar el cliente
     const client = await this.clientRepository.findOne({
-      where: { id: clientId }
+      where: { id: clientId },
     });
 
     if (!client) {
@@ -803,7 +884,9 @@ async updateAdminProfile(
 
     // 3. Verificar que el cliente está asociado a la compañía del admin
     if (!client.companies || !client.companies.includes(company.id)) {
-      throw new NotFoundException('Este cliente no está asociado a tu compañía');
+      throw new NotFoundException(
+        'Este cliente no está asociado a tu compañía',
+      );
     }
 
     // 4. Marcar como permanentemente eliminado
@@ -815,20 +898,19 @@ async updateAdminProfile(
 
     return {
       message: 'Cliente eliminado permanentemente. No podrá ser restaurado.',
-      canRestore: false
+      canRestore: false,
     };
   }
 
-  async findByFilters(dto: GetCompaniesFilterDto): Promise<PaginationResult<CompanyWithLogoUrl>> {
+  async findByFilters(
+    dto: GetCompaniesFilterDto,
+  ): Promise<PaginationResult<CompanyWithLogoUrl>> {
     const query = this.companyRepository.createQueryBuilder('company');
 
     if (dto.categoryName) {
-      query.innerJoin(
-        'company.categories',
-        'cat',
-        'cat.name LIKE :catName',
-        { catName: `%${dto.categoryName}%` },
-      );
+      query.innerJoin('company.categories', 'cat', 'cat.name LIKE :catName', {
+        catName: `%${dto.categoryName}%`,
+      });
     }
 
     if (dto.city) {
@@ -836,10 +918,13 @@ async updateAdminProfile(
     }
 
     if (!dto.date) {
-      const result = await paginate(query, { page: dto.page, limit: dto.limit });
+      const result = await paginate(query, {
+        page: dto.page,
+        limit: dto.limit,
+      });
       return {
         ...result,
-        data: result.data.map(c => this.mapToCompanyWithLogoUrl(c)),
+        data: result.data.map((c) => this.mapToCompanyWithLogoUrl(c)),
       };
     }
 
@@ -849,14 +934,23 @@ async updateAdminProfile(
     if (allCompanies.length === 0) {
       return {
         data: [],
-        meta: { page: dto.page, limit: dto.limit, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
+        meta: {
+          page: dto.page,
+          limit: dto.limit,
+          total: 0,
+          totalPages: 0,
+          hasNext: false,
+          hasPrev: false,
+        },
       };
     }
 
-    const companyIds = allCompanies.map(c => c.id);
+    const companyIds = allCompanies.map((c) => c.id);
 
     const [companyCalendars, workerCalendars] = await Promise.all([
-      this.calendarCompanyRepository.find({ where: { companyId: In(companyIds) } }),
+      this.calendarCompanyRepository.find({
+        where: { companyId: In(companyIds) },
+      }),
       this.companyWorkerRepository.find({
         where: {
           companyId: In(companyIds),
@@ -870,7 +964,8 @@ async updateAdminProfile(
     const compCalMap = new Map<number, any[]>();
     for (const cc of companyCalendars) {
       if (!compCalMap.has(cc.companyId)) compCalMap.set(cc.companyId, []);
-      if (cc.calendarDetail) compCalMap.get(cc.companyId)!.push(cc.calendarDetail);
+      if (cc.calendarDetail)
+        compCalMap.get(cc.companyId)!.push(cc.calendarDetail);
     }
 
     const workerCalMap = new Map<number, any[]>();
@@ -879,12 +974,16 @@ async updateAdminProfile(
       if (cw.calendar) workerCalMap.get(cw.companyId)!.push(cw.calendar);
     }
 
-    const available = allCompanies.filter(company => {
+    const available = allCompanies.filter((company) => {
       const compCals = compCalMap.get(company.id) || [];
       const workerCals = workerCalMap.get(company.id) || [];
       return (
-        compCals.some(cal => this.isCalendarAvailable(cal, dto.date!, dayOfWeek)) ||
-        workerCals.some(cal => this.isCalendarAvailable(cal, dto.date!, dayOfWeek))
+        compCals.some((cal) =>
+          this.isCalendarAvailable(cal, dto.date!, dayOfWeek),
+        ) ||
+        workerCals.some((cal) =>
+          this.isCalendarAvailable(cal, dto.date!, dayOfWeek),
+        )
       );
     });
 
@@ -893,7 +992,9 @@ async updateAdminProfile(
     const totalPages = Math.ceil(total / dto.limit);
 
     return {
-      data: available.slice(skip, skip + dto.limit).map(c => this.mapToCompanyWithLogoUrl(c)),
+      data: available
+        .slice(skip, skip + dto.limit)
+        .map((c) => this.mapToCompanyWithLogoUrl(c)),
       meta: {
         page: dto.page,
         limit: dto.limit,
@@ -906,15 +1007,31 @@ async updateAdminProfile(
   }
 
   private getDayOfWeek(date: string): string {
-    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const days = [
+      'sunday',
+      'monday',
+      'tuesday',
+      'wednesday',
+      'thursday',
+      'friday',
+      'saturday',
+    ];
     const [year, month, day] = date.split('-').map(Number);
     return days[new Date(year, month - 1, day).getDay()];
   }
 
-  private isCalendarAvailable(calendarDetail: any, date: string, dayOfWeek: string): boolean {
+  private isCalendarAvailable(
+    calendarDetail: any,
+    date: string,
+    dayOfWeek: string,
+  ): boolean {
     let cal = calendarDetail;
     if (typeof cal === 'string') {
-      try { cal = JSON.parse(cal); } catch { return false; }
+      try {
+        cal = JSON.parse(cal);
+      } catch {
+        return false;
+      }
     }
     if (!cal?.schedule?.days) return false;
     if (!cal.schedule.days.includes(dayOfWeek)) return false;
@@ -926,18 +1043,18 @@ async updateAdminProfile(
   private mapToCompanyWithLogoUrl(company: Company): CompanyWithLogoUrl {
     return {
       ...company,
-      logoUrl: company.logo ? this.fileUploadService.getFileUrl('company_logo', company.logo) : null,
+      logoUrl: company.logo
+        ? this.fileUploadService.getFileUrl('company_logo', company.logo)
+        : null,
     };
   }
 
   /**
    * Obtener lista de clientes temporalmente eliminados del admin
    */
-  async getTemporarilyRemovedClients(
-    adminId: number
-  ): Promise<Client[]> {
+  async getTemporarilyRemovedClients(adminId: number): Promise<Client[]> {
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
@@ -948,13 +1065,13 @@ async updateAdminProfile(
     const allTemporarilyDeletedClients = await this.clientRepository.find({
       where: {
         temporarilyDeleted: true,
-        permanentlyDeleted: false
-      }
+        permanentlyDeleted: false,
+      },
     });
 
     // Filtrar solo los que están asociados a la compañía del admin
-    return allTemporarilyDeletedClients.filter(client =>
-      client.companies && client.companies.includes(company.id)
+    return allTemporarilyDeletedClients.filter(
+      (client) => client.companies && client.companies.includes(company.id),
     );
   }
 
@@ -963,7 +1080,7 @@ async updateAdminProfile(
    * equipo de trabajadores y servicios (con descripción, monto y duración).
    */
   async findAllWithDetails(
-    options: PaginationOptions
+    options: PaginationOptions,
   ): Promise<PaginationResult<any>> {
     const { page, limit } = options;
     const skip = (page - 1) * limit;
@@ -988,7 +1105,7 @@ async updateAdminProfile(
       };
     }
 
-    const companyIds = companies.map(c => c.id);
+    const companyIds = companies.map((c) => c.id);
 
     const [
       calendars,
@@ -1030,9 +1147,9 @@ async updateAdminProfile(
     ]);
 
     const workerIds = companyWorkers
-      .map(cw => cw.worker?.id)
+      .map((cw) => cw.worker?.id)
       .filter((id): id is number => typeof id === 'number');
-    const serviceIds = services.map(s => s.id);
+    const serviceIds = services.map((s) => s.id);
 
     const [workerRatings, serviceRatings] = await Promise.all([
       workerIds.length
@@ -1059,21 +1176,30 @@ async updateAdminProfile(
         : Promise.resolve([]),
     ]);
 
-    const companyRatingMap = new Map<number, { average: number; total: number }>();
+    const companyRatingMap = new Map<
+      number,
+      { average: number; total: number }
+    >();
     for (const r of companyRatings) {
       companyRatingMap.set(Number(r.companyId), {
         average: Number(Number(r.avg).toFixed(2)),
         total: Number(r.count),
       });
     }
-    const workerRatingMap = new Map<number, { average: number; total: number }>();
+    const workerRatingMap = new Map<
+      number,
+      { average: number; total: number }
+    >();
     for (const r of workerRatings) {
       workerRatingMap.set(Number(r.workerId), {
         average: Number(Number(r.avg).toFixed(2)),
         total: Number(r.count),
       });
     }
-    const serviceRatingMap = new Map<number, { average: number; total: number }>();
+    const serviceRatingMap = new Map<
+      number,
+      { average: number; total: number }
+    >();
     for (const r of serviceRatings) {
       serviceRatingMap.set(Number(r.serviceId), {
         average: Number(Number(r.avg).toFixed(2)),
@@ -1085,7 +1211,11 @@ async updateAdminProfile(
     for (const cal of calendars) {
       let detail = cal.calendarDetail;
       if (typeof detail === 'string') {
-        try { detail = JSON.parse(detail); } catch { /* ignore */ }
+        try {
+          detail = JSON.parse(detail);
+        } catch {
+          /* ignore */
+        }
       }
       calendarByCompany.set(cal.companyId, detail);
     }
@@ -1153,7 +1283,7 @@ async updateAdminProfile(
       });
     }
 
-    const data = companies.map(company => ({
+    const data = companies.map((company) => ({
       id: company.id,
       name: company.name,
       description: company.description,

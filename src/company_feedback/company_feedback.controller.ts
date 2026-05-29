@@ -12,7 +12,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
-  UnauthorizedException
+  UnauthorizedException,
 } from '@nestjs/common';
 import { CompanyFeedbackService } from './company_feedback.service';
 import { CompanyFeedback } from './entities/company_feedback.entity';
@@ -25,7 +25,9 @@ import { PaginationResult } from '../common/utils/pagination.util';
 @Controller('companyfeedbacks')
 @UseGuards(JwtAuthGuard)
 export class CompanyFeedbackController {
-  constructor(private readonly companyFeedbackService: CompanyFeedbackService) { }
+  constructor(
+    private readonly companyFeedbackService: CompanyFeedbackService,
+  ) {}
 
   // ------------------------------------------------------------
   // 1. Crear feedback para una compañía (cliente autenticado)
@@ -52,7 +54,7 @@ export class CompanyFeedbackController {
     @Query() paginationDto: PaginationDto,
     @Req() req: any,
   ): Promise<PaginationResult<CompanyFeedback>> {
-    const userId = req.user?.sub;  // ID del usuario autenticado (JWT)
+    const userId = req.user?.sub; // ID del usuario autenticado (JWT)
     if (!userId) {
       throw new UnauthorizedException('User not authenticated');
     }
@@ -87,7 +89,12 @@ export class CompanyFeedbackController {
   ): Promise<CompanyFeedback> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;
-    return this.companyFeedbackService.update(id, updateDto, requesterUserId, requesterUserType);
+    return this.companyFeedbackService.update(
+      id,
+      updateDto,
+      requesterUserId,
+      requesterUserType,
+    );
   }
   // ------------------------------------------------------------
   // 5. Eliminar feedback (solo autor o admin)
@@ -95,11 +102,17 @@ export class CompanyFeedbackController {
   // ------------------------------------------------------------
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  async remove(@Param('id', ParseIntPipe) id: number, @Req() req: any): Promise<{ message: string }> {
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+  ): Promise<{ message: string }> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;
-    await this.companyFeedbackService.remove(id, requesterUserId, requesterUserType);
+    await this.companyFeedbackService.remove(
+      id,
+      requesterUserId,
+      requesterUserType,
+    );
     return { message: 'Feedback eliminado correctamente' };
   }
-
 }

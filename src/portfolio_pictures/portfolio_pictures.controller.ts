@@ -30,10 +30,7 @@ export class PortfolioPicturesController {
    */
   @Post()
   @UseInterceptors(FileInterceptor('picture'))
-  async create(
-    @UploadedFile() file: Express.Multer.File,
-    @Request() req,
-  ) {
+  async create(@UploadedFile() file: Express.Multer.File, @Request() req) {
     const userId = req.user.sub; // JWT `sub` = user.id (no worker.id)
     return this.service.create(file, userId);
   }
@@ -54,10 +51,7 @@ export class PortfolioPicturesController {
    * Obtener una imagen específica del trabajador autenticado
    */
   @Get(':id')
-  async findOne(
-    @Request() req,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
+  async findOne(@Request() req, @Param('id', ParseIntPipe) id: number) {
     const userId = req.user.sub;
     return this.service.findOne(id, userId);
   }
@@ -81,10 +75,7 @@ export class PortfolioPicturesController {
    */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(
-    @Request() req,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
+  async remove(@Request() req, @Param('id', ParseIntPipe) id: number) {
     const userId = req.user.sub;
     await this.service.remove(id, userId);
   }

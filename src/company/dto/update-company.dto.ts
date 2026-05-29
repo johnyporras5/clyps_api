@@ -1,7 +1,13 @@
-import { IsOptional, IsEmail, IsString, IsBoolean, IsNumber, IsDateString } from 'class-validator';
+import {
+  IsOptional,
+  IsEmail,
+  IsString,
+  IsBoolean,
+  IsNumber,
+  IsDateString,
+} from 'class-validator';
 
 export class UpdateCompanyDto {
-
   @IsOptional()
   @IsString()
   name?: string;

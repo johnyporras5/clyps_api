@@ -11,4 +11,3 @@ export class UpdateCompanyFeedbackDto {
   @IsString()
   description?: string;
 }
-

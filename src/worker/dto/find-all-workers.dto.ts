@@ -1,4 +1,4 @@
-import { IsOptional, IsNumber, IsString, IsIn  } from 'class-validator';
+import { IsOptional, IsNumber, IsString, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -12,9 +12,9 @@ export class FindAllWorkersDto extends PaginationDto {
   @IsString()
   search?: string;
 
- @IsOptional()
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @IsIn([0, 1])
-  isActive?: number; 
+  isActive?: number;
 }

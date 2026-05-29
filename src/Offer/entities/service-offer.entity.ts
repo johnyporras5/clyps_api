@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { Offer } from './offer.entity';
 import { Service } from '../../service/entities/service.entity';
 
@@ -20,7 +26,9 @@ export class ServiceOffer {
   @JoinColumn({ name: 'service_id' })
   service: Service;
 
-  @ManyToOne(() => Offer, (offer) => offer.serviceOffers, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Offer, (offer) => offer.serviceOffers, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'offer_id' })
   offer: Offer;
 }

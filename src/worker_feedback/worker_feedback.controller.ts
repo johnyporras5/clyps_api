@@ -26,8 +26,7 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 @Controller('workerfeedbacks')
 @UseGuards(JwtAuthGuard)
 export class WorkerFeedbackController {
-  constructor(private readonly workerFeedbackService: WorkerFeedbackService) { }
-
+  constructor(private readonly workerFeedbackService: WorkerFeedbackService) {}
 
   // =============================================
   //  Crear feedback para un trabajador (cliente)
@@ -66,7 +65,7 @@ export class WorkerFeedbackController {
   // =============================================
   @Get('me')
   @UseGuards(RolesGuard)
-  @Roles('wrk') 
+  @Roles('wrk')
   @HttpCode(HttpStatus.OK)
   async findMyFeedbacks(
     @Req() req: any,
@@ -85,7 +84,7 @@ export class WorkerFeedbackController {
   // =============================================
   @Get()
   @UseGuards(RolesGuard)
-  @Roles('adm') 
+  @Roles('adm')
   @HttpCode(HttpStatus.OK)
   async findAllPaginated(
     @Query() paginationDto: PaginationDto,
@@ -99,7 +98,6 @@ export class WorkerFeedbackController {
     );
   }
 
-
   // =============================================
   //  Obtener un feedback por ID (cualquier usuario autenticado)
   // GET /workerfeedbacks/:id
@@ -107,7 +105,9 @@ export class WorkerFeedbackController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  async findOne(@Param('id', ParseIntPipe) id: number): Promise<WorkerFeedback> {
+  async findOne(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<WorkerFeedback> {
     return this.workerFeedbackService.findOne(id);
   }
 
@@ -124,7 +124,12 @@ export class WorkerFeedbackController {
   ): Promise<WorkerFeedback> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;
-    return this.workerFeedbackService.update(id, updateDto, requesterUserId, requesterUserType);
+    return this.workerFeedbackService.update(
+      id,
+      updateDto,
+      requesterUserId,
+      requesterUserType,
+    );
   }
 
   // =============================================
@@ -134,12 +139,17 @@ export class WorkerFeedbackController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  async remove(@Param('id', ParseIntPipe) id: number, @Req() req: any): Promise<{ message: string }> {
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+  ): Promise<{ message: string }> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;
-    await this.workerFeedbackService.remove(id, requesterUserId, requesterUserType);
+    await this.workerFeedbackService.remove(
+      id,
+      requesterUserId,
+      requesterUserType,
+    );
     return { message: 'Feedback eliminado correctamente' };
   }
-
-
 }

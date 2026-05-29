@@ -1,12 +1,12 @@
-import { 
-  IsOptional, 
-  IsString, 
-  IsDate, 
-  Length, 
+import {
+  IsOptional,
+  IsString,
+  IsDate,
+  Length,
   IsNumber,
   IsIn,
   Matches,
-  IsPhoneNumber
+  IsPhoneNumber,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -24,7 +24,8 @@ export class UpdateWorkerDto {
   @IsOptional()
   @IsString()
   @Matches(/^[0-9+\-\s()]*$/, {
-    message: 'El teléfono debe contener solo números, espacios, y los caracteres: + - ( )'
+    message:
+      'El teléfono debe contener solo números, espacios, y los caracteres: + - ( )',
   })
   @Length(8, 20)
   phone?: string;
@@ -73,5 +74,4 @@ export class UpdateWorkerDto {
   @IsString()
   @Length(0, 245)
   facebookUrl?: string;
-
 }
