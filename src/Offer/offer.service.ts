@@ -14,6 +14,7 @@ import { UpdateOfferDto } from './dto/update-offer.dto';
 import { Company } from '../company/entities/company.entity';
 import { Service } from '../service/entities/service.entity';
 import { FileUploadService } from '../common/services/file_upload.service';
+import { paginate, PaginationOptions, PaginationResult } from '../common/utils/pagination.util';
 
 @Injectable()
 export class OfferService {
@@ -30,13 +31,25 @@ export class OfferService {
     private fileUploadService: FileUploadService,
   ) {}
 
-  async findAllByCompany(adminId: number): Promise<any[]> {
+  async findAllByCompany(
+    adminId: number,
+    paginationOptions: PaginationOptions,
+  ): Promise<PaginationResult<any>> {
     const company = await this.getCompanyByAdmin(adminId);
-    const offers = await this.offerRepository.find({
-      where: { companyId: company.id },
-      relations: ['serviceOffers', 'serviceOffers.service'],
-    });
-    return offers.map((offer) => this.addLogoUrl(offer));
+
+    const queryBuilder = this.offerRepository
+      .createQueryBuilder('offer')
+      .leftJoinAndSelect('offer.serviceOffers', 'serviceOffers')
+      .leftJoinAndSelect('serviceOffers.service', 'service')
+      .where('offer.companyId = :companyId', { companyId: company.id })
+      .orderBy('offer.id', 'DESC');
+
+    const paginatedOffers = await paginate<Offer>(queryBuilder, paginationOptions);
+
+    return {
+      ...paginatedOffers,
+      data: paginatedOffers.data.map((offer) => this.addLogoUrl(offer)),
+    };
   }
 
   async findAll(): Promise<any[]> {

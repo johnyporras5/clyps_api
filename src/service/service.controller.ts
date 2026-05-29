@@ -19,7 +19,8 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { PaginationDto } from '../common/dto/pagination.dto'; 
+import { PaginationDto } from '../common/dto/pagination.dto';
+import { FindServicesDto } from './dto/find-services.dto';
 
 @Controller('services')
 @UseGuards(JwtAuthGuard)
@@ -39,11 +40,11 @@ export class ServiceController {
   @HttpCode(HttpStatus.OK)
   async findMyCompanyServices(
     @Req() req: any,
-    @Query() paginationDto: PaginationDto // <-- Agregar parámetro de paginación
+    @Query() paginationDto: FindServicesDto,
   ): Promise<any> {
     const adminId = req.user.sub;
-    const { page, limit } = paginationDto;
-    return this.serviceService.findAllByCompanyWithWorkers(adminId, { page, limit });
+    const { page, limit, name } = paginationDto;
+    return this.serviceService.findAllByCompanyWithWorkers(adminId, { page, limit, name });
   }
 
   /**

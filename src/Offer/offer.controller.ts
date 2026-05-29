@@ -14,6 +14,7 @@ import {
   Req,
   UseInterceptors,
   UploadedFile,
+  Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { OfferService } from './offer.service';
@@ -22,6 +23,7 @@ import { UpdateOfferDto } from './dto/update-offer.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { PaginationDto } from '../common/dto/pagination.dto';
 
 @Controller('offers')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -64,9 +66,13 @@ export class OfferController {
   @Get('my-company')
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
-  async findMyCompanyOffers(@Req() req: any) {
+  async findMyCompanyOffers(
+    @Req() req: any,
+    @Query() paginationDto: PaginationDto,
+  ) {
     const adminId = req.user.sub;
-    return this.offerService.findAllByCompany(adminId);
+    const { page, limit } = paginationDto;
+    return this.offerService.findAllByCompany(adminId, { page, limit });
   }
 
   /**

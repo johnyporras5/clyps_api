@@ -14,6 +14,7 @@ import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Company } from 'src/company/entities/company.entity';
 import { Client } from 'src/client/entities/client.entity';
+import { Session } from 'src/session/entities/session.entity';
 import { FileUploadService } from 'src/common/services/file_upload.service';
 
 @Injectable()
@@ -27,6 +28,10 @@ export class WorkerFeedbackService {
     private companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
+    @InjectRepository(Client)
+    private clientRepository: Repository<Client>,
+    @InjectRepository(Session)
+    private sessionRepository: Repository<Session>,
     private fileUploadService: FileUploadService,
   ) { }
 
@@ -62,7 +67,38 @@ export class WorkerFeedbackService {
     };
 
     const feedback = this.workerFeedbackRepository.create(feedbackData);
-    return await this.workerFeedbackRepository.save(feedback);
+    const saved = await this.workerFeedbackRepository.save(feedback);
+
+    // Si el cliente vinculó la calificación a una sesión, marcarla como RATED
+    // (sessionStatus = 6) para que no vuelva a aparecer como "pendiente de calificar".
+    if (createDto.sessionId && clientId) {
+      await this.markSessionAsRatedIfOwned(createDto.sessionId, clientId);
+    }
+
+    return saved;
+  }
+
+  /**
+   * Marca la sesión como RATED (sessionStatus = 6) sólo si:
+   *  - existe,
+   *  - pertenece al cliente autenticado (userId del token → clientId),
+   *  - está actualmente en PAID (sessionStatus = 4).
+   * Best-effort: no rompe la creación del feedback si falla.
+   */
+  private async markSessionAsRatedIfOwned(sessionId: number, clientUserId: number): Promise<void> {
+    try {
+      const client = await this.clientRepository.findOne({ where: { userId: clientUserId } });
+      if (!client) return;
+
+      const session = await this.sessionRepository.findOne({ where: { id: sessionId } });
+      if (!session) return;
+      if (session.clientId !== client.id) return;
+      if (session.sessionStatus !== 4) return;
+
+      await this.sessionRepository.update({ id: sessionId, clientId: session.clientId }, { sessionStatus: 6 });
+    } catch {
+      // best-effort
+    }
   }
 
   async update(id: number, updateDto: UpdateWorkerFeedbackDto, requesterUserId?: number, requesterUserType?: string): Promise<WorkerFeedback> {

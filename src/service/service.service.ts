@@ -50,7 +50,7 @@ export class ServiceService {
     */
   async findAllByCompanyWithWorkers(
     adminId: number,
-    paginationOptions: PaginationOptions
+    paginationOptions: PaginationOptions & { name?: string }
   ): Promise<PaginationResult<any>> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
@@ -66,6 +66,13 @@ export class ServiceService {
       .createQueryBuilder('service')
       .leftJoinAndSelect('service.category', 'category')
       .where('service.companyId = :companyId', { companyId: company.id });
+
+    // 2.b Filtro por nombre (igual que /workers): LIKE sobre service.name
+    if (paginationOptions.name && paginationOptions.name.trim() !== '') {
+      queryBuilder.andWhere('service.name LIKE :search', {
+        search: `%${paginationOptions.name.trim()}%`,
+      });
+    }
 
     // 3. Aplicar paginación
     const paginatedServices = await paginate<Service>(queryBuilder, paginationOptions);

@@ -14,6 +14,7 @@ import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { AllowedFolder, FileUploadService } from '../common/services/file_upload.service';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
+import { FindAllClientsDto } from './dto/find-all-clients.dto';
 
 @Injectable()
 export class ClientService {
@@ -149,7 +150,7 @@ export class ClientService {
    */
   async findAllByAdminCompanies(
     adminId: number,
-    options: PaginationDto
+    options: FindAllClientsDto
   ): Promise<PaginationResult<any>> {
     this.logger.log(`=== SERVICE: LISTANDO CLIENTES PARA ADMIN ID: ${adminId} ===`);
 
@@ -196,6 +197,15 @@ export class ClientService {
       adminCompanyIds.forEach((companyId, index) => {
         queryBuilder.setParameter(`companyId${index}`, JSON.stringify(companyId));
       });
+    }
+
+    // 3.b Filtro por nombre (igual que /workers): name, last_name o concat
+    if (options.name && options.name.trim() !== '') {
+      const searchTerm = `%${options.name.trim()}%`;
+      queryBuilder.andWhere(
+        "(client.name LIKE :search OR client.last_name LIKE :search OR CONCAT(client.name, ' ', client.last_name) LIKE :search)",
+        { search: searchTerm },
+      );
     }
 
     // 4. Aplicar paginación
