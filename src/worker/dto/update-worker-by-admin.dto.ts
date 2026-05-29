@@ -29,11 +29,6 @@ export class UpdateWorkerByAdminDto {
 
   @IsOptional()
   @IsString()
-  @Length(1, 145)
-  lastName?: string;
-
-  @IsOptional()
-  @IsString()
   @Matches(/^[0-9+\-\s()]*$/, {
     message: 'El teléfono debe contener solo números y los caracteres: + - ( )',
   })

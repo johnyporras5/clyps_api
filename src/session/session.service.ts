@@ -514,7 +514,7 @@ export class SessionService {
           if (workerConflict) {
             const conflictStart = new Date(workerConflict.startDatetime);
             const workerName = companyWorker.worker
-              ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+              ? (companyWorker.worker.name || '').trim()
               : `Trabajador ID: ${companyWorker.id}`;
             throw new BadRequestException(
               `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`,
@@ -576,7 +576,7 @@ export class SessionService {
 
       const workerName = companyWorker
         ? companyWorker.worker
-          ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+          ? (companyWorker.worker.name || '').trim()
           : `Trabajador ID: ${companyWorker.id}`
         : 'Sin asignar';
 
@@ -1306,7 +1306,6 @@ export class SessionService {
         serviceDescription: service?.description || '',
         companyWorkerId: detail.companyWorkerId,
         workerName: companyWorker?.worker?.name ?? null,
-        workerLastName: companyWorker?.worker?.lastName ?? null,
         startDatetime: detail.startDatetime,
         totalTime: detail.totalTime || 0,
         totalWorker: Number(detail.totalWorker || 0),
@@ -1881,9 +1880,7 @@ export class SessionService {
     return {
       email: user?.email || '',
       name:
-        `${worker.name || ''} ${worker.lastName || ''}`.trim() ||
-        user?.username ||
-        'Trabajador',
+        (worker.name || '').trim() || user?.username || 'Trabajador',
       phone: worker.phone || '',
     };
   }
@@ -2222,9 +2219,8 @@ export class SessionService {
                 startDatetime: detail.startDatetime,
                 companyWorkerId: detail.companyWorkerId,
                 workerName: companyWorker?.worker
-                  ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+                  ? (companyWorker.worker.name || '').trim()
                   : '',
-                workerLastName: companyWorker?.worker?.lastName || '',
                 originalPrice,
                 appliedPrice,
                 isOffer: hasOffer && offerObj !== null,
@@ -2517,9 +2513,8 @@ export class SessionService {
             startDatetime: detail.startDatetime,
             companyWorkerId: detail.companyWorkerId,
             workerName: companyWorker?.worker
-              ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+              ? (companyWorker.worker.name || '').trim()
               : '',
-            workerLastName: companyWorker?.worker?.lastName || '',
             totalWorker: Number(detail.totalWorker || 0),
             totalCompany: Number(detail.totalCompany || 0),
             detailStatus: detail.status || 1,
@@ -3174,13 +3169,12 @@ export class SessionService {
           const allowedNames = allowedWorkers
             .map((cw) =>
               cw.worker
-                ? `${cw.worker.name || ''} ${cw.worker.lastName || ''}`.trim() ||
-                  `Trabajador #${cw.id}`
+                ? (cw.worker.name || '').trim() || `Trabajador #${cw.id}`
                 : `Trabajador #${cw.id}`,
             )
             .filter((n) => n.length > 0);
           const workerName = newCompanyWorker.worker
-            ? `${newCompanyWorker.worker.name || ''} ${newCompanyWorker.worker.lastName || ''}`.trim()
+            ? (newCompanyWorker.worker.name || '').trim()
             : `Trabajador #${assignment.companyWorkerId}`;
           const allowedText =
             allowedNames.length > 0
@@ -3215,10 +3209,10 @@ export class SessionService {
         detail.companyWorkerId,
       );
       const previousWorkerName = previousCompanyWorker?.worker
-        ? `${previousCompanyWorker.worker.name || ''} ${previousCompanyWorker.worker.lastName || ''}`.trim()
+        ? (previousCompanyWorker.worker.name || '').trim()
         : `Trabajador ID: ${detail.companyWorkerId}`;
       const workerName = newCompanyWorker.worker
-        ? `${newCompanyWorker.worker.name || ''} ${newCompanyWorker.worker.lastName || ''}`.trim()
+        ? (newCompanyWorker.worker.name || '').trim()
         : `Trabajador ID: ${assignment.companyWorkerId}`;
 
       plans.set(assignment.detailId, {
@@ -3939,7 +3933,7 @@ export class SessionService {
           serviceDescription: service?.description || '',
           companyWorkerId: detail.companyWorkerId,
           workerName: companyWorker?.worker
-            ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+            ? (companyWorker.worker.name || '').trim()
             : 'Trabajador no encontrado',
           cost: detail.cost,
           totalTime: detail.totalTime,
@@ -4134,7 +4128,6 @@ export class SessionService {
         'company.name AS companyName',
         'worker.id AS workerId',
         'worker.name AS workerName',
-        'worker.last_name AS workerLastName',
         'worker.picture AS workerPicture',
       ])
       .where('detail.company_worker_id IN (:...companyWorkerIds)', {
@@ -4503,7 +4496,6 @@ export class SessionService {
         companyPercentage,
         workerId: detail.workerId,
         workerName: detail.workerName,
-        workerLastName: detail.workerLastName,
         workerPhotoUrl: detail.workerPicture
           ? this.fileUploadService.getFileUrl(
               'worker_photo',
@@ -4962,7 +4954,7 @@ export class SessionService {
           if (workerConflict) {
             const conflictStart = new Date(workerConflict.startDatetime);
             const workerName = companyWorker.worker
-              ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+              ? (companyWorker.worker.name || '').trim()
               : `Trabajador ID: ${companyWorker.id}`;
             throw new BadRequestException(
               `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`,
@@ -5021,7 +5013,7 @@ export class SessionService {
 
       const workerName = companyWorker
         ? companyWorker.worker
-          ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+          ? (companyWorker.worker.name || '').trim()
           : `Trabajador ID: ${companyWorker.id}`
         : 'Sin asignar';
 
@@ -5889,7 +5881,7 @@ export class SessionService {
       if (workerConflict) {
         const conflictStart = new Date(workerConflict.startDatetime);
         const workerName = companyWorker.worker
-          ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+          ? (companyWorker.worker.name || '').trim()
           : `Trabajador ID: ${companyWorker.id}`;
         throw new BadRequestException(
           `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`,
@@ -5901,7 +5893,7 @@ export class SessionService {
       extraTotalTime += detailTime;
 
       const workerName = companyWorker.worker
-        ? `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim()
+        ? (companyWorker.worker.name || '').trim()
         : `Trabajador ID: ${companyWorker.id}`;
 
       // Guardar validación
@@ -6343,7 +6335,7 @@ export class SessionService {
 
         await this.emailService.sendSessionCancellationToWorker(
           workerEmail,
-          `${companyWorker.worker.name || ''} ${companyWorker.worker.lastName || ''}`.trim(),
+          (companyWorker.worker.name || '').trim(),
           {
             date: formatted.date,
             time: formatted.time,
@@ -6547,7 +6539,6 @@ export class SessionService {
         // Trabajador
         'worker.id AS workerId',
         'worker.name AS workerName',
-        'worker.last_name AS workerLastName',
         'worker.phone AS workerPhone',
         'worker.address AS workerAddress',
         'worker.birthdate AS workerBirthdate',
@@ -6870,7 +6861,6 @@ export class SessionService {
         ? {
             id: detail.workerId,
             name: detail.workerName,
-            lastName: detail.workerLastName,
             phone: detail.workerPhone,
             address: detail.workerAddress,
             birthdate: detail.workerBirthdate,

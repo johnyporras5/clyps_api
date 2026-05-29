@@ -8,6 +8,8 @@ import { Company } from 'src/company/entities/company.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { Client } from 'src/client/entities/client.entity';
 import { Session } from 'src/session/entities/session.entity';
+import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
+import { Service } from 'src/service/entities/service.entity';
 import { CommonModule } from 'src/common/common.module';
 
 @Module({
@@ -19,6 +21,8 @@ import { CommonModule } from 'src/common/common.module';
       CompanyWorker,
       Client,
       Session,
+      SessionDetail,
+      Service,
     ]),
     CommonModule,
   ],

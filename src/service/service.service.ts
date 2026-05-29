@@ -340,7 +340,7 @@ export class ServiceService {
         .select([
           'cw.id AS companyWorkerId',
           'worker.id AS workerId',
-          "CONCAT(worker.name, ' ', worker.last_name) AS fullName",
+          'worker.name AS fullName',
           'worker.picture AS picture',
           'COALESCE(AVG(wf.stars), 0) AS averageRating',
         ])
@@ -473,7 +473,6 @@ export class ServiceService {
         workerInfo: {
           id: companyWorker.worker.id,
           name: companyWorker.worker.name,
-          lastName: companyWorker.worker.lastName,
           picture: companyWorker.worker.picture,
           pictureUrl: companyWorker.worker.picture
             ? this.fileUploadService.getFileUrl(

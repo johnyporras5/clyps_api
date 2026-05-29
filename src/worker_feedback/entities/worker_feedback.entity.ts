@@ -35,4 +35,15 @@ export class WorkerFeedback {
 
   @Column({ name: 'client_id', type: 'int', nullable: true })
   clientId?: number | null;
+
+  @Column({ name: 'session_id', type: 'int', nullable: true })
+  sessionId?: number | null;
+
+  // Hidratado en runtime con los servicios prestados por este worker en la
+  // sesión asociada (sólo se llena cuando hay sessionId).
+  services?: Array<{
+    id: number;
+    name: string | null;
+    category: { id: number; name: string } | null;
+  }>;
 }
