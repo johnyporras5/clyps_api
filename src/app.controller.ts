@@ -9,13 +9,17 @@ export class AppController {
   constructor(
     private readonly appService: AppService,
     private readonly configService: ConfigService,
-    @Optional() @InjectDataSource() private readonly dataSource: DataSource | null,
+    @Optional()
+    @InjectDataSource()
+    private readonly dataSource: DataSource | null,
   ) {
     // Log if DataSource is available
     if (this.dataSource) {
       console.log('✅ DataSource injected successfully');
     } else {
-      console.warn('⚠️  DataSource not available - TypeORM may not be initialized');
+      console.warn(
+        '⚠️  DataSource not available - TypeORM may not be initialized',
+      );
     }
   }
 
@@ -55,8 +59,12 @@ export class AppController {
         PORT: this.configService.get('PORT', 'NOT SET'),
         DB_HOST: this.configService.get('DB_HOST', 'NOT SET'),
         DB_PORT: this.configService.get('DB_PORT', 'NOT SET'),
-        DB_USERNAME: this.configService.get('DB_USERNAME') ? '***SET***' : 'NOT SET',
-        DB_PASSWORD: this.configService.get('DB_PASSWORD') ? '***SET***' : 'NOT SET',
+        DB_USERNAME: this.configService.get('DB_USERNAME')
+          ? '***SET***'
+          : 'NOT SET',
+        DB_PASSWORD: this.configService.get('DB_PASSWORD')
+          ? '***SET***'
+          : 'NOT SET',
         DB_DATABASE: this.configService.get('DB_DATABASE', 'NOT SET'),
       },
       note: 'Check Digital Ocean App Platform environment variables in Settings > App-Level Environment Variables',
@@ -89,11 +97,13 @@ export class AppController {
           status.database.error = 'Database not initialized yet';
         }
       } catch (error) {
-        status.database.error = error instanceof Error ? error.message : 'Unknown error';
+        status.database.error =
+          error instanceof Error ? error.message : 'Unknown error';
         console.error('Database connection test failed:', error);
       }
     } else {
-      status.database.error = 'DataSource not injected (TypeORM may not be initialized)';
+      status.database.error =
+        'DataSource not injected (TypeORM may not be initialized)';
     }
 
     return status;
@@ -106,19 +116,21 @@ export class AppController {
         return {
           success: false,
           message: 'DataSource not available',
-          error: 'DataSource not injected. TypeORM may have failed to initialize.',
+          error:
+            'DataSource not injected. TypeORM may have failed to initialize.',
           note: 'Check application logs for TypeORM connection errors',
         };
       }
 
       const startTime = Date.now();
       const isInitialized = this.dataSource.isInitialized;
-      
+
       if (!isInitialized) {
         return {
           success: false,
           message: 'Database not initialized',
-          error: 'TypeORM DataSource is not initialized. Check connection settings.',
+          error:
+            'TypeORM DataSource is not initialized. Check connection settings.',
           connectionInfo: {
             host: this.configService.get('DB_HOST', 'NOT SET'),
             port: this.configService.get('DB_PORT', 'NOT SET'),
@@ -128,7 +140,9 @@ export class AppController {
         };
       }
 
-      const result = await this.dataSource.query('SELECT 1 as test, NOW() as current_time');
+      const result = await this.dataSource.query(
+        'SELECT 1 as test, NOW() as current_time',
+      );
       const duration = Date.now() - startTime;
 
       return {

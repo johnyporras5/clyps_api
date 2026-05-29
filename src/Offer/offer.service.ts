@@ -14,7 +14,11 @@ import { UpdateOfferDto } from './dto/update-offer.dto';
 import { Company } from '../company/entities/company.entity';
 import { Service } from '../service/entities/service.entity';
 import { FileUploadService } from '../common/services/file_upload.service';
-import { paginate, PaginationOptions, PaginationResult } from '../common/utils/pagination.util';
+import {
+  paginate,
+  PaginationOptions,
+  PaginationResult,
+} from '../common/utils/pagination.util';
 
 @Injectable()
 export class OfferService {
@@ -44,7 +48,10 @@ export class OfferService {
       .where('offer.companyId = :companyId', { companyId: company.id })
       .orderBy('offer.id', 'DESC');
 
-    const paginatedOffers = await paginate<Offer>(queryBuilder, paginationOptions);
+    const paginatedOffers = await paginate<Offer>(
+      queryBuilder,
+      paginationOptions,
+    );
 
     return {
       ...paginatedOffers,
@@ -80,7 +87,9 @@ export class OfferService {
   ): Promise<any> {
     const company = await this.getCompanyByAdmin(adminId);
 
-    if (new Date(createOfferDto.startDate) >= new Date(createOfferDto.endDate)) {
+    if (
+      new Date(createOfferDto.startDate) >= new Date(createOfferDto.endDate)
+    ) {
       throw new BadRequestException('Start date must be before end date');
     }
 
@@ -113,7 +122,7 @@ export class OfferService {
       })),
     });
 
-    const savedOffer = await this.offerRepository.save(offer) as Offer;
+    const savedOffer = await this.offerRepository.save(offer);
     return this.findOne(savedOffer.id, adminId);
   }
 
@@ -137,7 +146,9 @@ export class OfferService {
     }
 
     if (updateOfferDto.startDate && updateOfferDto.endDate) {
-      if (new Date(updateOfferDto.startDate) >= new Date(updateOfferDto.endDate)) {
+      if (
+        new Date(updateOfferDto.startDate) >= new Date(updateOfferDto.endDate)
+      ) {
         throw new BadRequestException('Start date must be before end date');
       }
     }
@@ -223,14 +234,18 @@ export class OfferService {
    * Accesible para admin, worker y cliente (no requiere pertenencia).
    */
   async findActiveServiceOffersByCompanyId(companyId: number): Promise<any[]> {
-    const company = await this.companyRepository.findOne({ where: { id: companyId } });
+    const company = await this.companyRepository.findOne({
+      where: { id: companyId },
+    });
     if (!company) {
       throw new NotFoundException(`Company with id ${companyId} not found`);
     }
     return this.fetchActiveServiceOffersByCompanyId(companyId);
   }
 
-  private async fetchActiveServiceOffersByCompanyId(companyId: number): Promise<any[]> {
+  private async fetchActiveServiceOffersByCompanyId(
+    companyId: number,
+  ): Promise<any[]> {
     const today = new Date();
 
     const serviceOffers = await this.serviceOfferRepository
@@ -282,18 +297,18 @@ export class OfferService {
           : 0;
 
       offerMap.get(offer.id).services.push({
-        serviceOfferId: so.id,   // id de service_offer
+        serviceOfferId: so.id, // id de service_offer
         serviceId: service.id,
         serviceName: service.name,
         serviceDescription: service.description,
-        originalPrice,           // precio original del servicio
-        offerPrice,              // precio con la oferta aplicada
-        discount,                // % de descuento calculado
+        originalPrice, // precio original del servicio
+        offerPrice, // precio con la oferta aplicada
+        discount, // % de descuento calculado
         standardTime: service.standardTime,
         currency: service.currency,
         workers: service.workers,
         percentage: service.percentage,
-        offerId: offer.id,       // necesario para enviar al crear la sesión
+        offerId: offer.id, // necesario para enviar al crear la sesión
       });
     }
 

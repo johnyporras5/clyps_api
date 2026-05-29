@@ -8,12 +8,9 @@ import { IAPrompts } from './entities/ia_prompts.entity';
 import { ChatGPTService } from '../chatgpt/chatgpt.service';
 
 @Module({
-    imports: [
-        TypeOrmModule.forFeature([IAPrompts]),
-        ConfigModule, 
-    ],
-    controllers: [IAPromptsController],
-    providers: [IAPromptsService, ChatGPTService],
-    exports: [IAPromptsService],
+  imports: [TypeOrmModule.forFeature([IAPrompts]), ConfigModule],
+  controllers: [IAPromptsController],
+  providers: [IAPromptsService, ChatGPTService],
+  exports: [IAPromptsService],
 })
-export class IAPromptsModule { }
+export class IAPromptsModule {}

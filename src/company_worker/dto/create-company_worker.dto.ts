@@ -1,7 +1,13 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, IsJSON, IsNumber } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsEmail,
+  IsString,
+  IsJSON,
+  IsNumber,
+} from 'class-validator';
 
 export class CreateCompanyWorkerDto {
-
   @IsNotEmpty()
   @IsNumber()
   workerId: number;

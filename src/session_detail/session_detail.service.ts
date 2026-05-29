@@ -17,24 +17,35 @@ export class SessionDetailService {
   }
 
   async findOne(id: number): Promise<SessionDetail> {
-    const SessionDetail = await this.SessionDetailRepository.findOne({ where: { id } });
+    const SessionDetail = await this.SessionDetailRepository.findOne({
+      where: { id },
+    });
     if (!SessionDetail) {
       throw new NotFoundException(`SessionDetail with id ${id} not found`);
     }
     return SessionDetail;
   }
 
-  async create(createSessionDetailDto: CreateSessionDetailDto): Promise<SessionDetail> {
-    const SessionDetail = this.SessionDetailRepository.create(createSessionDetailDto);
+  async create(
+    createSessionDetailDto: CreateSessionDetailDto,
+  ): Promise<SessionDetail> {
+    const SessionDetail = this.SessionDetailRepository.create(
+      createSessionDetailDto,
+    );
     return await this.SessionDetailRepository.save(SessionDetail);
   }
 
-  async update(id: number, updateSessionDetailDto: UpdateSessionDetailDto): Promise<SessionDetail> {
-    const SessionDetail = await this.SessionDetailRepository.findOne({ where: { id } });
+  async update(
+    id: number,
+    updateSessionDetailDto: UpdateSessionDetailDto,
+  ): Promise<SessionDetail> {
+    const SessionDetail = await this.SessionDetailRepository.findOne({
+      where: { id },
+    });
     if (!SessionDetail) {
       throw new NotFoundException(`SessionDetail with id ${id} not found`);
     }
-    
+
     Object.assign(SessionDetail, updateSessionDetailDto);
     return await this.SessionDetailRepository.save(SessionDetail);
   }

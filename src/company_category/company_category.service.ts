@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CompanyCategory } from './entities/company_category.entity';
@@ -16,7 +20,9 @@ export class CompanyCategoryService {
   ) {}
 
   private async getCompanyOrFail(adminId: number): Promise<Company> {
-    const company = await this.companyRepository.findOne({ where: { userId: adminId } });
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
     if (!company) {
       throw new UnauthorizedException('No tienes una compañía asignada');
     }
@@ -41,7 +47,10 @@ export class CompanyCategoryService {
     return category;
   }
 
-  async create(dto: CreateCompanyCategoryDto, adminId: number): Promise<CompanyCategory> {
+  async create(
+    dto: CreateCompanyCategoryDto,
+    adminId: number,
+  ): Promise<CompanyCategory> {
     const company = await this.getCompanyOrFail(adminId);
     const category = this.categoryRepository.create({
       name: dto.name,

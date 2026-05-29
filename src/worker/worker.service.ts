@@ -16,7 +16,10 @@ import { UpdateWorkerByAdminDto } from './dto/update-worker-by-admin.dto';
 import { User } from '../user/entities/user.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Company } from '../company/entities/company.entity';
-import { FileUploadService, AllowedFolder } from '../common/services/file_upload.service';
+import {
+  FileUploadService,
+  AllowedFolder,
+} from '../common/services/file_upload.service';
 import { PhotoWithUrl } from '../worker/types/photo_with_url.type';
 import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
 import { FeedbackSummary } from './types/feedback_summary.type';
@@ -35,89 +38,98 @@ export class WorkerService {
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
     @InjectRepository(WorkerFeedback) // <<-- agregar
-  private workerFeedbackRepository: Repository<WorkerFeedback>,
+    private workerFeedbackRepository: Repository<WorkerFeedback>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
-  ) { }
+  ) {}
 
-
-async findOne(id: number, userId?: number, userType?: string): Promise<PhotoWithUrl & { feedbackSummary?: FeedbackSummary }> {
-  const worker = await this.workerRepository.findOne({
-    where: { id },
-    relations: ['user'],
-  });
-
-  if (!worker) {
-    throw new NotFoundException(`Worker with id ${id} not found`);
-  }
-
-  if (userId && userType) {
-    const canView =
-      userType === 'adm' ||
-      userType === 'cli' ||
-      worker.userId === userId;
-    if (!canView) {
-      throw new UnauthorizedException('No tienes permiso para ver este perfil');
-    }
-  }
-
-  const photoUrl = await this.getWorkerPhotoUrl(worker.id);
-  const userWithoutPassword = this.excludePasswordFromUser(worker.user);
-  const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
-
-  const companyWorkerWhere: any = { workerId: id };
-  if (userType === 'adm' && userId) {
-    const adminCompany = await this.companyRepository.findOne({
-      where: { userId },
+  async findOne(
+    id: number,
+    userId?: number,
+    userType?: string,
+  ): Promise<PhotoWithUrl & { feedbackSummary?: FeedbackSummary }> {
+    const worker = await this.workerRepository.findOne({
+      where: { id },
+      relations: ['user'],
     });
-    if (adminCompany) {
-      companyWorkerWhere.companyId = adminCompany.id;
+
+    if (!worker) {
+      throw new NotFoundException(`Worker with id ${id} not found`);
     }
+
+    if (userId && userType) {
+      const canView =
+        userType === 'adm' || userType === 'cli' || worker.userId === userId;
+      if (!canView) {
+        throw new UnauthorizedException(
+          'No tienes permiso para ver este perfil',
+        );
+      }
+    }
+
+    const photoUrl = await this.getWorkerPhotoUrl(worker.id);
+    const userWithoutPassword = this.excludePasswordFromUser(worker.user);
+    const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
+
+    const companyWorkerWhere: any = { workerId: id };
+    if (userType === 'adm' && userId) {
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId },
+      });
+      if (adminCompany) {
+        companyWorkerWhere.companyId = adminCompany.id;
+      }
+    }
+
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: companyWorkerWhere,
+      relations: ['company'],
+    });
+
+    return {
+      ...worker,
+      photoUrl,
+      user: userWithoutPassword,
+      feedbackSummary,
+      companyWorker: companyWorker ?? null,
+    };
   }
 
-  const companyWorker = await this.companyWorkerRepository.findOne({
-    where: companyWorkerWhere,
-    relations: ['company'],
-  });
+  async findByUserId(
+    userId: number,
+  ): Promise<PhotoWithUrl & { feedbackSummary?: FeedbackSummary }> {
+    const worker = await this.workerRepository.findOne({
+      where: { userId },
+      relations: ['user'],
+    });
 
-  return {
-    ...worker,
-    photoUrl,
-    user: userWithoutPassword,
-    feedbackSummary,
-    companyWorker: companyWorker ?? null,
-  };
-}
+    if (!worker) {
+      throw new NotFoundException(
+        `Worker profile for user ${userId} not found`,
+      );
+    }
+    const photoUrl = await this.getWorkerPhotoUrl(worker.id);
+    const userWithoutPassword = this.excludePasswordFromUser(worker.user);
+    const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
 
-async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: FeedbackSummary }> {
-  const worker = await this.workerRepository.findOne({
-    where: { userId },
-    relations: ['user']
-  });
-
-  if (!worker) {
-    throw new NotFoundException(`Worker profile for user ${userId} not found`);
+    return {
+      ...worker,
+      photoUrl,
+      user: userWithoutPassword,
+      feedbackSummary,
+    };
   }
-  const photoUrl = await this.getWorkerPhotoUrl(worker.id);
-  const userWithoutPassword = this.excludePasswordFromUser(worker.user);
-  const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
-
-  return {
-    ...worker,
-    photoUrl, 
-    user: userWithoutPassword,
-    feedbackSummary,
-  };
-}
 
   async create(createWorkerDto: CreateWorkerDto): Promise<Worker> {
     // Verificar que el usuario existe y es de tipo 'wrk'
     const user = await this.userRepository.findOne({
-      where: { id: createWorkerDto.userId }
+      where: { id: createWorkerDto.userId },
     });
 
     if (!user) {
-      throw new NotFoundException(`User with id ${createWorkerDto.userId} not found`);
+      throw new NotFoundException(
+        `User with id ${createWorkerDto.userId} not found`,
+      );
     }
 
     if (user.userType !== 'wrk') {
@@ -126,21 +138,27 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
 
     // Verificar que no exista ya un worker para este usuario
     const existingWorker = await this.workerRepository.findOne({
-      where: { userId: createWorkerDto.userId }
+      where: { userId: createWorkerDto.userId },
     });
 
     if (existingWorker) {
-      throw new ConflictException('Worker profile already exists for this user');
+      throw new ConflictException(
+        'Worker profile already exists for this user',
+      );
     }
 
     const worker = this.workerRepository.create(createWorkerDto);
     return await this.workerRepository.save(worker);
   }
 
-  async update(id: number, updateWorkerDto: UpdateWorkerDto, userId: number): Promise<Worker> {
+  async update(
+    id: number,
+    updateWorkerDto: UpdateWorkerDto,
+    userId: number,
+  ): Promise<Worker> {
     const worker = await this.workerRepository.findOne({
       where: { id },
-      relations: ['user']
+      relations: ['user'],
     });
 
     if (!worker) {
@@ -149,7 +167,9 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
 
     // Verificar que el usuario autenticado sea el dueño del perfil
     if (worker.userId !== userId) {
-      throw new UnauthorizedException('No tienes permiso para actualizar este perfil');
+      throw new UnauthorizedException(
+        'No tienes permiso para actualizar este perfil',
+      );
     }
 
     Object.assign(worker, updateWorkerDto);
@@ -157,12 +177,12 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
   }
 
   /**
-    * Actualizar perfil del trabajador con posibilidad de subir foto
-    * @param userId ID del usuario trabajador
-    * @param updateWorkerDto Datos a actualizar
-    * @param photoFile Archivo de foto (opcional)
-    * @returns Trabajador actualizado
-    */
+   * Actualizar perfil del trabajador con posibilidad de subir foto
+   * @param userId ID del usuario trabajador
+   * @param updateWorkerDto Datos a actualizar
+   * @param photoFile Archivo de foto (opcional)
+   * @returns Trabajador actualizado
+   */
   async updateProfileWithPhoto(
     userId: number,
     updateWorkerDto: UpdateWorkerDto,
@@ -171,11 +191,13 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
     // 1. Buscar el trabajador por userId
     const worker = await this.workerRepository.findOne({
       where: { userId },
-      relations: ['user']
+      relations: ['user'],
     });
 
     if (!worker) {
-      throw new NotFoundException(`Perfil de trabajador para el usuario ${userId} no encontrado`);
+      throw new NotFoundException(
+        `Perfil de trabajador para el usuario ${userId} no encontrado`,
+      );
     }
 
     // 2. Procesar foto si se proporciona
@@ -186,14 +208,14 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
           photoFile,
           this.WORKER_PHOTO_FOLDER,
           'worker',
-          userId
+          userId,
         );
 
         // Eliminar la foto anterior si existe
         if (worker.picture) {
           await this.fileUploadService.deleteFile(
             this.WORKER_PHOTO_FOLDER,
-            worker.picture
+            worker.picture,
           );
         }
 
@@ -218,12 +240,12 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
       'isActive',
       'instagramUrl',
       'tiktokUrl',
-      'facebookUrl'
+      'facebookUrl',
     ];
 
     // Filtrar solo los campos permitidos
     const updates: Partial<Worker> = {};
-    Object.keys(updateWorkerDto).forEach(key => {
+    Object.keys(updateWorkerDto).forEach((key) => {
       if (allowedFields.includes(key) && updateWorkerDto[key] !== undefined) {
         updates[key] = updateWorkerDto[key];
       }
@@ -232,11 +254,15 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
     // 4. Advertencia si se intentó modificar campos restringidos
     const restrictedFields = ['id', 'userId', 'user'];
     const attemptedRestrictedUpdates = Object.keys(updateWorkerDto).filter(
-      key => restrictedFields.includes(key) && updateWorkerDto[key] !== undefined
+      (key) =>
+        restrictedFields.includes(key) && updateWorkerDto[key] !== undefined,
     );
 
     if (attemptedRestrictedUpdates.length > 0) {
-      console.warn('Intento de modificación de campos restringidos ignorado:', attemptedRestrictedUpdates);
+      console.warn(
+        'Intento de modificación de campos restringidos ignorado:',
+        attemptedRestrictedUpdates,
+      );
     }
 
     // 5. Aplicar actualizaciones y guardar
@@ -251,11 +277,13 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
    */
   async getWorkerPhotoUrl(workerId: number): Promise<string> {
     const worker = await this.workerRepository.findOne({
-      where: { id: workerId }
+      where: { id: workerId },
     });
 
     if (!worker) {
-      throw new NotFoundException(`Trabajador con ID ${workerId} no encontrado`);
+      throw new NotFoundException(
+        `Trabajador con ID ${workerId} no encontrado`,
+      );
     }
 
     if (!worker.picture) {
@@ -264,13 +292,9 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
 
     return this.fileUploadService.getFileUrl(
       this.WORKER_PHOTO_FOLDER,
-      worker.picture
+      worker.picture,
     );
   }
-
-
-
-
 
   /**
    * Actualizar información completa de un worker por el administrador:
@@ -288,13 +312,19 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
       relations: ['user'],
     });
     if (!worker) {
-      throw new NotFoundException(`Trabajador con ID ${workerId} no encontrado`);
+      throw new NotFoundException(
+        `Trabajador con ID ${workerId} no encontrado`,
+      );
     }
 
     // 2. Obtener la compañía del admin
-    const company = await this.companyRepository.findOne({ where: { userId: adminId } });
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
     if (!company) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
     }
 
     // 3. Verificar que el worker pertenece a la compañía del admin
@@ -317,7 +347,10 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
           worker.userId,
         );
         if (worker.picture) {
-          await this.fileUploadService.deleteFile(this.WORKER_PHOTO_FOLDER, worker.picture);
+          await this.fileUploadService.deleteFile(
+            this.WORKER_PHOTO_FOLDER,
+            worker.picture,
+          );
         }
         dto.picture = photoInfo.fileName;
       } catch (error) {
@@ -329,14 +362,18 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
     // 5. Actualizar User (username / email)
     const userUpdates: Partial<User> = {};
     if (dto.username !== undefined) {
-      const taken = await this.userRepository.findOne({ where: { username: dto.username } });
+      const taken = await this.userRepository.findOne({
+        where: { username: dto.username },
+      });
       if (taken && taken.id !== worker.userId) {
         throw new BadRequestException('El nombre de usuario ya está en uso');
       }
       userUpdates.username = dto.username;
     }
     if (dto.email !== undefined) {
-      const taken = await this.userRepository.findOne({ where: { email: dto.email } });
+      const taken = await this.userRepository.findOne({
+        where: { email: dto.email },
+      });
       if (taken && taken.id !== worker.userId) {
         throw new BadRequestException('El email ya está registrado');
       }
@@ -348,15 +385,24 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
 
     // 6. Actualizar Worker
     const workerFields: (keyof UpdateWorkerByAdminDto)[] = [
-      'name', 'lastName', 'phone', 'address', 'birthdate',
-      'description', 'location', 'picture',
-      'instagramUrl', 'tiktokUrl', 'facebookUrl',
+      'name',
+      'lastName',
+      'phone',
+      'address',
+      'birthdate',
+      'description',
+      'location',
+      'picture',
+      'instagramUrl',
+      'tiktokUrl',
+      'facebookUrl',
     ];
     const workerUpdates: Partial<Worker> = {};
     workerFields.forEach((key) => {
       if (dto[key] !== undefined) {
         let value = dto[key];
-        if (key === 'birthdate' && typeof value === 'string') value = new Date(value);
+        if (key === 'birthdate' && typeof value === 'string')
+          value = new Date(value);
         workerUpdates[key as string] = value;
       }
     });
@@ -369,7 +415,8 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
 
     // 7. Actualizar CompanyWorker
     const cwUpdates: Partial<CompanyWorker> = {};
-    if (dto.companyWorkerIsActive !== undefined) cwUpdates.isActive = Number(dto.companyWorkerIsActive);
+    if (dto.companyWorkerIsActive !== undefined)
+      cwUpdates.isActive = Number(dto.companyWorkerIsActive);
     if (dto.startDate !== undefined) cwUpdates.startDate = dto.startDate;
     if (dto.endDate !== undefined) cwUpdates.endDate = dto.endDate;
     if (dto.servicesDetail !== undefined) {
@@ -380,7 +427,9 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
     }
     if (dto.calendar !== undefined) {
       cwUpdates.calendar =
-        typeof dto.calendar === 'string' ? JSON.parse(dto.calendar) : dto.calendar;
+        typeof dto.calendar === 'string'
+          ? JSON.parse(dto.calendar)
+          : dto.calendar;
     }
     if (Object.keys(cwUpdates).length > 0) {
       await this.companyWorkerRepository.update(companyWorker.id, cwUpdates);
@@ -392,14 +441,19 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
       relations: ['user'],
     });
     if (!updatedWorker) {
-      throw new NotFoundException(`Trabajador con ID ${workerId} no encontrado`);
+      throw new NotFoundException(
+        `Trabajador con ID ${workerId} no encontrado`,
+      );
     }
     const updatedCW = await this.companyWorkerRepository.findOne({
       where: { id: companyWorker.id },
     });
 
     const photoUrl = updatedWorker.picture
-      ? this.fileUploadService.getFileUrl(this.WORKER_PHOTO_FOLDER, updatedWorker.picture)
+      ? this.fileUploadService.getFileUrl(
+          this.WORKER_PHOTO_FOLDER,
+          updatedWorker.picture,
+        )
       : '';
 
     const { password, ...userWithoutPassword } = updatedWorker.user as any;
@@ -413,7 +467,7 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
   // Método para verificar si un usuario es dueño del worker
   async isWorkerOwner(workerId: number, userId: number): Promise<boolean> {
     const worker = await this.workerRepository.findOne({
-      where: { id: workerId, userId: userId }
+      where: { id: workerId, userId: userId },
     });
 
     return !!worker;
@@ -435,28 +489,31 @@ async findByUserId(userId: number): Promise<PhotoWithUrl & { feedbackSummary?: F
     return userWithoutPassword;
   }
 
+  private async getFeedbackSummary(
+    workerId: number,
+    recentLimit = 5,
+  ): Promise<FeedbackSummary> {
+    // total y últimos reviews
+    const [recentReviews, totalReviews] =
+      await this.workerFeedbackRepository.findAndCount({
+        where: { workerId },
+        order: { datetime: 'DESC' },
+        take: recentLimit,
+      });
 
-  private async getFeedbackSummary(workerId: number, recentLimit = 5): Promise<FeedbackSummary> {
-  // total y últimos reviews
-  const [recentReviews, totalReviews] = await this.workerFeedbackRepository.findAndCount({
-    where: { workerId },
-    order: { datetime: 'DESC' },
-    take: recentLimit,
-  });
+    // average usando query builder (más preciso en SQL)
+    const raw = await this.workerFeedbackRepository
+      .createQueryBuilder('f')
+      .select('AVG(f.stars)', 'avg')
+      .where('f.workerId = :workerId', { workerId })
+      .getRawOne();
 
-  // average usando query builder (más preciso en SQL)
-  const raw = await this.workerFeedbackRepository
-    .createQueryBuilder('f')
-    .select('AVG(f.stars)', 'avg')
-    .where('f.workerId = :workerId', { workerId })
-    .getRawOne();
+    const averageStars = raw && raw.avg ? parseFloat(raw.avg) : 0;
 
-  const averageStars = raw && raw.avg ? parseFloat(raw.avg) : 0;
-
-  return {
-    averageStars: Math.round((averageStars + Number.EPSILON) * 100) / 100, // 2 decimales
-    totalReviews,
-    recentReviews,
-  };
-}
+    return {
+      averageStars: Math.round((averageStars + Number.EPSILON) * 100) / 100, // 2 decimales
+      totalReviews,
+      recentReviews,
+    };
+  }
 }

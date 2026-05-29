@@ -28,7 +28,6 @@ import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.
 import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 
-
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -54,7 +53,7 @@ import { SessionDetail } from 'src/session_detail/entities/session_detail.entity
       useFactory: (configService: ConfigService) => ({
         secret: configService.get('JWT_SECRET') || 'clypsSecretKey',
         signOptions: {
-          expiresIn: configService.get('JWT_EXPIRES_IN') || '24h'
+          expiresIn: configService.get('JWT_EXPIRES_IN') || '24h',
         },
       }),
       inject: [ConfigService],
@@ -63,10 +62,10 @@ import { SessionDetail } from 'src/session_detail/entities/session_detail.entity
     EmailModule,
     VerificationModule,
     CommonModule,
-    CompanyCategoryModule
+    CompanyCategoryModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, TokenBlacklistService, CompanyService],
   exports: [AuthService, JwtStrategy, PassportModule, TokenBlacklistService],
 })
-export class AuthModule { }
+export class AuthModule {}

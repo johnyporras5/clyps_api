@@ -1,4 +1,3 @@
-
 export interface ExtraServiceResponse {
   id: number;
   serviceId: number;
@@ -8,7 +7,7 @@ export interface ExtraServiceResponse {
   date: string;
   time: string;
   durationMinutes: number;
-  priceOption: "default" | "custom" | "free";
+  priceOption: 'default' | 'custom' | 'free';
   price: number;
   customPrice?: number;
   description?: string;
@@ -78,12 +77,12 @@ export interface SessionResponse {
   iaResponse: any;
   descriptionIA?: string | null;
   description?: string | null;
-  extraServices?: ExtraServiceResponse[]; createdAt?: Date;
+  extraServices?: ExtraServiceResponse[];
+  createdAt?: Date;
   updatedAt?: Date;
   // Datos de cancelación de la cita (sólo cuando sessionStatus = 5 = Cancelada)
   cancellationReason?: string | null;
   cancelledBy?: string | null;
   cancelledByText?: string | null;
   details: SessionDetailResponse[];
-
 }

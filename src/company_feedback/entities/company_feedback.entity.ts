@@ -22,7 +22,9 @@ export class CompanyFeedback {
   @CreateDateColumn({ name: 'datetime', type: 'timestamp' })
   datetime: Date;
 
-  @ManyToOne(() => Company, (company) => (company.feedbacks ?? []), { onDelete: 'CASCADE' })
+  @ManyToOne(() => Company, (company) => company.feedbacks ?? [], {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'company_id' })
   company: Company;
 

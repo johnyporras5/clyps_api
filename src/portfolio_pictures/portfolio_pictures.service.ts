@@ -103,11 +103,17 @@ export class PortfolioPicturesService {
       .where('picture.workerId = :workerId', { workerId })
       .orderBy('picture.createdAt', 'DESC');
 
-    const result = await paginate<PortfolioPictures>(queryBuilder, paginationDto);
+    const result = await paginate<PortfolioPictures>(
+      queryBuilder,
+      paginationDto,
+    );
 
-    const dataWithUrls = result.data.map(picture => ({
+    const dataWithUrls = result.data.map((picture) => ({
       ...picture,
-      pictureUrl: this.fileUploadService.getFileUrl(this.FOLDER, picture.picture),
+      pictureUrl: this.fileUploadService.getFileUrl(
+        this.FOLDER,
+        picture.picture,
+      ),
     }));
 
     return {
@@ -132,7 +138,10 @@ export class PortfolioPicturesService {
 
     return {
       ...picture,
-      pictureUrl: this.fileUploadService.getFileUrl(this.FOLDER, picture.picture),
+      pictureUrl: this.fileUploadService.getFileUrl(
+        this.FOLDER,
+        picture.picture,
+      ),
     };
   }
 

@@ -1,8 +1,20 @@
-import { IsNotEmpty, IsOptional, IsEmail, IsString, Length, IsNumber, IsDate, IsIn, IsArray, Min, Max, IsInt } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsEmail,
+  IsString,
+  Length,
+  IsNumber,
+  IsDate,
+  IsIn,
+  IsArray,
+  Min,
+  Max,
+  IsInt,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateClientDto {
-
   @IsOptional()
   @IsString()
   name?: string;
@@ -42,7 +54,4 @@ export class CreateClientDto {
   @IsNotEmpty()
   @IsNumber()
   userId: number;
-
-
-
 }

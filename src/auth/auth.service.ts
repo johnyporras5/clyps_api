@@ -1,4 +1,10 @@
-import { Injectable, UnauthorizedException, ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ConflictException,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -16,13 +22,16 @@ import { Company } from '../company/entities/company.entity';
 import { CompanyService } from '../company/company.service';
 import { CreateCompanyDto } from '../company/dto/create-company.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import { RequestPasswordResetDto, ResetPasswordDto, VerifyResetCodeDto } from './dto/reset-password.dto';
+import {
+  RequestPasswordResetDto,
+  ResetPasswordDto,
+  VerifyResetCodeDto,
+} from './dto/reset-password.dto';
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
-
 
 @Injectable()
 export class AuthService {
@@ -44,16 +53,15 @@ export class AuthService {
     private tokenBlacklistService: TokenBlacklistService,
     private fileUploadService: FileUploadService,
     private readonly companyCategoryService: CompanyCategoryService,
-
-  ) { }
+  ) {}
 
   // ==================== MÉTODOS DE REGISTRO ====================
   /**
-    * Registro específico para administradores (con o sin logo)
-    */
+   * Registro específico para administradores (con o sin logo)
+   */
   async registerAdmin(
     registerDto: RegisterAdminDto,
-    logoFile?: Express.Multer.File
+    logoFile?: Express.Multer.File,
   ): Promise<{
     message: string;
     user: Partial<User>;
@@ -61,19 +69,22 @@ export class AuthService {
   }> {
     // Verificar si el email ya existe
     const existingUserByEmail = await this.userRepository.findOne({
-      where: { email: registerDto.email }
+      where: { email: registerDto.email },
     });
 
     if (existingUserByEmail) {
       // Si el email pertenece a otro rol, rechazar inmediatamente
       if (existingUserByEmail.userType !== 'adm') {
-        throw new ConflictException('El email ya está registrado con un rol diferente (trabajador o cliente)');
+        throw new ConflictException(
+          'El email ya está registrado con un rol diferente (trabajador o cliente)',
+        );
       }
       // Mismo rol (admin), pero no verificado → reenviar código
       if (existingUserByEmail.emailVerified === 0) {
         await this.sendVerificationCode(registerDto.email);
         throw new ConflictException({
-          message: 'El email ya está registrado pero no verificado. Se ha enviado un nuevo código de verificación.',
+          message:
+            'El email ya está registrado pero no verificado. Se ha enviado un nuevo código de verificación.',
           requiresVerification: true,
           userId: existingUserByEmail.id,
         });
@@ -83,7 +94,7 @@ export class AuthService {
 
     // Verificar si el username ya existe
     const existingUserByUsername = await this.userRepository.findOne({
-      where: { username: registerDto.username }
+      where: { username: registerDto.username },
     });
 
     if (existingUserByUsername) {
@@ -112,7 +123,7 @@ export class AuthService {
           logoFile,
           'company_logo',
           'company',
-          savedUser.id
+          savedUser.id,
         );
         logoFileName = logoInfo.fileName;
         console.log(`✅ Logo guardado: ${logoFileName}`);
@@ -134,12 +145,11 @@ export class AuthService {
 
     await this.companyService.create(companyData);
 
-
     if (registerDto.categories && registerDto.categories.length > 0) {
       for (const categoryName of registerDto.categories) {
         await this.companyCategoryService.create(
           { name: categoryName },
-          savedUser.id  // adminId
+          savedUser.id, // adminId
         );
       }
     }
@@ -150,7 +160,7 @@ export class AuthService {
     const payload = {
       email: savedUser.email,
       sub: savedUser.id,
-      userType: savedUser.userType
+      userType: savedUser.userType,
     };
 
     const access_token = this.jwtService.sign(payload);
@@ -159,7 +169,8 @@ export class AuthService {
     const { password, ...userWithoutPassword } = savedUser;
 
     return {
-      message: 'Administrador registrado exitosamente. Por favor verifica tu email.',
+      message:
+        'Administrador registrado exitosamente. Por favor verifica tu email.',
       user: userWithoutPassword,
     };
   }
@@ -186,7 +197,10 @@ export class AuthService {
     }
 
     // Mezclar la contraseña
-    return password.split('').sort(() => Math.random() - 0.5).join('');
+    return password
+      .split('')
+      .sort(() => Math.random() - 0.5)
+      .join('');
   }
 
   /**
@@ -195,7 +209,7 @@ export class AuthService {
   async registerWorker(
     registerDto: RegisterWorkerDto,
     adminId: number, // ID del administrador que registra
-    pictureFile?: Express.Multer.File
+    pictureFile?: Express.Multer.File,
   ): Promise<{
     message: string;
     user: Partial<User>;
@@ -204,7 +218,7 @@ export class AuthService {
   }> {
     // 1. Verificar si el email ya existe en la tabla User
     const existingUserByEmail = await this.userRepository.findOne({
-      where: { email: registerDto.email }
+      where: { email: registerDto.email },
     });
 
     let user: User;
@@ -214,20 +228,24 @@ export class AuthService {
 
     // Verificar que el admin existe y es administrador
     const admin = await this.userRepository.findOne({
-      where: { id: adminId, userType: 'adm' }
+      where: { id: adminId, userType: 'adm' },
     });
 
     if (!admin) {
-      throw new UnauthorizedException('Solo los administradores pueden registrar trabajadores');
+      throw new UnauthorizedException(
+        'Solo los administradores pueden registrar trabajadores',
+      );
     }
 
     // Buscar la compañía del administrador
     const company = await this.companyRepository.findOne({
-      where: { userId: adminId }
+      where: { userId: adminId },
     });
 
     if (!company) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
     }
 
     // ==================== VERIFICAR SI YA EXISTE EL TRABAJADOR ====================
@@ -235,7 +253,9 @@ export class AuthService {
     if (existingUserByEmail) {
       // Si el usuario existe, verificar si ya es un trabajador
       if (existingUserByEmail.userType !== 'wrk') {
-        throw new ConflictException('El email ya está registrado con un rol diferente (no trabajador)');
+        throw new ConflictException(
+          'El email ya está registrado con un rol diferente (no trabajador)',
+        );
       }
 
       // Usuario existe y es trabajador (verificado o no)
@@ -252,7 +272,7 @@ export class AuthService {
       // ==================== CREAR NUEVO TRABAJADOR ====================
       // Verificar si el username ya existe
       const existingUserByUsername = await this.userRepository.findOne({
-        where: { username: registerDto.username }
+        where: { username: registerDto.username },
       });
 
       if (existingUserByUsername) {
@@ -281,17 +301,18 @@ export class AuthService {
         user.email,
         user.username,
         generatedPassword,
-        company.name // Nombre de la compañía para el email
+        company.name, // Nombre de la compañía para el email
       );
 
       if (!credentialsSent) {
-        console.warn('No se pudieron enviar las credenciales por correo, pero el usuario fue creado');
+        console.warn(
+          'No se pudieron enviar las credenciales por correo, pero el usuario fue creado',
+        );
       }
 
       // Enviar código de verificación solo si es nuevo
       await this.sendVerificationCode(user.email);
     }
-
 
     // ==================== [NUEVO] PROCESAR ARCHIVO DE FOTO (SI SE ENVIÓ) ====================
     let pictureFileName: string | undefined;
@@ -299,9 +320,9 @@ export class AuthService {
       try {
         const fileInfo = await this.fileUploadService.saveFile(
           pictureFile,
-          'worker_photo',   // subcarpeta
-          'worker',              // tipo de entidad
-          user.id                // ID del usuario
+          'worker_photo', // subcarpeta
+          'worker', // tipo de entidad
+          user.id, // ID del usuario
         );
         pictureFileName = fileInfo.fileName;
         console.log(`✅ Foto de trabajador guardada: ${pictureFileName}`);
@@ -315,13 +336,13 @@ export class AuthService {
     const existingAssignment = await this.companyWorkerRepository.findOne({
       where: {
         userId: user.id,
-        companyId: company.id
-      }
+        companyId: company.id,
+      },
     });
 
     // Buscar el perfil de worker
     worker = await this.workerRepository.findOne({
-      where: { userId: user.id }
+      where: { userId: user.id },
     });
 
     let createdWorkerProfile = false;
@@ -341,7 +362,7 @@ export class AuthService {
         description: registerDto.description,
         isActive: 1,
         location: registerDto.location,
-        userId: user.id
+        userId: user.id,
       });
 
       worker = await this.workerRepository.save(newWorker);
@@ -389,26 +410,40 @@ export class AuthService {
 
       // Base del mensaje según estado de verificación
       if (!isVerified) {
-        actionParts.push(`El trabajador ya estaba registrado en el sistema pero su correo no estaba verificado.`);
-        actionParts.push(`Se ha enviado un nuevo código de verificación para completar este proceso.`);
+        actionParts.push(
+          `El trabajador ya estaba registrado en el sistema pero su correo no estaba verificado.`,
+        );
+        actionParts.push(
+          `Se ha enviado un nuevo código de verificación para completar este proceso.`,
+        );
       } else {
-        actionParts.push(`El trabajador ya estaba registrado y verificado en el sistema.`);
+        actionParts.push(
+          `El trabajador ya estaba registrado y verificado en el sistema.`,
+        );
       }
 
       // Agregar detalles específicos
       if (createdWorkerProfile) {
-        actionParts.push(`Se ha completado su perfil profesional con la información proporcionada.`);
+        actionParts.push(
+          `Se ha completado su perfil profesional con la información proporcionada.`,
+        );
       }
 
       if (createdCompanyWorker) {
-        actionParts.push(`Ha sido asignado exitosamente a la compañía '${company.name}'.`);
+        actionParts.push(
+          `Ha sido asignado exitosamente a la compañía '${company.name}'.`,
+        );
       } else if (existingAssignment) {
-        actionParts.push(`Ya se encontraba asignado a la compañía '${company.name}'.`);
+        actionParts.push(
+          `Ya se encontraba asignado a la compañía '${company.name}'.`,
+        );
       }
 
       // Agregar recomendación si no está verificado
       if (!isVerified) {
-        actionParts.push(`Una vez que verifique su correo electrónico, podrá acceder a todas las funcionalidades.`);
+        actionParts.push(
+          `Una vez que verifique su correo electrónico, podrá acceder a todas las funcionalidades.`,
+        );
       }
 
       message = actionParts.join(' ');
@@ -418,7 +453,7 @@ export class AuthService {
         `Trabajador registrado exitosamente en el sistema CLYPS.`,
         `Ha sido asignado a la compañía '${company.name}'.`,
         `Las credenciales de acceso han sido enviadas a su correo electrónico.`,
-        `Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`
+        `Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`,
       ];
       message = newUserParts.join(' ');
     }
@@ -429,24 +464,24 @@ export class AuthService {
       user: userWithoutPassword,
     };
 
-
     return response;
   }
 
-
   /**
-  * Registro específico para clientes CON CONTRASEÑA AUTOMÁTICA
-  */
-  async registerClient(registerDto: RegisterClientDto, pictureFile?: Express.Multer.File): Promise<{
+   * Registro específico para clientes CON CONTRASEÑA AUTOMÁTICA
+   */
+  async registerClient(
+    registerDto: RegisterClientDto,
+    pictureFile?: Express.Multer.File,
+  ): Promise<{
     message: string;
     user: Partial<User>;
     generatedPassword?: string;
     access_token?: string;
   }> {
-
     // 1. Verificar si el correo ya existe en la tabla User
     const existingUserByEmail = await this.userRepository.findOne({
-      where: { email: registerDto.email }
+      where: { email: registerDto.email },
     });
 
     let user: User;
@@ -457,7 +492,9 @@ export class AuthService {
     // ==================== VERIFICAR SI YA EXISTE EL USUARIO ====================
     if (existingUserByEmail) {
       if (existingUserByEmail.userType !== 'cli') {
-        throw new ConflictException('El email ya está registrado con un rol diferente (no cliente)');
+        throw new ConflictException(
+          'El email ya está registrado con un rol diferente (no cliente)',
+        );
       }
 
       user = existingUserByEmail;
@@ -469,7 +506,7 @@ export class AuthService {
     } else {
       // ==================== CREAR NUEVO USUARIO ====================
       const existingUserByUsername = await this.userRepository.findOne({
-        where: { username: registerDto.username }
+        where: { username: registerDto.username },
       });
 
       if (existingUserByUsername) {
@@ -478,7 +515,8 @@ export class AuthService {
 
       // Si el cliente envió contraseña, úsala; si no, generar aleatoria y enviar por correo.
       const clientProvidedPassword = !!registerDto.password;
-      const passwordToUse = registerDto.password || this.generateRandomPassword(8);
+      const passwordToUse =
+        registerDto.password || this.generateRandomPassword(8);
       if (!clientProvidedPassword) {
         generatedPassword = passwordToUse;
       }
@@ -498,11 +536,13 @@ export class AuthService {
         const credentialsSent = await this.emailService.sendClientCredentials(
           user.email,
           user.username,
-          passwordToUse
+          passwordToUse,
         );
 
         if (!credentialsSent) {
-          console.warn('No se pudieron enviar las credenciales por correo, pero el usuario fue creado');
+          console.warn(
+            'No se pudieron enviar las credenciales por correo, pero el usuario fue creado',
+          );
         }
       }
 
@@ -515,9 +555,9 @@ export class AuthService {
       try {
         const fileInfo = await this.fileUploadService.saveFile(
           pictureFile,
-          'client_photo',   // subcarpeta
-          'client',              // tipo de entidad
-          user.id                // ID del usuario
+          'client_photo', // subcarpeta
+          'client', // tipo de entidad
+          user.id, // ID del usuario
         );
         pictureFileName = fileInfo.fileName;
         console.log(`✅ Foto de cliente guardada: ${pictureFileName}`);
@@ -529,12 +569,12 @@ export class AuthService {
 
     // ==================== VERIFICAR SI YA TIENE PERFIL DE CLIENTE ====================
     client = await this.clientRepository.findOne({
-      where: { userId: user.id }
+      where: { userId: user.id },
     });
 
     let createdClientProfile = false;
     let updatedClientProfile = false;
-    let addedNewCompanies = false;
+    const addedNewCompanies = false;
 
     if (!client) {
       // Crear nuevo perfil de cliente
@@ -546,11 +586,11 @@ export class AuthService {
         email: registerDto.email,
         phone: registerDto.phone,
         birthDate: registerDto.birthdate,
-        picture: pictureFileName ,
+        picture: pictureFileName,
         isActive: registerDto.isActive !== undefined ? registerDto.isActive : 1,
         companies: [],
         location: registerDto.location,
-        userId: user.id
+        userId: user.id,
       });
 
       client = await this.clientRepository.save(newClient);
@@ -568,62 +608,96 @@ export class AuthService {
       if (registerDto.name !== undefined && registerDto.name !== client.name) {
         updateData.name = registerDto.name;
         hasChanges = true;
-        console.log(`Cambio detectado en nombre: ${client.name} -> ${registerDto.name}`);
+        console.log(
+          `Cambio detectado en nombre: ${client.name} -> ${registerDto.name}`,
+        );
       }
 
-      if (registerDto.lastName !== undefined && registerDto.lastName !== client.lastName) {
+      if (
+        registerDto.lastName !== undefined &&
+        registerDto.lastName !== client.lastName
+      ) {
         updateData.lastName = registerDto.lastName;
         hasChanges = true;
-        console.log(`Cambio detectado en apellido: ${client.lastName} -> ${registerDto.lastName}`);
+        console.log(
+          `Cambio detectado en apellido: ${client.lastName} -> ${registerDto.lastName}`,
+        );
       }
 
-      if (registerDto.email !== undefined && registerDto.email !== client.email) {
+      if (
+        registerDto.email !== undefined &&
+        registerDto.email !== client.email
+      ) {
         updateData.email = registerDto.email;
         hasChanges = true;
-        console.log(`Cambio detectado en email: ${client.email} -> ${registerDto.email}`);
+        console.log(
+          `Cambio detectado en email: ${client.email} -> ${registerDto.email}`,
+        );
       }
 
-      if (registerDto.phone !== undefined && registerDto.phone !== client.phone) {
+      if (
+        registerDto.phone !== undefined &&
+        registerDto.phone !== client.phone
+      ) {
         updateData.phone = registerDto.phone;
         hasChanges = true;
-        console.log(`Cambio detectado en teléfono: ${client.phone} -> ${registerDto.phone}`);
+        console.log(
+          `Cambio detectado en teléfono: ${client.phone} -> ${registerDto.phone}`,
+        );
       }
 
       if (registerDto.birthdate !== undefined) {
-        const currentBirthDate = client.birthDate ? new Date(client.birthDate).toISOString().split('T')[0] : null;
-        const newBirthDate = registerDto.birthdate ? new Date(registerDto.birthdate).toISOString().split('T')[0] : null;
+        const currentBirthDate = client.birthDate
+          ? new Date(client.birthDate).toISOString().split('T')[0]
+          : null;
+        const newBirthDate = registerDto.birthdate
+          ? new Date(registerDto.birthdate).toISOString().split('T')[0]
+          : null;
 
         if (currentBirthDate !== newBirthDate) {
           updateData.birthDate = registerDto.birthdate;
           hasChanges = true;
-          console.log(`Cambio detectado en fecha de nacimiento: ${currentBirthDate} -> ${newBirthDate}`);
+          console.log(
+            `Cambio detectado en fecha de nacimiento: ${currentBirthDate} -> ${newBirthDate}`,
+          );
         }
       }
-
-
 
       if (pictureFileName) {
         updateData.picture = pictureFileName;
         hasChanges = true;
-        console.log(`Cambio detectado en foto (archivo): ${client.picture} -> ${pictureFileName}`);
+        console.log(
+          `Cambio detectado en foto (archivo): ${client.picture} -> ${pictureFileName}`,
+        );
       }
 
-      if (registerDto.isActive !== undefined && registerDto.isActive !== client.isActive) {
+      if (
+        registerDto.isActive !== undefined &&
+        registerDto.isActive !== client.isActive
+      ) {
         updateData.isActive = registerDto.isActive;
         hasChanges = true;
-        console.log(`Cambio detectado en estado activo: ${client.isActive} -> ${registerDto.isActive}`);
+        console.log(
+          `Cambio detectado en estado activo: ${client.isActive} -> ${registerDto.isActive}`,
+        );
       }
 
-      if (registerDto.location !== undefined && registerDto.location !== client.location) {
+      if (
+        registerDto.location !== undefined &&
+        registerDto.location !== client.location
+      ) {
         updateData.location = registerDto.location;
         hasChanges = true;
-        console.log(`Cambio detectado en ubicación: ${client.location} -> ${registerDto.location}`);
+        console.log(
+          `Cambio detectado en ubicación: ${client.location} -> ${registerDto.location}`,
+        );
       }
-
 
       // Solo actualizar si hay cambios reales
       if (hasChanges) {
-        console.log(`Detectados cambios reales. Actualizando perfil del cliente...`);
+        console.log(
+          `Detectados cambios reales. Actualizando perfil del cliente...`,
+        );
 
         // Aplicar actualizaciones
         await this.clientRepository.update(client.id, updateData);
@@ -631,15 +705,16 @@ export class AuthService {
 
         // Recargar el cliente actualizado
         client = await this.clientRepository.findOne({
-          where: { id: client.id }
+          where: { id: client.id },
         });
 
         console.log(`Perfil de cliente actualizado exitosamente.`);
       } else {
-        console.log(`No se detectaron cambios reales en el perfil del cliente. No se realizaron actualizaciones.`);
+        console.log(
+          `No se detectaron cambios reales en el perfil del cliente. No se realizaron actualizaciones.`,
+        );
       }
     }
-
 
     // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
@@ -653,34 +728,55 @@ export class AuthService {
       if (!createdClientProfile && !updatedClientProfile) {
         // No hubo cambios en el perfil
         if (isVerified) {
-          actionParts.push(`El cliente ya estaba registrado y verificado en el sistema.`);
+          actionParts.push(
+            `El cliente ya estaba registrado y verificado en el sistema.`,
+          );
         } else {
-          actionParts.push(`El cliente ya estaba registrado en el sistema pero su correo no estaba verificado.`);
-          actionParts.push(`Se ha enviado un nuevo código de verificación para completar este proceso.`);
+          actionParts.push(
+            `El cliente ya estaba registrado en el sistema pero su correo no estaba verificado.`,
+          );
+          actionParts.push(
+            `Se ha enviado un nuevo código de verificación para completar este proceso.`,
+          );
         }
 
         // CORRECCIÓN: Verificar que client no sea null y que companies exista
-        if (client && Array.isArray(client.companies) && client.companies.length > 0) {
-          actionParts.push(`El cliente mantiene sus ${client.companies.length} compañía(s) actuales sin cambios.`);
+        if (
+          client &&
+          Array.isArray(client.companies) &&
+          client.companies.length > 0
+        ) {
+          actionParts.push(
+            `El cliente mantiene sus ${client.companies.length} compañía(s) actuales sin cambios.`,
+          );
         }
       } else {
         // Hubo cambios en el perfil
         if (createdClientProfile) {
-          actionParts.push(`Se completó el perfil del cliente con la información proporcionada.`);
+          actionParts.push(
+            `Se completó el perfil del cliente con la información proporcionada.`,
+          );
         } else if (updatedClientProfile) {
-          actionParts.push(`Se actualizó el perfil del cliente con la nueva información.`);
+          actionParts.push(
+            `Se actualizó el perfil del cliente con la nueva información.`,
+          );
         }
 
         if (addedNewCompanies) {
-          actionParts.push(`Se agregaron nuevas compañías al perfil del cliente.`);
+          actionParts.push(
+            `Se agregaron nuevas compañías al perfil del cliente.`,
+          );
         }
       }
     } else {
       // Nuevo cliente
       actionParts.push(`Cliente registrado exitosamente en el sistema CLYPS.`);
-      actionParts.push(`Las credenciales de acceso han sido enviadas a su correo electrónico.`);
-      actionParts.push(`Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`);
-
+      actionParts.push(
+        `Las credenciales de acceso han sido enviadas a su correo electrónico.`,
+      );
+      actionParts.push(
+        `Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`,
+      );
     }
     const message = actionParts.join(' ');
 
@@ -697,8 +793,9 @@ export class AuthService {
         profileUpdated: updatedClientProfile,
         hasNewCompanies: addedNewCompanies,
         totalCompanies: totalCompanies,
-        noChangesDetected: isExistingUser && !createdClientProfile && !updatedClientProfile
-      }
+        noChangesDetected:
+          isExistingUser && !createdClientProfile && !updatedClientProfile,
+      },
     };
 
     return response;
@@ -710,18 +807,28 @@ export class AuthService {
     registerDto: RegisterClientDto,
     adminId: number,
     pictureFile?: Express.Multer.File,
-  ): Promise<{ message: string; user: Partial<User>; generatedPassword?: string }> {
+  ): Promise<{
+    message: string;
+    user: Partial<User>;
+    generatedPassword?: string;
+  }> {
     // 1. Validar que el admin existe y tiene compañía
     const admin = await this.userRepository.findOne({
       where: { id: adminId, userType: 'adm' },
     });
     if (!admin) {
-      throw new UnauthorizedException('Solo los administradores pueden registrar clientes');
+      throw new UnauthorizedException(
+        'Solo los administradores pueden registrar clientes',
+      );
     }
 
-    const company = await this.companyRepository.findOne({ where: { userId: adminId } });
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
     if (!company) {
-      throw new NotFoundException('El administrador no tiene una compañía asignada');
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
     }
 
     // 2. Verificar email
@@ -736,7 +843,9 @@ export class AuthService {
 
     if (existingUserByEmail) {
       if (existingUserByEmail.userType !== 'cli') {
-        throw new ConflictException('El email ya está registrado con un rol diferente (no cliente)');
+        throw new ConflictException(
+          'El email ya está registrado con un rol diferente (no cliente)',
+        );
       }
       user = existingUserByEmail;
       isExistingUser = true;
@@ -760,7 +869,11 @@ export class AuthService {
       });
       user = await this.userRepository.save(newUser);
 
-      await this.emailService.sendClientCredentials(user.email, user.username, generatedPassword);
+      await this.emailService.sendClientCredentials(
+        user.email,
+        user.username,
+        generatedPassword,
+      );
       await this.sendVerificationCode(user.email);
     }
 
@@ -768,7 +881,12 @@ export class AuthService {
     let pictureFileName: string | undefined;
     if (pictureFile) {
       try {
-        const fileInfo = await this.fileUploadService.saveFile(pictureFile, 'client_photo', 'client', user.id);
+        const fileInfo = await this.fileUploadService.saveFile(
+          pictureFile,
+          'client_photo',
+          'client',
+          user.id,
+        );
         pictureFileName = fileInfo.fileName;
       } catch (error) {
         console.error('Error al guardar foto de cliente:', error);
@@ -776,7 +894,9 @@ export class AuthService {
     }
 
     // 4. Crear o actualizar perfil del cliente
-    client = await this.clientRepository.findOne({ where: { userId: user.id } });
+    client = await this.clientRepository.findOne({
+      where: { userId: user.id },
+    });
 
     if (!client) {
       const newClient = this.clientRepository.create({
@@ -794,10 +914,14 @@ export class AuthService {
       client = await this.clientRepository.save(newClient);
     } else {
       // Agregar compañía si aún no está en el array
-      const currentCompanies: number[] = Array.isArray(client.companies) ? client.companies : [];
+      const currentCompanies: number[] = Array.isArray(client.companies)
+        ? client.companies
+        : [];
       if (!currentCompanies.includes(company.id)) {
         currentCompanies.push(company.id);
-        await this.clientRepository.update(client.id, { companies: currentCompanies });
+        await this.clientRepository.update(client.id, {
+          companies: currentCompanies,
+        });
       }
     }
 
@@ -812,9 +936,11 @@ export class AuthService {
 
   // ==================== MÉTODOS DE LOGIN ====================
 
-  async login(loginDto: LoginDto): Promise<{ access_token: string; user: Partial<User> }> {
+  async login(
+    loginDto: LoginDto,
+  ): Promise<{ access_token: string; user: Partial<User> }> {
     const user = await this.userRepository.findOne({
-      where: { email: loginDto.email }
+      where: { email: loginDto.email },
     });
 
     if (!user) {
@@ -822,7 +948,10 @@ export class AuthService {
     }
 
     // Primero verificamos si la contraseña es válida
-    const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
+    const isPasswordValid = await bcrypt.compare(
+      loginDto.password,
+      user.password,
+    );
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales inválidas');
@@ -831,7 +960,8 @@ export class AuthService {
     // Si el usuario no está verificado
     if (user.emailVerified === 0) {
       // Verificar si ya hay un código activo
-      const codeStatus = await this.verificationService.getVerificationCodeStatus(user.id);
+      const codeStatus =
+        await this.verificationService.getVerificationCodeStatus(user.id);
 
       if (codeStatus.hasActiveCode && codeStatus.secondsRemaining) {
         // Si ya tiene código activo, calcular minutos restantes
@@ -843,7 +973,7 @@ export class AuthService {
           userId: user.id,
           hasActiveCode: true,
           secondsRemaining: codeStatus.secondsRemaining,
-          minutesRemaining
+          minutesRemaining,
         });
       } else {
         // Si no tiene código activo, enviar uno nuevo
@@ -853,17 +983,21 @@ export class AuthService {
 
           // Lanzamos excepción con mensaje informativo
           throw new UnauthorizedException({
-            message: 'Por favor verifica tu email antes de iniciar sesión. Se ha enviado un nuevo código de verificación a tu correo.',
+            message:
+              'Por favor verifica tu email antes de iniciar sesión. Se ha enviado un nuevo código de verificación a tu correo.',
             requiresVerification: true,
-            userId: user.id
+            userId: user.id,
           });
         } catch (error) {
           // Si hay error específico al enviar, usamos mensaje diferente
-          if (error instanceof BadRequestException || error instanceof NotFoundException) {
+          if (
+            error instanceof BadRequestException ||
+            error instanceof NotFoundException
+          ) {
             throw new UnauthorizedException({
               message: 'Por favor verifica tu email antes de iniciar sesión.',
               requiresVerification: true,
-              userId: user.id
+              userId: user.id,
             });
           }
           // Si es la excepción que lanzamos nosotros, la propagamos
@@ -874,7 +1008,7 @@ export class AuthService {
           throw new UnauthorizedException({
             message: 'Por favor verifica tu email antes de iniciar sesión.',
             requiresVerification: true,
-            userId: user.id
+            userId: user.id,
           });
         }
       }
@@ -887,7 +1021,7 @@ export class AuthService {
     const payload = {
       email: user.email,
       sub: user.id,
-      userType: user.userType
+      userType: user.userType,
     };
 
     const access_token = this.jwtService.sign(payload);
@@ -906,7 +1040,9 @@ export class AuthService {
    * Método separado para enviar código de verificación
    * Se puede usar en registro y de forma independiente
    */
-  async sendVerificationCode(email: string): Promise<{ message: string; userId: number }> {
+  async sendVerificationCode(
+    email: string,
+  ): Promise<{ message: string; userId: number }> {
     const user = await this.userRepository.findOne({ where: { email } });
 
     if (!user) {
@@ -919,7 +1055,9 @@ export class AuthService {
     }
 
     // Primero, verificar si ya existe un código activo
-    const codeStatus = await this.verificationService.getVerificationCodeStatus(user.id);
+    const codeStatus = await this.verificationService.getVerificationCodeStatus(
+      user.id,
+    );
 
     if (codeStatus.hasActiveCode && codeStatus.secondsRemaining) {
       const minutesRemaining = Math.ceil(codeStatus.secondsRemaining / 60);
@@ -931,16 +1069,25 @@ export class AuthService {
     }
 
     // Si no hay código activo, generar uno nuevo
-    const code = await this.verificationService.generateVerificationCode(user.id);
-    const emailSent = await this.emailService.sendVerificationCode(user.email, code, user.username);
+    const code = await this.verificationService.generateVerificationCode(
+      user.id,
+    );
+    const emailSent = await this.emailService.sendVerificationCode(
+      user.email,
+      code,
+      user.username,
+    );
 
     if (!emailSent) {
       console.warn('No se pudo enviar el email de verificación');
-      throw new BadRequestException('No se pudo enviar el código de verificación');
+      throw new BadRequestException(
+        'No se pudo enviar el código de verificación',
+      );
     }
 
     return {
-      message: 'Código de verificación enviado a tu email. Por favor, revisa tu bandeja de entrada.',
+      message:
+        'Código de verificación enviado a tu email. Por favor, revisa tu bandeja de entrada.',
       userId: user.id,
     };
   }
@@ -949,7 +1096,9 @@ export class AuthService {
     const success = await this.verificationService.verifyCode(email, code);
 
     if (success) {
-      return { message: 'Email verificado correctamente. Ahora puedes iniciar sesión.' };
+      return {
+        message: 'Email verificado correctamente. Ahora puedes iniciar sesión.',
+      };
     }
 
     throw new BadRequestException('Error al verificar el email');
@@ -964,7 +1113,9 @@ export class AuthService {
   /**
    * Método para verificar si un usuario existe y su estado
    */
-  async checkUserStatus(email: string): Promise<{ exists: boolean; verified: boolean; userId?: number }> {
+  async checkUserStatus(
+    email: string,
+  ): Promise<{ exists: boolean; verified: boolean; userId?: number }> {
     const user = await this.userRepository.findOne({ where: { email } });
 
     if (!user) {
@@ -974,7 +1125,7 @@ export class AuthService {
     return {
       exists: true,
       verified: user.emailVerified === 1,
-      userId: user.id
+      userId: user.id,
     };
   }
 
@@ -983,7 +1134,10 @@ export class AuthService {
   /**
    * Cambiar contraseña (usuario autenticado)
    */
-  async changePassword(userId: number, changePasswordDto: ChangePasswordDto): Promise<{ message: string }> {
+  async changePassword(
+    userId: number,
+    changePasswordDto: ChangePasswordDto,
+  ): Promise<{ message: string }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
 
     if (!user) {
@@ -993,7 +1147,7 @@ export class AuthService {
     // Verificar contraseña actual
     const isCurrentPasswordValid = await bcrypt.compare(
       changePasswordDto.currentPassword,
-      user.password
+      user.password,
     );
 
     if (!isCurrentPasswordValid) {
@@ -1001,22 +1155,29 @@ export class AuthService {
     }
 
     // Verificar que las nuevas contraseñas coincidan
-    if (changePasswordDto.newPassword !== changePasswordDto.confirmNewPassword) {
+    if (
+      changePasswordDto.newPassword !== changePasswordDto.confirmNewPassword
+    ) {
       throw new BadRequestException('Las nuevas contraseñas no coinciden');
     }
 
     // Verificar que la nueva contraseña no sea igual a la actual
     const isSamePassword = await bcrypt.compare(
       changePasswordDto.newPassword,
-      user.password
+      user.password,
     );
 
     if (isSamePassword) {
-      throw new BadRequestException('La nueva contraseña debe ser diferente a la actual');
+      throw new BadRequestException(
+        'La nueva contraseña debe ser diferente a la actual',
+      );
     }
 
     // Encriptar nueva contraseña
-    const hashedNewPassword = await bcrypt.hash(changePasswordDto.newPassword, 10);
+    const hashedNewPassword = await bcrypt.hash(
+      changePasswordDto.newPassword,
+      10,
+    );
 
     // Actualizar contraseña
     user.password = hashedNewPassword;
@@ -1026,7 +1187,7 @@ export class AuthService {
     try {
       await this.emailService.sendPasswordChangedNotification(
         user.email,
-        user.username
+        user.username,
       );
     } catch (error) {
       console.warn('No se pudo enviar email de notificación:', error.message);
@@ -1035,47 +1196,60 @@ export class AuthService {
     return { message: 'Contraseña cambiada exitosamente' };
   }
 
-  async requestPasswordReset(requestPasswordResetDto: RequestPasswordResetDto): Promise<{ message: string }> {
+  async requestPasswordReset(
+    requestPasswordResetDto: RequestPasswordResetDto,
+  ): Promise<{ message: string }> {
     const user = await this.userRepository.findOne({
-      where: { email: requestPasswordResetDto.email }
+      where: { email: requestPasswordResetDto.email },
     });
 
     // Verificar explícitamente si el usuario existe
     if (!user) {
-      throw new NotFoundException('No existe un usuario registrado con este email');
+      throw new NotFoundException(
+        'No existe un usuario registrado con este email',
+      );
     }
 
     // Verificar si el email está verificado (opcional, dependiendo de tus requisitos)
     if (user.emailVerified === 0) {
-      throw new BadRequestException('Por favor verifica tu email antes de solicitar un reseteo de contraseña');
+      throw new BadRequestException(
+        'Por favor verifica tu email antes de solicitar un reseteo de contraseña',
+      );
     }
 
     // Generar código de reseteo
-    const code = await this.verificationService.generatePasswordResetCode(user.id);
+    const code = await this.verificationService.generatePasswordResetCode(
+      user.id,
+    );
 
     // Enviar email con el código
     const emailSent = await this.emailService.sendPasswordResetCode(
       user.email,
       code,
-      user.username
+      user.username,
     );
 
     if (!emailSent) {
       console.warn('No se pudo enviar email de reseteo de contraseña');
-      throw new BadRequestException('No se pudo enviar el código de reseteo de contraseña');
+      throw new BadRequestException(
+        'No se pudo enviar el código de reseteo de contraseña',
+      );
     }
 
     return {
-      message: 'Se ha enviado un código de restablecimiento de contraseña a tu email'
+      message:
+        'Se ha enviado un código de restablecimiento de contraseña a tu email',
     };
   }
 
   /**
    * Verificar código de reseteo de contraseña
    */
-  async verifyResetCode(verifyResetCodeDto: VerifyResetCodeDto): Promise<{ message: string; valid: boolean }> {
+  async verifyResetCode(
+    verifyResetCodeDto: VerifyResetCodeDto,
+  ): Promise<{ message: string; valid: boolean }> {
     const user = await this.userRepository.findOne({
-      where: { email: verifyResetCodeDto.email }
+      where: { email: verifyResetCodeDto.email },
     });
 
     if (!user) {
@@ -1085,28 +1259,30 @@ export class AuthService {
     const isValid = await this.verificationService.verifyCodeByUserId(
       user.id,
       verifyResetCodeDto.code,
-      'password_reset'
+      'password_reset',
     );
 
     if (isValid) {
       return {
         message: 'Código válido. Puedes proceder a cambiar tu contraseña.',
-        valid: true
+        valid: true,
       };
     }
 
     return {
       message: 'Código inválido o expirado',
-      valid: false
+      valid: false,
     };
   }
 
   /**
    * Resetear contraseña usando código
    */
-  async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<{ message: string }> {
+  async resetPassword(
+    resetPasswordDto: ResetPasswordDto,
+  ): Promise<{ message: string }> {
     const user = await this.userRepository.findOne({
-      where: { email: resetPasswordDto.email }
+      where: { email: resetPasswordDto.email },
     });
 
     if (!user) {
@@ -1117,7 +1293,7 @@ export class AuthService {
     const isValid = await this.verificationService.verifyCodeByUserId(
       user.id,
       resetPasswordDto.code,
-      'password_reset'
+      'password_reset',
     );
 
     if (!isValid) {
@@ -1125,7 +1301,10 @@ export class AuthService {
     }
 
     // Encriptar nueva contraseña
-    const hashedNewPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
+    const hashedNewPassword = await bcrypt.hash(
+      resetPasswordDto.newPassword,
+      10,
+    );
 
     // Actualizar contraseña
     user.password = hashedNewPassword;
@@ -1133,7 +1312,10 @@ export class AuthService {
 
     // Enviar email de confirmación
     try {
-      await this.emailService.sendPasswordChangedNotification(user.email, user.username);
+      await this.emailService.sendPasswordChangedNotification(
+        user.email,
+        user.username,
+      );
     } catch (error) {
       console.warn('No se pudo enviar email de notificación:', error.message);
     }
@@ -1144,7 +1326,10 @@ export class AuthService {
   /**
    * Logout - Invalidar token actual
    */
-  async logout(authHeader: string, userId: number): Promise<{ message: string }> {
+  async logout(
+    authHeader: string,
+    userId: number,
+  ): Promise<{ message: string }> {
     const token = this.tokenBlacklistService.extractTokenFromHeader(authHeader);
 
     if (!token) {
@@ -1170,7 +1355,10 @@ export class AuthService {
    */
   async forceLogoutAllDevices(userId: number): Promise<{ message: string }> {
     // Invalidar todos los tokens del usuario
-    const invalidated = await this.tokenBlacklistService.forceLogoutUser(userId, 'force_logout');
+    const invalidated = await this.tokenBlacklistService.forceLogoutUser(
+      userId,
+      'force_logout',
+    );
 
     // Actualizar lastLogout
     await this.userRepository.update(userId, {
@@ -1178,7 +1366,7 @@ export class AuthService {
     });
 
     return {
-      message: `Sesiones cerradas exitosamente. ${invalidated} tokens invalidados.`
+      message: `Sesiones cerradas exitosamente. ${invalidated} tokens invalidados.`,
     };
   }
 
@@ -1187,10 +1375,10 @@ export class AuthService {
    * Para usuarios que olvidaron su contraseña
    */
   async changePasswordWithoutAuth(
-    changePasswordDto: ChangePasswordWithoutAuthDto
+    changePasswordDto: ChangePasswordWithoutAuthDto,
   ): Promise<{ message: string }> {
     const user = await this.userRepository.findOne({
-      where: { email: changePasswordDto.email }
+      where: { email: changePasswordDto.email },
     });
 
     if (!user) {
@@ -1198,22 +1386,29 @@ export class AuthService {
     }
 
     // Verificar que las nuevas contraseñas coincidan
-    if (changePasswordDto.newPassword !== changePasswordDto.confirmNewPassword) {
+    if (
+      changePasswordDto.newPassword !== changePasswordDto.confirmNewPassword
+    ) {
       throw new BadRequestException('Las nuevas contraseñas no coinciden');
     }
 
     // Verificar que la nueva contraseña no sea igual a la anterior
     const isSamePassword = await bcrypt.compare(
       changePasswordDto.newPassword,
-      user.password
+      user.password,
     );
 
     if (isSamePassword) {
-      throw new BadRequestException('La nueva contraseña debe ser diferente a la anterior');
+      throw new BadRequestException(
+        'La nueva contraseña debe ser diferente a la anterior',
+      );
     }
 
     // Encriptar nueva contraseña
-    const hashedNewPassword = await bcrypt.hash(changePasswordDto.newPassword, 10);
+    const hashedNewPassword = await bcrypt.hash(
+      changePasswordDto.newPassword,
+      10,
+    );
 
     // Actualizar contraseña
     user.password = hashedNewPassword;
@@ -1223,7 +1418,7 @@ export class AuthService {
     try {
       await this.emailService.sendPasswordChangedNotification(
         user.email,
-        user.username
+        user.username,
       );
     } catch (error) {
       console.warn('No se pudo enviar email de notificación:', error.message);
@@ -1254,7 +1449,8 @@ export class AuthService {
    * Verificar si un token está en blacklist (útil para pruebas)
    */
   async isTokenBlacklisted(token: string): Promise<{ isBlacklisted: boolean }> {
-    const isBlacklisted = await this.tokenBlacklistService.isTokenBlacklisted(token);
+    const isBlacklisted =
+      await this.tokenBlacklistService.isTokenBlacklisted(token);
     return { isBlacklisted };
   }
 
@@ -1264,7 +1460,7 @@ export class AuthService {
   async cleanupExpiredTokens(): Promise<{ message: string }> {
     const count = await this.tokenBlacklistService.cleanupExpiredTokens();
     return {
-      message: `Se han limpiado ${count} tokens expirados`
+      message: `Se han limpiado ${count} tokens expirados`,
     };
   }
 }

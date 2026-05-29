@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  Index,
+} from 'typeorm';
 
 @Entity('blacklisted_tokens')
 export class BlacklistedToken {
@@ -9,13 +15,13 @@ export class BlacklistedToken {
   token: string;
 
   @Column({ type: 'bigint' })
-  expiresAt: number; 
+  expiresAt: number;
 
   @Column({ nullable: true })
   userId: number;
 
   @Column({ length: 255, nullable: true })
-  reason: string; 
+  reason: string;
 
   @CreateDateColumn()
   createdAt: Date;

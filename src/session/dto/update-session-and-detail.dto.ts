@@ -1,4 +1,9 @@
-import { IsOptional, IsDateString, IsNotEmpty, IsNumber } from 'class-validator';
+import {
+  IsOptional,
+  IsDateString,
+  IsNotEmpty,
+  IsNumber,
+} from 'class-validator';
 
 export class UpdateSessionDto {
   @IsOptional()
@@ -8,7 +13,6 @@ export class UpdateSessionDto {
   @IsOptional()
   @IsDateString()
   detailStartDatetime?: string;
-  
 
   @IsNotEmpty()
   @IsNumber()

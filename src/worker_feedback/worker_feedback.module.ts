@@ -11,7 +11,17 @@ import { Session } from 'src/session/entities/session.entity';
 import { CommonModule } from 'src/common/common.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([WorkerFeedback, Worker, Company, CompanyWorker, Client, Session]), CommonModule],
+  imports: [
+    TypeOrmModule.forFeature([
+      WorkerFeedback,
+      Worker,
+      Company,
+      CompanyWorker,
+      Client,
+      Session,
+    ]),
+    CommonModule,
+  ],
   providers: [WorkerFeedbackService],
   controllers: [WorkerFeedbackController],
   exports: [WorkerFeedbackService],

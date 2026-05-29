@@ -1,4 +1,13 @@
-import { IsOptional, IsString, IsNumber, IsArray, Min, Max, IsEnum, ValidateNested } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsNumber,
+  IsArray,
+  Min,
+  Max,
+  IsEnum,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { Currency } from '../../common/enum/currency.enum';
 
@@ -11,7 +20,6 @@ class WorkerAssignmentDto {
   @Min(0)
   @Max(100)
   percentage: number;
-
 
   @IsOptional()
   @IsNumber()

@@ -21,9 +21,7 @@ import { PaginationResult } from '../common/utils/pagination.util';
 @Controller('favorites/companies')
 @UseGuards(JwtAuthGuard)
 export class ClientFavoriteCompanyController {
-  constructor(
-    private readonly favoriteService: ClientFavoriteCompanyService,
-  ) {}
+  constructor(private readonly favoriteService: ClientFavoriteCompanyService) {}
 
   // ------------------------------------------------------------
   // 1. Añadir compañía a favoritos del cliente autenticado

@@ -1,17 +1,18 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Body, 
-  Param, 
-  Put, 
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Put,
   Delete,
   Patch,
-  ParseIntPipe, 
-  HttpCode, 
-  HttpStatus, 
-  UseGuards, 
-  Req ,Query
+  ParseIntPipe,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  Req,
+  Query,
 } from '@nestjs/common';
 import { ServiceService } from './service.service';
 import { CreateServiceDto } from './dto/create-service.dto';
@@ -34,7 +35,7 @@ export class ServiceController {
    * GET /services/my-company
    * Solo administradores
    */
-@Get('my-company')
+  @Get('my-company')
   @UseGuards(RolesGuard)
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
@@ -44,7 +45,11 @@ export class ServiceController {
   ): Promise<any> {
     const adminId = req.user.sub;
     const { page, limit, name } = paginationDto;
-    return this.serviceService.findAllByCompanyWithWorkers(adminId, { page, limit, name });
+    return this.serviceService.findAllByCompanyWithWorkers(adminId, {
+      page,
+      limit,
+      name,
+    });
   }
 
   /**
@@ -59,7 +64,7 @@ export class ServiceController {
   @HttpCode(HttpStatus.OK)
   async findOneMyCompany(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<any> {
     const userId = req.user.sub;
     const userType = req.user.userType;
@@ -80,7 +85,10 @@ export class ServiceController {
     @Query() paginationDto: PaginationDto,
   ): Promise<any> {
     const { page, limit } = paginationDto;
-    return this.serviceService.findAllByCompanyIdWithWorkers(companyId, { page, limit });
+    return this.serviceService.findAllByCompanyIdWithWorkers(companyId, {
+      page,
+      limit,
+    });
   }
 
   /**
@@ -113,7 +121,7 @@ export class ServiceController {
   @HttpCode(HttpStatus.CREATED)
   async createForMyCompany(
     @Body() createServiceDto: CreateServiceDto,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<any> {
     const adminId = req.user.sub;
     return this.serviceService.create(createServiceDto, adminId);
@@ -131,7 +139,7 @@ export class ServiceController {
   async updateMyCompany(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateServiceDto: UpdateServiceDto,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<any> {
     const adminId = req.user.sub;
     return this.serviceService.update(id, updateServiceDto, adminId);
@@ -148,7 +156,7 @@ export class ServiceController {
   @HttpCode(HttpStatus.OK)
   async inactivateMyCompany(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<any> {
     const adminId = req.user.sub;
     return this.serviceService.inactivate(id, adminId);
@@ -165,10 +173,9 @@ export class ServiceController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async removeMyCompany(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any
+    @Req() req: any,
   ): Promise<void> {
     const adminId = req.user.sub;
     return this.serviceService.remove(id, adminId);
   }
-
 }

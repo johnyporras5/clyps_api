@@ -9,7 +9,10 @@ import { Client } from '../client/entities/client.entity';
 import { CommonModule } from '../common/common.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ServiceFeedback, Service, Company, Client]), CommonModule],
+  imports: [
+    TypeOrmModule.forFeature([ServiceFeedback, Service, Company, Client]),
+    CommonModule,
+  ],
   providers: [ServiceFeedbackService],
   controllers: [ServiceFeedbackController],
   exports: [ServiceFeedbackService],

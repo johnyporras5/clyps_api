@@ -29,12 +29,15 @@ export class CalendarService {
     return await this.CalendarRepository.save(Calendar);
   }
 
-  async update(id: number, updateCalendarDto: UpdateCalendarDto): Promise<Calendar> {
+  async update(
+    id: number,
+    updateCalendarDto: UpdateCalendarDto,
+  ): Promise<Calendar> {
     const Calendar = await this.CalendarRepository.findOne({ where: { id } });
     if (!Calendar) {
       throw new NotFoundException(`Calendar with id ${id} not found`);
     }
-    
+
     Object.assign(Calendar, updateCalendarDto);
     return await this.CalendarRepository.save(Calendar);
   }

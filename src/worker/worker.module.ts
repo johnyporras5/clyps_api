@@ -10,9 +10,18 @@ import { CommonModule } from 'src/common/common.module';
 import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Worker, User, Company, CompanyWorker,WorkerFeedback]), CommonModule],
+  imports: [
+    TypeOrmModule.forFeature([
+      Worker,
+      User,
+      Company,
+      CompanyWorker,
+      WorkerFeedback,
+    ]),
+    CommonModule,
+  ],
   providers: [WorkerService],
   controllers: [WorkerController],
   exports: [WorkerService],
 })
-export class WorkerModule { }
+export class WorkerModule {}

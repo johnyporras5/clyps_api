@@ -21,7 +21,7 @@ export async function paginate<T extends ObjectLiteral>(
   repositoryOrQueryBuilder: Repository<T> | SelectQueryBuilder<T>,
   options: PaginationOptions,
   whereConditions: any = {},
-  relations: string[] = []
+  relations: string[] = [],
 ): Promise<PaginationResult<T>> {
   const { page, limit } = options;
   const skip = (page - 1) * limit;

@@ -20,7 +20,6 @@ export class SessionDetailItemDto {
   @IsNumber()
   companyWorkerId?: number | null;
 
-
   @IsOptional()
   @IsString()
   description?: string;

@@ -15,7 +15,7 @@ import {
   UseInterceptors,
   ParseFilePipe,
   MaxFileSizeValidator,
-  FileTypeValidator
+  FileTypeValidator,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
@@ -25,7 +25,11 @@ import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TokenBlacklistService } from './services/token_blacklist.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import { RequestPasswordResetDto, ResetPasswordDto, VerifyResetCodeDto } from './dto/reset-password.dto';
+import {
+  RequestPasswordResetDto,
+  ResetPasswordDto,
+  VerifyResetCodeDto,
+} from './dto/reset-password.dto';
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 
@@ -34,7 +38,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly tokenBlacklistService: TokenBlacklistService,
-  ) { }
+  ) {}
 
   // ==================== ENDPOINTS DE REGISTRO ====================
 
@@ -72,7 +76,8 @@ export class AuthController {
   async registerWorker(
     @Body() registerDto: RegisterWorkerDto,
     @Req() req: any,
-    @UploadedFile(                                 // <-- NUEVO
+    @UploadedFile(
+      // <-- NUEVO
       new ParseFilePipe({
         validators: [
           new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
@@ -81,7 +86,7 @@ export class AuthController {
         fileIsRequired: false,
       }),
     )
-    pictureFile?: Express.Multer.File,            // <-- NUEVO
+    pictureFile?: Express.Multer.File, // <-- NUEVO
   ) {
     const adminId = req.user.sub;
     return this.authService.registerWorker(registerDto, adminId, pictureFile);
@@ -96,7 +101,8 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   async registerClient(
     @Body() registerDto: RegisterClientDto,
-    @UploadedFile(                                 // <-- NUEVO
+    @UploadedFile(
+      // <-- NUEVO
       new ParseFilePipe({
         validators: [
           new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
@@ -105,7 +111,7 @@ export class AuthController {
         fileIsRequired: false,
       }),
     )
-    pictureFile?: Express.Multer.File,            // <-- NUEVO
+    pictureFile?: Express.Multer.File, // <-- NUEVO
   ) {
     return this.authService.registerClient(registerDto, pictureFile);
   }
@@ -133,7 +139,11 @@ export class AuthController {
     pictureFile?: Express.Multer.File,
   ) {
     const adminId = req.user.sub;
-    return this.authService.registerClientByAdmin(registerDto, adminId, pictureFile);
+    return this.authService.registerClientByAdmin(
+      registerDto,
+      adminId,
+      pictureFile,
+    );
   }
 
   // ==================== ENDPOINTS DE LOGIN ====================
@@ -222,7 +232,7 @@ export class AuthController {
       email,
       exists: result.exists,
       verified: result.verified,
-      userId: result.userId
+      userId: result.userId,
     };
   }
 
@@ -237,7 +247,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async changePassword(
     @Req() req: any,
-    @Body() changePasswordDto: ChangePasswordDto
+    @Body() changePasswordDto: ChangePasswordDto,
   ) {
     const userId = req.user.sub;
     return this.authService.changePassword(userId, changePasswordDto);
@@ -249,7 +259,9 @@ export class AuthController {
    */
   @Post('request-password-reset')
   @HttpCode(HttpStatus.OK)
-  async requestPasswordReset(@Body() requestPasswordResetDto: RequestPasswordResetDto) {
+  async requestPasswordReset(
+    @Body() requestPasswordResetDto: RequestPasswordResetDto,
+  ) {
     return this.authService.requestPasswordReset(requestPasswordResetDto);
   }
 
@@ -279,7 +291,9 @@ export class AuthController {
    */
   @Post('change-password-without-auth')
   @HttpCode(HttpStatus.OK)
-  async changePasswordWithoutAuth(@Body() changePasswordDto: ChangePasswordWithoutAuthDto) {
+  async changePasswordWithoutAuth(
+    @Body() changePasswordDto: ChangePasswordWithoutAuthDto,
+  ) {
     return this.authService.changePasswordWithoutAuth(changePasswordDto);
   }
 
@@ -292,10 +306,7 @@ export class AuthController {
   @Post('logout')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  async logout(
-    @Headers('authorization') authHeader: string,
-    @Req() req: any
-  ) {
+  async logout(@Headers('authorization') authHeader: string, @Req() req: any) {
     const userId = req.user.sub;
     return this.authService.logout(authHeader, userId);
   }

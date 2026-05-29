@@ -13,8 +13,16 @@ import { CommonModule } from 'src/common/common.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([CompanyWorker, Company, Worker, User, WorkerFeedback, Session, SessionDetail]),
-    CommonModule
+    TypeOrmModule.forFeature([
+      CompanyWorker,
+      Company,
+      Worker,
+      User,
+      WorkerFeedback,
+      Session,
+      SessionDetail,
+    ]),
+    CommonModule,
   ],
   controllers: [CompanyWorkerController],
   providers: [CompanyWorkerService],

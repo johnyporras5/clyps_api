@@ -2,7 +2,6 @@ import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column } from 'typeorm';
 
 @Entity('calendar')
 export class Calendar {
-
   @PrimaryGeneratedColumn()
   id: number;
 

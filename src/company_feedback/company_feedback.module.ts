@@ -9,7 +9,10 @@ import { Session } from '../session/entities/session.entity';
 import { CommonModule } from '../common/common.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([CompanyFeedback, Company, Client, Session]), CommonModule],
+  imports: [
+    TypeOrmModule.forFeature([CompanyFeedback, Company, Client, Session]),
+    CommonModule,
+  ],
   providers: [CompanyFeedbackService],
   controllers: [CompanyFeedbackController],
   exports: [CompanyFeedbackService],

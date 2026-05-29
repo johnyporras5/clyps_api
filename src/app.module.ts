@@ -21,7 +21,6 @@ import { CompanyCategoryModule } from './company_category/company_category.modul
 import { OfferModule } from './Offer/offer.module';
 import { ReportsModule } from './reports/reports.module';
 
-
 @Module({
   imports: [
     EventEmitterModule.forRoot({
@@ -56,7 +55,8 @@ import { ReportsModule } from './reports/reports.module';
         // On Digital Ocean App Platform, DB_HOST should be set directly
         // For local Docker, use host.docker.internal if DB_HOST is localhost
         const dbHost = configService.get('DB_HOST', 'localhost');
-        const isLocalDocker = dbHost === 'localhost' && process.env.NODE_ENV !== 'production';
+        const isLocalDocker =
+          dbHost === 'localhost' && process.env.NODE_ENV !== 'production';
         const finalHost = isLocalDocker ? 'host.docker.internal' : dbHost;
 
         const dbConfig = {
@@ -82,10 +82,16 @@ import { ReportsModule } from './reports/reports.module';
           },
           autoLoadEntities: true,
         };
-        console.log(`📊 Database config: ${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);
-        console.log(`📊 DB_USERNAME: ${dbConfig.username ? '***SET***' : 'NOT SET'}`);
+        console.log(
+          `📊 Database config: ${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`,
+        );
+        console.log(
+          `📊 DB_USERNAME: ${dbConfig.username ? '***SET***' : 'NOT SET'}`,
+        );
         if (isLocalDocker) {
-          console.log(`ℹ️  Using host.docker.internal to connect to MySQL on host machine`);
+          console.log(
+            `ℹ️  Using host.docker.internal to connect to MySQL on host machine`,
+          );
         }
         return dbConfig;
       },
@@ -104,9 +110,8 @@ import { ReportsModule } from './reports/reports.module';
     OfferModule,
     ReportsModule,
     SessionModule,
-
   ],
   controllers: [AppController],
   providers: [AppService, CleanupTask, AutoCancelSessionsTask],
 })
-export class AppModule { }
+export class AppModule {}
