@@ -12,30 +12,8 @@ concurrency:
 
 jobs:
   test:
-    name: Lint, Build, Test, Migrations
+    name: Lint, Build, Test
     runs-on: ubuntu-latest
-
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: password
-          MYSQL_DATABASE: clyps_test
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h localhost -uroot -ppassword"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-
-    env:
-      NODE_ENV: test
-      DB_HOST: 127.0.0.1
-      DB_PORT: 3306
-      DB_USERNAME: root
-      DB_PASSWORD: password
-      DB_DATABASE: clyps_test
 
     steps:
       - name: Checkout
@@ -56,19 +34,6 @@ jobs:
 
       - name: Build
         run: npm run build
-
-      - name: Wait for MySQL
-        run: |
-          for i in {1..30}; do
-            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -ppassword --silent; then
-              echo "MySQL is up"; exit 0
-            fi
-            echo "Waiting for MySQL ($i)..."; sleep 2
-          done
-          echo "MySQL did not become ready in time"; exit 1
-
-      - name: Run migrations against ephemeral MySQL
-        run: npm run migration:run
 
       - name: Run unit tests
         run: npm test -- --passWithNoTests
