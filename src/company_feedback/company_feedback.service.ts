@@ -11,6 +11,7 @@ import { CreateCompanyFeedbackDto } from './dto/create-company_feedback.dto';
 import { UpdateCompanyFeedbackDto } from './dto/update-company_feedback.dto';
 import { Company } from '../company/entities/company.entity';
 import { Client } from '../client/entities/client.entity';
+import { Session } from '../session/entities/session.entity';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { FileUploadService } from '../common/services/file_upload.service';
 
@@ -22,6 +23,12 @@ export class CompanyFeedbackService {
 
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
+
+    @InjectRepository(Client)
+    private clientRepository: Repository<Client>,
+
+    @InjectRepository(Session)
+    private sessionRepository: Repository<Session>,
 
     private fileUploadService: FileUploadService,
   ) {}
@@ -55,7 +62,50 @@ export class CompanyFeedbackService {
     };
 
     const feedback = this.companyFeedbackRepository.create(data);
-    return await this.companyFeedbackRepository.save(feedback);
+    const saved = await this.companyFeedbackRepository.save(feedback);
+
+    // Si el cliente envió la calificación vinculada a una sesión, marcar la
+    // sesión como RATED (sessionStatus = 6) para que el flujo de
+    // "Calificar Servicio" no la siga proponiendo.
+    if (createDto.sessionId && clientId) {
+      await this.markSessionAsRatedIfOwned(createDto.sessionId, clientId);
+    }
+
+    return saved;
+  }
+
+  /**
+   * Marca la sesión como RATED (sessionStatus = 6) sólo si:
+   *  - existe,
+   *  - pertenece al cliente autenticado (userId del token → clientId),
+   *  - está actualmente en PAID (sessionStatus = 4).
+   * No lanza error si no se cumplen las condiciones: la calificación ya se
+   * guardó y el frontend no debe romper por un cambio de estado opcional.
+   */
+  private async markSessionAsRatedIfOwned(
+    sessionId: number,
+    clientUserId: number,
+  ): Promise<void> {
+    try {
+      const client = await this.clientRepository.findOne({
+        where: { userId: clientUserId },
+      });
+      if (!client) return;
+
+      const session = await this.sessionRepository.findOne({
+        where: { id: sessionId },
+      });
+      if (!session) return;
+      if (session.clientId !== client.id) return;
+      if (session.sessionStatus !== 4) return;
+
+      await this.sessionRepository.update(
+        { id: sessionId, clientId: session.clientId },
+        { sessionStatus: 6 },
+      );
+    } catch {
+      // best-effort: no romper la creación del feedback por un fallo aquí
+    }
   }
 
   async update(

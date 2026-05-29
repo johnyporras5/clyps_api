@@ -5,11 +5,12 @@ import { CompanyFeedbackController } from './company_feedback.controller';
 import { CompanyFeedback } from './entities/company_feedback.entity';
 import { Company } from '../company/entities/company.entity';
 import { Client } from '../client/entities/client.entity';
+import { Session } from '../session/entities/session.entity';
 import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([CompanyFeedback, Company, Client]),
+    TypeOrmModule.forFeature([CompanyFeedback, Company, Client, Session]),
     CommonModule,
   ],
   providers: [CompanyFeedbackService],

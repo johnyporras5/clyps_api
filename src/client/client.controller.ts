@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Client } from './entities/client.entity';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
+import { FindAllClientsDto } from './dto/find-all-clients.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -41,7 +42,7 @@ export class ClientController {
   @Get('admin/companies')
   async findAllByAdminCompanies(
     @Request() req,
-    @Query() paginationDto: PaginationDto,
+    @Query() paginationDto: FindAllClientsDto,
   ) {
     // Extraer adminId del token JWT (soporta tanto 'id' como 'sub')
     const adminId = req.user?.id || req.user?.sub;

@@ -2592,6 +2592,7 @@ export class SessionService {
       3: 'Completada',
       4: 'Pagado',
       5: 'Cancelada',
+      6: 'Calificada',
       8: 'Pendiente de asignación de trabajador',
     };
     return statusMap[status] || 'Desconocido';
@@ -2829,11 +2830,14 @@ export class SessionService {
       );
     }
 
-    // 1.2 Estados terminales: si la cita ya está Pagada (4) o Cancelada (5),
-    //     es una decisión final y no se admiten cambios en sus servicios.
+    // 1.2 Estados terminales: si la cita ya está Pagada (4), Cancelada (5)
+    //     o Calificada (6), es una decisión final y no se admiten cambios
+    //     en sus servicios.
     if (
       parentSession &&
-      (parentSession.sessionStatus === 4 || parentSession.sessionStatus === 5)
+      (parentSession.sessionStatus === 4 ||
+        parentSession.sessionStatus === 5 ||
+        parentSession.sessionStatus === 6)
     ) {
       throw new BadRequestException(
         `La cita está en estado "${this.getSessionStatusText(parentSession.sessionStatus)}" y no admite cambios en sus servicios`,
@@ -3391,12 +3395,16 @@ export class SessionService {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
 
-    // 1.1 Si la cita está en un estado terminal (Pagada 4 / Cancelada 5), el
-    //     auto-sync NO la modifica: es una decisión final.
+    // 1.1 Si la cita está en un estado terminal (Pagada 4 / Cancelada 5 /
+    //     Calificada 6), el auto-sync NO la modifica: es una decisión final.
     //     Nota: si el admin tomó control (statusLocked) el auto-sync SÍ corre,
     //     pero solo puede AVANZAR el estado de la cita, nunca retrocederlo
     //     (ver paso 5.1).
-    if (session.sessionStatus === 4 || session.sessionStatus === 5) {
+    if (
+      session.sessionStatus === 4 ||
+      session.sessionStatus === 5 ||
+      session.sessionStatus === 6
+    ) {
       const motivo = `la cita está en estado terminal "${this.getSessionStatusText(session.sessionStatus)}"`;
       console.log(
         `ℹ️ Sesión ${sessionId}: ${motivo}, no se recalcula automáticamente`,
@@ -6148,9 +6156,13 @@ export class SessionService {
     if (session.sessionStatus === 5) {
       throw new BadRequestException('La sesión ya está cancelada');
     }
-    if (session.sessionStatus === 3 || session.sessionStatus === 4) {
+    if (
+      session.sessionStatus === 3 ||
+      session.sessionStatus === 4 ||
+      session.sessionStatus === 6
+    ) {
       throw new BadRequestException(
-        'No se puede cancelar una sesión completada o pagada',
+        'No se puede cancelar una sesión completada, pagada o calificada',
       );
     }
 
@@ -7481,11 +7493,11 @@ export class SessionService {
    * GET /sessions/worker/my-history
    * Historial paginado de citas en estados terminales del worker.
    *
-   * Estados válidos del historial: Completada(3), Pagado(4), Cancelada(5).
+   * Estados válidos del historial: Completada(3), Pagado(4), Cancelada(5), Calificada(6).
    * Acepta filtros opcionales por estado:
-   *  - `detailStatus`: filtra por estado del DETALLE. Si no se pasa → [3,4,5].
+   *  - `detailStatus`: filtra por estado del DETALLE. Si no se pasa → [3,4,5,6].
    *  - `sessionStatus`: filtra por estado de la SESIÓN (cita). Si no se pasa → sin filtro de sesión.
-   * Si se pasan valores fuera de [3,4,5] se lanza BadRequestException.
+   * Si se pasan valores fuera de [3,4,5,6] se lanza BadRequestException.
    */
   async getWorkerHistory(
     userId: number,
@@ -7493,7 +7505,7 @@ export class SessionService {
     targetWorkerId?: number,
   ): Promise<PaginationResult<any>> {
     // Estados terminales permitidos en el historial
-    const HISTORY_STATUSES = [3, 4, 5];
+    const HISTORY_STATUSES = [3, 4, 5, 6];
 
     // Validar detailStatus recibido (si lo hay)
     if (getSessionsDto.detailStatus && getSessionsDto.detailStatus.length > 0) {
@@ -7502,7 +7514,7 @@ export class SessionService {
       );
       if (invalid.length > 0) {
         throw new BadRequestException(
-          `detailStatus inválido: ${invalid.join(', ')}. El historial sólo admite 3 (Completado), 4 (Pagado) o 5 (Cancelado).`,
+          `detailStatus inválido: ${invalid.join(', ')}. El historial sólo admite 3 (Completado), 4 (Pagado), 5 (Cancelado) o 6 (Calificada).`,
         );
       }
     }
@@ -7517,7 +7529,7 @@ export class SessionService {
       );
       if (invalid.length > 0) {
         throw new BadRequestException(
-          `sessionStatus inválido: ${invalid.join(', ')}. El historial sólo admite 3 (Completada), 4 (Pagada) o 5 (Cancelada).`,
+          `sessionStatus inválido: ${invalid.join(', ')}. El historial sólo admite 3 (Completada), 4 (Pagada), 5 (Cancelada) o 6 (Calificada).`,
         );
       }
     }
