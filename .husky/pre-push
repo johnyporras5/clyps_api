@@ -1,0 +1,17 @@
+echo "Running lint check..."
+npm run lint:check || {
+  echo ""
+  echo "Lint failed. Fix errors with 'npm run lint' (which auto-fixes) or manually, then try again."
+  exit 1
+}
+
+echo ""
+echo "Running build..."
+npm run build || {
+  echo ""
+  echo "Build failed. Fix the compilation errors and try again."
+  exit 1
+}
+
+echo ""
+echo "All checks passed. Proceeding with push."

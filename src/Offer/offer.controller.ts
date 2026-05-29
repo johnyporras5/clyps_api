@@ -40,9 +40,13 @@ export class OfferController {
   @Get('my-company/active-services')
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
-  async findActiveServiceOffers(@Req() req: any) {
+  async findActiveServiceOffers(
+    @Req() req: any,
+    @Query() paginationDto: PaginationDto,
+  ) {
     const adminId = req.user.sub;
-    return this.offerService.findActiveServiceOffers(adminId);
+    const { page, limit } = paginationDto;
+    return this.offerService.findActiveServiceOffers(adminId, { page, limit });
   }
 
   /**
