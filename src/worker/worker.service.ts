@@ -230,7 +230,6 @@ export class WorkerService {
     // 3. Actualizar campos del trabajador (excluyendo userId y campos protegidos)
     const allowedFields = [
       'name',
-      'lastName',
       'phone',
       'address',
       'birthdate',
@@ -386,7 +385,6 @@ export class WorkerService {
     // 6. Actualizar Worker
     const workerFields: (keyof UpdateWorkerByAdminDto)[] = [
       'name',
-      'lastName',
       'phone',
       'address',
       'birthdate',

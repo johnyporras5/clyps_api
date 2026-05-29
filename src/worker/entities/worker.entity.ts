@@ -19,9 +19,6 @@ export class Worker {
   @Column({ name: 'name', length: 145, nullable: true })
   name: string;
 
-  @Column({ name: 'last_name', length: 145, nullable: true })
-  lastName: string;
-
   @Column({ type: 'varchar', length: 20, nullable: true })
   phone: string;
 

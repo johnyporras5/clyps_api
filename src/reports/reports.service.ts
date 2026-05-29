@@ -230,7 +230,7 @@ export class ReportsService {
       const cw = workerMap.get(parseInt(r.companyWorkerId));
       const income = parseFloat(r.totalIncome || '0');
       const workerName = cw?.worker
-        ? `${cw.worker.name || ''} ${cw.worker.lastName || ''}`.trim()
+        ? (cw.worker.name || '').trim()
         : 'Empleado eliminado';
       return {
         companyWorkerId: parseInt(r.companyWorkerId),

@@ -21,10 +21,6 @@ export class CreateWorkerDto {
 
   @IsOptional()
   @IsString()
-  lastName?: string;
-
-  @IsOptional()
-  @IsString()
   @Length(0, 20)
   phone?: string;
 
