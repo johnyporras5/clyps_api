@@ -14,6 +14,12 @@ import { Company } from '../company/entities/company.entity';
 import { Client } from '../client/entities/client.entity';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { FileUploadService } from '../common/services/file_upload.service';
+import { WorkerFeedbackStatsDto } from '../worker/dto/worker-feedback-stats.dto';
+
+export type ServiceFeedbackPaginatedResult =
+  PaginationResult<ServiceFeedback> & {
+    stats: WorkerFeedbackStatsDto;
+  };
 
 @Injectable()
 export class ServiceFeedbackService {
@@ -196,7 +202,8 @@ export class ServiceFeedbackService {
     userId: number,
     page = 1,
     limit = 10,
-  ): Promise<PaginationResult<ServiceFeedback>> {
+    serviceId?: number,
+  ): Promise<ServiceFeedbackPaginatedResult> {
     const company = await this.companyRepository.findOne({ where: { userId } });
     if (!company) {
       throw new NotFoundException(`No company found for user ${userId}`);
@@ -207,6 +214,18 @@ export class ServiceFeedbackService {
       .createQueryBuilder('s')
       .select('s.id')
       .where('s.companyId = :companyId', { companyId: company.id });
+
+    // Si se pasó serviceId, validar que pertenece a la compañía
+    if (serviceId !== undefined) {
+      const belongs = await this.serviceRepository.findOne({
+        where: { id: serviceId, companyId: company.id },
+      });
+      if (!belongs) {
+        throw new ForbiddenException(
+          `Service ${serviceId} no pertenece a esta compañía`,
+        );
+      }
+    }
 
     const queryBuilder = this.serviceFeedbackRepository
       .createQueryBuilder('feedback')
@@ -220,6 +239,12 @@ export class ServiceFeedbackService {
       .where(`feedback.serviceId IN (${serviceIdsSubQuery.getQuery()})`)
       .setParameters(serviceIdsSubQuery.getParameters())
       .orderBy('feedback.datetime', 'DESC');
+
+    if (serviceId !== undefined) {
+      queryBuilder.andWhere('feedback.serviceId = :targetServiceId', {
+        targetServiceId: serviceId,
+      });
+    }
 
     const result = await paginate<ServiceFeedback>(queryBuilder, {
       page,
@@ -236,6 +261,94 @@ export class ServiceFeedbackService {
       return feedback;
     });
 
-    return result;
+    const stats =
+      serviceId !== undefined
+        ? await this.computeStatsForServiceIds([serviceId])
+        : await this.computeStatsForServiceIdsSubQuery(serviceIdsSubQuery);
+
+    return { ...result, stats };
+  }
+
+  /**
+   * Stats agregadas (promedio + conteo por estrella) para una lista de
+   * serviceIds (ej. un servicio puntual).
+   */
+  private async computeStatsForServiceIds(
+    serviceIds: number[],
+  ): Promise<WorkerFeedbackStatsDto> {
+    if (serviceIds.length === 0) return this.emptyStats();
+    const qb = this.serviceFeedbackRepository
+      .createQueryBuilder('feedback')
+      .where('feedback.serviceId IN (:...serviceIds)', { serviceIds });
+    return this.aggregateStats(qb);
+  }
+
+  /**
+   * Stats agregadas reutilizando la subconsulta de serviceIds que pertenecen
+   * a la compañía del admin.
+   */
+  private async computeStatsForServiceIdsSubQuery(
+    serviceIdsSubQuery: SelectQueryBuilder<Service>,
+  ): Promise<WorkerFeedbackStatsDto> {
+    const qb = this.serviceFeedbackRepository
+      .createQueryBuilder('feedback')
+      .where(`feedback.serviceId IN (${serviceIdsSubQuery.getQuery()})`)
+      .setParameters(serviceIdsSubQuery.getParameters());
+    return this.aggregateStats(qb);
+  }
+
+  private async aggregateStats(
+    baseQb: SelectQueryBuilder<ServiceFeedback>,
+  ): Promise<WorkerFeedbackStatsDto> {
+    const rows: Array<{ stars: number | null; count: string }> = await baseQb
+      .clone()
+      .select('feedback.stars', 'stars')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('feedback.stars')
+      .getRawMany();
+
+    const stats = this.emptyStats();
+    let total = 0;
+    let weighted = 0;
+    for (const row of rows) {
+      const stars = row.stars == null ? null : Number(row.stars);
+      const count = Number(row.count);
+      if (stars === null) continue;
+      total += count;
+      weighted += stars * count;
+      switch (stars) {
+        case 5:
+          stats.fiveStarCount = count;
+          break;
+        case 4:
+          stats.fourStarCount = count;
+          break;
+        case 3:
+          stats.threeStarCount = count;
+          break;
+        case 2:
+          stats.twoStarCount = count;
+          break;
+        case 1:
+          stats.oneStarCount = count;
+          break;
+      }
+    }
+    stats.totalFeedbacks = total;
+    stats.averageStars =
+      total === 0 ? 0 : Number((weighted / total).toFixed(2));
+    return stats;
+  }
+
+  private emptyStats(): WorkerFeedbackStatsDto {
+    return {
+      averageStars: 0,
+      totalFeedbacks: 0,
+      fiveStarCount: 0,
+      fourStarCount: 0,
+      threeStarCount: 0,
+      twoStarCount: 0,
+      oneStarCount: 0,
+    };
   }
 }

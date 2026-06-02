@@ -14,13 +14,15 @@ import {
   HttpStatus,
   UnauthorizedException,
 } from '@nestjs/common';
-import { CompanyFeedbackService } from './company_feedback.service';
+import {
+  CompanyFeedbackService,
+  CompanyFeedbackPaginatedResult,
+} from './company_feedback.service';
 import { CompanyFeedback } from './entities/company_feedback.entity';
 import { CreateCompanyFeedbackDto } from './dto/create-company_feedback.dto';
 import { UpdateCompanyFeedbackDto } from './dto/update-company_feedback.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaginationDto } from '../common/dto/pagination.dto';
-import { PaginationResult } from '../common/utils/pagination.util';
 
 @Controller('companyfeedbacks')
 @UseGuards(JwtAuthGuard)
@@ -53,7 +55,7 @@ export class CompanyFeedbackController {
   async findByCompany(
     @Query() paginationDto: PaginationDto,
     @Req() req: any,
-  ): Promise<PaginationResult<CompanyFeedback>> {
+  ): Promise<CompanyFeedbackPaginatedResult> {
     const userId = req.user?.sub; // ID del usuario autenticado (JWT)
     if (!userId) {
       throw new UnauthorizedException('User not authenticated');
