@@ -44,7 +44,7 @@ export class WorkerFeedbackService {
     @InjectRepository(Service)
     private serviceRepository: Repository<Service>,
     private fileUploadService: FileUploadService,
-  ) { }
+  ) {}
 
   async findOne(id: number): Promise<WorkerFeedback> {
     const feedback = await this.workerFeedbackRepository
