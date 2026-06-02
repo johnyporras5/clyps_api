@@ -21,7 +21,6 @@ import { WorkerFeedback } from './entities/worker_feedback.entity';
 import { CreateWorkerFeedbackDto } from './dto/create-worker_feedback.dto';
 import { UpdateWorkerFeedbackDto } from './dto/update-worker_feedback.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { PaginationResult } from '../common/utils/pagination.util';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -54,7 +53,7 @@ export class WorkerFeedbackController {
   async findByWorker(
     @Param('workerId', ParseIntPipe) workerId: number,
     @Query() paginationDto: PaginationDto, // Type transform y validación automática
-  ): Promise<PaginationResult<WorkerFeedback>> {
+  ): Promise<WorkerFeedbackPaginatedResult> {
     return this.workerFeedbackService.findByWorker(
       workerId,
       paginationDto.page,
@@ -82,8 +81,10 @@ export class WorkerFeedbackController {
     );
   }
   // =============================================
-  // (ADMIN) Listar feedbacks de los barberos de su compañía
+  // (ADMIN) Listar feedbacks de los barberos de su compañía.
   // GET /workerfeedbacks?page=1&limit=10
+  // GET /workerfeedbacks?workerId=20&page=1&limit=10  → filtra por worker
+  //   y los `stats` quedan acotados a ese worker (promedio + por estrella).
   // =============================================
   @Get()
   @UseGuards(RolesGuard)
@@ -91,13 +92,19 @@ export class WorkerFeedbackController {
   @HttpCode(HttpStatus.OK)
   async findAllPaginated(
     @Query() paginationDto: PaginationDto,
+    @Query('workerId') workerIdRaw: string | undefined,
     @Req() req: any,
   ): Promise<WorkerFeedbackPaginatedResult> {
     const userId = req.user?.sub; // ID del usuario admin (desde el JWT)
+    const workerId =
+      workerIdRaw !== undefined && workerIdRaw !== ''
+        ? Number(workerIdRaw)
+        : undefined;
     return this.workerFeedbackService.findAllByAdminCompany(
       userId,
       paginationDto.page,
       paginationDto.limit,
+      workerId,
     );
   }
 

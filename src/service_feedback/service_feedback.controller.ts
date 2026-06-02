@@ -13,7 +13,10 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ServiceFeedbackService } from './service_feedback.service';
+import {
+  ServiceFeedbackService,
+  ServiceFeedbackPaginatedResult,
+} from './service_feedback.service';
 import { ServiceFeedback } from './entities/service_feedback.entity';
 import { CreateServiceFeedbackDto } from './dto/create-service_feedback.dto';
 import { UpdateServiceFeedbackDto } from './dto/update-service_feedback.dto';
@@ -63,8 +66,10 @@ export class ServiceFeedbackController {
   }
 
   // =============================================
-  // (ADMIN) Listar feedbacks de los servicios de su compañía
+  // (ADMIN) Listar feedbacks de los servicios de su compañía.
   // GET /servicefeedbacks?page=1&limit=10
+  // GET /servicefeedbacks?serviceId=4&page=1  → filtra por servicio
+  //   y `stats` queda acotado a ese servicio.
   // =============================================
   @Get()
   @UseGuards(RolesGuard)
@@ -72,13 +77,19 @@ export class ServiceFeedbackController {
   @HttpCode(HttpStatus.OK)
   async findAllByAdminCompany(
     @Query() paginationDto: PaginationDto,
+    @Query('serviceId') serviceIdRaw: string | undefined,
     @Req() req: any,
-  ): Promise<PaginationResult<ServiceFeedback>> {
+  ): Promise<ServiceFeedbackPaginatedResult> {
     const userId = req.user?.sub;
+    const serviceId =
+      serviceIdRaw !== undefined && serviceIdRaw !== ''
+        ? Number(serviceIdRaw)
+        : undefined;
     return this.serviceFeedbackService.findAllByAdminCompany(
       userId,
       paginationDto.page,
       paginationDto.limit,
+      serviceId,
     );
   }
 

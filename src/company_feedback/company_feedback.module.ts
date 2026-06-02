@@ -6,11 +6,24 @@ import { CompanyFeedback } from './entities/company_feedback.entity';
 import { Company } from '../company/entities/company.entity';
 import { Client } from '../client/entities/client.entity';
 import { Session } from '../session/entities/session.entity';
+import { SessionDetail } from '../session_detail/entities/session_detail.entity';
+import { Service } from '../service/entities/service.entity';
+import { Worker } from '../worker/entities/worker.entity';
+import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([CompanyFeedback, Company, Client, Session]),
+    TypeOrmModule.forFeature([
+      CompanyFeedback,
+      Company,
+      Client,
+      Session,
+      SessionDetail,
+      Service,
+      Worker,
+      CompanyWorker,
+    ]),
     CommonModule,
   ],
   providers: [CompanyFeedbackService],
