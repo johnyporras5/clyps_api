@@ -22,8 +22,9 @@ import { WorkerFeedbackStatsDto } from '../worker/dto/worker-feedback-stats.dto'
 
 // El campo `stats` ahora va anidado dentro de cada feedback.company (un card
 // por compañía). El resultado paginado mantiene la forma estándar.
-export type CompanyFeedbackPaginatedResult = PaginationResult<CompanyFeedback>;
-
+export type CompanyFeedbackPaginatedResult = PaginationResult<CompanyFeedback> & {
+  stats?: WorkerFeedbackStatsDto;
+};
 @Injectable()
 export class CompanyFeedbackService {
   constructor(
@@ -204,16 +205,11 @@ export class CompanyFeedbackService {
     page = 1,
     limit = 10,
   ): Promise<CompanyFeedbackPaginatedResult> {
-    // 1. Buscar la compañía cuyo userId coincida con el usuario autenticado
-    const company = await this.companyRepository.findOne({
-      where: { userId },
-    });
-
+    const company = await this.companyRepository.findOne({ where: { userId } });
     if (!company) {
       throw new NotFoundException(`No company found for user id ${userId}`);
     }
 
-    // 2. Construir query builder para los feedbacks de esa compañía
     const queryBuilder: SelectQueryBuilder<CompanyFeedback> =
       this.companyFeedbackRepository
         .createQueryBuilder('feedback')
@@ -227,18 +223,21 @@ export class CompanyFeedbackService {
         .where('feedback.companyId = :companyId', { companyId: company.id })
         .orderBy('feedback.datetime', 'DESC');
 
-    // 3. Paginar
-    const result = await paginate<CompanyFeedback>(queryBuilder, {
-      page,
-      limit,
-    });
+    const result = await paginate<CompanyFeedback>(queryBuilder, { page, limit });
 
-    // 4. Hidratar pictureUrls + servicios + company.stats por feedback.
+    // Hidratar (sin stats redundantes)
     await this.hydrateFeedbacks(result.data);
 
-    return result;
-  }
+    // Calcular estadísticas de la compañía una sola vez
+    const statsMap = await this.computeStatsByCompany([company.id]);
+    const stats = statsMap.get(company.id) ?? this.emptyStats();
 
+    // Adjuntar stats al resultado paginado
+    const finalResult = result as CompanyFeedbackPaginatedResult;
+    finalResult.stats = stats;
+
+    return finalResult;
+  }
   /**
    * Hidrata cada feedback con:
    *  - client.pictureUrl.
@@ -250,6 +249,7 @@ export class CompanyFeedbackService {
   private async hydrateFeedbacks(feedbacks: CompanyFeedback[]): Promise<void> {
     if (feedbacks.length === 0) return;
 
+    // 1. URLs de imágenes y limpiar services
     for (const feedback of feedbacks) {
       if (feedback.client?.picture) {
         feedback.client.pictureUrl = this.fileUploadService.getFileUrl(
@@ -260,18 +260,7 @@ export class CompanyFeedbackService {
       feedback.services = [];
     }
 
-    // Stats por compañía → anidadas en feedback.company.stats
-    const uniqueCompanyIds = Array.from(
-      new Set(feedbacks.map((f) => f.companyId)),
-    );
-    const statsByCompany = await this.computeStatsByCompany(uniqueCompanyIds);
-    for (const feedback of feedbacks) {
-      if (feedback.company) {
-        (feedback.company as any).stats =
-          statsByCompany.get(feedback.companyId) ?? this.emptyStats();
-      }
-    }
-
+    // 2. Servicios de las sesiones (sin tocar stats)
     const sessionIds = Array.from(
       new Set(
         feedbacks
@@ -279,79 +268,81 @@ export class CompanyFeedbackService {
           .filter((id): id is number => typeof id === 'number'),
       ),
     );
-    if (sessionIds.length === 0) return;
+    if (sessionIds.length > 0) {
+      const rows: Array<{
+        sessionId: number;
+        serviceId: number;
+        workerId: number | null;
+      }> = await this.sessionDetailRepository
+        .createQueryBuilder('sd')
+        .leftJoin(CompanyWorker, 'cw', 'cw.id = sd.companyWorkerId')
+        .select('sd.session_id', 'sessionId')
+        .addSelect('sd.service_id', 'serviceId')
+        .addSelect('cw.worker_id', 'workerId')
+        .where('sd.session_id IN (:...sessionIds)', { sessionIds })
+        .getRawMany();
 
-    // session_detail JOIN company_worker (para obtener worker_id) por sesión.
-    const rows: Array<{
-      sessionId: number;
-      serviceId: number;
-      workerId: number | null;
-    }> = await this.sessionDetailRepository
-      .createQueryBuilder('sd')
-      .leftJoin(CompanyWorker, 'cw', 'cw.id = sd.companyWorkerId')
-      .select('sd.session_id', 'sessionId')
-      .addSelect('sd.service_id', 'serviceId')
-      .addSelect('cw.worker_id', 'workerId')
-      .where('sd.session_id IN (:...sessionIds)', { sessionIds })
-      .getRawMany();
+      if (rows.length > 0) {
+        const serviceIds = Array.from(new Set(rows.map((r) => r.serviceId)));
+        const workerIds = Array.from(
+          new Set(
+            rows
+              .map((r) => r.workerId)
+              .filter((id): id is number => typeof id === 'number'),
+          ),
+        );
 
-    if (rows.length === 0) return;
+        const [services, workers] = await Promise.all([
+          this.serviceRepository.find({
+            where: serviceIds.map((id) => ({ id })),
+          }),
+          workerIds.length > 0
+            ? this.workerRepository.find({
+              where: workerIds.map((id) => ({ id })),
+            })
+            : Promise.resolve([] as Worker[]),
+        ]);
+        const serviceById = new Map(services.map((s) => [s.id, s]));
+        const workerById = new Map(workers.map((w) => [w.id, w]));
 
-    const serviceIds = Array.from(new Set(rows.map((r) => r.serviceId)));
-    const workerIds = Array.from(
-      new Set(
-        rows
-          .map((r) => r.workerId)
-          .filter((id): id is number => typeof id === 'number'),
-      ),
-    );
+        const grouped = new Map<
+          number,
+          Array<{ serviceId: number; workerId: number | null }>
+        >();
+        for (const r of rows) {
+          const arr = grouped.get(r.sessionId) ?? [];
+          arr.push({ serviceId: r.serviceId, workerId: r.workerId });
+          grouped.set(r.sessionId, arr);
+        }
 
-    const [services, workers] = await Promise.all([
-      this.serviceRepository.find({
-        where: serviceIds.map((id) => ({ id })),
-      }),
-      workerIds.length > 0
-        ? this.workerRepository.find({
-          where: workerIds.map((id) => ({ id })),
-        })
-        : Promise.resolve([] as Worker[]),
-    ]);
-    const serviceById = new Map(services.map((s) => [s.id, s]));
-    const workerById = new Map(workers.map((w) => [w.id, w]));
-
-    const grouped = new Map<
-      number,
-      Array<{ serviceId: number; workerId: number | null }>
-    >();
-    for (const r of rows) {
-      const arr = grouped.get(r.sessionId) ?? [];
-      arr.push({ serviceId: r.serviceId, workerId: r.workerId });
-      grouped.set(r.sessionId, arr);
-    }
-
-    for (const feedback of feedbacks) {
-      if (typeof feedback.sessionId !== 'number') continue;
-      const entries = grouped.get(feedback.sessionId);
-      if (!entries) continue;
-      feedback.services = entries.flatMap((entry) => {
-        const svc = serviceById.get(entry.serviceId);
-        if (!svc) return [];
-        const wrk =
-          entry.workerId != null ? workerById.get(entry.workerId) : undefined;
-        return [
-          {
-            id: svc.id,
-            name: svc.name ?? null,
-            category: svc.category
-              ? { id: svc.category.id, name: svc.category.name }
-              : null,
-            worker: wrk ? { id: wrk.id, name: wrk.name ?? null } : null,
-          },
-        ];
-      });
+        for (const feedback of feedbacks) {
+          if (typeof feedback.sessionId !== 'number') continue;
+          const entries = grouped.get(feedback.sessionId);
+          if (!entries) continue;
+          feedback.services = entries.flatMap((entry) => {
+            const svc = serviceById.get(entry.serviceId);
+            if (!svc) return [];
+            const wrk =
+              entry.workerId != null ? workerById.get(entry.workerId) : undefined;
+            return [
+              {
+                id: svc.id,
+                name: svc.name ?? null,
+                category: svc.category
+                  ? { id: svc.category.id, name: svc.category.name }
+                  : null,
+                worker: wrk ? { id: wrk.id, name: wrk.name ?? null } : null,
+              },
+            ];
+          });
+        }
+      }
     }
     for (const feedback of feedbacks) {
       if (feedback.client) {
+        // console.log(
+        //   `Reemplazando clientId: antes ${feedback.clientId}, después ${feedback.client.id}`
+        // );
         feedback.clientId = feedback.client.id;
       }
     }
