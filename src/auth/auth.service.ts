@@ -935,104 +935,89 @@ export class AuthService {
 
   // ==================== MÉTODOS DE LOGIN ====================
 
-  async login(
-    loginDto: LoginDto,
-  ): Promise<{ access_token: string; user: Partial<User> }> {
-    const user = await this.userRepository.findOne({
-      where: { email: loginDto.email },
-    });
+async login(
+  loginDto: LoginDto,
+): Promise<{ access_token: string; user: Partial<User> }> {
+  const { email, password } = loginDto;  // 'email' es el identificador (email o username)
 
-    if (!user) {
-      throw new UnauthorizedException('Credenciales inválidas');
-    }
+  // Buscar por email O username
+  const user = await this.userRepository.findOne({
+    where: [
+      { email: email },
+      { username: email },
+    ],
+  });
 
-    // Primero verificamos si la contraseña es válida
-    const isPasswordValid = await bcrypt.compare(
-      loginDto.password,
-      user.password,
-    );
+  if (!user) {
+    throw new UnauthorizedException('Credenciales inválidas');
+  }
 
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Credenciales inválidas');
-    }
+  const isPasswordValid = await bcrypt.compare(password, user.password);
+  if (!isPasswordValid) {
+    throw new UnauthorizedException('Credenciales inválidas');
+  }
 
-    // Si el usuario no está verificado
-    if (user.emailVerified === 0) {
-      // Verificar si ya hay un código activo
-      const codeStatus =
-        await this.verificationService.getVerificationCodeStatus(user.id);
+  // Si el usuario no está verificado
+  if (user.emailVerified === 0) {
+    const codeStatus = await this.verificationService.getVerificationCodeStatus(user.id);
 
-      if (codeStatus.hasActiveCode && codeStatus.secondsRemaining) {
-        // Si ya tiene código activo, calcular minutos restantes
-        const minutesRemaining = Math.ceil(codeStatus.secondsRemaining / 60);
-
+    if (codeStatus.hasActiveCode && codeStatus.secondsRemaining) {
+      const minutesRemaining = Math.ceil(codeStatus.secondsRemaining / 60);
+      throw new UnauthorizedException({
+        message: `Por favor verifica tu email antes de iniciar sesión. Ya tienes un código activo (expira en ${minutesRemaining} minutos). Revisa tu correo.`,
+        requiresVerification: true,
+        userId: user.id,
+        hasActiveCode: true,
+        secondsRemaining: codeStatus.secondsRemaining,
+        minutesRemaining,
+      });
+    } else {
+      try {
+        // IMPORTANTE: Enviar código al EMAIL real del usuario
+        await this.sendVerificationCode(user.email);  // Cambiado: usamos user.email
         throw new UnauthorizedException({
-          message: `Por favor verifica tu email antes de iniciar sesión. Ya tienes un código activo (expira en ${minutesRemaining} minutos). Revisa tu correo.`,
+          message: 'Por favor verifica tu email antes de iniciar sesión. Se ha enviado un nuevo código de verificación a tu correo.',
           requiresVerification: true,
           userId: user.id,
-          hasActiveCode: true,
-          secondsRemaining: codeStatus.secondsRemaining,
-          minutesRemaining,
         });
-      } else {
-        // Si no tiene código activo, enviar uno nuevo
-        try {
-          // Enviar código de verificación automáticamente
-          await this.sendVerificationCode(loginDto.email);
-
-          // Lanzamos excepción con mensaje informativo
-          throw new UnauthorizedException({
-            message:
-              'Por favor verifica tu email antes de iniciar sesión. Se ha enviado un nuevo código de verificación a tu correo.',
-            requiresVerification: true,
-            userId: user.id,
-          });
-        } catch (error) {
-          // Si hay error específico al enviar, usamos mensaje diferente
-          if (
-            error instanceof BadRequestException ||
-            error instanceof NotFoundException
-          ) {
-            throw new UnauthorizedException({
-              message: 'Por favor verifica tu email antes de iniciar sesión.',
-              requiresVerification: true,
-              userId: user.id,
-            });
-          }
-          // Si es la excepción que lanzamos nosotros, la propagamos
-          if (error instanceof UnauthorizedException) {
-            throw error;
-          }
-          // Cualquier otro error
+      } catch (error) {
+        if (error instanceof BadRequestException || error instanceof NotFoundException) {
           throw new UnauthorizedException({
             message: 'Por favor verifica tu email antes de iniciar sesión.',
             requiresVerification: true,
             userId: user.id,
           });
         }
+        if (error instanceof UnauthorizedException) {
+          throw error;
+        }
+        throw new UnauthorizedException({
+          message: 'Por favor verifica tu email antes de iniciar sesión.',
+          requiresVerification: true,
+          userId: user.id,
+        });
       }
     }
-
-    // Actualizar lastLogin del usuario
-    user.lastLogin = new Date();
-    await this.userRepository.save(user);
-
-    const payload = {
-      email: user.email,
-      sub: user.id,
-      userType: user.userType,
-    };
-
-    const access_token = this.jwtService.sign(payload);
-
-    const { password, ...userWithoutPassword } = user;
-
-    return {
-      access_token,
-      user: userWithoutPassword,
-    };
   }
 
+  // Actualizar lastLogin
+  user.lastLogin = new Date();
+  await this.userRepository.save(user);
+
+  const payload = {
+    email: user.email,
+    sub: user.id,
+    userType: user.userType,
+  };
+
+  const access_token = this.jwtService.sign(payload);
+  const { password: _, ...userWithoutPassword } = user;
+
+  return {
+    access_token,
+    user: userWithoutPassword,
+  };
+}
   // ==================== MÉTODOS DE VERIFICACIÓN ====================
 
   /**

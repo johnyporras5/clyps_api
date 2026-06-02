@@ -20,9 +20,9 @@ import { Service } from 'src/service/entities/service.entity';
 import { FileUploadService } from 'src/common/services/file_upload.service';
 import { WorkerFeedbackStatsDto } from 'src/worker/dto/worker-feedback-stats.dto';
 
-export type WorkerFeedbackPaginatedResult = PaginationResult<WorkerFeedback> & {
-  stats: WorkerFeedbackStatsDto;
-};
+// El campo `stats` ahora va anidado dentro de cada feedback.worker (un card
+// por worker). El resultado paginado mantiene la forma estándar.
+export type WorkerFeedbackPaginatedResult = PaginationResult<WorkerFeedback>;
 
 @Injectable()
 export class WorkerFeedbackService {
@@ -44,15 +44,24 @@ export class WorkerFeedbackService {
     @InjectRepository(Service)
     private serviceRepository: Repository<Service>,
     private fileUploadService: FileUploadService,
-  ) {}
+  ) { }
 
   async findOne(id: number): Promise<WorkerFeedback> {
-    const feedback = await this.workerFeedbackRepository.findOne({
-      where: { id },
-    });
+    const feedback = await this.workerFeedbackRepository
+      .createQueryBuilder('feedback')
+      .leftJoinAndSelect('feedback.worker', 'worker')
+      .leftJoinAndMapOne(
+        'feedback.client',
+        Client,
+        'client',
+        'client.userId = feedback.clientId',
+      )
+      .where('feedback.id = :id', { id })
+      .getOne();
     if (!feedback) {
       throw new NotFoundException(`WorkerFeedback with id ${id} not found`);
     }
+    await this.hydrateFeedbacks([feedback]);
     return feedback;
   }
 
@@ -201,7 +210,7 @@ export class WorkerFeedbackService {
     workerId: number,
     page = 1,
     limit = 10,
-  ): Promise<PaginationResult<WorkerFeedback>> {
+  ): Promise<WorkerFeedbackPaginatedResult> {
     // Verificar que el worker existe
     const worker = await this.workerRepository.findOne({
       where: { id: workerId },
@@ -210,20 +219,28 @@ export class WorkerFeedbackService {
       throw new NotFoundException(`Worker with id ${workerId} not found`);
     }
 
-    // Crear query builder con filtro y orden
+    // Crear query builder con joins de worker + client para hidratar la respuesta
     const queryBuilder: SelectQueryBuilder<WorkerFeedback> =
       this.workerFeedbackRepository
         .createQueryBuilder('feedback')
+        .leftJoinAndSelect('feedback.worker', 'worker')
+        .leftJoinAndMapOne(
+          'feedback.client',
+          Client,
+          'client',
+          'client.userId = feedback.clientId',
+        )
         .where('feedback.workerId = :workerId', { workerId })
         .orderBy('feedback.datetime', 'DESC');
 
-    // Delegar la paginación al helper
-    const paginationResult = await paginate<WorkerFeedback>(queryBuilder, {
+    const result = await paginate<WorkerFeedback>(queryBuilder, {
       page,
       limit,
     });
 
-    return paginationResult;
+    await this.hydrateFeedbacks(result.data);
+
+    return result;
   }
 
   /**
@@ -236,6 +253,7 @@ export class WorkerFeedbackService {
     userId: number,
     page = 1,
     limit = 10,
+    workerId?: number,
   ): Promise<WorkerFeedbackPaginatedResult> {
     // 1. Buscar la compañía asociada al usuario admin
     const company = await this.companyRepository.findOne({ where: { userId } });
@@ -250,7 +268,23 @@ export class WorkerFeedbackService {
       .where('cw.companyId = :companyId', { companyId: company.id })
       .andWhere('cw.permanentlyDeleted = false'); // Opcional: excluir borrados
 
+    // 2b. Si se pasó workerId, validar que pertenece a la compañía del admin
+    if (workerId !== undefined) {
+      const belongsToCompany = await this.companyWorkerRepository
+        .createQueryBuilder('cw')
+        .where('cw.companyId = :companyId', { companyId: company.id })
+        .andWhere('cw.workerId = :workerId', { workerId })
+        .andWhere('cw.permanentlyDeleted = false')
+        .getCount();
+      if (belongsToCompany === 0) {
+        throw new ForbiddenException(
+          `Worker ${workerId} no pertenece a esta compañía`,
+        );
+      }
+    }
+
     // 3. Consulta principal: feedbacks cuyo workerId esté en la subconsulta
+    //    (filtrando además por workerId si fue provisto)
     const queryBuilder = this.workerFeedbackRepository
       .createQueryBuilder('feedback')
       .leftJoinAndSelect('feedback.worker', 'worker')
@@ -264,18 +298,23 @@ export class WorkerFeedbackService {
       .setParameters(workerIdsSubQuery.getParameters())
       .orderBy('feedback.datetime', 'DESC');
 
+    if (workerId !== undefined) {
+      queryBuilder.andWhere('feedback.workerId = :targetWorkerId', {
+        targetWorkerId: workerId,
+      });
+    }
+
     // 4. Paginar usando el helper
     const result = await paginate<WorkerFeedback>(queryBuilder, {
       page,
       limit,
     });
 
-    // 5. Hidratar pictureUrls, servicios prestados y stats agregadas
+    // 5. Hidratar pictureUrls, servicios y stats por worker
+    //    (stats van dentro de feedback.worker.stats).
     await this.hydrateFeedbacks(result.data);
-    const stats =
-      await this.computeStatsForWorkerIdsSubQuery(workerIdsSubQuery);
 
-    return { ...result, stats };
+    return result;
   }
 
   /**
@@ -319,16 +358,16 @@ export class WorkerFeedbackService {
       limit,
     });
 
-    // 4. Hidratar pictureUrls, servicios prestados y stats agregadas
+    // 4. Hidratar pictureUrls, servicios y worker.stats
     await this.hydrateFeedbacks(result.data);
-    const stats = await this.computeStatsForWorkerIds([worker.id]);
 
-    return { ...result, stats };
+    return result;
   }
 
   /**
    * Hidrata cada feedback con:
    *  - client.pictureUrl y worker.pictureUrl si tienen `picture`.
+   *  - worker.stats: promedio + conteo por estrella de ese worker.
    *  - `services`: arreglo de servicios prestados por el worker del feedback
    *    dentro de la sesión asociada (sólo cuando `sessionId` está presente).
    */
@@ -350,6 +389,18 @@ export class WorkerFeedbackService {
         );
       }
       feedback.services = [];
+    }
+
+    // 1b) Stats por worker → anidadas dentro de feedback.worker.stats
+    const uniqueWorkerIds = Array.from(
+      new Set(feedbacks.map((f) => f.workerId)),
+    );
+    const statsByWorker = await this.computeStatsByWorker(uniqueWorkerIds);
+    for (const feedback of feedbacks) {
+      if (feedback.worker) {
+        (feedback.worker as any).stats =
+          statsByWorker.get(feedback.workerId) ?? this.emptyStats();
+      }
     }
 
     // 2) Servicios prestados por el worker del feedback dentro de su sesión
@@ -416,54 +467,55 @@ export class WorkerFeedbackService {
         ];
       });
     }
+
+    for (const feedback of feedbacks) {
+      if (feedback.client) {
+        feedback.clientId = feedback.client.id;
+      }
+    }
   }
 
   /**
-   * Stats agregadas (promedio + conteo por estrella) para una lista de workerIds.
+   * Stats por worker (promedio + conteo por estrella) en una sola query.
+   * Devuelve un map workerId → stats. Los workerIds sin reseñas reciben
+   * stats vacías.
    */
-  private async computeStatsForWorkerIds(
+  private async computeStatsByWorker(
     workerIds: number[],
-  ): Promise<WorkerFeedbackStatsDto> {
-    if (workerIds.length === 0) return this.emptyStats();
-    const qb = this.workerFeedbackRepository
-      .createQueryBuilder('feedback')
-      .where('feedback.workerId IN (:...workerIds)', { workerIds });
-    return this.aggregateStats(qb);
-  }
+  ): Promise<Map<number, WorkerFeedbackStatsDto>> {
+    const result = new Map<number, WorkerFeedbackStatsDto>();
+    for (const wid of workerIds) result.set(wid, this.emptyStats());
+    if (workerIds.length === 0) return result;
 
-  /**
-   * Stats agregadas usando la misma subconsulta de workerIds que la query
-   * principal del admin, para evitar duplicar el filtro de compañía.
-   */
-  private async computeStatsForWorkerIdsSubQuery(
-    workerIdsSubQuery: SelectQueryBuilder<CompanyWorker>,
-  ): Promise<WorkerFeedbackStatsDto> {
-    const qb = this.workerFeedbackRepository
+    const rows: Array<{
+      workerId: number;
+      stars: number | null;
+      count: string;
+    }> = await this.workerFeedbackRepository
       .createQueryBuilder('feedback')
-      .where(`feedback.workerId IN (${workerIdsSubQuery.getQuery()})`)
-      .setParameters(workerIdsSubQuery.getParameters());
-    return this.aggregateStats(qb);
-  }
-
-  private async aggregateStats(
-    baseQb: SelectQueryBuilder<WorkerFeedback>,
-  ): Promise<WorkerFeedbackStatsDto> {
-    const rows: Array<{ stars: number | null; count: string }> = await baseQb
-      .clone()
-      .select('feedback.stars', 'stars')
+      .select('feedback.workerId', 'workerId')
+      .addSelect('feedback.stars', 'stars')
       .addSelect('COUNT(*)', 'count')
-      .groupBy('feedback.stars')
+      .where('feedback.workerId IN (:...workerIds)', { workerIds })
+      .groupBy('feedback.workerId')
+      .addGroupBy('feedback.stars')
       .getRawMany();
 
-    const stats = this.emptyStats();
-    let total = 0;
-    let weighted = 0;
+    const totals = new Map<number, { total: number; weighted: number }>();
+    for (const wid of workerIds) totals.set(wid, { total: 0, weighted: 0 });
+
     for (const row of rows) {
+      const wid = Number(row.workerId);
       const stars = row.stars == null ? null : Number(row.stars);
       const count = Number(row.count);
       if (stars === null) continue;
-      total += count;
-      weighted += stars * count;
+
+      const stats = result.get(wid);
+      const acc = totals.get(wid);
+      if (!stats || !acc) continue;
+
+      acc.total += count;
+      acc.weighted += stars * count;
       switch (stars) {
         case 5:
           stats.fiveStarCount = count;
@@ -482,10 +534,17 @@ export class WorkerFeedbackService {
           break;
       }
     }
-    stats.totalFeedbacks = total;
-    stats.averageStars =
-      total === 0 ? 0 : Number((weighted / total).toFixed(2));
-    return stats;
+
+    for (const wid of workerIds) {
+      const stats = result.get(wid);
+      const acc = totals.get(wid);
+      if (!stats || !acc) continue;
+      stats.totalFeedbacks = acc.total;
+      stats.averageStars =
+        acc.total === 0 ? 0 : Number((acc.weighted / acc.total).toFixed(2));
+    }
+
+    return result;
   }
 
   private emptyStats(): WorkerFeedbackStatsDto {

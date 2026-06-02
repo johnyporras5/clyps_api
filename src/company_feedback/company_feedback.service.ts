@@ -12,8 +12,17 @@ import { UpdateCompanyFeedbackDto } from './dto/update-company_feedback.dto';
 import { Company } from '../company/entities/company.entity';
 import { Client } from '../client/entities/client.entity';
 import { Session } from '../session/entities/session.entity';
+import { SessionDetail } from '../session_detail/entities/session_detail.entity';
+import { Service } from '../service/entities/service.entity';
+import { Worker } from '../worker/entities/worker.entity';
+import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { FileUploadService } from '../common/services/file_upload.service';
+import { WorkerFeedbackStatsDto } from '../worker/dto/worker-feedback-stats.dto';
+
+// El campo `stats` ahora va anidado dentro de cada feedback.company (un card
+// por compañía). El resultado paginado mantiene la forma estándar.
+export type CompanyFeedbackPaginatedResult = PaginationResult<CompanyFeedback>;
 
 @Injectable()
 export class CompanyFeedbackService {
@@ -30,14 +39,34 @@ export class CompanyFeedbackService {
     @InjectRepository(Session)
     private sessionRepository: Repository<Session>,
 
+    @InjectRepository(SessionDetail)
+    private sessionDetailRepository: Repository<SessionDetail>,
+
+    @InjectRepository(Service)
+    private serviceRepository: Repository<Service>,
+
+    @InjectRepository(Worker)
+    private workerRepository: Repository<Worker>,
+
     private fileUploadService: FileUploadService,
-  ) {}
+  ) { }
 
   async findOne(id: number): Promise<CompanyFeedback> {
-    const f = await this.companyFeedbackRepository.findOne({ where: { id } });
-    if (!f)
+    const feedback = await this.companyFeedbackRepository
+      .createQueryBuilder('feedback')
+      .leftJoinAndSelect('feedback.company', 'company')
+      .leftJoinAndMapOne(
+        'feedback.client',
+        Client,
+        'client',
+        'client.userId = feedback.clientId',
+      )
+      .where('feedback.id = :id', { id })
+      .getOne();
+    if (!feedback)
       throw new NotFoundException(`CompanyFeedback with id ${id} not found`);
-    return f;
+    await this.hydrateFeedbacks([feedback]);
+    return feedback;
   }
 
   async create(
@@ -59,6 +88,7 @@ export class CompanyFeedbackService {
       description: createDto.description,
       companyId,
       clientId: clientId ?? null,
+      sessionId: createDto.sessionId ?? null,
     };
 
     const feedback = this.companyFeedbackRepository.create(data);
@@ -173,7 +203,7 @@ export class CompanyFeedbackService {
     userId: number,
     page = 1,
     limit = 10,
-  ): Promise<PaginationResult<CompanyFeedback>> {
+  ): Promise<CompanyFeedbackPaginatedResult> {
     // 1. Buscar la compañía cuyo userId coincida con el usuario autenticado
     const company = await this.companyRepository.findOne({
       where: { userId },
@@ -187,6 +217,7 @@ export class CompanyFeedbackService {
     const queryBuilder: SelectQueryBuilder<CompanyFeedback> =
       this.companyFeedbackRepository
         .createQueryBuilder('feedback')
+        .leftJoinAndSelect('feedback.company', 'company')
         .leftJoinAndMapOne(
           'feedback.client',
           Client,
@@ -202,17 +233,210 @@ export class CompanyFeedbackService {
       limit,
     });
 
-    // 4. Agregar pictureUrl al cliente
-    result.data = result.data.map((feedback) => {
+    // 4. Hidratar pictureUrls + servicios + company.stats por feedback.
+    await this.hydrateFeedbacks(result.data);
+
+    return result;
+  }
+
+  /**
+   * Hidrata cada feedback con:
+   *  - client.pictureUrl.
+   *  - company.stats: promedio + conteo por estrella de esa compañía.
+   *  - `services`: arreglo con los servicios prestados en la sesión asociada
+   *    al feedback (sólo cuando hay sessionId). Cada servicio incluye su
+   *    categoría y el trabajador que lo realizó.
+   */
+  private async hydrateFeedbacks(feedbacks: CompanyFeedback[]): Promise<void> {
+    if (feedbacks.length === 0) return;
+
+    for (const feedback of feedbacks) {
       if (feedback.client?.picture) {
         feedback.client.pictureUrl = this.fileUploadService.getFileUrl(
           'client_photo',
           feedback.client.picture,
         );
       }
-      return feedback;
-    });
+      feedback.services = [];
+    }
+
+    // Stats por compañía → anidadas en feedback.company.stats
+    const uniqueCompanyIds = Array.from(
+      new Set(feedbacks.map((f) => f.companyId)),
+    );
+    const statsByCompany = await this.computeStatsByCompany(uniqueCompanyIds);
+    for (const feedback of feedbacks) {
+      if (feedback.company) {
+        (feedback.company as any).stats =
+          statsByCompany.get(feedback.companyId) ?? this.emptyStats();
+      }
+    }
+
+    const sessionIds = Array.from(
+      new Set(
+        feedbacks
+          .map((f) => f.sessionId)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    );
+    if (sessionIds.length === 0) return;
+
+    // session_detail JOIN company_worker (para obtener worker_id) por sesión.
+    const rows: Array<{
+      sessionId: number;
+      serviceId: number;
+      workerId: number | null;
+    }> = await this.sessionDetailRepository
+      .createQueryBuilder('sd')
+      .leftJoin(CompanyWorker, 'cw', 'cw.id = sd.companyWorkerId')
+      .select('sd.session_id', 'sessionId')
+      .addSelect('sd.service_id', 'serviceId')
+      .addSelect('cw.worker_id', 'workerId')
+      .where('sd.session_id IN (:...sessionIds)', { sessionIds })
+      .getRawMany();
+
+    if (rows.length === 0) return;
+
+    const serviceIds = Array.from(new Set(rows.map((r) => r.serviceId)));
+    const workerIds = Array.from(
+      new Set(
+        rows
+          .map((r) => r.workerId)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    );
+
+    const [services, workers] = await Promise.all([
+      this.serviceRepository.find({
+        where: serviceIds.map((id) => ({ id })),
+      }),
+      workerIds.length > 0
+        ? this.workerRepository.find({
+          where: workerIds.map((id) => ({ id })),
+        })
+        : Promise.resolve([] as Worker[]),
+    ]);
+    const serviceById = new Map(services.map((s) => [s.id, s]));
+    const workerById = new Map(workers.map((w) => [w.id, w]));
+
+    const grouped = new Map<
+      number,
+      Array<{ serviceId: number; workerId: number | null }>
+    >();
+    for (const r of rows) {
+      const arr = grouped.get(r.sessionId) ?? [];
+      arr.push({ serviceId: r.serviceId, workerId: r.workerId });
+      grouped.set(r.sessionId, arr);
+    }
+
+    for (const feedback of feedbacks) {
+      if (typeof feedback.sessionId !== 'number') continue;
+      const entries = grouped.get(feedback.sessionId);
+      if (!entries) continue;
+      feedback.services = entries.flatMap((entry) => {
+        const svc = serviceById.get(entry.serviceId);
+        if (!svc) return [];
+        const wrk =
+          entry.workerId != null ? workerById.get(entry.workerId) : undefined;
+        return [
+          {
+            id: svc.id,
+            name: svc.name ?? null,
+            category: svc.category
+              ? { id: svc.category.id, name: svc.category.name }
+              : null,
+            worker: wrk ? { id: wrk.id, name: wrk.name ?? null } : null,
+          },
+        ];
+      });
+    }
+    for (const feedback of feedbacks) {
+      if (feedback.client) {
+        feedback.clientId = feedback.client.id;
+      }
+    }
+  }
+
+  /**
+   * Stats por compañía en una sola query. Devuelve un map companyId → stats.
+   * Las compañías sin reseñas reciben stats vacías.
+   */
+  private async computeStatsByCompany(
+    companyIds: number[],
+  ): Promise<Map<number, WorkerFeedbackStatsDto>> {
+    const result = new Map<number, WorkerFeedbackStatsDto>();
+    for (const cid of companyIds) result.set(cid, this.emptyStats());
+    if (companyIds.length === 0) return result;
+
+    const rows: Array<{
+      companyId: number;
+      stars: number | null;
+      count: string;
+    }> = await this.companyFeedbackRepository
+      .createQueryBuilder('feedback')
+      .select('feedback.companyId', 'companyId')
+      .addSelect('feedback.stars', 'stars')
+      .addSelect('COUNT(*)', 'count')
+      .where('feedback.companyId IN (:...companyIds)', { companyIds })
+      .groupBy('feedback.companyId')
+      .addGroupBy('feedback.stars')
+      .getRawMany();
+
+    const totals = new Map<number, { total: number; weighted: number }>();
+    for (const cid of companyIds) totals.set(cid, { total: 0, weighted: 0 });
+
+    for (const row of rows) {
+      const cid = Number(row.companyId);
+      const stars = row.stars == null ? null : Number(row.stars);
+      const count = Number(row.count);
+      if (stars === null) continue;
+
+      const stats = result.get(cid);
+      const acc = totals.get(cid);
+      if (!stats || !acc) continue;
+
+      acc.total += count;
+      acc.weighted += stars * count;
+      switch (stars) {
+        case 5:
+          stats.fiveStarCount = count;
+          break;
+        case 4:
+          stats.fourStarCount = count;
+          break;
+        case 3:
+          stats.threeStarCount = count;
+          break;
+        case 2:
+          stats.twoStarCount = count;
+          break;
+        case 1:
+          stats.oneStarCount = count;
+          break;
+      }
+    }
+
+    for (const cid of companyIds) {
+      const stats = result.get(cid);
+      const acc = totals.get(cid);
+      if (!stats || !acc) continue;
+      stats.totalFeedbacks = acc.total;
+      stats.averageStars =
+        acc.total === 0 ? 0 : Number((acc.weighted / acc.total).toFixed(2));
+    }
 
     return result;
+  }
+
+  private emptyStats(): WorkerFeedbackStatsDto {
+    return {
+      averageStars: 0,
+      totalFeedbacks: 0,
+      fiveStarCount: 0,
+      fourStarCount: 0,
+      threeStarCount: 0,
+      twoStarCount: 0,
+      oneStarCount: 0,
+    };
   }
 }
