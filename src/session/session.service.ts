@@ -1186,6 +1186,17 @@ export class SessionService {
     }
     return session;
   }
+  private calculateRealTime(detail: SessionDetail): number {
+    if (detail.status === 3 || detail.status === 4) {
+      if (detail.startDatetime && detail.endDatetime) {
+        const start = new Date(detail.startDatetime).getTime();
+        const end = new Date(detail.endDatetime).getTime();
+        const minutes = (end - start) / 60000;
+        return Math.round(minutes * 100) / 100; // opcional: redondear a 2 decimales
+      }
+    }
+    return 0; // si no tiene fechas o no está terminado, devuelve 0 (o podrías devolver detail.totalTime)
+  }
 
   async findOneWithDetails(id: number): Promise<SessionResponse> {
     // Buscar la sesión por ID
@@ -1296,6 +1307,7 @@ export class SessionService {
           };
         }
       }
+      const realTime = this.calculateRealTime(detail);
 
       // Agregar detalle al array
       details.push({
@@ -1307,7 +1319,7 @@ export class SessionService {
         companyWorkerId: detail.companyWorkerId,
         workerName: companyWorker?.worker?.name ?? null,
         startDatetime: detail.startDatetime,
-        totalTime: detail.totalTime || 0,
+        totalTime: realTime,
         totalWorker: Number(detail.totalWorker || 0),
         totalCompany: Number(detail.totalCompany || 0),
         status: detail.status || 1,
@@ -2207,6 +2219,7 @@ export class SessionService {
                   };
                 }
               }
+              const realTime = this.calculateRealTime(detail);
 
               services.push({
                 detailId: detail.id,
@@ -2214,7 +2227,7 @@ export class SessionService {
                 serviceName: service?.name || '',
                 serviceDescription: service?.description || '',
                 serviceCost: Number(detail.cost || 0),
-                serviceTime: detail.totalTime || 0,
+                totalTime: realTime,
                 startDatetime: detail.startDatetime,
                 companyWorkerId: detail.companyWorkerId,
                 workerName: companyWorker?.worker
@@ -2501,6 +2514,7 @@ export class SessionService {
           const service = await this.serviceRepository.findOne({
             where: { id: detail.serviceId },
           });
+          const realTime = this.calculateRealTime(detail);
 
           services.push({
             detailId: detail.id,
@@ -2508,7 +2522,7 @@ export class SessionService {
             serviceName: service?.name || '',
             serviceDescription: service?.description || '',
             serviceCost: Number(detail.cost || 0),
-            serviceTime: detail.totalTime || 0,
+            totalTime: realTime,   
             startDatetime: detail.startDatetime,
             companyWorkerId: detail.companyWorkerId,
             workerName: companyWorker?.worker
