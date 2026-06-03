@@ -183,21 +183,20 @@ export class ClientService {
       `[DEBUG] IDs de compañías del admin ${adminId}: ${adminCompanyIds}`,
     );
 
-    // 2. Construir query con la nueva lógica (SIN isPublic)
+    // 2. Construir query (incluye clientes activos e inactivos)
     const queryBuilder = this.clientRepository
       .createQueryBuilder('client')
-      .leftJoinAndSelect('client.user', 'user')
-      .where('client.isActive = :isActive', { isActive: 1 });
+      .leftJoinAndSelect('client.user', 'user');
 
     // 3. Aplicar condiciones de visibilidad (SIN isPublic)
     if (adminCompanyIds.length === 0) {
       // Admin SIN compañías: Solo puede ver clientes que él mismo creó
-      queryBuilder.andWhere('client.userId = :adminId', { adminId });
+      queryBuilder.where('client.userId = :adminId', { adminId });
     } else {
       // Admin CON compañías: Puede ver:
       // a) Clientes que él creó
       // b) Clientes que comparten compañías con el admin
-      queryBuilder.andWhere(
+      queryBuilder.where(
         new Brackets((qb) => {
           // Condición para clientes que el admin creó
           qb.where('client.userId = :adminId', { adminId })

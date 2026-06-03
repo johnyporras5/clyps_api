@@ -20,9 +20,13 @@ import { Service } from 'src/service/entities/service.entity';
 import { FileUploadService } from 'src/common/services/file_upload.service';
 import { WorkerFeedbackStatsDto } from 'src/worker/dto/worker-feedback-stats.dto';
 
-// El campo `stats` ahora va anidado dentro de cada feedback.worker (un card
-// por worker). El resultado paginado mantiene la forma estándar.
-export type WorkerFeedbackPaginatedResult = PaginationResult<WorkerFeedback>;
+// Cada feedback trae sus stats individuales en `feedback.worker.stats`. El
+// resultado paginado también incluye `stats` a nivel root: estadísticas
+// globales del conjunto consultado (todos los workers de la compañía del
+// admin, o el worker concreto cuando hay filtro).
+export type WorkerFeedbackPaginatedResult = PaginationResult<WorkerFeedback> & {
+  stats: WorkerFeedbackStatsDto;
+};
 
 @Injectable()
 export class WorkerFeedbackService {
@@ -240,7 +244,14 @@ export class WorkerFeedbackService {
 
     await this.hydrateFeedbacks(result.data);
 
-    return result;
+    // Stats globales del worker consultado
+    const stats = await this.computeAggregateStats(
+      this.workerFeedbackRepository
+        .createQueryBuilder('feedback')
+        .where('feedback.workerId = :workerId', { workerId }),
+    );
+
+    return { ...result, stats };
   }
 
   /**
@@ -311,10 +322,24 @@ export class WorkerFeedbackService {
     });
 
     // 5. Hidratar pictureUrls, servicios y stats por worker
-    //    (stats van dentro de feedback.worker.stats).
+    //    (stats individuales van dentro de feedback.worker.stats).
     await this.hydrateFeedbacks(result.data);
 
-    return result;
+    // 6. Stats globales del scope consultado:
+    //    - si hay workerId, sólo ese worker;
+    //    - si no, todos los workers de la compañía.
+    const statsQb = this.workerFeedbackRepository
+      .createQueryBuilder('feedback')
+      .where(`feedback.workerId IN (${workerIdsSubQuery.getQuery()})`)
+      .setParameters(workerIdsSubQuery.getParameters());
+    if (workerId !== undefined) {
+      statsQb.andWhere('feedback.workerId = :targetWorkerId', {
+        targetWorkerId: workerId,
+      });
+    }
+    const stats = await this.computeAggregateStats(statsQb);
+
+    return { ...result, stats };
   }
 
   /**
@@ -361,7 +386,14 @@ export class WorkerFeedbackService {
     // 4. Hidratar pictureUrls, servicios y worker.stats
     await this.hydrateFeedbacks(result.data);
 
-    return result;
+    // 5. Stats globales del worker autenticado
+    const stats = await this.computeAggregateStats(
+      this.workerFeedbackRepository
+        .createQueryBuilder('feedback')
+        .where('feedback.workerId = :workerId', { workerId: worker.id }),
+    );
+
+    return { ...result, stats };
   }
 
   /**
@@ -545,6 +577,54 @@ export class WorkerFeedbackService {
     }
 
     return result;
+  }
+
+  /**
+   * Stats agregadas (promedio + conteo por estrella) sobre el conjunto de
+   * feedbacks que satisfaga el WHERE del `baseQb`. Útil para devolver un
+   * `stats` global del response sin importar cuántos workers haya.
+   */
+  private async computeAggregateStats(
+    baseQb: SelectQueryBuilder<WorkerFeedback>,
+  ): Promise<WorkerFeedbackStatsDto> {
+    const rows: Array<{ stars: number | null; count: string }> = await baseQb
+      .clone()
+      .select('feedback.stars', 'stars')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('feedback.stars')
+      .getRawMany();
+
+    const stats = this.emptyStats();
+    let total = 0;
+    let weighted = 0;
+    for (const row of rows) {
+      const stars = row.stars == null ? null : Number(row.stars);
+      const count = Number(row.count);
+      if (stars === null) continue;
+      total += count;
+      weighted += stars * count;
+      switch (stars) {
+        case 5:
+          stats.fiveStarCount = count;
+          break;
+        case 4:
+          stats.fourStarCount = count;
+          break;
+        case 3:
+          stats.threeStarCount = count;
+          break;
+        case 2:
+          stats.twoStarCount = count;
+          break;
+        case 1:
+          stats.oneStarCount = count;
+          break;
+      }
+    }
+    stats.totalFeedbacks = total;
+    stats.averageStars =
+      total === 0 ? 0 : Number((weighted / total).toFixed(2));
+    return stats;
   }
 
   private emptyStats(): WorkerFeedbackStatsDto {

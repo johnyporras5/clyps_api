@@ -176,31 +176,35 @@ export class AuthService {
   }
 
   /**
-   * Genera una contraseña simple (solo letras y números, sin caracteres ambiguos)
+   * Genera una contraseña simple y fácil de escribir:
+   * una palabra sencilla en minúscula seguida de números.
+   * Ejemplo: "gato4821"
    */
-  private generateRandomPassword(length: number = 8): string {
-    const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-    const lowercase = 'abcdefghijkmnpqrstuvwxyz';
-    const numbers = '23456789';
+  private generateRandomPassword(_length: number = 8): string {
+    const words = [
+      'gato',
+      'sol',
+      'luna',
+      'casa',
+      'flor',
+      'mar',
+      'rio',
+      'pan',
+      'cielo',
+      'verde',
+      'rojo',
+      'pez',
+      'uva',
+      'oso',
+      'lago',
+    ];
 
-    const allChars = uppercase + lowercase + numbers;
-    let password = '';
+    const word = words[Math.floor(Math.random() * words.length)];
 
-    // Asegurar al menos una mayúscula, minúscula y número
-    password += uppercase.charAt(Math.floor(Math.random() * uppercase.length));
-    password += lowercase.charAt(Math.floor(Math.random() * lowercase.length));
-    password += numbers.charAt(Math.floor(Math.random() * numbers.length));
+    // 4 dígitos (sin ceros a la izquierda) -> entre 1000 y 9999
+    const digits = Math.floor(1000 + Math.random() * 9000).toString();
 
-    // Completar el resto de la longitud
-    for (let i = 3; i < length; i++) {
-      password += allChars.charAt(Math.floor(Math.random() * allChars.length));
-    }
-
-    // Mezclar la contraseña
-    return password
-      .split('')
-      .sort(() => Math.random() - 0.5)
-      .join('');
+    return `${word}${digits}`;
   }
 
   /**
@@ -935,89 +939,91 @@ export class AuthService {
 
   // ==================== MÉTODOS DE LOGIN ====================
 
-async login(
-  loginDto: LoginDto,
-): Promise<{ access_token: string; user: Partial<User> }> {
-  const { email, password } = loginDto;  // 'email' es el identificador (email o username)
+  async login(
+    loginDto: LoginDto,
+  ): Promise<{ access_token: string; user: Partial<User> }> {
+    const { email, password } = loginDto; // 'email' es el identificador (email o username)
 
-  // Buscar por email O username
-  const user = await this.userRepository.findOne({
-    where: [
-      { email: email },
-      { username: email },
-    ],
-  });
+    // Buscar por email O username
+    const user = await this.userRepository.findOne({
+      where: [{ email: email }, { username: email }],
+    });
 
-  if (!user) {
-    throw new UnauthorizedException('Credenciales inválidas');
-  }
+    if (!user) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
 
-  const isPasswordValid = await bcrypt.compare(password, user.password);
-  if (!isPasswordValid) {
-    throw new UnauthorizedException('Credenciales inválidas');
-  }
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
 
-  // Si el usuario no está verificado
-  if (user.emailVerified === 0) {
-    const codeStatus = await this.verificationService.getVerificationCodeStatus(user.id);
+    // Si el usuario no está verificado
+    if (user.emailVerified === 0) {
+      const codeStatus =
+        await this.verificationService.getVerificationCodeStatus(user.id);
 
-    if (codeStatus.hasActiveCode && codeStatus.secondsRemaining) {
-      const minutesRemaining = Math.ceil(codeStatus.secondsRemaining / 60);
-      throw new UnauthorizedException({
-        message: `Por favor verifica tu email antes de iniciar sesión. Ya tienes un código activo (expira en ${minutesRemaining} minutos). Revisa tu correo.`,
-        requiresVerification: true,
-        userId: user.id,
-        hasActiveCode: true,
-        secondsRemaining: codeStatus.secondsRemaining,
-        minutesRemaining,
-      });
-    } else {
-      try {
-        // IMPORTANTE: Enviar código al EMAIL real del usuario
-        await this.sendVerificationCode(user.email);  // Cambiado: usamos user.email
+      if (codeStatus.hasActiveCode && codeStatus.secondsRemaining) {
+        const minutesRemaining = Math.ceil(codeStatus.secondsRemaining / 60);
         throw new UnauthorizedException({
-          message: 'Por favor verifica tu email antes de iniciar sesión. Se ha enviado un nuevo código de verificación a tu correo.',
+          message: `Por favor verifica tu email antes de iniciar sesión. Ya tienes un código activo (expira en ${minutesRemaining} minutos). Revisa tu correo.`,
           requiresVerification: true,
           userId: user.id,
+          hasActiveCode: true,
+          secondsRemaining: codeStatus.secondsRemaining,
+          minutesRemaining,
         });
-      } catch (error) {
-        if (error instanceof BadRequestException || error instanceof NotFoundException) {
+      } else {
+        try {
+          // IMPORTANTE: Enviar código al EMAIL real del usuario
+          await this.sendVerificationCode(user.email); // Cambiado: usamos user.email
+          throw new UnauthorizedException({
+            message:
+              'Por favor verifica tu email antes de iniciar sesión. Se ha enviado un nuevo código de verificación a tu correo.',
+            requiresVerification: true,
+            userId: user.id,
+          });
+        } catch (error) {
+          if (
+            error instanceof BadRequestException ||
+            error instanceof NotFoundException
+          ) {
+            throw new UnauthorizedException({
+              message: 'Por favor verifica tu email antes de iniciar sesión.',
+              requiresVerification: true,
+              userId: user.id,
+            });
+          }
+          if (error instanceof UnauthorizedException) {
+            throw error;
+          }
           throw new UnauthorizedException({
             message: 'Por favor verifica tu email antes de iniciar sesión.',
             requiresVerification: true,
             userId: user.id,
           });
         }
-        if (error instanceof UnauthorizedException) {
-          throw error;
-        }
-        throw new UnauthorizedException({
-          message: 'Por favor verifica tu email antes de iniciar sesión.',
-          requiresVerification: true,
-          userId: user.id,
-        });
       }
     }
+
+    // Actualizar lastLogin
+    user.lastLogin = new Date();
+    await this.userRepository.save(user);
+
+    const payload = {
+      email: user.email,
+      sub: user.id,
+      userType: user.userType,
+    };
+
+    const access_token = this.jwtService.sign(payload);
+    const { password: _, ...userWithoutPassword } = user;
+
+    return {
+      access_token,
+      user: userWithoutPassword,
+    };
   }
-
-  // Actualizar lastLogin
-  user.lastLogin = new Date();
-  await this.userRepository.save(user);
-
-  const payload = {
-    email: user.email,
-    sub: user.id,
-    userType: user.userType,
-  };
-
-  const access_token = this.jwtService.sign(payload);
-  const { password: _, ...userWithoutPassword } = user;
-
-  return {
-    access_token,
-    user: userWithoutPassword,
-  };
-}
   // ==================== MÉTODOS DE VERIFICACIÓN ====================
 
   /**

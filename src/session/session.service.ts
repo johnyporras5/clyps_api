@@ -70,7 +70,7 @@ export class SessionService {
     @InjectRepository(ServiceOffer)
     private serviceOfferRepository: Repository<ServiceOffer>,
     private fileUploadService: FileUploadService,
-  ) { }
+  ) {}
 
   async create(
     createSessionDto: CreateSessionDto,
@@ -1245,9 +1245,9 @@ export class SessionService {
       // Obtener información del trabajador (solo si hay companyWorkerId asignado)
       const companyWorker = detail.companyWorkerId
         ? await this.companyWorkerRepository.findOne({
-          where: { id: detail.companyWorkerId },
-          relations: ['worker', 'company'],
-        })
+            where: { id: detail.companyWorkerId },
+            relations: ['worker', 'company'],
+          })
         : null;
 
       // Si es el primer detalle, tomar la compañía (asumimos que todos son de la misma compañía)
@@ -2158,9 +2158,9 @@ export class SessionService {
             for (const detail of sessionDetails) {
               const companyWorker = detail.companyWorkerId
                 ? await this.companyWorkerRepository.findOne({
-                  where: { id: detail.companyWorkerId },
-                  relations: ['worker', 'company'],
-                })
+                    where: { id: detail.companyWorkerId },
+                    relations: ['worker', 'company'],
+                  })
                 : null;
 
               const service = await this.serviceRepository.findOne({
@@ -2195,8 +2195,8 @@ export class SessionService {
                   const discountPercentage =
                     originalPrice > 0
                       ? parseFloat(
-                        ((discountAmount / originalPrice) * 100).toFixed(2),
-                      )
+                          ((discountAmount / originalPrice) * 100).toFixed(2),
+                        )
                       : 0;
 
                   offerObj = {
@@ -2208,9 +2208,9 @@ export class SessionService {
                     status: offer.status,
                     logoUrl: offer.logo
                       ? this.fileUploadService.getFileUrl(
-                        'offer_logo',
-                        offer.logo,
-                      )
+                          'offer_logo',
+                          offer.logo,
+                        )
                       : null,
                     originalPrice,
                     offerPrice,
@@ -2266,9 +2266,9 @@ export class SessionService {
             clientLastName: client?.lastName || '',
             clientPicture: client?.picture
               ? this.fileUploadService.getFileUrl(
-                'client_photo',
-                client.picture,
-              )
+                  'client_photo',
+                  client.picture,
+                )
               : null,
             companyId: adminCompany.id,
             companyName: adminCompany.name,
@@ -2506,9 +2506,9 @@ export class SessionService {
         for (const detail of sessionDetails) {
           const companyWorker = detail.companyWorkerId
             ? await this.companyWorkerRepository.findOne({
-              where: { id: detail.companyWorkerId },
-              relations: ['worker', 'company'],
-            })
+                where: { id: detail.companyWorkerId },
+                relations: ['worker', 'company'],
+              })
             : null;
 
           const service = await this.serviceRepository.findOne({
@@ -2522,7 +2522,7 @@ export class SessionService {
             serviceName: service?.name || '',
             serviceDescription: service?.description || '',
             serviceCost: Number(detail.cost || 0),
-            totalTime: realTime,   
+            totalTime: realTime,
             startDatetime: detail.startDatetime,
             companyWorkerId: detail.companyWorkerId,
             workerName: companyWorker?.worker
@@ -2554,9 +2554,9 @@ export class SessionService {
           clientLastName: sessionClient?.lastName || '',
           clientPicture: sessionClient?.picture
             ? this.fileUploadService.getFileUrl(
-              'client_photo',
-              sessionClient.picture,
-            )
+                'client_photo',
+                sessionClient.picture,
+              )
             : null,
           companyId: company.id,
           companyName: company.name,
@@ -2749,14 +2749,28 @@ export class SessionService {
       updatedSession = await queryRunner.manager.save(session);
 
       if (cascadeToDetails) {
+        // Construir los valores a actualizar. Además del estado, al propagar
+        // a los detalles registramos los tiempos reales:
+        //  - status 2 (En progreso) → start_datetime, solo si está vacío
+        //  - status 3 (Completada)  → end_datetime,   solo si está vacío
+        // Usamos COALESCE para no pisar un tiempo real que el worker ya marcó.
+        const now = new Date();
+        const setValues: Record<string, unknown> = { status: newStatus };
+        if (newStatus === 5) {
+          setValues.cancelledBy = 'adm';
+        }
+        if (newStatus === 2) {
+          setValues.startDatetime = () => 'COALESCE(start_datetime, :now)';
+        }
+        if (newStatus === 3) {
+          setValues.endDatetime = () => 'COALESCE(end_datetime, :now)';
+        }
+
         const cascadeResult = await queryRunner.manager
           .createQueryBuilder()
           .update(SessionDetail)
-          .set(
-            newStatus === 5
-              ? { status: newStatus, cancelledBy: 'adm' }
-              : { status: newStatus },
-          )
+          .set(setValues)
+          .setParameter('now', now)
           .where('sessionId = :sessionId', { sessionId })
           .andWhere('status != :cancelled', { cancelled: 5 })
           .execute();
@@ -2962,24 +2976,19 @@ export class SessionService {
 
     // 5. Actualizar el detalle
     detail.status = updateDetailStatusDto.status;
-    // ✨ Registrar tiempos reales de inicio y fin (solo para workers)
-    /* if (userRole === 'wrk') {
-       if (updateDetailStatusDto.status === 2 && !detail.startDatetime) {
-         detail.startDatetime = new Date();     // inicio real
-       }
-       if (updateDetailStatusDto.status === 3 && !detail.endDatetime) {
-         detail.endDatetime = new Date();       // fin real (solo si no estaba ya)
-       }*/
-
-    // Registrar tiempos reales de inicio y fin (para admin y worker)
+    // ✨ Registrar tiempos reales de inicio y fin.
+    //    Aplica tanto para el worker (que ejecuta el servicio) como para el
+    //    admin (que puede gestionar el estado). Cada transición sobrescribe el
+    //    tiempo con `new Date()` para que quede registrado el momento exacto
+    //    en que se marcó "En proceso" / "Completado".
     if (updateDetailStatusDto.status === 2) {
-      // Cuando se marca "En proceso" (estado 2)
-      detail.startDatetime = new Date();   // sobrescribe con la hora real actual
+      detail.startDatetime = new Date(); // inicio real
     }
     if (updateDetailStatusDto.status === 3) {
-      // Cuando se marca "Completado" (estado 3)
-      detail.endDatetime = new Date();     // hora real de finalización
-      // Si por algún motivo no se había registrado startDatetime, lo asignamos igual
+      detail.endDatetime = new Date(); // fin real
+      // Si por algún motivo el servicio se completa sin haber pasado por
+      // "En proceso", igualamos startDatetime al fin para que el cálculo
+      // del tiempo real no quede en blanco.
       if (!detail.startDatetime) {
         detail.startDatetime = detail.endDatetime;
       }
@@ -3364,7 +3373,7 @@ export class SessionService {
 
     this.logger.log(
       `✅ Cita ${sessionId}: reasignaciones aplicadas por admin ${adminId}. ` +
-      `Total de detalles afectados: ${plans.size}. Nuevo totalTime de cita: ${newSessionTotalTime}`,
+        `Total de detalles afectados: ${plans.size}. Nuevo totalTime de cita: ${newSessionTotalTime}`,
     );
 
     // 12. Respuesta
@@ -3960,6 +3969,19 @@ export class SessionService {
           where: { id: detail.serviceId },
         });
 
+        // Tiempo REAL que tardó el worker en realizar el servicio:
+        // endDatetime (fin real, status 3) - startDatetime (inicio real, status 2),
+        // en minutos. Si aún no hay inicio/fin reales, se usa la duración
+        // configurada del servicio (detail.totalTime) como respaldo.
+        const realTotalTime =
+          detail.startDatetime && detail.endDatetime
+            ? Math.round(
+                (new Date(detail.endDatetime).getTime() -
+                  new Date(detail.startDatetime).getTime()) /
+                  60000,
+              )
+            : detail.totalTime;
+
         return {
           id: detail.id,
           serviceId: detail.serviceId,
@@ -3970,12 +3992,13 @@ export class SessionService {
             ? (companyWorker.worker.name || '').trim()
             : 'Trabajador no encontrado',
           cost: detail.cost,
-          totalTime: detail.totalTime,
+          totalTime: realTotalTime,
           totalWorker: detail.totalWorker,
           totalCompany: detail.totalCompany,
           status: detail.status,
           statusText: this.getDetailStatusText(detail.status),
           startDatetime: detail.startDatetime,
+          endDatetime: detail.endDatetime,
           updatedAt: detail.updatedAt,
           description: detail.description ?? null,
           descriptionIA: detail.descriptionIA ?? null,
@@ -3996,9 +4019,18 @@ export class SessionService {
     const allDetailsCompleted = completedDetails === totalDetails;
     const canCompleteSession = allDetailsCompleted; // Solo se puede completar si todos los detalles están completados
 
+    // 6.1 Tiempo real total de la sesión: suma del tiempo real de cada detalle
+    //     (cada uno ya es endDatetime - startDatetime, o su duración configurada
+    //     como respaldo si el servicio aún no se ha realizado).
+    const sessionRealTotalTime = enrichedDetails.reduce(
+      (sum, d) => sum + (d.totalTime || 0),
+      0,
+    );
+
     // 7. Sesión enriquecida con datos del cliente
     const enrichedSession = {
       ...session,
+      totalTime: sessionRealTotalTime,
       clientName: client
         ? `${client.name || ''} ${client.lastName || ''}`.trim()
         : 'Cliente no encontrado',
@@ -4420,9 +4452,9 @@ export class SessionService {
             location: detail.clientLocation || null,
             picture: detail.clientPicture
               ? this.fileUploadService.getFileUrl(
-                'client_photo',
-                detail.clientPicture,
-              )
+                  'client_photo',
+                  detail.clientPicture,
+                )
               : null,
           },
           sessionDatetime: detail.sessionDatetime,
@@ -4482,23 +4514,23 @@ export class SessionService {
 
       const offerObj = hasOffer
         ? {
-          id: detail.offerId,
-          name: detail.offerName,
-          description: detail.offerDescription,
-          startDate: detail.offerStartDate,
-          endDate: detail.offerEndDate,
-          status: detail.offerStatus,
-          logoUrl: detail.offerLogo
-            ? this.fileUploadService.getFileUrl(
-              'offer_logo',
-              detail.offerLogo,
-            )
-            : null,
-          originalPrice,
-          offerPrice,
-          discountAmount: parseFloat(discountAmount.toFixed(2)),
-          discountPercentage,
-        }
+            id: detail.offerId,
+            name: detail.offerName,
+            description: detail.offerDescription,
+            startDate: detail.offerStartDate,
+            endDate: detail.offerEndDate,
+            status: detail.offerStatus,
+            logoUrl: detail.offerLogo
+              ? this.fileUploadService.getFileUrl(
+                  'offer_logo',
+                  detail.offerLogo,
+                )
+              : null,
+            originalPrice,
+            offerPrice,
+            discountAmount: parseFloat(discountAmount.toFixed(2)),
+            discountPercentage,
+          }
         : null;
 
       sessionData.assignedServices.push({
@@ -4532,9 +4564,9 @@ export class SessionService {
         workerName: detail.workerName,
         workerPhotoUrl: detail.workerPicture
           ? this.fileUploadService.getFileUrl(
-            'worker_photo',
-            detail.workerPicture,
-          )
+              'worker_photo',
+              detail.workerPicture,
+            )
           : null,
         description: detail.detailDescription ?? null,
         descriptionIA: detail.detailDescriptionIA ?? null,
@@ -5751,7 +5783,7 @@ export class SessionService {
         } else {
           throw new BadRequestException(
             `El servicio "${service.name}" (ID: ${service.id}) no tiene configurado el porcentaje para el trabajador ${extraService.providerId}. ` +
-            `Debe estar en service.workers[] o en service.percentage`,
+              `Debe estar en service.workers[] o en service.percentage`,
           );
         }
       }
@@ -6406,9 +6438,17 @@ export class SessionService {
   }> {
     const now = new Date();
 
+    // Estados de cita "pendiente" que deben auto-cancelarse al vencer:
+    //   1 = Agendado, 8 = Pendiente de asignación de trabajador.
+    // Los estados que ya representan una cita atendida o cerrada
+    // (3 Completada, 4 Pagado, 5 Cancelada, 6 Calificada) no se tocan.
+    const cancellableStatuses = [1, 8];
+
     const expiredSessions = await this.sessionRepository
       .createQueryBuilder('session')
-      .where('session.session_status = :status', { status: 1 })
+      .where('session.session_status IN (:...statuses)', {
+        statuses: cancellableStatuses,
+      })
       .andWhere('session.session_datetime < :now', { now })
       .getMany();
 
@@ -6893,28 +6933,28 @@ export class SessionService {
 
       const workerObj = detail.workerId
         ? {
-          id: detail.workerId,
-          name: detail.workerName,
-          phone: detail.workerPhone,
-          address: detail.workerAddress,
-          birthdate: detail.workerBirthdate,
-          description: detail.workerDescription,
-          isActive: detail.workerIsActive,
-          location: detail.workerLocation,
-          instagramUrl: detail.workerInstagramUrl,
-          tiktokUrl: detail.workerTiktokUrl,
-          facebookUrl: detail.workerFacebookUrl,
-          photoUrl: detail.workerPicture
-            ? this.fileUploadService.getFileUrl(
-              'worker_photo',
-              detail.workerPicture,
-            )
-            : null,
-          rating: {
-            averageStars: rating.averageStars,
-            totalReviews: rating.totalReviews,
-          },
-        }
+            id: detail.workerId,
+            name: detail.workerName,
+            phone: detail.workerPhone,
+            address: detail.workerAddress,
+            birthdate: detail.workerBirthdate,
+            description: detail.workerDescription,
+            isActive: detail.workerIsActive,
+            location: detail.workerLocation,
+            instagramUrl: detail.workerInstagramUrl,
+            tiktokUrl: detail.workerTiktokUrl,
+            facebookUrl: detail.workerFacebookUrl,
+            photoUrl: detail.workerPicture
+              ? this.fileUploadService.getFileUrl(
+                  'worker_photo',
+                  detail.workerPicture,
+                )
+              : null,
+            rating: {
+              averageStars: rating.averageStars,
+              totalReviews: rating.totalReviews,
+            },
+          }
         : null;
 
       const companyRating = ratingsByCompany.get(detail.companyId) || {
@@ -6924,27 +6964,27 @@ export class SessionService {
 
       const companyObj = detail.companyId
         ? {
-          id: detail.companyId,
-          name: detail.companyName,
-          location: detail.companyLocation,
-          email: detail.companyEmail,
-          phone: detail.companyPhone,
-          description: detail.companyDescription,
-          managerName: detail.companyManagerName,
-          instagramUrl: detail.companyInstagramUrl,
-          tiktokUrl: detail.companyTiktokUrl,
-          facebookUrl: detail.companyFacebookUrl,
-          logoUrl: detail.companyLogo
-            ? this.fileUploadService.getFileUrl(
-              'company_logo',
-              detail.companyLogo,
-            )
-            : null,
-          rating: {
-            averageStars: companyRating.averageStars,
-            totalReviews: companyRating.totalReviews,
-          },
-        }
+            id: detail.companyId,
+            name: detail.companyName,
+            location: detail.companyLocation,
+            email: detail.companyEmail,
+            phone: detail.companyPhone,
+            description: detail.companyDescription,
+            managerName: detail.companyManagerName,
+            instagramUrl: detail.companyInstagramUrl,
+            tiktokUrl: detail.companyTiktokUrl,
+            facebookUrl: detail.companyFacebookUrl,
+            logoUrl: detail.companyLogo
+              ? this.fileUploadService.getFileUrl(
+                  'company_logo',
+                  detail.companyLogo,
+                )
+              : null,
+            rating: {
+              averageStars: companyRating.averageStars,
+              totalReviews: companyRating.totalReviews,
+            },
+          }
         : null;
 
       const originalPrice = parseFloat(detail.serviceOriginalCost) || 0;
@@ -6961,23 +7001,23 @@ export class SessionService {
 
       const offerObj = hasOffer
         ? {
-          id: detail.offerId,
-          name: detail.offerName,
-          description: detail.offerDescription,
-          startDate: detail.offerStartDate,
-          endDate: detail.offerEndDate,
-          status: detail.offerStatus,
-          logoUrl: detail.offerLogo
-            ? this.fileUploadService.getFileUrl(
-              'offer_logo',
-              detail.offerLogo,
-            )
-            : null,
-          originalPrice,
-          offerPrice,
-          discountAmount: parseFloat(discountAmount.toFixed(2)),
-          discountPercentage,
-        }
+            id: detail.offerId,
+            name: detail.offerName,
+            description: detail.offerDescription,
+            startDate: detail.offerStartDate,
+            endDate: detail.offerEndDate,
+            status: detail.offerStatus,
+            logoUrl: detail.offerLogo
+              ? this.fileUploadService.getFileUrl(
+                  'offer_logo',
+                  detail.offerLogo,
+                )
+              : null,
+            originalPrice,
+            offerPrice,
+            discountAmount: parseFloat(discountAmount.toFixed(2)),
+            discountPercentage,
+          }
         : null;
 
       sessionData.services.push({
@@ -7112,7 +7152,7 @@ export class SessionService {
     if (!serviceOffer) {
       throw new BadRequestException(
         `La oferta con ID ${offerId} no es válida para el servicio ${serviceId}. ` +
-        `Verifique que la oferta exista, pertenezca a su compañía y esté activa y vigente.`,
+          `Verifique que la oferta exista, pertenezca a su compañía y esté activa y vigente.`,
       );
     }
 
@@ -7350,11 +7390,21 @@ export class SessionService {
       .createQueryBuilder('detail')
       .select('detail.service_id', 'serviceId')
       .addSelect('COUNT(detail.id)', 'totalAppointments')
-      .addSelect('SUM(CASE WHEN detail.status IN (3, 4) THEN 1 ELSE 0 END)', 'totalCompleted')
-      .addSelect('SUM(CASE WHEN detail.status = 5 THEN 1 ELSE 0 END)', 'totalCancelled')
-      .addSelect('SUM(CASE WHEN detail.status IN (3, 4) THEN detail.total_worker ELSE 0 END)', 'totalEarned')
+      .addSelect(
+        'SUM(CASE WHEN detail.status IN (3, 4) THEN 1 ELSE 0 END)',
+        'totalCompleted',
+      )
+      .addSelect(
+        'SUM(CASE WHEN detail.status = 5 THEN 1 ELSE 0 END)',
+        'totalCancelled',
+      )
+      .addSelect(
+        'SUM(CASE WHEN detail.status IN (3, 4) THEN detail.total_worker ELSE 0 END)',
+        'totalEarned',
+      )
       //  Calcular tiempo REAL trabajado (minutos) a partir de start_datetime y end_datetime
-      .addSelect(`
+      .addSelect(
+        `
     SUM(
       CASE 
         WHEN detail.status IN (3, 4) 
@@ -7363,8 +7413,12 @@ export class SessionService {
         THEN TIMESTAMPDIFF(MINUTE, detail.start_datetime, detail.end_datetime)
         ELSE 0 
       END
-    )`, 'totalTime')
-      .where('detail.company_worker_id IN (:...companyWorkerIds)', { companyWorkerIds })
+    )`,
+        'totalTime',
+      )
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', {
+        companyWorkerIds,
+      })
       .andWhere('detail.service_id IN (:...serviceIds)', { serviceIds })
       .groupBy('detail.service_id')
       .getRawMany();
