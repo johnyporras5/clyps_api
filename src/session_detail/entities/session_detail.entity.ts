@@ -61,7 +61,7 @@ export class SessionDetail {
   @Column({ name: 'is_extra', default: false })
   isExtra: boolean;
 
-  @Column({ name: 'end_datetime', nullable: true })
+  @Column({ name: 'end_datetime', type: 'datetime', nullable: true })
   endDatetime: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })
