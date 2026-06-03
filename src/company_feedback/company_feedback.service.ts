@@ -22,9 +22,10 @@ import { WorkerFeedbackStatsDto } from '../worker/dto/worker-feedback-stats.dto'
 
 // El campo `stats` ahora va anidado dentro de cada feedback.company (un card
 // por compañía). El resultado paginado mantiene la forma estándar.
-export type CompanyFeedbackPaginatedResult = PaginationResult<CompanyFeedback> & {
-  stats?: WorkerFeedbackStatsDto;
-};
+export type CompanyFeedbackPaginatedResult =
+  PaginationResult<CompanyFeedback> & {
+    stats?: WorkerFeedbackStatsDto;
+  };
 @Injectable()
 export class CompanyFeedbackService {
   constructor(
@@ -50,7 +51,7 @@ export class CompanyFeedbackService {
     private workerRepository: Repository<Worker>,
 
     private fileUploadService: FileUploadService,
-  ) { }
+  ) {}
 
   async findOne(id: number): Promise<CompanyFeedback> {
     const feedback = await this.companyFeedbackRepository
@@ -223,7 +224,10 @@ export class CompanyFeedbackService {
         .where('feedback.companyId = :companyId', { companyId: company.id })
         .orderBy('feedback.datetime', 'DESC');
 
-    const result = await paginate<CompanyFeedback>(queryBuilder, { page, limit });
+    const result = await paginate<CompanyFeedback>(queryBuilder, {
+      page,
+      limit,
+    });
 
     // Hidratar (sin stats redundantes)
     await this.hydrateFeedbacks(result.data);
@@ -298,8 +302,8 @@ export class CompanyFeedbackService {
           }),
           workerIds.length > 0
             ? this.workerRepository.find({
-              where: workerIds.map((id) => ({ id })),
-            })
+                where: workerIds.map((id) => ({ id })),
+              })
             : Promise.resolve([] as Worker[]),
         ]);
         const serviceById = new Map(services.map((s) => [s.id, s]));
@@ -323,7 +327,9 @@ export class CompanyFeedbackService {
             const svc = serviceById.get(entry.serviceId);
             if (!svc) return [];
             const wrk =
-              entry.workerId != null ? workerById.get(entry.workerId) : undefined;
+              entry.workerId != null
+                ? workerById.get(entry.workerId)
+                : undefined;
             return [
               {
                 id: svc.id,
