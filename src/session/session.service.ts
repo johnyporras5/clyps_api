@@ -2522,7 +2522,7 @@ export class SessionService {
             serviceName: service?.name || '',
             serviceDescription: service?.description || '',
             serviceCost: Number(detail.cost || 0),
-            totalTime: realTime,   
+            totalTime: realTime,
             startDatetime: detail.startDatetime,
             companyWorkerId: detail.companyWorkerId,
             workerName: companyWorker?.worker
@@ -2978,14 +2978,20 @@ export class SessionService {
     detail.status = updateDetailStatusDto.status;
     // ✨ Registrar tiempos reales de inicio y fin.
     //    Aplica tanto para el worker (que ejecuta el servicio) como para el
-    //    admin (que puede gestionar el estado). Las guardas `!detail.startDatetime`
-    //    y `!detail.endDatetime` garantizan que nunca se pisa un tiempo real que
-    //    el worker ya haya marcado.
-    if (updateDetailStatusDto.status === 2 && !detail.startDatetime) {
+    //    admin (que puede gestionar el estado). Cada transición sobrescribe el
+    //    tiempo con `new Date()` para que quede registrado el momento exacto
+    //    en que se marcó "En proceso" / "Completado".
+    if (updateDetailStatusDto.status === 2) {
       detail.startDatetime = new Date(); // inicio real
     }
-    if (updateDetailStatusDto.status === 3 && !detail.endDatetime) {
-      detail.endDatetime = new Date(); // fin real (solo si no estaba ya)
+    if (updateDetailStatusDto.status === 3) {
+      detail.endDatetime = new Date(); // fin real
+      // Si por algún motivo el servicio se completa sin haber pasado por
+      // "En proceso", igualamos startDatetime al fin para que el cálculo
+      // del tiempo real no quede en blanco.
+      if (!detail.startDatetime) {
+        detail.startDatetime = detail.endDatetime;
+      }
     }
     // 5.1 Si se cancela el servicio (status 5), registrar el motivo de
     //     cancelación y quién lo canceló. Para cualquier otro estado, no aplica.
@@ -3992,6 +3998,7 @@ export class SessionService {
           status: detail.status,
           statusText: this.getDetailStatusText(detail.status),
           startDatetime: detail.startDatetime,
+          endDatetime: detail.endDatetime,
           updatedAt: detail.updatedAt,
           description: detail.description ?? null,
           descriptionIA: detail.descriptionIA ?? null,
