@@ -399,7 +399,9 @@ export class WorkerFeedbackService {
   /**
    * Hidrata cada feedback con:
    *  - client.pictureUrl y worker.pictureUrl si tienen `picture`.
-   *  - worker.stats: promedio + conteo por estrella de ese worker.
+   *  - worker.stats: promedio + conteo por estrella del worker en la sesión
+   *    asociada al feedback (no global). Si el feedback no tiene sessionId,
+   *    se devuelven stats vacías.
    *  - `services`: arreglo de servicios prestados por el worker del feedback
    *    dentro de la sesión asociada (sólo cuando `sessionId` está presente).
    */
@@ -423,16 +425,24 @@ export class WorkerFeedbackService {
       feedback.services = [];
     }
 
-    // 1b) Stats por worker → anidadas dentro de feedback.worker.stats
-    const uniqueWorkerIds = Array.from(
-      new Set(feedbacks.map((f) => f.workerId)),
-    );
-    const statsByWorker = await this.computeStatsByWorker(uniqueWorkerIds);
+    // 1b) Stats por (worker, sesión) → anidadas en feedback.worker.stats.
+    //     Acota la calificación a lo recibido en esa sesión concreta.
+    const pairs = feedbacks
+      .filter((f) => typeof f.sessionId === 'number')
+      .map((f) => ({
+        workerId: f.workerId,
+        sessionId: f.sessionId as number,
+      }));
+    const statsByPair = await this.computeStatsByWorkerSession(pairs);
     for (const feedback of feedbacks) {
-      if (feedback.worker) {
-        (feedback.worker as any).stats =
-          statsByWorker.get(feedback.workerId) ?? this.emptyStats();
+      if (!feedback.worker) continue;
+      if (typeof feedback.sessionId !== 'number') {
+        (feedback.worker as any).stats = this.emptyStats();
+        continue;
       }
+      (feedback.worker as any).stats =
+        statsByPair.get(`${feedback.workerId}:${feedback.sessionId}`) ??
+        this.emptyStats();
     }
 
     // 2) Servicios prestados por el worker del feedback dentro de su sesión
@@ -508,43 +518,61 @@ export class WorkerFeedbackService {
   }
 
   /**
-   * Stats por worker (promedio + conteo por estrella) en una sola query.
-   * Devuelve un map workerId → stats. Los workerIds sin reseñas reciben
-   * stats vacías.
+   * Stats por (worker, sesión). Devuelve un map clave `${workerId}:${sessionId}`
+   * → stats. Resuelve la calificación que recibió el worker en una sesión
+   * concreta (no global). En una sola query agrupando por worker_id, session_id
+   * y stars.
    */
-  private async computeStatsByWorker(
-    workerIds: number[],
-  ): Promise<Map<number, WorkerFeedbackStatsDto>> {
-    const result = new Map<number, WorkerFeedbackStatsDto>();
-    for (const wid of workerIds) result.set(wid, this.emptyStats());
-    if (workerIds.length === 0) return result;
+  private async computeStatsByWorkerSession(
+    pairs: Array<{ workerId: number; sessionId: number }>,
+  ): Promise<Map<string, WorkerFeedbackStatsDto>> {
+    const key = (workerId: number, sessionId: number) =>
+      `${workerId}:${sessionId}`;
+    const result = new Map<string, WorkerFeedbackStatsDto>();
+    for (const p of pairs) {
+      result.set(key(p.workerId, p.sessionId), this.emptyStats());
+    }
+    if (pairs.length === 0) return result;
+
+    const workerIds = Array.from(new Set(pairs.map((p) => p.workerId)));
+    const sessionIds = Array.from(new Set(pairs.map((p) => p.sessionId)));
 
     const rows: Array<{
       workerId: number;
+      sessionId: number;
       stars: number | null;
       count: string;
     }> = await this.workerFeedbackRepository
       .createQueryBuilder('feedback')
       .select('feedback.workerId', 'workerId')
+      .addSelect('feedback.sessionId', 'sessionId')
       .addSelect('feedback.stars', 'stars')
       .addSelect('COUNT(*)', 'count')
       .where('feedback.workerId IN (:...workerIds)', { workerIds })
+      .andWhere('feedback.sessionId IN (:...sessionIds)', { sessionIds })
       .groupBy('feedback.workerId')
+      .addGroupBy('feedback.sessionId')
       .addGroupBy('feedback.stars')
       .getRawMany();
 
-    const totals = new Map<number, { total: number; weighted: number }>();
-    for (const wid of workerIds) totals.set(wid, { total: 0, weighted: 0 });
+    const totals = new Map<string, { total: number; weighted: number }>();
+    for (const p of pairs) {
+      totals.set(key(p.workerId, p.sessionId), { total: 0, weighted: 0 });
+    }
 
     for (const row of rows) {
       const wid = Number(row.workerId);
+      const sid = Number(row.sessionId);
+      const k = key(wid, sid);
+      // Sólo acumulamos sobre pares pedidos. Filtra combinaciones que la query
+      // amplia (IN workerIds x IN sessionIds) podría haber traído de más.
+      const stats = result.get(k);
+      const acc = totals.get(k);
+      if (!stats || !acc) continue;
+
       const stars = row.stars == null ? null : Number(row.stars);
       const count = Number(row.count);
       if (stars === null) continue;
-
-      const stats = result.get(wid);
-      const acc = totals.get(wid);
-      if (!stats || !acc) continue;
 
       acc.total += count;
       acc.weighted += stars * count;
@@ -567,9 +595,10 @@ export class WorkerFeedbackService {
       }
     }
 
-    for (const wid of workerIds) {
-      const stats = result.get(wid);
-      const acc = totals.get(wid);
+    for (const p of pairs) {
+      const k = key(p.workerId, p.sessionId);
+      const stats = result.get(k);
+      const acc = totals.get(k);
       if (!stats || !acc) continue;
       stats.totalFeedbacks = acc.total;
       stats.averageStars =
