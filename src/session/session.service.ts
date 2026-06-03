@@ -2750,30 +2750,42 @@ export class SessionService {
 
       if (cascadeToDetails) {
         // Construir los valores a actualizar. Además del estado, al propagar
-        // a los detalles registramos los tiempos reales:
-        //  - status 2 (En progreso) → start_datetime, solo si está vacío
-        //  - status 3 (Completada)  → end_datetime,   solo si está vacío
-        // Usamos COALESCE para no pisar un tiempo real que el worker ya marcó.
+        // a los detalles registramos los tiempos reales (igual que en
+        // updateDetailStatus):
+        //  - status 2 (En progreso) → start_datetime = ahora (SOBRESCRIBE la
+        //    hora agendada con la hora real). Para no re-pisar el inicio real
+        //    de detalles que YA estaban en progreso, se excluyen con status != 2.
+        //  - status 3 (Completada)  → end_datetime = ahora, solo si está vacío
+        //    (COALESCE) para no pisar un fin real ya registrado por el worker.
         const now = new Date();
         const setValues: Record<string, unknown> = { status: newStatus };
         if (newStatus === 5) {
           setValues.cancelledBy = 'adm';
         }
         if (newStatus === 2) {
-          setValues.startDatetime = () => 'COALESCE(start_datetime, :now)';
+          setValues.startDatetime = () => ':now';
         }
         if (newStatus === 3) {
           setValues.endDatetime = () => 'COALESCE(end_datetime, :now)';
         }
 
-        const cascadeResult = await queryRunner.manager
+        let cascadeQuery = queryRunner.manager
           .createQueryBuilder()
           .update(SessionDetail)
           .set(setValues)
           .setParameter('now', now)
           .where('sessionId = :sessionId', { sessionId })
-          .andWhere('status != :cancelled', { cancelled: 5 })
-          .execute();
+          .andWhere('status != :cancelled', { cancelled: 5 });
+
+        // Al iniciar la cita, no tocar los detalles que ya están en progreso:
+        // así conservan el inicio real que el worker ya marcó.
+        if (newStatus === 2) {
+          cascadeQuery = cascadeQuery.andWhere('status != :inProgress', {
+            inProgress: 2,
+          });
+        }
+
+        const cascadeResult = await cascadeQuery.execute();
         detailsUpdated = cascadeResult.affected || 0;
       }
 
