@@ -2738,6 +2738,7 @@ export class SessionService {
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
+    const now = new Date();
     let updatedSession: Session;
     try {
       session.sessionStatus = newStatus;
@@ -2745,6 +2746,12 @@ export class SessionService {
       // Si el admin cancela la cita completa, registrar que la canceló él.
       if (newStatus === 5) {
         session.cancelledBy = 'adm';
+      }
+      // Al iniciar la cita (En progreso), sobrescribir su startDatetime con la
+      // hora real, igual que en los detalles. Solo cuando realmente cambia a 2
+      // para no re-pisar el inicio real si ya estaba en progreso.
+      if (newStatus === 2 && previousStatus !== 2) {
+        session.startDatetime = now;
       }
       updatedSession = await queryRunner.manager.save(session);
 
@@ -2757,7 +2764,6 @@ export class SessionService {
         //    de detalles que YA estaban en progreso, se excluyen con status != 2.
         //  - status 3 (Completada)  → end_datetime = ahora, solo si está vacío
         //    (COALESCE) para no pisar un fin real ya registrado por el worker.
-        const now = new Date();
         const setValues: Record<string, unknown> = { status: newStatus };
         if (newStatus === 5) {
           setValues.cancelledBy = 'adm';
