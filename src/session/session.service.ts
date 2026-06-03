@@ -2949,12 +2949,25 @@ export class SessionService {
     // 5. Actualizar el detalle
     detail.status = updateDetailStatusDto.status;
     // ✨ Registrar tiempos reales de inicio y fin (solo para workers)
-    if (userRole === 'wrk') {
-      if (updateDetailStatusDto.status === 2 && !detail.startDatetime) {
-        detail.startDatetime = new Date();     // inicio real
-      }
-      if (updateDetailStatusDto.status === 3 && !detail.endDatetime) {
-        detail.endDatetime = new Date();       // fin real (solo si no estaba ya)
+    /* if (userRole === 'wrk') {
+       if (updateDetailStatusDto.status === 2 && !detail.startDatetime) {
+         detail.startDatetime = new Date();     // inicio real
+       }
+       if (updateDetailStatusDto.status === 3 && !detail.endDatetime) {
+         detail.endDatetime = new Date();       // fin real (solo si no estaba ya)
+       }*/
+
+    // Registrar tiempos reales de inicio y fin (para admin y worker)
+    if (updateDetailStatusDto.status === 2) {
+      // Cuando se marca "En proceso" (estado 2)
+      detail.startDatetime = new Date();   // sobrescribe con la hora real actual
+    }
+    if (updateDetailStatusDto.status === 3) {
+      // Cuando se marca "Completado" (estado 3)
+      detail.endDatetime = new Date();     // hora real de finalización
+      // Si por algún motivo no se había registrado startDatetime, lo asignamos igual
+      if (!detail.startDatetime) {
+        detail.startDatetime = detail.endDatetime;
       }
     }
     // 5.1 Si se cancela el servicio (status 5), registrar el motivo de
