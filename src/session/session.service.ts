@@ -2770,6 +2770,8 @@ export class SessionService {
         }
         if (newStatus === 2) {
           setValues.startDatetime = () => ':now';
+          // Re-inicio: anular fin previo para no dejar end < start al recompletar.
+          setValues.endDatetime = () => 'NULL';
         }
         if (newStatus === 3) {
           setValues.endDatetime = () => 'COALESCE(end_datetime, :now)';
@@ -3001,6 +3003,11 @@ export class SessionService {
     //    en que se marcó "En proceso" / "Completado".
     if (updateDetailStatusDto.status === 2) {
       detail.startDatetime = new Date(); // inicio real
+      // Re-inicio: anular cualquier fin previo. Si el servicio había sido
+      // completado antes (endDatetime con valor) y vuelve a "En proceso", ese
+      // fin ya no es válido; de lo contrario quedaría end < start (tiempo
+      // negativo) al recompletar.
+      detail.endDatetime = null;
     }
     if (updateDetailStatusDto.status === 3) {
       detail.endDatetime = new Date(); // fin real
@@ -3989,15 +3996,17 @@ export class SessionService {
 
         // Tiempo REAL que tardó el worker en realizar el servicio:
         // endDatetime (fin real, status 3) - startDatetime (inicio real, status 2),
-        // en minutos. Si aún no hay inicio/fin reales, se usa la duración
-        // configurada del servicio (detail.totalTime) como respaldo.
-        const realTotalTime =
+        // en minutos. Si aún no hay inicio/fin reales, o si los datos son
+        // inconsistentes (fin anterior al inicio → tiempo negativo), se usa la
+        // duración configurada del servicio (detail.totalTime) como respaldo.
+        const elapsedMs =
           detail.startDatetime && detail.endDatetime
-            ? Math.round(
-                (new Date(detail.endDatetime).getTime() -
-                  new Date(detail.startDatetime).getTime()) /
-                  60000,
-              )
+            ? new Date(detail.endDatetime).getTime() -
+              new Date(detail.startDatetime).getTime()
+            : null;
+        const realTotalTime =
+          elapsedMs !== null && elapsedMs >= 0
+            ? Math.round(elapsedMs / 60000)
             : detail.totalTime;
 
         return {

@@ -425,8 +425,11 @@ export class WorkerFeedbackService {
       feedback.services = [];
     }
 
-    // 1b) Stats por (worker, sesión) → anidadas en feedback.worker.stats.
-    //     Acota la calificación a lo recibido en esa sesión concreta.
+    // 1b) worker.stats: agregado de las estrellas que recibió ese worker
+    //     EN ESA SESIÓN concreta (formato completo del DTO: promedio,
+    //     totalFeedbacks y conteo por estrella). Si una sesión tuvo varios
+    //     feedbacks para el mismo worker, todos los items de esa sesión
+    //     comparten el mismo bloque.
     const pairs = feedbacks
       .filter((f) => typeof f.sessionId === 'number')
       .map((f) => ({
@@ -520,8 +523,8 @@ export class WorkerFeedbackService {
   /**
    * Stats por (worker, sesión). Devuelve un map clave `${workerId}:${sessionId}`
    * → stats. Resuelve la calificación que recibió el worker en una sesión
-   * concreta (no global). En una sola query agrupando por worker_id, session_id
-   * y stars.
+   * concreta (no global), en una sola query agrupando por worker_id,
+   * session_id y stars.
    */
   private async computeStatsByWorkerSession(
     pairs: Array<{ workerId: number; sessionId: number }>,
@@ -564,8 +567,8 @@ export class WorkerFeedbackService {
       const wid = Number(row.workerId);
       const sid = Number(row.sessionId);
       const k = key(wid, sid);
-      // Sólo acumulamos sobre pares pedidos. Filtra combinaciones que la query
-      // amplia (IN workerIds x IN sessionIds) podría haber traído de más.
+      // Filtra combinaciones que el IN workerIds x IN sessionIds podría haber
+      // traído de más; sólo acumulamos los pares pedidos.
       const stats = result.get(k);
       const acc = totals.get(k);
       if (!stats || !acc) continue;
