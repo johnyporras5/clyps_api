@@ -1187,15 +1187,31 @@ export class SessionService {
     return session;
   }
   private calculateRealTime(detail: SessionDetail): number {
-    if (detail.status === 3 || detail.status === 4) {
-      if (detail.startDatetime && detail.endDatetime) {
-        const start = new Date(detail.startDatetime).getTime();
-        const end = new Date(detail.endDatetime).getTime();
-        const minutes = (end - start) / 60000;
-        return Math.round(minutes * 100) / 100; // opcional: redondear a 2 decimales
-      }
+    return this.calculateRealTimeRaw(
+      detail.status,
+      detail.startDatetime,
+      detail.endDatetime,
+    );
+  }
+
+  /**
+   * Tiempo real (en minutos) de un servicio, calculado desde sus fechas de
+   * inicio y fin. Solo aplica a servicios completados (status 3 o 4); en
+   * cualquier otro caso devuelve 0. Sirve tanto para entidades como para filas
+   * crudas (getRawMany).
+   */
+  private calculateRealTimeRaw(
+    status: number | null | undefined,
+    startDatetime: Date | string | null | undefined,
+    endDatetime: Date | string | null | undefined,
+  ): number {
+    if ((status === 3 || status === 4) && startDatetime && endDatetime) {
+      const start = new Date(startDatetime).getTime();
+      const end = new Date(endDatetime).getTime();
+      const minutes = (end - start) / 60000;
+      return Math.round(minutes * 100) / 100; // redondear a 2 decimales
     }
-    return 0; // si no tiene fechas o no está terminado, devuelve 0 (o podrías devolver detail.totalTime)
+    return 0; // si no tiene fechas o no está terminado
   }
 
   async findOneWithDetails(id: number): Promise<SessionResponse> {
@@ -2153,6 +2169,7 @@ export class SessionService {
           const services: any[] = [];
           let totalCost = 0;
           let totalTime = 0;
+          let realTotalTime = 0;
 
           if (sessionDetails.length > 0) {
             for (const detail of sessionDetails) {
@@ -2232,8 +2249,10 @@ export class SessionService {
                   service?.standardTime != null
                     ? Number(service.standardTime)
                     : null,
-                // Tiempo del trabajador para este servicio (en minutos)
-                durationWorker: realTime,
+                // Tiempo planificado del trabajador para este servicio (en minutos)
+                durationWorker: Number(detail.totalTime || 0),
+                // Tiempo real del servicio (inicio→fin; 0 si no está completado)
+                realDuration: realTime,
                 startDatetime: detail.startDatetime,
                 companyWorkerId: detail.companyWorkerId,
                 workerName: companyWorker?.worker
@@ -2260,6 +2279,7 @@ export class SessionService {
 
               totalCost += Number(detail.cost || 0);
               totalTime += Number(detail.totalTime || 0);
+              realTotalTime += realTime;
             }
           }
 
@@ -2286,6 +2306,8 @@ export class SessionService {
             totalCost: totalCost,
             // Tiempo estimado total del trabajador para la cita (suma de durationWorker)
             workerEstimateTime: totalTime,
+            // Duración real total de la cita (suma de realDuration de cada servicio)
+            realTotalTime: parseFloat(realTotalTime.toFixed(2)),
             startDatetime: session.startDatetime,
             status: session.status,
             iaResponse: session.iaResponse,
@@ -4200,6 +4222,7 @@ export class SessionService {
         'detail.total_company AS totalCompany',
         'detail.status AS detailStatus',
         'detail.start_datetime AS detailStartDatetime',
+        'detail.end_datetime AS detailEndDatetime',
         'detail.is_extra AS isExtra',
         'detail.offer_id AS detailOfferId',
         'detail.description AS detailDescription',
@@ -4517,6 +4540,8 @@ export class SessionService {
           assignedTotalCost: 0,
           // Tiempo estimado total del trabajador para la cita (suma de durationWorker)
           workerEstimateTime: 0,
+          // Duración real total de la cita (suma de realDuration de cada servicio)
+          realTotalTime: 0,
           assignedServicesCount: 0,
           assignedOverallStatus: null,
           hasAssignedTodayDetail: false,
@@ -4527,6 +4552,11 @@ export class SessionService {
 
       const cost = parseFloat(detail.cost) || 0;
       const totalTime = parseFloat(detail.totalTime) || 0;
+      const realTime = this.calculateRealTimeRaw(
+        detail.detailStatus,
+        detail.detailStartDatetime,
+        detail.detailEndDatetime,
+      );
       const totalWorker = parseFloat(detail.totalWorker) || 0;
       const totalCompany = parseFloat(detail.totalCompany) || 0;
 
@@ -4589,8 +4619,10 @@ export class SessionService {
         isOffer: hasOffer,
         offerId: hasOffer ? detail.detailOfferId : null,
         offer: offerObj,
-        // Tiempo del trabajador para este servicio (en minutos)
+        // Tiempo planificado del trabajador para este servicio (en minutos)
         durationWorker: totalTime,
+        // Tiempo real del servicio (inicio→fin; 0 si no está completado)
+        realDuration: realTime,
         totalWorker,
         totalCompany,
         detailStatus: detail.detailStatus || 1,
@@ -4618,6 +4650,7 @@ export class SessionService {
 
       sessionData.assignedTotalCost += cost;
       sessionData.workerEstimateTime += totalTime;
+      sessionData.realTotalTime += realTime;
       sessionData.assignedServicesCount += 1;
     }
 
@@ -4654,6 +4687,7 @@ export class SessionService {
         ...session,
         assignedTotalCost: parseFloat(session.assignedTotalCost.toFixed(2)),
         workerEstimateTime: parseFloat(session.workerEstimateTime.toFixed(2)),
+        realTotalTime: parseFloat(session.realTotalTime.toFixed(2)),
         assignedOverallStatus: overallStatus,
         hasAssignedTodayDetail: hasAssignedToday,
       };
@@ -6613,6 +6647,7 @@ export class SessionService {
         'detail.total_company AS totalCompany',
         'detail.status AS detailStatus',
         'detail.start_datetime AS detailStartDatetime',
+        'detail.end_datetime AS detailEndDatetime',
         'detail.is_extra AS isExtra',
         'detail.offer_id AS detailOfferId',
         'detail.description AS detailDescription',
@@ -6950,6 +6985,8 @@ export class SessionService {
           totalCost: 0,
           // Tiempo estimado total del trabajador para la cita (suma de durationWorker)
           workerEstimateTime: 0,
+          // Duración real total de la cita (suma de realDuration de cada servicio)
+          realTotalTime: 0,
           servicesCount: 0,
         });
       }
@@ -6958,6 +6995,11 @@ export class SessionService {
 
       const cost = parseFloat(detail.cost) || 0;
       const totalTime = parseFloat(detail.totalTime) || 0;
+      const realTime = this.calculateRealTimeRaw(
+        detail.detailStatus,
+        detail.detailStartDatetime,
+        detail.detailEndDatetime,
+      );
       const totalWorker = parseFloat(detail.totalWorker) || 0;
       const totalCompany = parseFloat(detail.totalCompany) || 0;
 
@@ -7080,8 +7122,10 @@ export class SessionService {
         appliedPrice: cost,
         isOffer: hasOffer,
         offer: offerObj,
-        // Tiempo del trabajador para este servicio (en minutos)
+        // Tiempo planificado del trabajador para este servicio (en minutos)
         durationWorker: totalTime,
+        // Tiempo real del servicio (inicio→fin; 0 si no está completado)
+        realDuration: realTime,
         totalWorker,
         totalCompany,
         detailStatus: detail.detailStatus || 1,
@@ -7101,6 +7145,7 @@ export class SessionService {
 
       sessionData.totalCost += cost;
       sessionData.workerEstimateTime += totalTime;
+      sessionData.realTotalTime += realTime;
       sessionData.servicesCount += 1;
     }
 
@@ -7109,6 +7154,7 @@ export class SessionService {
       ...session,
       totalCost: parseFloat(session.totalCost.toFixed(2)),
       workerEstimateTime: parseFloat(session.workerEstimateTime.toFixed(2)),
+      realTotalTime: parseFloat(session.realTotalTime.toFixed(2)),
     }));
 
     // Ordenar nuevamente por si acaso (aunque ya se ordenó en la query)
