@@ -4037,7 +4037,7 @@ export class SessionService {
             : null;
         const realTotalTime =
           elapsedMs !== null && elapsedMs >= 0
-            ? Math.round(elapsedMs / 60000)
+            ? Math.round((elapsedMs / 60000) * 100) / 100 // minutos con 2 decimales
             : detail.totalTime;
 
         return {
@@ -4080,10 +4080,10 @@ export class SessionService {
     // 6.1 Tiempo real total de la sesión: suma del tiempo real de cada detalle
     //     (cada uno ya es endDatetime - startDatetime, o su duración configurada
     //     como respaldo si el servicio aún no se ha realizado).
-    const sessionRealTotalTime = enrichedDetails.reduce(
-      (sum, d) => sum + (d.totalTime || 0),
-      0,
-    );
+    const sessionRealTotalTime =
+      Math.round(
+        enrichedDetails.reduce((sum, d) => sum + (d.totalTime || 0), 0) * 100,
+      ) / 100;
 
     // 7. Sesión enriquecida con datos del cliente
     const enrichedSession = {
@@ -7494,16 +7494,18 @@ export class SessionService {
         'SUM(CASE WHEN detail.status IN (3, 4) THEN detail.total_worker ELSE 0 END)',
         'totalEarned',
       )
-      //  Calcular tiempo REAL trabajado (minutos) a partir de start_datetime y end_datetime
+      //  Calcular tiempo REAL trabajado (minutos, con decimales) a partir de
+      //  start_datetime y end_datetime. Se usa SECOND/60 para conservar la
+      //  fracción de minuto que TIMESTAMPDIFF(MINUTE, ...) descartaría.
       .addSelect(
         `
     SUM(
-      CASE 
-        WHEN detail.status IN (3, 4) 
-             AND detail.start_datetime IS NOT NULL 
-             AND detail.end_datetime IS NOT NULL 
-        THEN TIMESTAMPDIFF(MINUTE, detail.start_datetime, detail.end_datetime)
-        ELSE 0 
+      CASE
+        WHEN detail.status IN (3, 4)
+             AND detail.start_datetime IS NOT NULL
+             AND detail.end_datetime IS NOT NULL
+        THEN TIMESTAMPDIFF(SECOND, detail.start_datetime, detail.end_datetime) / 60
+        ELSE 0
       END
     )`,
         'totalTime',
@@ -7542,7 +7544,7 @@ export class SessionService {
         totalCancelled: parseInt(a?.totalCancelled, 10) || 0,
         totalEarned:
           parseFloat(parseFloat(a?.totalEarned || '0').toFixed(2)) || 0,
-        totalTime: parseInt(a?.totalTime, 10) || 0,
+        totalTime: parseFloat(parseFloat(a?.totalTime || '0').toFixed(2)) || 0,
       };
     });
 
@@ -7774,7 +7776,19 @@ export class SessionService {
       .addSelect('service.name', 'serviceName')
       .addSelect('COUNT(detail.id)', 'sessionsCount')
       .addSelect('SUM(detail.total_worker)', 'totalEarned')
-      .addSelect('SUM(detail.total_time)', 'totalTime')
+      // Tiempo REAL trabajado (minutos con decimales) desde start/end_datetime.
+      .addSelect(
+        `
+    SUM(
+      CASE
+        WHEN detail.start_datetime IS NOT NULL
+             AND detail.end_datetime IS NOT NULL
+        THEN TIMESTAMPDIFF(SECOND, detail.start_datetime, detail.end_datetime) / 60
+        ELSE 0
+      END
+    )`,
+        'totalTime',
+      )
       .where('detail.company_worker_id IN (:...companyWorkerIds)', {
         companyWorkerIds,
       })
@@ -7826,7 +7840,7 @@ export class SessionService {
         serviceName: r.serviceName ?? 'Servicio no encontrado',
         sessionsCount,
         totalEarned,
-        totalTime: parseInt(r.totalTime, 10) || 0,
+        totalTime: parseFloat(parseFloat(r.totalTime || '0').toFixed(2)) || 0,
         averagePerSession:
           sessionsCount > 0
             ? parseFloat((totalEarned / sessionsCount).toFixed(2))
@@ -7850,6 +7864,7 @@ export class SessionService {
     );
 
     totals.totalEarned = parseFloat(totals.totalEarned.toFixed(2));
+    totals.totalTime = parseFloat(totals.totalTime.toFixed(2));
 
     return {
       range: { startDate: startDate ?? null, endDate: endDate ?? null },
