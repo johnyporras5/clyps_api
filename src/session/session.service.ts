@@ -7494,16 +7494,18 @@ export class SessionService {
         'SUM(CASE WHEN detail.status IN (3, 4) THEN detail.total_worker ELSE 0 END)',
         'totalEarned',
       )
-      //  Calcular tiempo REAL trabajado (minutos) a partir de start_datetime y end_datetime
+      //  Calcular tiempo REAL trabajado (minutos, con decimales) a partir de
+      //  start_datetime y end_datetime. Se usa SECOND/60 para conservar la
+      //  fracción de minuto que TIMESTAMPDIFF(MINUTE, ...) descartaría.
       .addSelect(
         `
     SUM(
-      CASE 
-        WHEN detail.status IN (3, 4) 
-             AND detail.start_datetime IS NOT NULL 
-             AND detail.end_datetime IS NOT NULL 
-        THEN TIMESTAMPDIFF(MINUTE, detail.start_datetime, detail.end_datetime)
-        ELSE 0 
+      CASE
+        WHEN detail.status IN (3, 4)
+             AND detail.start_datetime IS NOT NULL
+             AND detail.end_datetime IS NOT NULL
+        THEN TIMESTAMPDIFF(SECOND, detail.start_datetime, detail.end_datetime) / 60
+        ELSE 0
       END
     )`,
         'totalTime',
@@ -7542,7 +7544,7 @@ export class SessionService {
         totalCancelled: parseInt(a?.totalCancelled, 10) || 0,
         totalEarned:
           parseFloat(parseFloat(a?.totalEarned || '0').toFixed(2)) || 0,
-        totalTime: parseInt(a?.totalTime, 10) || 0,
+        totalTime: parseFloat(parseFloat(a?.totalTime || '0').toFixed(2)) || 0,
       };
     });
 
