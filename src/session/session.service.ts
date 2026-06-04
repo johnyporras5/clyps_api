@@ -2227,7 +2227,13 @@ export class SessionService {
                 serviceName: service?.name || '',
                 serviceDescription: service?.description || '',
                 serviceCost: Number(detail.cost || 0),
-                totalTime: realTime,
+                // Tiempo estimado del servicio definido por la compañía (en minutos)
+                standardTime:
+                  service?.standardTime != null
+                    ? Number(service.standardTime)
+                    : null,
+                // Tiempo del trabajador para este servicio (en minutos)
+                durationWorker: realTime,
                 startDatetime: detail.startDatetime,
                 companyWorkerId: detail.companyWorkerId,
                 workerName: companyWorker?.worker
@@ -2272,11 +2278,14 @@ export class SessionService {
               : null,
             companyId: adminCompany.id,
             companyName: adminCompany.name,
+            // Dirección de la cita (dirección de la compañía)
+            address: adminCompany.address ?? null,
             sessionDatetime: session.sessionDatetime,
             sessionStatus: session.sessionStatus,
             sessionStatusText: this.getSessionStatusText(session.sessionStatus),
             totalCost: totalCost,
-            totalTime: totalTime,
+            // Tiempo estimado total del trabajador para la cita (suma de durationWorker)
+            workerEstimateTime: totalTime,
             startDatetime: session.startDatetime,
             status: session.status,
             iaResponse: session.iaResponse,
@@ -4219,6 +4228,7 @@ export class SessionService {
         'companyWorker.id AS companyWorkerId',
         'company.id AS companyId',
         'company.name AS companyName',
+        'company.address AS companyAddress',
         'worker.id AS workerId',
         'worker.name AS workerName',
         'worker.picture AS workerPicture',
@@ -4489,6 +4499,8 @@ export class SessionService {
           sessionStatusText: this.getSessionStatusText(detail.sessionStatus),
           sessionTotalCost: parseFloat(detail.sessionTotalCost) || 0,
           sessionTotalTime: parseFloat(detail.sessionTotalTime) || 0,
+          // Dirección de la cita (dirección de la compañía)
+          address: detail.companyAddress ?? null,
           startDatetime: detail.sessionStartDatetime,
           status: detail.sessionStatusFlag,
           iaResponse: detail.iaResponse,
@@ -4503,7 +4515,8 @@ export class SessionService {
           // === SERVICIOS ASIGNADOS A ESTE TRABAJADOR ===
           assignedServices: [],
           assignedTotalCost: 0,
-          assignedTotalTime: 0,
+          // Tiempo estimado total del trabajador para la cita (suma de durationWorker)
+          workerEstimateTime: 0,
           assignedServicesCount: 0,
           assignedOverallStatus: null,
           hasAssignedTodayDetail: false,
@@ -4566,7 +4579,7 @@ export class SessionService {
         serviceName: detail.serviceName || 'Servicio no encontrado',
         serviceDescription: detail.serviceDescription || '',
         // Tiempo estimado del servicio definido por la compañía (en minutos)
-        estimatedTime:
+        standardTime:
           detail.serviceStandardTime != null
             ? Number(detail.serviceStandardTime)
             : null,
@@ -4576,7 +4589,8 @@ export class SessionService {
         isOffer: hasOffer,
         offerId: hasOffer ? detail.detailOfferId : null,
         offer: offerObj,
-        totalTime,
+        // Tiempo del trabajador para este servicio (en minutos)
+        durationWorker: totalTime,
         totalWorker,
         totalCompany,
         detailStatus: detail.detailStatus || 1,
@@ -4603,7 +4617,7 @@ export class SessionService {
       });
 
       sessionData.assignedTotalCost += cost;
-      sessionData.assignedTotalTime += totalTime;
+      sessionData.workerEstimateTime += totalTime;
       sessionData.assignedServicesCount += 1;
     }
 
@@ -4639,7 +4653,7 @@ export class SessionService {
       return {
         ...session,
         assignedTotalCost: parseFloat(session.assignedTotalCost.toFixed(2)),
-        assignedTotalTime: parseFloat(session.assignedTotalTime.toFixed(2)),
+        workerEstimateTime: parseFloat(session.workerEstimateTime.toFixed(2)),
         assignedOverallStatus: overallStatus,
         hasAssignedTodayDetail: hasAssignedToday,
       };
@@ -6628,6 +6642,7 @@ export class SessionService {
         'company.id AS companyId',
         'company.name AS companyName',
         'company.location AS companyLocation',
+        'company.address AS companyAddress',
         'company.email AS companyEmail',
         'company.phone AS companyPhone',
         'company.description AS companyDescription',
@@ -6916,6 +6931,8 @@ export class SessionService {
           sessionStatusText: this.getSessionStatusText(detail.sessionStatus),
           sessionTotalCost: parseFloat(detail.sessionTotalCost) || 0,
           sessionTotalTime: parseFloat(detail.sessionTotalTime) || 0,
+          // Dirección de la cita (dirección de la compañía)
+          address: detail.companyAddress ?? null,
           startDatetime: detail.sessionStartDatetime,
           status: detail.sessionStatusFlag,
           iaResponse: detail.iaResponse,
@@ -6931,7 +6948,8 @@ export class SessionService {
           services: [],
           // Totales calculados (se actualizarán)
           totalCost: 0,
-          totalTime: 0,
+          // Tiempo estimado total del trabajador para la cita (suma de durationWorker)
+          workerEstimateTime: 0,
           servicesCount: 0,
         });
       }
@@ -7053,7 +7071,7 @@ export class SessionService {
         serviceName: detail.serviceName || 'Servicio no encontrado',
         serviceDescription: detail.serviceDescription || '',
         // Tiempo estimado del servicio definido por la compañía (en minutos)
-        estimatedTime:
+        standardTime:
           detail.serviceStandardTime != null
             ? Number(detail.serviceStandardTime)
             : null,
@@ -7062,7 +7080,8 @@ export class SessionService {
         appliedPrice: cost,
         isOffer: hasOffer,
         offer: offerObj,
-        totalTime,
+        // Tiempo del trabajador para este servicio (en minutos)
+        durationWorker: totalTime,
         totalWorker,
         totalCompany,
         detailStatus: detail.detailStatus || 1,
@@ -7081,7 +7100,7 @@ export class SessionService {
       });
 
       sessionData.totalCost += cost;
-      sessionData.totalTime += totalTime;
+      sessionData.workerEstimateTime += totalTime;
       sessionData.servicesCount += 1;
     }
 
@@ -7089,7 +7108,7 @@ export class SessionService {
     const sessions = Array.from(sessionMap.values()).map((session) => ({
       ...session,
       totalCost: parseFloat(session.totalCost.toFixed(2)),
-      totalTime: parseFloat(session.totalTime.toFixed(2)),
+      workerEstimateTime: parseFloat(session.workerEstimateTime.toFixed(2)),
     }));
 
     // Ordenar nuevamente por si acaso (aunque ya se ordenó en la query)
