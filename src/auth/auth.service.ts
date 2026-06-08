@@ -456,7 +456,7 @@ export class AuthService {
 
     let user: User;
     let client: Client | null = null;
-    let isExistingUser = false;
+    const isExistingUser = false;
     let generatedPassword: string | undefined;
 
     // ==================== EL EMAIL YA EXISTE → CONFLICTO (409) ====================
