@@ -1382,6 +1382,7 @@ export class SessionService {
     // Variables para almacenar información general
     let companyId = 0;
     let companyName = 'Compañía no encontrada';
+    let companyAddress: string | null = null;
 
     // Array para almacenar todos los detalles
     const details: SessionDetailResponse[] = [];
@@ -1389,6 +1390,7 @@ export class SessionService {
     // Variables para calcular totales
     let totalCost = 0;
     let totalTime = 0;
+    let realTotalTime = 0;
 
     // Procesar CADA detalle de la sesión
     for (const detail of sessionDetails) {
@@ -1409,17 +1411,7 @@ export class SessionService {
       if (companyId === 0 && companyWorker?.company) {
         companyId = companyWorker.company.id;
         companyName = companyWorker.company.name;
-      }
-
-      // Calcular porcentajes
-      let workerPercentage = 0;
-      let companyPercentage = 0;
-
-      if (detail.cost && detail.cost > 0) {
-        workerPercentage =
-          (Number(detail.totalWorker) / Number(detail.cost)) * 100;
-        companyPercentage =
-          (Number(detail.totalCompany) / Number(detail.cost)) * 100;
+        companyAddress = companyWorker.company.address ?? null;
       }
 
       // Obtener información de la oferta (si el detalle tiene offer_id)
@@ -1464,27 +1456,35 @@ export class SessionService {
       }
       const realTime = this.calculateRealTime(detail);
 
-      // Agregar detalle al array
+      // Agregar detalle al array (mismo shape que el listado de admin)
       details.push({
-        id: detail.id,
-        cost: appliedPrice,
+        detailId: detail.id,
         serviceId: detail.serviceId,
         serviceName: service?.name || 'Servicio no encontrado',
         serviceDescription: service?.description || '',
-        companyWorkerId: detail.companyWorkerId,
-        workerName: companyWorker?.worker?.name ?? null,
+        serviceCost: Number(detail.cost || 0),
+        // Tiempo estimado del servicio definido por la compañía (en minutos)
+        standardTime:
+          service?.standardTime != null ? Number(service.standardTime) : null,
+        // Tiempo planificado del trabajador para este servicio (en minutos)
+        durationWorker: Number(detail.totalTime || 0),
+        // Tiempo real del servicio (inicio→fin; 0 si no está completado)
+        realDuration: realTime,
         startDatetime: detail.startDatetime,
-        totalTime: realTime,
-        totalWorker: Number(detail.totalWorker || 0),
-        totalCompany: Number(detail.totalCompany || 0),
-        status: detail.status || 1,
-        workerPercentage: Number(workerPercentage.toFixed(2)),
-        companyPercentage: Number(companyPercentage.toFixed(2)),
+        companyWorkerId: detail.companyWorkerId,
+        workerName: companyWorker?.worker
+          ? (companyWorker.worker.name || '').trim()
+          : '',
+        originalPrice,
+        appliedPrice,
         isOffer: hasOffer && offerObj !== null,
         offerId: hasOffer ? detail.offerId : null,
         offer: offerObj,
-        originalPrice,
-        appliedPrice,
+        totalWorker: Number(detail.totalWorker || 0),
+        totalCompany: Number(detail.totalCompany || 0),
+        detailStatus: detail.status || 1,
+        detailStatusText: this.getDetailStatusText(detail.status || 1),
+        isExtra: detail.isExtra === true || (detail.isExtra as any) === 1,
         description: detail.description ?? null,
         descriptionIA: detail.descriptionIA ?? null,
         descriptionWorker: detail.descriptionWorker ?? null,
@@ -1496,6 +1496,7 @@ export class SessionService {
       // Acumular totales
       totalCost += appliedPrice;
       totalTime += Number(detail.totalTime || 0);
+      realTotalTime += realTime;
     }
 
     // Si no se encontró información de compañía en los detalles
@@ -1509,37 +1510,43 @@ export class SessionService {
         if (company) {
           companyId = company.id;
           companyName = company.name;
+          companyAddress = company.address ?? null;
         }
       }
     }
 
-    // Construir la respuesta
+    // Construir la respuesta (mismo shape que el listado de admin)
     const response: SessionResponse = {
       id: session.id,
       clientId: session.clientId,
-      clientName: client.name || '',
+      clientName: `${client.name || ''} ${client.lastName || ''}`.trim(),
       clientLastName: client.lastName || '',
       clientPicture: client.picture
         ? this.fileUploadService.getFileUrl('client_photo', client.picture)
         : null,
       companyId: companyId,
       companyName: companyName,
+      // Dirección de la cita (dirección de la compañía)
+      address: companyAddress,
       sessionDatetime: session.sessionDatetime,
       sessionStatus: session.sessionStatus,
       sessionStatusText: this.getSessionStatusText(session.sessionStatus),
       totalCost: totalCost,
-      totalTime: totalTime,
+      // Tiempo estimado total del trabajador para la cita (suma de durationWorker)
+      workerEstimateTime: totalTime,
+      // Duración real total de la cita (suma de realDuration de cada servicio)
+      realTotalTime: parseFloat(realTotalTime.toFixed(2)),
       startDatetime: session.startDatetime || session.sessionDatetime,
       status: session.status || 1,
       iaResponse: session.iaResponse,
-      createdAt: (session as any).createdAt || null,
-      updatedAt: (session as any).updatedAt || null,
-      description: session.description ?? null,
-      descriptionIA: session.descriptionIA ?? null,
+      servicesCount: details.length,
+      services: details,
+      extraServices: session.extraServices || [],
       cancellationReason: session.cancellationReason ?? null,
       cancelledBy: session.cancelledBy ?? null,
       cancelledByText: this.getCancelledByText(session.cancelledBy),
-      details: details, // Incluir todos los detalles
+      createdAt: (session as any).createdAt || null,
+      updatedAt: (session as any).updatedAt || null,
     };
 
     return response;

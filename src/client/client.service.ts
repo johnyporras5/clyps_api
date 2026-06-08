@@ -229,12 +229,14 @@ export class ClientService {
     }
 
     // 3.b Filtro por nombre: name, last_name, concat o alias por compañía.
-    // El alias se guarda en company_aliases (JSON: [{ companyId, alias }]),
-    // por eso se busca con JSON_SEARCH sobre el path '$[*].alias'.
+    // El alias se guarda en company_aliases (JSON: [{ companyId, alias }]);
+    // se extraen los alias con JSON_EXTRACT y se compara con LOWER en ambos
+    // lados para que la búsqueda sea case-insensitive igual que el nombre
+    // (JSON_SEARCH usa collation binaria y distinguía mayúsculas/minúsculas).
     if (options.name && options.name.trim() !== '') {
       const searchTerm = `%${options.name.trim()}%`;
       queryBuilder.andWhere(
-        "(client.name LIKE :search OR client.last_name LIKE :search OR CONCAT(client.name, ' ', client.last_name) LIKE :search OR JSON_SEARCH(client.company_aliases, 'one', :search, NULL, '$[*].alias') IS NOT NULL)",
+        "(client.name LIKE :search OR client.last_name LIKE :search OR CONCAT(client.name, ' ', client.last_name) LIKE :search OR LOWER(JSON_EXTRACT(client.company_aliases, '$[*].alias')) LIKE LOWER(:search))",
         { search: searchTerm },
       );
     }
