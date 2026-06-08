@@ -456,23 +456,42 @@ export class AuthService {
 
     let user: User;
     let client: Client | null = null;
-    let isExistingUser = false;
+    const isExistingUser = false;
     let generatedPassword: string | undefined;
 
-    // ==================== VERIFICAR SI YA EXISTE EL USUARIO ====================
+    // ==================== EL EMAIL YA EXISTE → CONFLICTO (409) ====================
+    // El registro público NO debe actualizar ni sobrescribir un perfil existente:
+    // cualquier email ya registrado se trata como conflicto, con un `code` para
+    // que el frontend lo muestre como error informativo (no como creación exitosa).
     if (existingUserByEmail) {
       if (existingUserByEmail.userType !== 'cli') {
-        throw new ConflictException(
-          'El email ya está registrado con un rol diferente (no cliente)',
-        );
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'EMAIL_REGISTERED_DIFFERENT_ROLE',
+          message:
+            'El email ya está registrado con un rol diferente (no cliente).',
+        });
       }
-
-      user = existingUserByEmail;
-      isExistingUser = true;
 
       if (existingUserByEmail.emailVerified === 0) {
+        // Reenviar código para que pueda completar la verificación pendiente.
         await this.sendVerificationCode(registerDto.email);
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'CLIENT_EXISTS_UNVERIFIED',
+          message:
+            'El cliente ya estaba registrado pero su correo no estaba verificado. Se ha enviado un nuevo código de verificación a su correo para completar el proceso.',
+        });
       }
+
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'Conflict',
+        code: 'CLIENT_ALREADY_EXISTS',
+        message: 'El cliente ya estaba registrado y verificado en el sistema.',
+      });
     } else {
       // ==================== CREAR NUEVO USUARIO ====================
       const existingUserByUsername = await this.userRepository.findOne({
@@ -480,7 +499,12 @@ export class AuthService {
       });
 
       if (existingUserByUsername) {
-        throw new ConflictException('El nombre de usuario ya está en uso');
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'USERNAME_TAKEN',
+          message: 'El nombre de usuario ya está en uso.',
+        });
       }
 
       // Si el cliente envió contraseña, úsala; si no, generar aleatoria y enviar por correo.
