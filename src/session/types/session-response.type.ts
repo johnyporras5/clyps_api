@@ -1,5 +1,6 @@
+// Refleja el shape real almacenado en session.extra_services (entidad Session).
 export interface ExtraServiceResponse {
-  id: number;
+  sessionDetailId: number;
   serviceId: number;
   serviceName: string;
   providerId: number;
@@ -29,35 +30,42 @@ export interface OfferDetailResponse {
   discountPercentage: number;
 }
 
+// Mismo shape que cada servicio del listado de admin (findAllSessionsSimple).
 export interface SessionDetailResponse {
-  id: number;
-  cost: number;
+  detailId: number;
   serviceId: number;
   serviceName: string;
   serviceDescription: string;
-  companyWorkerId: number | null;
-  workerName: string | null;
+  serviceCost: number;
+  // Tiempo estimado del servicio definido por la compañía (en minutos)
+  standardTime: number | null;
+  // Tiempo planificado del trabajador para este servicio (en minutos)
+  durationWorker: number;
+  // Tiempo real del servicio (inicio→fin; 0 si no está completado)
+  realDuration: number;
   startDatetime: Date;
-  totalTime: number;
-  totalWorker: number;
-  totalCompany: number;
-  status: number;
-  workerPercentage: number;
-  companyPercentage: number;
-  description?: string | null;
-  descriptionIA?: string | null;
-  descriptionWorker?: string | null;
+  companyWorkerId: number | null;
+  workerName: string;
+  originalPrice: number;
+  appliedPrice: number;
   isOffer: boolean;
   offerId: number | null;
   offer: OfferDetailResponse | null;
-  originalPrice: number;
-  appliedPrice: number;
+  totalWorker: number;
+  totalCompany: number;
+  detailStatus: number;
+  detailStatusText: string;
+  isExtra: boolean;
+  description?: string | null;
+  descriptionIA?: string | null;
+  descriptionWorker?: string | null;
   // Datos de cancelación del servicio (sólo cuando status = 5 = Cancelado)
   cancelReason?: string | null;
   cancelledBy?: string | null;
   cancelledByText?: string | null;
 }
 
+// Mismo shape que cada sesión del listado de admin (findAllSessionsSimple).
 export interface SessionResponse {
   id: number;
   clientId: number;
@@ -66,16 +74,21 @@ export interface SessionResponse {
   clientPicture: string | null;
   companyId: number;
   companyName: string;
+  // Dirección de la cita (dirección de la compañía)
+  address: string | null;
   sessionDatetime: Date;
   sessionStatus: number;
   sessionStatusText: string;
   totalCost: number;
-  totalTime: number;
+  // Tiempo estimado total del trabajador para la cita (suma de durationWorker)
+  workerEstimateTime: number;
+  // Duración real total de la cita (suma de realDuration de cada servicio)
+  realTotalTime: number;
   startDatetime: Date;
   status: number;
   iaResponse: any;
-  descriptionIA?: string | null;
-  description?: string | null;
+  servicesCount: number;
+  services: SessionDetailResponse[];
   extraServices?: ExtraServiceResponse[];
   createdAt?: Date;
   updatedAt?: Date;
@@ -83,5 +96,4 @@ export interface SessionResponse {
   cancellationReason?: string | null;
   cancelledBy?: string | null;
   cancelledByText?: string | null;
-  details: SessionDetailResponse[];
 }
