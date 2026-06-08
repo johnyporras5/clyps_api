@@ -25,6 +25,7 @@ import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
 import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
+import { GetAvailabilityDto } from './dto/get-availability.dto';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -49,6 +50,20 @@ export class SessionController {
       createSessionWithDetailDto,
       adminId,
     );
+  }
+
+  /**
+   * Devuelve los rangos ocupados de una compañía en un día, sin datos
+   * personales de otros clientes. Pensado para que el rol cliente pueda
+   * bloquear en el front los slots ya tomados.
+   *
+   * IMPORTANTE: debe declararse antes de `@Get(':id')` para que el segmento
+   * `availability` no sea capturado como parámetro `id`.
+   */
+  @Get('availability')
+  @Roles('cli', 'adm', 'wrk')
+  async getAvailability(@Query() getAvailabilityDto: GetAvailabilityDto) {
+    return this.sessionService.getAvailability(getAvailabilityDto);
   }
 
   @Get(':id')
