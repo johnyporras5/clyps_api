@@ -37,14 +37,20 @@ export class OfferService {
 
   async findAllByCompany(
     adminId: number,
-    paginationOptions: PaginationOptions,
+    paginationOptions: PaginationOptions & { status?: string },
   ): Promise<PaginationResult<any>> {
     const company = await this.getCompanyByAdmin(adminId);
-    const { page, limit } = paginationOptions;
+    const { page, limit, status } = paginationOptions;
     const skip = (page - 1) * limit;
 
+    // Filtro por estado: '1' = activa, '0' = inactiva, ausente = todas
+    const where: Record<string, any> = { companyId: company.id };
+    if (status !== undefined) {
+      where.status = parseInt(status, 10);
+    }
+
     const [offers, total] = await this.offerRepository.findAndCount({
-      where: { companyId: company.id },
+      where,
       relations: ['serviceOffers', 'serviceOffers.service'],
       order: { id: 'DESC' },
       skip,

@@ -48,6 +48,11 @@ export class Client {
   @Column({ name: 'company_aliases', type: 'json', nullable: true })
   companyAliases: { companyId: number; alias: string }[];
 
+  // Fecha de la primera cita del cliente por compañía. Se registra al crear
+  // la primera sesión/cita del cliente con esa compañía: [{ companyId, firstAppointmentDate }]
+  @Column({ name: 'company_first_appointments', type: 'json', nullable: true })
+  companyFirstAppointments: { companyId: number; firstAppointmentDate: Date }[];
+
   @Column({ name: 'temporarily_deleted', type: 'boolean', default: false })
   temporarilyDeleted: boolean;
 

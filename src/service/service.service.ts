@@ -63,7 +63,7 @@ export class ServiceService {
    */
   async findAllByCompanyWithWorkers(
     adminId: number,
-    paginationOptions: PaginationOptions & { name?: string },
+    paginationOptions: PaginationOptions & { name?: string; status?: string },
   ): Promise<PaginationResult<any>> {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
@@ -84,6 +84,13 @@ export class ServiceService {
     if (paginationOptions.name && paginationOptions.name.trim() !== '') {
       queryBuilder.andWhere('service.name LIKE :search', {
         search: `%${paginationOptions.name.trim()}%`,
+      });
+    }
+
+    // 2.c Filtro por estado: '1' = activo, '0' = inactivo, ausente = todos
+    if (paginationOptions.status !== undefined) {
+      queryBuilder.andWhere('service.status = :status', {
+        status: parseInt(paginationOptions.status, 10),
       });
     }
 

@@ -4,6 +4,7 @@ import {
   ConflictException,
   BadRequestException,
   NotFoundException,
+  HttpStatus,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -227,7 +228,6 @@ export class AuthService {
 
     let user: User;
     let worker: Worker | null = null;
-    let isExistingWorker = false;
     let generatedPassword: string | undefined;
 
     // Verificar que el admin existe y es administrador
@@ -253,25 +253,41 @@ export class AuthService {
     }
 
     // ==================== VERIFICAR SI YA EXISTE EL TRABAJADOR ====================
-    // Buscar si ya existe un trabajador con el mismo email
+    // Un trabajador pertenece a una sola compañía: cualquier re-registro con un
+    // email ya existente es un CONFLICTO. Devolvemos 409 con un `code` para que
+    // el frontend lo trate como error informativo (no como creación exitosa).
     if (existingUserByEmail) {
-      // Si el usuario existe, verificar si ya es un trabajador
+      // El email pertenece a un usuario que NO es trabajador
       if (existingUserByEmail.userType !== 'wrk') {
-        throw new ConflictException(
-          'El email ya está registrado con un rol diferente (no trabajador)',
-        );
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'EMAIL_REGISTERED_DIFFERENT_ROLE',
+          message:
+            'El email ya está registrado con un rol diferente (no trabajador).',
+        });
       }
 
-      // Usuario existe y es trabajador (verificado o no)
-      user = existingUserByEmail;
-      isExistingWorker = true;
-
-      // Verificar si el usuario ya está verificado
+      // El email pertenece a un trabajador que aún no verificó su correo:
+      // reenviamos el código para que pueda completar la verificación.
       if (existingUserByEmail.emailVerified === 0) {
-        // Si no está verificado, enviar nuevo código
         await this.sendVerificationCode(registerDto.email);
-        // NO lanzamos excepción, continuamos con el flujo
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'WORKER_EXISTS_UNVERIFIED',
+          message:
+            'El trabajador ya estaba registrado pero su correo no estaba verificado. Se ha enviado un nuevo código de verificación a su correo para completar el proceso.',
+        });
       }
+
+      // El email pertenece a un trabajador ya registrado y verificado.
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'Conflict',
+        code: 'WORKER_ALREADY_EXISTS',
+        message: 'El trabajador ya estaba registrado y verificado en el sistema.',
+      });
     } else {
       // ==================== CREAR NUEVO TRABAJADOR ====================
       // Verificar si el username ya existe
@@ -280,7 +296,12 @@ export class AuthService {
       });
 
       if (existingUserByUsername) {
-        throw new ConflictException('El nombre de usuario ya está en uso');
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'USERNAME_TAKEN',
+          message: 'El nombre de usuario ya está en uso.',
+        });
       }
 
       // Generar contraseña automáticamente
@@ -349,9 +370,6 @@ export class AuthService {
       where: { userId: user.id },
     });
 
-    let createdWorkerProfile = false;
-    let createdCompanyWorker = false;
-
     // Si no existe perfil de worker, crearlo
     if (!worker) {
       console.log(`Creando perfil de trabajador para usuario: ${user.email}`);
@@ -369,7 +387,6 @@ export class AuthService {
       });
 
       worker = await this.workerRepository.save(newWorker);
-      createdWorkerProfile = true;
 
       console.log(`Perfil de trabajador creado con ID: ${worker.id}`);
     }
@@ -393,7 +410,6 @@ export class AuthService {
       });
 
       await this.companyWorkerRepository.save(companyWorker);
-      createdCompanyWorker = true;
     }
 
     // No se genera token JWT en el registro de trabajador
@@ -401,65 +417,15 @@ export class AuthService {
     // Eliminar password del objeto de respuesta
     const { password, ...userWithoutPassword } = user;
 
-    // ==================== CONSTRUIR MENSAJE DE RESPUESTA MEJORADO ====================
-    let message: string;
-
-    if (isExistingWorker) {
-      // Usuario ya existente
-      const actionParts: string[] = []; // <-- DECLARAR EXPLÍCITAMENTE COMO STRING[]
-
-      // Determinar si hubo cambios
-      const isVerified = user.emailVerified === 1;
-
-      // Base del mensaje según estado de verificación
-      if (!isVerified) {
-        actionParts.push(
-          `El trabajador ya estaba registrado en el sistema pero su correo no estaba verificado.`,
-        );
-        actionParts.push(
-          `Se ha enviado un nuevo código de verificación para completar este proceso.`,
-        );
-      } else {
-        actionParts.push(
-          `El trabajador ya estaba registrado y verificado en el sistema.`,
-        );
-      }
-
-      // Agregar detalles específicos
-      if (createdWorkerProfile) {
-        actionParts.push(
-          `Se ha completado su perfil profesional con la información proporcionada.`,
-        );
-      }
-
-      if (createdCompanyWorker) {
-        actionParts.push(
-          `Ha sido asignado exitosamente a la compañía '${company.name}'.`,
-        );
-      } else if (existingAssignment) {
-        actionParts.push(
-          `Ya se encontraba asignado a la compañía '${company.name}'.`,
-        );
-      }
-
-      // Agregar recomendación si no está verificado
-      if (!isVerified) {
-        actionParts.push(
-          `Una vez que verifique su correo electrónico, podrá acceder a todas las funcionalidades.`,
-        );
-      }
-
-      message = actionParts.join(' ');
-    } else {
-      // Usuario nuevo
-      const newUserParts = [
-        `Trabajador registrado exitosamente en el sistema CLYPS.`,
-        `Ha sido asignado a la compañía '${company.name}'.`,
-        `Las credenciales de acceso han sido enviadas a su correo electrónico.`,
-        `Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`,
-      ];
-      message = newUserParts.join(' ');
-    }
+    // ==================== CONSTRUIR MENSAJE DE RESPUESTA ====================
+    // En este punto el trabajador es siempre nuevo: los casos de trabajador
+    // existente ya retornaron 409 más arriba.
+    const message = [
+      `Trabajador registrado exitosamente en el sistema CLYPS.`,
+      `Ha sido asignado a la compañía '${company.name}'.`,
+      `Las credenciales de acceso han sido enviadas a su correo electrónico.`,
+      `Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`,
+    ].join(' ');
 
     // Construir objeto de respuesta
     const response: any = {
@@ -846,9 +812,13 @@ export class AuthService {
 
     if (existingUserByEmail) {
       if (existingUserByEmail.userType !== 'cli') {
-        throw new ConflictException(
-          'El email ya está registrado con un rol diferente (no cliente)',
-        );
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'EMAIL_REGISTERED_DIFFERENT_ROLE',
+          message:
+            'El email ya está registrado con un rol diferente (no cliente).',
+        });
       }
       user = existingUserByEmail;
       isExistingUser = true;
@@ -857,7 +827,12 @@ export class AuthService {
         where: { username: registerDto.username },
       });
       if (existingByUsername) {
-        throw new ConflictException('El nombre de usuario ya está en uso');
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'USERNAME_TAKEN',
+          message: 'El nombre de usuario ya está en uso.',
+        });
       }
 
       generatedPassword = this.generateRandomPassword(8);
@@ -880,28 +855,50 @@ export class AuthService {
       await this.sendVerificationCode(user.email);
     }
 
-    // 3. Procesar foto
-    let pictureFileName: string | undefined;
-    if (pictureFile) {
-      try {
-        const fileInfo = await this.fileUploadService.saveFile(
-          pictureFile,
-          'client_photo',
-          'client',
-          user.id,
-        );
-        pictureFileName = fileInfo.fileName;
-      } catch (error) {
-        console.error('Error al guardar foto de cliente:', error);
-      }
-    }
-
-    // 4. Crear o actualizar perfil del cliente
+    // 3. Buscar el perfil del cliente
     client = await this.clientRepository.findOne({
       where: { userId: user.id },
     });
 
-    if (!client) {
+    if (client) {
+      // El cliente ya tiene perfil: solo gestionamos su relación con la compañía.
+      // Como un cliente puede pertenecer a varias compañías, vincularlo a una
+      // compañía NUEVA es válido; pero si YA estaba vinculado a esta, es conflicto
+      // y devolvemos 409 para que el frontend no lo trate como creación exitosa.
+      const currentCompanies: number[] = Array.isArray(client.companies)
+        ? client.companies
+        : [];
+
+      if (currentCompanies.includes(company.id)) {
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'CLIENT_ALREADY_IN_COMPANY',
+          message: `El cliente ya estaba registrado y vinculado a la compañía '${company.name}'.`,
+        });
+      }
+
+      currentCompanies.push(company.id);
+      await this.clientRepository.update(client.id, {
+        companies: currentCompanies,
+      });
+    } else {
+      // No existe perfil de cliente: procesamos la foto (si la hay) y lo creamos.
+      let pictureFileName: string | undefined;
+      if (pictureFile) {
+        try {
+          const fileInfo = await this.fileUploadService.saveFile(
+            pictureFile,
+            'client_photo',
+            'client',
+            user.id,
+          );
+          pictureFileName = fileInfo.fileName;
+        } catch (error) {
+          console.error('Error al guardar foto de cliente:', error);
+        }
+      }
+
       const newClient = this.clientRepository.create({
         name: registerDto.name,
         lastName: registerDto.lastName,
@@ -915,17 +912,6 @@ export class AuthService {
         userId: user.id,
       });
       client = await this.clientRepository.save(newClient);
-    } else {
-      // Agregar compañía si aún no está en el array
-      const currentCompanies: number[] = Array.isArray(client.companies)
-        ? client.companies
-        : [];
-      if (!currentCompanies.includes(company.id)) {
-        currentCompanies.push(company.id);
-        await this.clientRepository.update(client.id, {
-          companies: currentCompanies,
-        });
-      }
     }
 
     const { password, ...userWithoutPassword } = user;

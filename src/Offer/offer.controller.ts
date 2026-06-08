@@ -24,6 +24,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { FindOffersDto } from './dto/find-offers.dto';
 
 @Controller('offers')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -72,11 +73,11 @@ export class OfferController {
   @HttpCode(HttpStatus.OK)
   async findMyCompanyOffers(
     @Req() req: any,
-    @Query() paginationDto: PaginationDto,
+    @Query() paginationDto: FindOffersDto,
   ) {
     const adminId = req.user.sub;
-    const { page, limit } = paginationDto;
-    return this.offerService.findAllByCompany(adminId, { page, limit });
+    const { page, limit, status } = paginationDto;
+    return this.offerService.findAllByCompany(adminId, { page, limit, status });
   }
 
   /**
