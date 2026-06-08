@@ -830,18 +830,41 @@ export class SessionService {
     const companyIds = companiesBefore.map((id) => Number(id));
     const targetCompanyId = Number(companyId);
 
-    if (!companyIds.includes(targetCompanyId)) {
-      const updatedCompanies = [...companiesBefore, targetCompanyId];
-      companiesAfter = updatedCompanies;
+    // Registrar la fecha de la primera cita del cliente con esta compañía.
+    // Solo se guarda una vez (la PRIMERA cita); citas posteriores no la pisan.
+    const firstAppointments = Array.isArray(client.companyFirstAppointments)
+      ? client.companyFirstAppointments
+      : [];
+    const hasFirstAppointment = firstAppointments.some(
+      (fa) => Number(fa.companyId) === targetCompanyId,
+    );
+    const updatedFirstAppointments = hasFirstAppointment
+      ? firstAppointments
+      : [
+          ...firstAppointments,
+          {
+            companyId: targetCompanyId,
+            firstAppointmentDate: session.startDatetime,
+          },
+        ];
 
+    const isNewCompany = !companyIds.includes(targetCompanyId);
+    const updatedCompanies = isNewCompany
+      ? [...companiesBefore, targetCompanyId]
+      : companiesBefore;
+    companiesAfter = updatedCompanies;
+
+    if (isNewCompany || !hasFirstAppointment) {
       await this.clientRepository.update(client.id, {
         companies: updatedCompanies,
+        companyFirstAppointments: updatedFirstAppointments,
       });
+    }
 
+    if (isNewCompany) {
       wasAlreadyAssociated = false;
       console.log(`✅ Cliente ${client.id} asociado a compañía ${companyId}`);
     } else {
-      companiesAfter = companiesBefore;
       wasAlreadyAssociated = true;
       console.log(
         `ℹ️ Cliente ${client.id} ya estaba asociado a compañía ${companyId}`,
@@ -5382,18 +5405,41 @@ export class SessionService {
     companiesBefore = client.companies || [];
     const targetCompanyId = Number(companyId);
 
-    if (!companiesBefore.includes(targetCompanyId)) {
-      const updatedCompanies = [...companiesBefore, targetCompanyId];
-      companiesAfter = updatedCompanies;
+    // Registrar la fecha de la primera cita del cliente con esta compañía.
+    // Solo se guarda una vez (la PRIMERA cita); citas posteriores no la pisan.
+    const firstAppointments = Array.isArray(client.companyFirstAppointments)
+      ? client.companyFirstAppointments
+      : [];
+    const hasFirstAppointment = firstAppointments.some(
+      (fa) => Number(fa.companyId) === targetCompanyId,
+    );
+    const updatedFirstAppointments = hasFirstAppointment
+      ? firstAppointments
+      : [
+          ...firstAppointments,
+          {
+            companyId: targetCompanyId,
+            firstAppointmentDate: session.startDatetime,
+          },
+        ];
 
+    const isNewCompany = !companiesBefore.includes(targetCompanyId);
+    const updatedCompanies = isNewCompany
+      ? [...companiesBefore, targetCompanyId]
+      : companiesBefore;
+    companiesAfter = updatedCompanies;
+
+    if (isNewCompany || !hasFirstAppointment) {
       await this.clientRepository.update(client.id, {
         companies: updatedCompanies,
+        companyFirstAppointments: updatedFirstAppointments,
       });
+    }
 
+    if (isNewCompany) {
       wasAlreadyAssociated = false;
       console.log(`✅ Cliente ${client.id} asociado a compañía ${companyId}`);
     } else {
-      companiesAfter = companiesBefore;
       wasAlreadyAssociated = true;
       console.log(
         `ℹ️ Cliente ${client.id} ya estaba asociado a compañía ${companyId}`,

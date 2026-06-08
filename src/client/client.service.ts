@@ -228,13 +228,22 @@ export class ClientService {
       });
     }
 
-    // 3.b Filtro por nombre (igual que /workers): name, last_name o concat
+    // 3.b Filtro por nombre: name, last_name, concat o alias por compañía.
+    // El alias se guarda en company_aliases (JSON: [{ companyId, alias }]),
+    // por eso se busca con JSON_SEARCH sobre el path '$[*].alias'.
     if (options.name && options.name.trim() !== '') {
       const searchTerm = `%${options.name.trim()}%`;
       queryBuilder.andWhere(
-        "(client.name LIKE :search OR client.last_name LIKE :search OR CONCAT(client.name, ' ', client.last_name) LIKE :search)",
+        "(client.name LIKE :search OR client.last_name LIKE :search OR CONCAT(client.name, ' ', client.last_name) LIKE :search OR JSON_SEARCH(client.company_aliases, 'one', :search, NULL, '$[*].alias') IS NOT NULL)",
         { search: searchTerm },
       );
+    }
+
+    // 3.c Filtro por estado: '1' = activo, '0' = inactivo, ausente = todos
+    if (options.isActive !== undefined) {
+      queryBuilder.andWhere('client.is_active = :isActive', {
+        isActive: parseInt(options.isActive, 10),
+      });
     }
 
     // 4. Aplicar paginación
