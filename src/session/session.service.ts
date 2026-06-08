@@ -986,6 +986,122 @@ export class SessionService {
   }
 
   /**
+   * Devuelve los rangos OCUPADOS de una compañía en un día concreto, sin
+   * exponer datos personales de otros clientes. Pensado para el rol cliente:
+   * con esta info el front puede bloquear los slots ya tomados.
+   *
+   * Reglas:
+   * - Filtra por `date` (día seleccionado).
+   * - Si llega `companyWorkerId`: devuelve las citas de ese trabajador + las
+   *   citas sin trabajador asignado (nivel company). NO incluye las de otros
+   *   trabajadores (pueden atender en paralelo).
+   * - Si no llega `companyWorkerId`: devuelve las de toda la compañía.
+   * - Incluye citas de cualquier cliente, pero sin nombre ni datos del cliente.
+   * - Excluye detalles cancelados (status 5).
+   * - `startDatetime` se devuelve con la misma convención que el resto de la
+   *   API (la app lee la hora con getUTCHours).
+   */
+  async getAvailability(getAvailabilityDto: {
+    companyId: number;
+    date: string;
+    companyWorkerId?: number;
+  }): Promise<
+    Array<{
+      companyWorkerId: number | null;
+      startDatetime: Date;
+      durationMinutes: number;
+    }>
+  > {
+    const { companyId, date, companyWorkerId } = getAvailabilityDto;
+
+    const company = await this.companyRepository.findOne({
+      where: { id: companyId },
+    });
+    if (!company) {
+      throw new NotFoundException(`Compañía con ID ${companyId} no encontrada`);
+    }
+
+    // company_worker_ids activos de la compañía
+    const companyWorkers = await this.companyWorkerRepository.find({
+      where: { companyId, isActive: 1 },
+      select: ['id'],
+    });
+    const companyWorkerIds = companyWorkers.map((cw) => cw.id);
+
+    // Si se pidió un trabajador concreto, validar que pertenece a la compañía
+    if (companyWorkerId && !companyWorkerIds.includes(companyWorkerId)) {
+      throw new BadRequestException(
+        `El trabajador ${companyWorkerId} no pertenece a la compañía ${companyId}`,
+      );
+    }
+
+    // Rango del día seleccionado (misma convención que el resto de filtros por fecha)
+    const dateStr = date.split('T')[0].split(' ')[0];
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+    const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+    // Se usa getMany() (entidades) en lugar de getRawMany() para que
+    // `startDatetime` se serialice EXACTAMENTE igual que en el resto de la API.
+    const query = this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .leftJoin('offer', 'offer', 'offer.id = detail.offer_id')
+      .where('detail.start_datetime BETWEEN :startOfDay AND :endOfDay', {
+        startOfDay,
+        endOfDay,
+      })
+      .andWhere('detail.status != :cancelledStatus', { cancelledStatus: 5 })
+      .andWhere('detail.start_datetime IS NOT NULL');
+
+    if (companyWorkerId) {
+      // Citas del trabajador pedido + citas sin trabajador asignado (nivel company)
+      query.andWhere(
+        new Brackets((qb) => {
+          qb.where('detail.company_worker_id = :companyWorkerId', {
+            companyWorkerId,
+          }).orWhere(
+            '(detail.company_worker_id IS NULL AND offer.company_id = :companyId)',
+            { companyId },
+          );
+        }),
+      );
+    } else {
+      // Toda la compañía: trabajadores propios + detalles sin trabajador del company
+      if (companyWorkerIds.length === 0) {
+        // Sin trabajadores activos: solo pueden existir detalles a nivel company (ofertas)
+        query.andWhere(
+          '(detail.company_worker_id IS NULL AND offer.company_id = :companyId)',
+          { companyId },
+        );
+      } else {
+        query.andWhere(
+          new Brackets((qb) => {
+            qb.where('detail.company_worker_id IN (:...companyWorkerIds)', {
+              companyWorkerIds,
+            }).orWhere(
+              '(detail.company_worker_id IS NULL AND offer.company_id = :companyId)',
+              { companyId },
+            );
+          }),
+        );
+      }
+    }
+
+    const details = await query
+      .orderBy('detail.start_datetime', 'ASC')
+      .getMany();
+
+    return details.map((detail) => ({
+      companyWorkerId:
+        detail.companyWorkerId !== null && detail.companyWorkerId !== undefined
+          ? Number(detail.companyWorkerId)
+          : null,
+      startDatetime: detail.startDatetime,
+      durationMinutes: Number(detail.totalTime || 0),
+    }));
+  }
+
+  /**
    * Verificar si el trabajador ya tiene una cita que se solape con el horario propuesto.
    * Compara el rango [startDatetime, startDatetime + totalTime] contra los detalles existentes del trabajador.
    * Excluye detalles con status 5 (cancelados) y opcionalmente una sesión específica.
