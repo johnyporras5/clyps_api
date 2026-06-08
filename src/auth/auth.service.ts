@@ -286,7 +286,8 @@ export class AuthService {
         statusCode: HttpStatus.CONFLICT,
         error: 'Conflict',
         code: 'WORKER_ALREADY_EXISTS',
-        message: 'El trabajador ya estaba registrado y verificado en el sistema.',
+        message:
+          'El trabajador ya estaba registrado y verificado en el sistema.',
       });
     } else {
       // ==================== CREAR NUEVO TRABAJADOR ====================
