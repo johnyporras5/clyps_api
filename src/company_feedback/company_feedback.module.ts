@@ -11,6 +11,7 @@ import { Service } from '../service/entities/service.entity';
 import { Worker } from '../worker/entities/worker.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { CommonModule } from '../common/common.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { CommonModule } from '../common/common.module';
       CompanyWorker,
     ]),
     CommonModule,
+    RealtimeModule,
   ],
   providers: [CompanyFeedbackService],
   controllers: [CompanyFeedbackController],

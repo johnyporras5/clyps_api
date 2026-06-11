@@ -28,6 +28,8 @@ import {
   FileUploadService,
   AllowedFolder,
 } from '../common/services/file_upload.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 
 @Injectable()
 export class ServiceService {
@@ -56,7 +58,27 @@ export class ServiceService {
     private workerFeedbackRepository: Repository<WorkerFeedback>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
+    private readonly realtime: RealtimeService,
   ) {}
+
+  /**
+   * Emite un evento de servicio a las rooms company:<id> + company-public:<id>
+   * (CLYP-244). El servicio no contiene datos de cliente → seguro para el canal
+   * público.
+   */
+  private emitServiceEvent(
+    type: string,
+    entityId: number,
+    companyId: number,
+    data: unknown,
+  ): void {
+    this.realtime.emitEntity([companyRoom(companyId), companyPublicRoom(companyId)], {
+      type,
+      entityId,
+      companyId,
+      data,
+    });
+  }
 
   /**
    * Obtener todos los servicios de una compañía con información completa de workers (paginado)
@@ -541,7 +563,9 @@ export class ServiceService {
     const savedService = await this.serviceRepository.save(service);
 
     // 4. Obtener el servicio con información de workers
-    return await this.findOneWithWorkers(savedService.id, adminId);
+    const full = await this.findOneWithWorkers(savedService.id, adminId);
+    this.emitServiceEvent('service.created', full.id, full.companyId, full);
+    return full;
   }
 
   /**
@@ -588,7 +612,9 @@ export class ServiceService {
     await this.serviceRepository.save(service);
 
     // 5. Devolver el servicio actualizado con información de workers
-    return await this.findOneWithWorkers(id, adminId);
+    const full = await this.findOneWithWorkers(id, adminId);
+    this.emitServiceEvent('service.updated', full.id, full.companyId, full);
+    return full;
   }
 
   /**
@@ -637,6 +663,10 @@ export class ServiceService {
     if (result.affected === 0) {
       throw new NotFoundException(`Service with id ${id} not found`);
     }
+
+    this.emitServiceEvent('service.deleted', id, service.companyId, {
+      serviceId: id,
+    });
   }
 
   /**

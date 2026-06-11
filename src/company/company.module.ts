@@ -16,6 +16,7 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.entity';
 import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { SessionDetail } from 'src/session_detail/entities/session_detail.entity
       SessionDetail,
     ]),
     CommonModule,
+    RealtimeModule,
   ],
   providers: [CompanyService],
   controllers: [CompanyController],

@@ -19,6 +19,8 @@ import { SessionDetail } from 'src/session_detail/entities/session_detail.entity
 import { Service } from 'src/service/entities/service.entity';
 import { FileUploadService } from 'src/common/services/file_upload.service';
 import { WorkerFeedbackStatsDto } from 'src/worker/dto/worker-feedback-stats.dto';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom, workerRoom } from '../realtime/rooms';
 
 // Cada feedback trae sus stats individuales en `feedback.worker.stats`. El
 // resultado paginado también incluye `stats` a nivel root: estadísticas
@@ -48,6 +50,7 @@ export class WorkerFeedbackService {
     @InjectRepository(Service)
     private serviceRepository: Repository<Service>,
     private fileUploadService: FileUploadService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async findOne(id: number): Promise<WorkerFeedback> {
@@ -108,7 +111,48 @@ export class WorkerFeedbackService {
       await this.markSessionAsRatedIfOwned(createDto.sessionId, clientId);
     }
 
+    await this.emitReviewCreated(saved);
+
     return saved;
+  }
+
+  /**
+   * Emite review.worker_created con el feedback + stats agregadas recalculadas
+   * del worker, para que las cards de worker/admin se actualicen sin recálculo
+   * en cliente (CLYP-242). Rooms: worker:<companyWorkerId> + company:<companyId>
+   * de cada compañía donde el worker esté asignado.
+   * Best-effort: nunca rompe la creación del feedback.
+   */
+  private async emitReviewCreated(feedback: WorkerFeedback): Promise<void> {
+    try {
+      const stats = await this.computeAggregateStats(
+        this.workerFeedbackRepository
+          .createQueryBuilder('feedback')
+          .where('feedback.workerId = :workerId', {
+            workerId: feedback.workerId,
+          }),
+      );
+
+      // workerId es Worker.id → resolver companyWorkerId + companyId.
+      const companyWorkers = await this.companyWorkerRepository.find({
+        where: { workerId: feedback.workerId },
+      });
+
+      const rooms: string[] = [];
+      for (const cw of companyWorkers) {
+        rooms.push(workerRoom(cw.id));
+        if (cw.companyId) rooms.push(companyRoom(cw.companyId));
+      }
+
+      this.realtime.emitEntity(rooms, {
+        type: 'review.worker_created',
+        entityId: feedback.id,
+        companyId: companyWorkers[0]?.companyId ?? null,
+        data: { feedback, stats },
+      });
+    } catch {
+      // best-effort
+    }
   }
 
   /**

@@ -8,6 +8,7 @@ import { Company } from 'src/company/entities/company.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { CommonModule } from 'src/common/common.module';
 import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
       WorkerFeedback,
     ]),
     CommonModule,
+    RealtimeModule,
   ],
   providers: [WorkerService],
   controllers: [WorkerController],

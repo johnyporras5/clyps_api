@@ -35,6 +35,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       sub: payload.sub,
       email: payload.email,
       userType: payload.userType,
+      // Claims de empresa para tiempo real (CLYP-247). Pueden venir null en
+      // tokens "viejos" emitidos antes de este cambio; el Gateway (CLYP-240)
+      // resuelve ese caso con el fallback a BD.
+      companyId: payload.companyId ?? null,
+      companyWorkerId: payload.companyWorkerId ?? null,
     };
   }
 }

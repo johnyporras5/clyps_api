@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -27,6 +27,7 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.entity';
 import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -63,6 +64,8 @@ import { SessionDetail } from 'src/session_detail/entities/session_detail.entity
     VerificationModule,
     CommonModule,
     CompanyCategoryModule,
+    // forwardRef: RealtimeModule importa AuthModule (Gateway usa AuthService).
+    forwardRef(() => RealtimeModule),
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, TokenBlacklistService, CompanyService],

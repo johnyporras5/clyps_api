@@ -26,11 +26,15 @@ import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
 import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
 import { GetAvailabilityDto } from './dto/get-availability.dto';
+import { SessionRealtimeEmitter } from './session-realtime.emitter';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SessionController {
-  constructor(private readonly sessionService: SessionService) {}
+  constructor(
+    private readonly sessionService: SessionService,
+    private readonly realtimeEmitter: SessionRealtimeEmitter,
+  ) {}
 
   @Post()
   @Roles('adm')
@@ -46,10 +50,12 @@ export class SessionController {
     @Body() createSessionWithDetailDto: CreateSessionWithDetailDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.createSessionWithDetail(
+    const result = await this.sessionService.createSessionWithDetail(
       createSessionWithDetailDto,
       adminId,
     );
+    await this.emitCreatedFrom(result);
+    return result;
   }
 
   /**
@@ -143,12 +149,14 @@ export class SessionController {
     @Body() updateSessionStatusDto: UpdateSessionStatusDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.updateSessionStatus(
+    const result = await this.sessionService.updateSessionStatus(
       +id,
       updateSessionStatusDto,
       adminId,
       'adm',
     );
+    await this.realtimeEmitter.emitStatusChanged(+id);
+    return result;
   }
 
   /**
@@ -164,11 +172,13 @@ export class SessionController {
     @Body() assignWorkersDto: AssignWorkersToSessionDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.assignWorkersToSession(
+    const result = await this.sessionService.assignWorkersToSession(
       +id,
       assignWorkersDto,
       adminId,
     );
+    await this.realtimeEmitter.emitWorkersAssigned(+id, result?.updates ?? []);
+    return result;
   }
 
   @Put('details/:detailId/status')
@@ -180,12 +190,17 @@ export class SessionController {
   ) {
     const userId = req.user?.id || req.user?.sub;
     const userRole = req.user?.userType;
-    return this.sessionService.updateDetailStatus(
+    const result = await this.sessionService.updateDetailStatus(
       +detailId,
       updateDetailStatusDto,
       userId,
       userRole,
     );
+    const sessionId = result?.validation?.sessionId;
+    if (sessionId) {
+      await this.realtimeEmitter.emitStatusChanged(sessionId);
+    }
+    return result;
   }
 
   @Delete(':id')
@@ -212,10 +227,12 @@ export class SessionController {
     @Body() createSessionWithDetailDto: CreateSessionWithDetailDto,
   ) {
     const userId = req.user?.id || req.user?.sub;
-    return this.sessionService.createSessionByClient(
+    const result = await this.sessionService.createSessionByClient(
       createSessionWithDetailDto,
       userId,
     );
+    await this.emitCreatedFrom(result);
+    return result;
   }
 
   @Post(':id/sync-status')
@@ -234,12 +251,14 @@ export class SessionController {
   ) {
     const userId = req.user?.id || req.user?.sub;
     const userRole = req.user?.userType;
-    return this.sessionService.addExtraServicesToSession(
+    const result = await this.sessionService.addExtraServicesToSession(
       +id,
       addExtraServicesDto,
       userId,
       userRole,
     );
+    await this.realtimeEmitter.emitExtraServicesChanged(+id, result?.newTotals);
+    return result;
   }
 
   @Delete(':id/extra-services/:detailId')
@@ -251,12 +270,14 @@ export class SessionController {
   ) {
     const userId = req.user?.id || req.user?.sub;
     const userRole = req.user?.userType;
-    return this.sessionService.removeExtraServiceFromSession(
+    const result = await this.sessionService.removeExtraServiceFromSession(
       +id,
       +detailId,
       userId,
       userRole,
     );
+    await this.realtimeEmitter.emitExtraServicesChanged(+id);
+    return result;
   }
 
   // ============ CANCELACIÓN POR ADMIN ============
@@ -268,7 +289,18 @@ export class SessionController {
     @Body() cancelDto?: CancelSessionDto,
   ) {
     const adminId = req.user?.id || req.user?.sub;
-    return this.sessionService.cancelSession(+id, adminId, 'adm', cancelDto);
+    const result = await this.sessionService.cancelSession(
+      +id,
+      adminId,
+      'adm',
+      cancelDto,
+    );
+    await this.realtimeEmitter.emitCancelled(
+      +id,
+      result?.session?.cancellationReason ?? cancelDto?.reason ?? null,
+      result?.session?.cancelledBy ?? 'adm',
+    );
+    return result;
   }
 
   // ============ CANCELACIÓN POR CLIENTE ============
@@ -280,7 +312,18 @@ export class SessionController {
     @Body() cancelDto?: CancelSessionDto,
   ) {
     const userId = req.user?.id || req.user?.sub;
-    return this.sessionService.cancelSession(+id, userId, 'cli', cancelDto);
+    const result = await this.sessionService.cancelSession(
+      +id,
+      userId,
+      'cli',
+      cancelDto,
+    );
+    await this.realtimeEmitter.emitCancelled(
+      +id,
+      result?.session?.cancellationReason ?? cancelDto?.reason ?? null,
+      result?.session?.cancelledBy ?? 'cli',
+    );
+    return result;
   }
 
   /**
@@ -402,6 +445,17 @@ export class SessionController {
       endDate,
       targetWorkerId,
     );
+  }
+
+  /**
+   * Emite appointment.created SOLO si realmente se creó una cita nueva.
+   * El sessionId se obtiene del primer detalle creado (createdDetails[0]).
+   */
+  private async emitCreatedFrom(result: any): Promise<void> {
+    const sessionId = result?.createdDetails?.[0]?.sessionId;
+    if (sessionId) {
+      await this.realtimeEmitter.emitCreated(sessionId);
+    }
   }
 
   private resolveTargetWorkerId(

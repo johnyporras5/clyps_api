@@ -24,10 +24,19 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { FindAllWorkersDto } from './dto/find-all-workers.dto';
 import { PaginationResult } from '../common/utils/pagination.util';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { RealtimeService } from '../realtime/realtime.service';
+import {
+  companyRoom,
+  workerRoom,
+  companyPublicRoom,
+} from '../realtime/rooms';
 
 @Controller('workers')
 export class WorkerController {
-  constructor(private readonly workerService: WorkerService) {}
+  constructor(
+    private readonly workerService: WorkerService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   // Obtener un worker por ID (cualquier usuario autenticado)
   @Get(':id')
@@ -94,12 +103,63 @@ export class WorkerController {
         'Debe proporcionar al menos un campo para actualizar',
       );
     }
-    return this.workerService.updateWorkerByAdmin(
+    const result = await this.workerService.updateWorkerByAdmin(
       workerId,
       adminId,
       dto,
       photoFile,
     );
+
+    // worker.updated (CLYP-246): toda edición del worker por el admin afecta la
+    // vista de equipo del admin y la selección de providers del cliente.
+    const rosterCompanyId =
+      result.companyWorker?.companyId ?? req.user?.companyId ?? null;
+    if (rosterCompanyId) {
+      this.realtime.emitEntity(
+        [companyRoom(rosterCompanyId), companyPublicRoom(rosterCompanyId)],
+        {
+          type: 'worker.updated',
+          entityId: workerId,
+          companyId: rosterCompanyId,
+          data: result.worker,
+        },
+      );
+    }
+
+    // schedule.worker_updated SOLO si el update incluyó el calendar del worker.
+    // + availability.changed para ese worker (CLYP-245).
+    if (dto.calendar !== undefined) {
+      const companyWorkerId = result.companyWorker?.id;
+      const companyId =
+        result.companyWorker?.companyId ?? req.user?.companyId ?? null;
+      if (companyWorkerId && companyId) {
+        this.realtime.emitEntity(
+          [
+            companyRoom(companyId),
+            workerRoom(companyWorkerId),
+            companyPublicRoom(companyId),
+          ],
+          {
+            type: 'schedule.worker_updated',
+            entityId: companyWorkerId,
+            companyId,
+            data: {
+              companyWorkerId,
+              workerId,
+              calendar: result.companyWorker?.calendar ?? dto.calendar,
+            },
+          },
+        );
+        this.realtime.emitEntity(companyPublicRoom(companyId), {
+          type: 'availability.changed',
+          entityId: companyId,
+          companyId,
+          data: { companyId, date: null, companyWorkerIds: [companyWorkerId] },
+        });
+      }
+    }
+
+    return result;
   }
 
   /**

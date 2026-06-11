@@ -4,9 +4,13 @@ import { ServiceCategoryService } from './service_category.service';
 import { ServiceCategoryController } from './service_category.controller';
 import { ServiceCategory } from './entities/service_category.entity';
 import { Company } from '../company/entities/company.entity';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ServiceCategory, Company])],
+  imports: [
+    TypeOrmModule.forFeature([ServiceCategory, Company]),
+    RealtimeModule,
+  ],
   providers: [ServiceCategoryService],
   controllers: [ServiceCategoryController],
   exports: [ServiceCategoryService],

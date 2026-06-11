@@ -19,6 +19,8 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { WorkerFeedbackStatsDto } from '../worker/dto/worker-feedback-stats.dto';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom } from '../realtime/rooms';
 
 // El campo `stats` ahora va anidado dentro de cada feedback.company (un card
 // por compañía). El resultado paginado mantiene la forma estándar.
@@ -51,6 +53,7 @@ export class CompanyFeedbackService {
     private workerRepository: Repository<Worker>,
 
     private fileUploadService: FileUploadService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async findOne(id: number): Promise<CompanyFeedback> {
@@ -103,7 +106,30 @@ export class CompanyFeedbackService {
       await this.markSessionAsRatedIfOwned(createDto.sessionId, clientId);
     }
 
+    await this.emitReviewCreated(saved);
+
     return saved;
+  }
+
+  /**
+   * Emite review.company_created con el feedback + stats agregadas recalculadas
+   * de la compañía (CLYP-242). Room: company:<companyId>.
+   * Best-effort: nunca rompe la creación del feedback.
+   */
+  private async emitReviewCreated(feedback: CompanyFeedback): Promise<void> {
+    try {
+      const statsMap = await this.computeStatsByCompany([feedback.companyId]);
+      const stats = statsMap.get(feedback.companyId) ?? this.emptyStats();
+
+      this.realtime.emitEntity(companyRoom(feedback.companyId), {
+        type: 'review.company_created',
+        entityId: feedback.id,
+        companyId: feedback.companyId,
+        data: { feedback, stats },
+      });
+    } catch {
+      // best-effort
+    }
   }
 
   /**

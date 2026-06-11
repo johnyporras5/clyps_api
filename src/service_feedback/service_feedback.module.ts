@@ -7,11 +7,13 @@ import { Service } from '../service/entities/service.entity';
 import { Company } from '../company/entities/company.entity';
 import { Client } from '../client/entities/client.entity';
 import { CommonModule } from '../common/common.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ServiceFeedback, Service, Company, Client]),
     CommonModule,
+    RealtimeModule,
   ],
   providers: [ServiceFeedbackService],
   controllers: [ServiceFeedbackController],
