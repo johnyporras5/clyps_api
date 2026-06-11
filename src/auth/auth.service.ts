@@ -33,6 +33,8 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 
 @Injectable()
 export class AuthService {
@@ -54,7 +56,45 @@ export class AuthService {
     private tokenBlacklistService: TokenBlacklistService,
     private fileUploadService: FileUploadService,
     private readonly companyCategoryService: CompanyCategoryService,
+    private readonly realtime: RealtimeService,
   ) {}
+
+  // ==================== CLAIMS PARA TIEMPO REAL (CLYP-247) ====================
+  /**
+   * Resuelve los claims de empresa que viajan en el JWT y que el Gateway de
+   * WebSockets usa para meter el socket en sus rooms sin tocar la BD:
+   *   - admin  (adm): companyId (su empresa). Sin companyWorkerId.
+   *   - worker (wrk): companyId + companyWorkerId (su fila en company_worker).
+   *   - client (cli): ninguno (pertenece a varias empresas; null/null).
+   *
+   * Este mismo método es la fuente de verdad para el fallback del Gateway
+   * (estrategia (b) de CLYP-247): si llega un token "viejo" sin estos claims,
+   * el handshake los puede resolver llamando aquí con el user del token.
+   */
+  async buildCompanyClaims(user: Pick<User, 'id' | 'userType'>): Promise<{
+    companyId: number | null;
+    companyWorkerId: number | null;
+  }> {
+    if (user.userType === 'adm') {
+      const company = await this.companyRepository.findOne({
+        where: { userId: user.id },
+      });
+      return { companyId: company?.id ?? null, companyWorkerId: null };
+    }
+
+    if (user.userType === 'wrk') {
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { userId: user.id },
+      });
+      return {
+        companyId: companyWorker?.companyId ?? null,
+        companyWorkerId: companyWorker?.id ?? null,
+      };
+    }
+
+    // client: multi-empresa → sin companyId único.
+    return { companyId: null, companyWorkerId: null };
+  }
 
   // ==================== MÉTODOS DE REGISTRO ====================
   /**
@@ -158,10 +198,13 @@ export class AuthService {
     await this.sendVerificationCode(savedUser.email);
 
     // Generar token JWT
+    const companyClaims = await this.buildCompanyClaims(savedUser);
     const payload = {
       email: savedUser.email,
       sub: savedUser.id,
       userType: savedUser.userType,
+      companyId: companyClaims.companyId,
+      companyWorkerId: companyClaims.companyWorkerId,
     };
 
     const access_token = this.jwtService.sign(payload);
@@ -433,6 +476,26 @@ export class AuthService {
       message,
       user: userWithoutPassword,
     };
+
+    // worker.added (CLYP-246): notifica el alta del worker al roster de la
+    // empresa (afecta la vista de equipo del admin y la selección de providers
+    // del cliente). Best-effort: no rompe el registro.
+    try {
+      const companyWorker = await this.companyWorkerRepository.findOne({
+        where: { workerId: worker.id, companyId: company.id },
+      });
+      this.realtime.emitEntity(
+        [companyRoom(company.id), companyPublicRoom(company.id)],
+        {
+          type: 'worker.added',
+          entityId: worker.id,
+          companyId: company.id,
+          data: { worker, companyWorkerId: companyWorker?.id ?? null },
+        },
+      );
+    } catch {
+      // best-effort
+    }
 
     return response;
   }
@@ -945,6 +1008,19 @@ export class AuthService {
       ? `Cliente existente vinculado a la compañía '${company.name}' exitosamente.`
       : `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'. Las credenciales fueron enviadas a su correo.`;
 
+    // client.added (CLYP-246): notifica el alta/vinculación del cliente al canal
+    // de la empresa. Best-effort.
+    try {
+      this.realtime.emitEntity(companyRoom(company.id), {
+        type: 'client.added',
+        entityId: client.id,
+        companyId: company.id,
+        data: client,
+      });
+    } catch {
+      // best-effort
+    }
+
     return { message, user: userWithoutPassword, generatedPassword };
   }
 
@@ -1021,10 +1097,13 @@ export class AuthService {
     user.lastLogin = new Date();
     await this.userRepository.save(user);
 
+    const companyClaims = await this.buildCompanyClaims(user);
     const payload = {
       email: user.email,
       sub: user.id,
       userType: user.userType,
+      companyId: companyClaims.companyId,
+      companyWorkerId: companyClaims.companyWorkerId,
     };
 
     const access_token = this.jwtService.sign(payload);

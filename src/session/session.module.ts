@@ -17,6 +17,8 @@ import { IAPrompts } from '../IAprompts/entities/ia_prompts.entity';
 import { ChatGPTService } from '../chatgpt/chatgpt.service';
 import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
 import { Offer } from 'src/Offer/entities/offer.entity';
+import { RealtimeModule } from '../realtime/realtime.module';
+import { SessionRealtimeEmitter } from './session-realtime.emitter';
 
 @Module({
   imports: [
@@ -34,12 +36,14 @@ import { Offer } from 'src/Offer/entities/offer.entity';
       ServiceOffer,
     ]),
     EmailModule,
+    RealtimeModule,
   ],
   providers: [
     SessionService,
     IAPromptsService,
     ChatGPTService,
     FileUploadService,
+    SessionRealtimeEmitter,
   ],
   controllers: [SessionController],
   exports: [SessionService],

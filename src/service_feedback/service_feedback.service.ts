@@ -15,6 +15,8 @@ import { Client } from '../client/entities/client.entity';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { WorkerFeedbackStatsDto } from '../worker/dto/worker-feedback-stats.dto';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom } from '../realtime/rooms';
 
 export type ServiceFeedbackPaginatedResult =
   PaginationResult<ServiceFeedback> & {
@@ -31,6 +33,7 @@ export class ServiceFeedbackService {
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
     private fileUploadService: FileUploadService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async findOne(id: number): Promise<ServiceFeedback> {
@@ -84,7 +87,35 @@ export class ServiceFeedbackService {
     };
 
     const feedback = this.serviceFeedbackRepository.create(data);
-    return await this.serviceFeedbackRepository.save(feedback);
+    const saved = await this.serviceFeedbackRepository.save(feedback);
+
+    await this.emitReviewCreated(saved, service.companyId ?? null);
+
+    return saved;
+  }
+
+  /**
+   * Emite review.service_created con el feedback + stats agregadas recalculadas
+   * del servicio (CLYP-242). Room: company:<companyId> de la compañía dueña del
+   * servicio. Best-effort: nunca rompe la creación del feedback.
+   */
+  private async emitReviewCreated(
+    feedback: ServiceFeedback,
+    companyId: number | null,
+  ): Promise<void> {
+    try {
+      const stats = await this.computeStatsForServiceIds([feedback.serviceId]);
+      const rooms = companyId ? [companyRoom(companyId)] : [];
+
+      this.realtime.emitEntity(rooms, {
+        type: 'review.service_created',
+        entityId: feedback.id,
+        companyId,
+        data: { feedback, stats },
+      });
+    } catch {
+      // best-effort
+    }
   }
 
   async update(

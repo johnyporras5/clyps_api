@@ -7,6 +7,7 @@ import { GeneratedModules } from './generated-modules';
 import { AuthModule } from './auth/auth.module';
 import { CleanupTask } from './tasks/cleanup.task';
 import { AutoCancelSessionsTask } from './tasks/auto-cancel-sessions.task';
+import { OfferExpirationTask } from './tasks/offer-expiration.task';
 import { VerificationModule } from './verification/verification.module';
 //import { SeedsModule } from './database/seeds/seeds.module';
 import { join } from 'path';
@@ -20,6 +21,7 @@ import { ServiceCategoryModule } from './service_category/service_category.modul
 import { CompanyCategoryModule } from './company_category/company_category.module';
 import { OfferModule } from './Offer/offer.module';
 import { ReportsModule } from './reports/reports.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -110,8 +112,14 @@ import { ReportsModule } from './reports/reports.module';
     OfferModule,
     ReportsModule,
     SessionModule,
+    RealtimeModule,
   ],
   controllers: [AppController],
-  providers: [AppService, CleanupTask, AutoCancelSessionsTask],
+  providers: [
+    AppService,
+    CleanupTask,
+    AutoCancelSessionsTask,
+    OfferExpirationTask,
+  ],
 })
 export class AppModule {}

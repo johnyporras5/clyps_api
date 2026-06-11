@@ -13,6 +13,7 @@ import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.
 import { CompanyFeedback } from 'src/company_feedback/entities/company_feedback.entity';
 import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
 import { CommonModule } from 'src/common/common.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { CommonModule } from 'src/common/common.module';
       WorkerFeedback,
     ]),
     CommonModule,
+    RealtimeModule,
   ],
   providers: [ServiceService],
   controllers: [ServiceController],

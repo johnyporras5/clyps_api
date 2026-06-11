@@ -19,6 +19,8 @@ import {
   PaginationOptions,
   PaginationResult,
 } from '../common/utils/pagination.util';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 
 @Injectable()
 export class OfferService {
@@ -33,7 +35,30 @@ export class OfferService {
     private serviceRepository: Repository<Service>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
+    private readonly realtime: RealtimeService,
   ) {}
+
+  /**
+   * Emite un evento de oferta a las rooms company:<id> + company-public:<id>
+   * (CLYP-243). La offer no contiene datos de cliente, por lo que es seguro
+   * emitir al canal público. Best-effort: no rompe la mutación.
+   */
+  private emitOfferEvent(
+    type: string,
+    entityId: number,
+    companyId: number,
+    data: unknown,
+  ): void {
+    this.realtime.emitEntity(
+      [companyRoom(companyId), companyPublicRoom(companyId)],
+      {
+        type,
+        entityId,
+        companyId,
+        data,
+      },
+    );
+  }
 
   async findAllByCompany(
     adminId: number,
@@ -136,7 +161,9 @@ export class OfferService {
     });
 
     const savedOffer = await this.offerRepository.save(offer);
-    return this.findOne(savedOffer.id, adminId);
+    const full = await this.findOne(savedOffer.id, adminId);
+    this.emitOfferEvent('offer.created', full.id, full.companyId, full);
+    return full;
   }
 
   async update(
@@ -199,7 +226,9 @@ export class OfferService {
     }
 
     await this.offerRepository.save(offer);
-    return this.findOne(id, adminId);
+    const full = await this.findOne(id, adminId);
+    this.emitOfferEvent('offer.updated', full.id, full.companyId, full);
+    return full;
   }
 
   async remove(id: number, adminId: number): Promise<void> {
@@ -212,11 +241,14 @@ export class OfferService {
         `Offer with id ${id} not found or you don't have permission`,
       );
     }
+    const offerId = offer.id;
+    const companyId = offer.companyId;
     // Eliminar logo del almacenamiento si existe
     if (offer.logo) {
       await this.fileUploadService.deleteFile('offer_logo', offer.logo);
     }
     await this.offerRepository.remove(offer);
+    this.emitOfferEvent('offer.deleted', offerId, companyId, { offerId });
   }
 
   async setStatus(id: number, status: number, adminId: number): Promise<any> {
@@ -231,7 +263,14 @@ export class OfferService {
     }
     offer.status = status;
     await this.offerRepository.save(offer);
-    return this.findOne(id, adminId);
+    const full = await this.findOne(id, adminId);
+    this.emitOfferEvent(
+      status === 1 ? 'offer.activated' : 'offer.deactivated',
+      full.id,
+      full.companyId,
+      full,
+    );
+    return full;
   }
 
   /**
@@ -364,6 +403,71 @@ export class OfferService {
     }
 
     return Array.from(offerMap.values());
+  }
+
+  /**
+   * Job de vencimiento/activación por tiempo (CLYP-243). Notify-only: NO cambia
+   * el status en BD. Corre a diario y, usando una ventana de un día, emite:
+   *  - offer.expired   → ofertas activas cuyo endDate cayó AYER (acaban de vencer).
+   *  - offer.activated → ofertas activas cuyo startDate es HOY y siguen vigentes.
+   * El status queda como switch manual del admin; la vigencia es por fecha.
+   * No requiere acción de usuario. Best-effort por evento.
+   */
+  async processScheduledOfferTransitions(): Promise<{
+    expired: number;
+    activated: number;
+  }> {
+    const now = new Date();
+    const today = this.toDateStr(now);
+    const yesterday = this.toDateStr(
+      new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1),
+    );
+    const tomorrow = this.toDateStr(
+      new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1),
+    );
+
+    // VENCIDAS: status activo y endDate == ayer (rango [ayer, hoy)).
+    const expiredOffers = await this.offerRepository
+      .createQueryBuilder('offer')
+      .where('offer.status = 1')
+      .andWhere('offer.endDate >= :yesterday', { yesterday })
+      .andWhere('offer.endDate < :today', { today })
+      .getMany();
+
+    for (const offer of expiredOffers) {
+      this.emitOfferEvent('offer.expired', offer.id, offer.companyId, {
+        offerId: offer.id,
+      });
+    }
+
+    // ACTIVADAS: status activo, startDate == hoy (rango [hoy, mañana)) y aún
+    // vigente (endDate >= hoy). Payload con la offer completa.
+    const activatedOffers = await this.offerRepository
+      .createQueryBuilder('offer')
+      .leftJoinAndSelect('offer.serviceOffers', 'so')
+      .leftJoinAndSelect('so.service', 'service')
+      .where('offer.status = 1')
+      .andWhere('offer.startDate >= :today', { today })
+      .andWhere('offer.startDate < :tomorrow', { tomorrow })
+      .andWhere('offer.endDate >= :today', { today })
+      .getMany();
+
+    for (const offer of activatedOffers) {
+      this.emitOfferEvent(
+        'offer.activated',
+        offer.id,
+        offer.companyId,
+        this.addLogoUrl(offer),
+      );
+    }
+
+    return { expired: expiredOffers.length, activated: activatedOffers.length };
+  }
+
+  /** Formatea una fecha a 'YYYY-MM-DD' usando componentes locales. */
+  private toDateStr(d: Date): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
 
   // ==================== MÉTODOS PRIVADOS ====================

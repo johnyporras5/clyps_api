@@ -28,11 +28,16 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Client } from '../client/entities/client.entity';
 import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 
 @Controller('companys')
 @UseGuards(JwtAuthGuard)
 export class CompanyController {
-  constructor(private readonly companyService: CompanyService) {}
+  constructor(
+    private readonly companyService: CompanyService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   @Get()
   async findAll(
@@ -104,11 +109,35 @@ export class CompanyController {
     @UploadedFile() logoFile?: Express.Multer.File,
   ): Promise<CompanyWithLogoUrl> {
     const userId = req.user.sub;
-    return this.companyService.updateAdminProfile(
+    const result = await this.companyService.updateAdminProfile(
       userId,
       updateAdminProfileDto,
       logoFile,
     );
+
+    // schedule.company_updated SOLO si el update incluyó el horario
+    // (calendarDetail = schedule + exceptions). Evita ruido en updates de
+    // logo/datos. + availability.changed para la empresa (CLYP-245).
+    if (updateAdminProfileDto.calendarDetail !== undefined) {
+      const companyId = result.id;
+      this.realtime.emitEntity(
+        [companyRoom(companyId), companyPublicRoom(companyId)],
+        {
+          type: 'schedule.company_updated',
+          entityId: companyId,
+          companyId,
+          data: { companyId, calendarDetail: result.calendarDetail },
+        },
+      );
+      this.realtime.emitEntity(companyPublicRoom(companyId), {
+        type: 'availability.changed',
+        entityId: companyId,
+        companyId,
+        data: { companyId, date: null, companyWorkerIds: [] },
+      });
+    }
+
+    return result;
   }
 
   /**
@@ -122,10 +151,26 @@ export class CompanyController {
     @Req() req: any,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
-    return this.companyService.temporarilyRemoveWorkerFromCompany(
+    const result = await this.companyService.temporarilyRemoveWorkerFromCompany(
       adminId,
       companyWorkerId,
     );
+
+    // worker.removed (CLYP-246): baja temporal del worker del roster.
+    const companyId = req.user?.companyId;
+    if (companyId) {
+      this.realtime.emitEntity(
+        [companyRoom(companyId), companyPublicRoom(companyId)],
+        {
+          type: 'worker.removed',
+          entityId: companyWorkerId,
+          companyId,
+          data: { companyWorkerId },
+        },
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -186,10 +231,23 @@ export class CompanyController {
     @Req() req: any,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
-    return this.companyService.temporarilyRemoveClientFromCompany(
+    const result = await this.companyService.temporarilyRemoveClientFromCompany(
       adminId,
       clientId,
     );
+
+    // client.removed (CLYP-246): baja temporal del cliente. Room: company.
+    const companyId = req.user?.companyId;
+    if (companyId) {
+      this.realtime.emitEntity(companyRoom(companyId), {
+        type: 'client.removed',
+        entityId: clientId,
+        companyId,
+        data: { clientId },
+      });
+    }
+
+    return result;
   }
 
   /**
