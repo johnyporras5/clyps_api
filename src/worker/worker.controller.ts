@@ -25,11 +25,7 @@ import { FindAllWorkersDto } from './dto/find-all-workers.dto';
 import { PaginationResult } from '../common/utils/pagination.util';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { RealtimeService } from '../realtime/realtime.service';
-import {
-  companyRoom,
-  workerRoom,
-  companyPublicRoom,
-} from '../realtime/rooms';
+import { companyRoom, workerRoom, companyPublicRoom } from '../realtime/rooms';
 
 @Controller('workers')
 export class WorkerController {

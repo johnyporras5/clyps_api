@@ -49,12 +49,15 @@ export class OfferService {
     companyId: number,
     data: unknown,
   ): void {
-    this.realtime.emitEntity([companyRoom(companyId), companyPublicRoom(companyId)], {
-      type,
-      entityId,
-      companyId,
-      data,
-    });
+    this.realtime.emitEntity(
+      [companyRoom(companyId), companyPublicRoom(companyId)],
+      {
+        type,
+        entityId,
+        companyId,
+        data,
+      },
+    );
   }
 
   async findAllByCompany(

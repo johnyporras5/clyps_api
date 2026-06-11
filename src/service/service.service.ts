@@ -72,12 +72,15 @@ export class ServiceService {
     companyId: number,
     data: unknown,
   ): void {
-    this.realtime.emitEntity([companyRoom(companyId), companyPublicRoom(companyId)], {
-      type,
-      entityId,
-      companyId,
-      data,
-    });
+    this.realtime.emitEntity(
+      [companyRoom(companyId), companyPublicRoom(companyId)],
+      {
+        type,
+        entityId,
+        companyId,
+        data,
+      },
+    );
   }
 
   /**
