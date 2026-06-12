@@ -19,6 +19,9 @@ import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
 import { Offer } from 'src/Offer/entities/offer.entity';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
+import { AppointmentBeforeAfter } from './entities/appointment-before-after.entity';
+import { AppointmentBeforeAfterController } from './appointment-before-after.controller';
+import { AppointmentBeforeAfterService } from './appointment-before-after.service';
 
 @Module({
   imports: [
@@ -34,6 +37,7 @@ import { SessionRealtimeEmitter } from './session-realtime.emitter';
       IAPrompts,
       Offer,
       ServiceOffer,
+      AppointmentBeforeAfter,
     ]),
     EmailModule,
     RealtimeModule,
@@ -44,8 +48,9 @@ import { SessionRealtimeEmitter } from './session-realtime.emitter';
     ChatGPTService,
     FileUploadService,
     SessionRealtimeEmitter,
+    AppointmentBeforeAfterService,
   ],
-  controllers: [SessionController],
+  controllers: [SessionController, AppointmentBeforeAfterController],
   exports: [SessionService],
 })
 export class SessionModule {}

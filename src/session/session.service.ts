@@ -4036,6 +4036,140 @@ export class SessionService {
    * @param userRole Rol del usuario ('adm', 'wrk', 'cli')
    * @returns Sesión enriquecida, detalles y resumen de estados
    */
+  /**
+   * Valida que el usuario autenticado tenga acceso a la sesión indicada y
+   * devuelve la sesión.
+   *
+   * Reglas:
+   *  - Lectura (requireWrite = false): cliente dueño de la cita, worker con al
+   *    menos un servicio asignado, o admin de la compañía dueña de la cita.
+   *  - Escritura (requireWrite = true): solo worker asignado o admin de la
+   *    compañía. El cliente nunca puede escribir.
+   *
+   * Lanza NotFoundException si la sesión no existe y ForbiddenException si el
+   * usuario no cuenta con el permiso requerido.
+   */
+  async validateSessionAccess(
+    sessionId: number,
+    userId: number,
+    userRole: 'adm' | 'wrk' | 'cli',
+    requireWrite = false,
+  ): Promise<Session> {
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+    }
+
+    // El cliente solo tiene permisos de lectura.
+    if (requireWrite && userRole === 'cli') {
+      throw new ForbiddenException(
+        'No tienes permiso para modificar esta sesión',
+      );
+    }
+
+    if (userRole === 'adm') {
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId },
+      });
+      if (!adminCompany) {
+        throw new ForbiddenException(
+          'El administrador no tiene una compañía asignada',
+        );
+      }
+
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId },
+      });
+
+      let sessionBelongsToAdmin = false;
+      for (const detail of sessionDetails) {
+        if (detail.companyWorkerId == null) continue;
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: detail.companyWorkerId },
+          relations: ['company'],
+        });
+        if (companyWorker?.company?.id === adminCompany.id) {
+          sessionBelongsToAdmin = true;
+          break;
+        }
+      }
+      if (!sessionBelongsToAdmin) {
+        throw new ForbiddenException(
+          'No tienes permiso para acceder a esta sesión',
+        );
+      }
+    } else if (userRole === 'wrk') {
+      const worker = await this.workerRepository.findOne({
+        where: { userId },
+      });
+      if (!worker) {
+        throw new ForbiddenException('Trabajador no encontrado');
+      }
+
+      const companyWorkers = await this.companyWorkerRepository.find({
+        where: { workerId: worker.id, isActive: 1 },
+      });
+      if (companyWorkers.length === 0) {
+        throw new ForbiddenException('No estás activo en ninguna compañía');
+      }
+
+      const companyWorkerIds = companyWorkers.map((cw) => cw.id);
+      const assignedDetail = await this.sessionDetailRepository.findOne({
+        where: { sessionId, companyWorkerId: In(companyWorkerIds) },
+      });
+      if (!assignedDetail) {
+        throw new ForbiddenException(
+          'No tienes servicios asignados en esta sesión',
+        );
+      }
+    } else if (userRole === 'cli') {
+      const client = await this.clientRepository.findOne({
+        where: { userId },
+      });
+      if (!client) {
+        throw new ForbiddenException('Cliente no encontrado');
+      }
+      if (session.clientId !== client.id) {
+        throw new ForbiddenException(
+          'No puedes acceder a una cita que no te pertenece',
+        );
+      }
+    } else {
+      throw new ForbiddenException('Rol de usuario no válido');
+    }
+
+    return session;
+  }
+
+  /**
+   * Resuelve el nombre legible de quien sube una foto (worker → nombre del
+   * trabajador, admin → nombre del responsable/empresa) a partir del usuario
+   * autenticado. Devuelve `{ id, name }` listo para `uploadedBy`.
+   */
+  async resolveUploaderInfo(
+    userId: number,
+    userRole: 'adm' | 'wrk' | 'cli',
+  ): Promise<{ id: string; name: string }> {
+    let name = '';
+    if (userRole === 'wrk') {
+      const worker = await this.workerRepository.findOne({
+        where: { userId },
+        select: ['id', 'name'],
+      });
+      name = (worker?.name || '').trim();
+    } else if (userRole === 'adm') {
+      const company = await this.companyRepository.findOne({
+        where: { userId },
+        select: ['id', 'name', 'managerName'],
+      });
+      name = (company?.managerName || company?.name || '').trim();
+    }
+    return { id: String(userId), name };
+  }
+
   async getSessionDetailsWithValidation(
     sessionId: number,
     userId: number,
