@@ -23,33 +23,49 @@ export class AppointmentBeforeAfter {
   sessionId: number;
 
   // ----- Slot "before" -----
-  @Column({ name: 'before_picture', length: 255, nullable: true })
+  @Column({
+    name: 'before_picture',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   beforePicture: string | null;
 
   @Column({ name: 'before_uploaded_at', type: 'datetime', nullable: true })
   beforeUploadedAt: Date | null;
 
-  @Column({ name: 'before_uploaded_by_id', nullable: true })
+  @Column({ name: 'before_uploaded_by_id', type: 'int', nullable: true })
   beforeUploadedById: number | null;
 
   @Column({
     name: 'before_uploaded_by_name',
+    type: 'varchar',
     length: 145,
     nullable: true,
   })
   beforeUploadedByName: string | null;
 
   // ----- Slot "after" -----
-  @Column({ name: 'after_picture', length: 255, nullable: true })
+  @Column({
+    name: 'after_picture',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   afterPicture: string | null;
 
   @Column({ name: 'after_uploaded_at', type: 'datetime', nullable: true })
   afterUploadedAt: Date | null;
 
-  @Column({ name: 'after_uploaded_by_id', nullable: true })
+  @Column({ name: 'after_uploaded_by_id', type: 'int', nullable: true })
   afterUploadedById: number | null;
 
-  @Column({ name: 'after_uploaded_by_name', length: 145, nullable: true })
+  @Column({
+    name: 'after_uploaded_by_name',
+    type: 'varchar',
+    length: 145,
+    nullable: true,
+  })
   afterUploadedByName: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
