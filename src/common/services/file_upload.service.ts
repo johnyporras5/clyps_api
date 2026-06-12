@@ -17,6 +17,7 @@ export type AllowedFolder =
   | 'company_logo'
   | 'worker_photo'
   | 'portfolio'
+  | 'before_after'
   | 'offer_logo';
 
 export interface FileInfo {
@@ -39,6 +40,7 @@ export class FileUploadService {
     'company_logo',
     'worker_photo',
     'portfolio',
+    'before_after',
     'offer_logo',
   ];
 
