@@ -8,6 +8,7 @@ import { NotificationService } from './notification.service';
 import { NotificationController } from './notification.controller';
 import { FcmTokenController } from './fcm-token.controller';
 import { NotificationRealtimeEmitter } from './notification-realtime.emitter';
+import { FirebaseService } from './firebase.service';
 
 @Module({
   imports: [
@@ -17,7 +18,7 @@ import { NotificationRealtimeEmitter } from './notification-realtime.emitter';
     // RealtimeService para emitir `notification.created` a la room del usuario.
     RealtimeModule,
   ],
-  providers: [NotificationService, NotificationRealtimeEmitter],
+  providers: [NotificationService, NotificationRealtimeEmitter, FirebaseService],
   controllers: [NotificationController, FcmTokenController],
   // NotificationService se exportará para que createNotification (§4) lo use
   // desde los services de dominio.
