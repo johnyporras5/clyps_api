@@ -22,6 +22,7 @@ import { CompanyCategoryModule } from './company_category/company_category.modul
 import { OfferModule } from './Offer/offer.module';
 import { ReportsModule } from './reports/reports.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
@@ -113,6 +114,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     ReportsModule,
     SessionModule,
     RealtimeModule,
+    NotificationModule,
   ],
   controllers: [AppController],
   providers: [
