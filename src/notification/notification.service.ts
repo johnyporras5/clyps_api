@@ -7,6 +7,7 @@ import {
   NotificationType,
 } from './entities/notification.entity';
 import { FcmToken, FcmPlatform } from './entities/fcm-token.entity';
+import { NotificationReminder } from './entities/notification-reminder.entity';
 import { NotificationRealtimeEmitter } from './notification-realtime.emitter';
 import { FirebaseService } from './firebase.service';
 
@@ -38,9 +39,27 @@ export class NotificationService {
     private readonly notificationRepo: Repository<Notification>,
     @InjectRepository(FcmToken)
     private readonly fcmTokenRepo: Repository<FcmToken>,
+    @InjectRepository(NotificationReminder)
+    private readonly reminderRepo: Repository<NotificationReminder>,
     private readonly realtimeEmitter: NotificationRealtimeEmitter,
     private readonly firebase: FirebaseService,
   ) {}
+
+  // ==================== IDEMPOTENCIA CRON (§7) ====================
+
+  /**
+   * Reclama un recordatorio de forma atómica (CLYP-263 / §7). Hace INSERT IGNORE
+   * sobre notification_reminders; devuelve true si lo reclamó (→ debe enviarse)
+   * o false si ya existía (→ omitir). Race-safe ante crons solapados.
+   */
+  async claimReminder(type: string, referenceId: number): Promise<boolean> {
+    const result = await this.reminderRepo.query(
+      'INSERT IGNORE INTO `notification_reminders` (`type`, `reference_id`, `sent_at`) VALUES (?, ?, NOW(6))',
+      [type, referenceId],
+    );
+    // mysql2: affectedRows = 1 si insertó, 0 si era duplicado (ignorado).
+    return (result?.affectedRows ?? 0) > 0;
+  }
 
   // ==================== CREATE (función central §4) ====================
 

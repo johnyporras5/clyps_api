@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { Notification } from './entities/notification.entity';
 import { FcmToken } from './entities/fcm-token.entity';
+import { NotificationReminder } from './entities/notification-reminder.entity';
 import { NotificationService } from './notification.service';
 import { NotificationController } from './notification.controller';
 import { FcmTokenController } from './fcm-token.controller';
@@ -12,7 +13,7 @@ import { FirebaseService } from './firebase.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Notification, FcmToken]),
+    TypeOrmModule.forFeature([Notification, FcmToken, NotificationReminder]),
     // JwtAuthGuard depende del JwtModule/strategy que expone AuthModule.
     AuthModule,
     // RealtimeService para emitir `notification.created` a la room del usuario.

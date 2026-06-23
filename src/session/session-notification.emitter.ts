@@ -172,6 +172,89 @@ export class SessionNotificationEmitter {
     });
   }
 
+  // ==================== RECORDATORIOS CRON (§7) ====================
+
+  /** Recordatorio cliente 24h antes. */
+  remindClient24h(sessionId: number): Promise<boolean> {
+    return this.remind(
+      sessionId,
+      'reminder_client_24h',
+      'client',
+      (s) => `Mañana tienes una cita en ${s.companyName}`,
+    );
+  }
+
+  /** Recordatorio cliente 2h antes. */
+  remindClient2h(sessionId: number): Promise<boolean> {
+    return this.remind(
+      sessionId,
+      'reminder_client_2h',
+      'client',
+      (s) => `Tu cita en ${s.companyName} es en 2 horas`,
+    );
+  }
+
+  /** Recordatorio admin + worker 1h antes. */
+  remindStaff1h(sessionId: number): Promise<boolean> {
+    return this.remind(
+      sessionId,
+      'reminder_staff_1h',
+      'staff',
+      (s) => `Cita con ${this.clientName(s)} en 1 hora`,
+    );
+  }
+
+  /** Recordatorio admin + worker a la hora de la cita. */
+  remindStaffNow(sessionId: number): Promise<boolean> {
+    return this.remind(
+      sessionId,
+      'reminder_staff_now',
+      'staff',
+      (s) => `Es hora de la cita con ${this.clientName(s)}`,
+    );
+  }
+
+  /**
+   * Núcleo de los recordatorios: idempotente (claim por type+sessionId) y
+   * best-effort. Devuelve true si envió, false si ya estaba enviado o falló.
+   */
+  private async remind(
+    sessionId: number,
+    type: string,
+    audience: 'client' | 'staff',
+    bodyFn: (s: SessionResponse) => string,
+  ): Promise<boolean> {
+    try {
+      // Idempotencia: solo el primero que reclama envía.
+      const claimed = await this.notifications.claimReminder(type, sessionId);
+      if (!claimed) return false;
+
+      const session = await this.sessionService.findOneWithDetails(sessionId);
+      const { adminUserId, workerUserIds, clientUserId } =
+        await this.resolveRecipients(session);
+
+      const recipients =
+        audience === 'client'
+          ? [clientUserId]
+          : [adminUserId, ...workerUserIds];
+
+      await this.notifications.createNotificationForUsers(recipients, {
+        type: 'reminder',
+        title:
+          audience === 'client'
+            ? 'Recordatorio de tu cita'
+            : 'Recordatorio de cita',
+        body: bodyFn(session),
+        data: buildNavigationData('appointment', session.id, session.companyId),
+      });
+      return true;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'desconocido';
+      this.logger.warn(`No se pudo enviar recordatorio "${type}": ${reason}`);
+      return false;
+    }
+  }
+
   // ==================== HELPERS ====================
 
   /** Resuelve los userId de admin, workers y cliente de una cita. */
