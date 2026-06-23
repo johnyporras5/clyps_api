@@ -38,6 +38,24 @@ interface ClientActivity {
   registeredMs: number | null;
 }
 
+/** Filas crudas (getRawMany) de los reportes; los agregados llegan como string. */
+interface IncomeAggRawRow {
+  totalIncome: string | null;
+  servicesCount: string;
+}
+interface ServiceIncomeRawRow extends IncomeAggRawRow {
+  serviceId: string;
+}
+interface WorkerIncomeRawRow extends IncomeAggRawRow {
+  companyWorkerId: string;
+}
+interface ClientApptRawRow {
+  sessionId: string;
+  clientId: string;
+  startDatetime: string | Date | null;
+  sessionDatetime: string | Date | null;
+}
+
 @Injectable()
 export class ReportsService {
   private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'worker_photo';
@@ -122,7 +140,7 @@ export class ReportsService {
       .andWhere('sd.status = :paid', { paid: 4 })
       .groupBy('sd.service_id')
       .orderBy('totalIncome', 'DESC')
-      .getRawMany();
+      .getRawMany<ServiceIncomeRawRow>();
 
     // 4. Calcular totales generales
     const totalIncome = allResults.reduce(
@@ -242,7 +260,7 @@ export class ReportsService {
       .andWhere('sd.status = :paid', { paid: 4 })
       .groupBy('sd.company_worker_id')
       .orderBy('totalIncome', 'DESC')
-      .getRawMany();
+      .getRawMany<WorkerIncomeRawRow>();
 
     // 5. Calcular totales generales
     const totalIncome = allResults.reduce(
@@ -460,7 +478,7 @@ export class ReportsService {
         cancelled: this.CANCELLED_SESSION_STATUS,
       })
       .groupBy('s.id')
-      .getRawMany();
+      .getRawMany<ClientApptRawRow>();
 
     // Agrupar timestamps de citas por cliente.
     const apptsByClient = new Map<number, number[]>();

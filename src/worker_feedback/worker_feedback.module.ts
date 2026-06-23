@@ -12,6 +12,7 @@ import { SessionDetail } from 'src/session_detail/entities/session_detail.entity
 import { Service } from 'src/service/entities/service.entity';
 import { CommonModule } from 'src/common/common.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     ]),
     CommonModule,
     RealtimeModule,
+    NotificationModule,
   ],
   providers: [WorkerFeedbackService],
   controllers: [WorkerFeedbackController],

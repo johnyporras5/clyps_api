@@ -7,6 +7,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
+import { Client } from '../../client/entities/client.entity';
 
 @Entity('company_feedback')
 export class CompanyFeedback {
@@ -31,7 +32,7 @@ export class CompanyFeedback {
   @Column({ name: 'company_id', type: 'int' })
   companyId: number;
 
-  client?: any;
+  client?: Client & { pictureUrl?: string };
 
   @Column({ name: 'client_id', type: 'int', nullable: true })
   clientId?: number | null;

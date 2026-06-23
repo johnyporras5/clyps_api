@@ -8,12 +8,14 @@ import { Company } from '../company/entities/company.entity';
 import { Client } from '../client/entities/client.entity';
 import { CommonModule } from '../common/common.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ServiceFeedback, Service, Company, Client]),
     CommonModule,
     RealtimeModule,
+    NotificationModule,
   ],
   providers: [ServiceFeedbackService],
   controllers: [ServiceFeedbackController],

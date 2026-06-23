@@ -18,6 +18,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { OfferService } from './offer.service';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -42,7 +43,7 @@ export class OfferController {
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
   async findActiveServiceOffers(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Query() paginationDto: PaginationDto,
   ) {
     const adminId = req.user.sub;
@@ -72,12 +73,17 @@ export class OfferController {
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
   async findMyCompanyOffers(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Query() paginationDto: FindOffersDto,
   ) {
     const adminId = req.user.sub;
-    const { page, limit, status } = paginationDto;
-    return this.offerService.findAllByCompany(adminId, { page, limit, status });
+    const { page, limit, status, name } = paginationDto;
+    return this.offerService.findAllByCompany(adminId, {
+      page,
+      limit,
+      status,
+      name,
+    });
   }
 
   /**
@@ -100,7 +106,7 @@ export class OfferController {
   @HttpCode(HttpStatus.OK)
   async findOneMyCompany(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     const adminId = req.user.sub;
     return this.offerService.findOne(id, adminId);
@@ -116,7 +122,7 @@ export class OfferController {
   @HttpCode(HttpStatus.CREATED)
   async createForMyCompany(
     @Body() createOfferDto: CreateOfferDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @UploadedFile() logoFile?: Express.Multer.File,
   ) {
     const adminId = req.user.sub;
@@ -134,7 +140,7 @@ export class OfferController {
   async updateMyCompany(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateOfferDto: UpdateOfferDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @UploadedFile() logoFile?: Express.Multer.File,
   ) {
     const adminId = req.user.sub;
@@ -148,7 +154,10 @@ export class OfferController {
   @Patch('my-company/:id/activate')
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
-  async activate(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  async activate(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const adminId = req.user.sub;
     return this.offerService.setStatus(id, 1, adminId);
   }
@@ -160,9 +169,25 @@ export class OfferController {
   @Patch('my-company/:id/inactivate')
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
-  async inactivate(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  async inactivate(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const adminId = req.user.sub;
     return this.offerService.setStatus(id, 0, adminId);
+  }
+
+  /**
+   * [PRUEBA] Disparar manualmente las transiciones programadas de ofertas
+   * (vencer activas con end_date pasado, activar las que inician hoy).
+   * Equivale a ejecutar el cron diario al instante. Útil para QA con Postman.
+   * POST /offers/process-transitions
+   */
+  @Post('process-transitions')
+  @Roles('adm')
+  @HttpCode(HttpStatus.OK)
+  async processTransitions() {
+    return this.offerService.processScheduledOfferTransitions();
   }
 
   /**
@@ -174,7 +199,7 @@ export class OfferController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async removeMyCompany(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     const adminId = req.user.sub;
     return this.offerService.remove(id, adminId);

@@ -13,6 +13,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { CompanyCategoryService } from './company_category.service';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateCompanyCategoryDto } from './dto/create-company-category.dto';
 import { UpdateCompanyCategoryDto } from './dto/update-company-category.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -28,18 +29,24 @@ export class CompanyCategoryController {
   ) {}
 
   @Get()
-  findAll(@Req() req: any) {
+  findAll(@Req() req: AuthenticatedRequest) {
     return this.companyCategoryService.findAllByCompany(req.user.sub);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
     return this.companyCategoryService.findOne(id, req.user.sub);
   }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  create(@Body() dto: CreateCompanyCategoryDto, @Req() req: any) {
+  create(
+    @Body() dto: CreateCompanyCategoryDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
     return this.companyCategoryService.create(dto, req.user.sub);
   }
 
@@ -47,14 +54,17 @@ export class CompanyCategoryController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateCompanyCategoryDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     return this.companyCategoryService.update(id, dto, req.user.sub);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
     return this.companyCategoryService.remove(id, req.user.sub);
   }
 }

@@ -12,6 +12,9 @@ import { MoreThan } from 'typeorm';
 
 @Injectable()
 export class VerificationService {
+  /** Máximo de intentos fallidos permitidos por código antes de invalidarlo. */
+  private readonly MAX_VERIFICATION_ATTEMPTS = 5;
+
   constructor(
     @InjectRepository(UserVerificationCodes)
     private verificationCodeRepository: Repository<UserVerificationCodes>,
@@ -117,7 +120,7 @@ export class VerificationService {
     await this.verificationCodeRepository.save(verificationCode);
 
     console.log(
-      `📧 Código de ${codeType} ${code} generado para usuario ${userId}, expira a las ${expiresAt.toLocaleTimeString()}`,
+      `📧 Código de ${codeType} generado para usuario ${userId}, expira a las ${expiresAt.toLocaleTimeString()}`,
     );
 
     return code;
@@ -150,10 +153,11 @@ export class VerificationService {
       throw new NotFoundException('Usuario no encontrado');
     }
 
+    // Buscamos el código ACTIVO del usuario (sin filtrar por el valor recibido)
+    // para poder contabilizar intentos fallidos contra esa misma fila.
     const verificationCode = await this.verificationCodeRepository.findOne({
       where: {
         userId: user.id,
-        code,
         codeType, // ✅ Filtrar por tipo de código
         used: 0,
       },
@@ -161,21 +165,6 @@ export class VerificationService {
     });
 
     if (!verificationCode) {
-      // Verificar si existe un código expirado para este usuario
-      const expiredCode = await this.verificationCodeRepository.findOne({
-        where: {
-          userId: user.id,
-          code,
-          codeType,
-        },
-        withDeleted: true,
-      });
-
-      if (expiredCode) {
-        await this.verificationCodeRepository.delete(expiredCode.id);
-        throw new BadRequestException('El código ha expirado');
-      }
-
       throw new BadRequestException('Código inválido');
     }
 
@@ -190,6 +179,20 @@ export class VerificationService {
       throw new BadRequestException('El código ha expirado');
     }
 
+    // El código recibido no coincide: contar el intento fallido y, si se supera
+    // el máximo, invalidar el código para frenar la fuerza bruta.
+    if (verificationCode.code !== code) {
+      verificationCode.attempts += 1;
+      if (verificationCode.attempts >= this.MAX_VERIFICATION_ATTEMPTS) {
+        await this.verificationCodeRepository.delete(verificationCode.id);
+        throw new BadRequestException(
+          'Demasiados intentos fallidos. Solicita un nuevo código.',
+        );
+      }
+      await this.verificationCodeRepository.save(verificationCode);
+      throw new BadRequestException('Código inválido');
+    }
+
     // Marcar como usado y eliminar
     verificationCode.used = 1;
     await this.verificationCodeRepository.save(verificationCode);
@@ -202,7 +205,7 @@ export class VerificationService {
     }
 
     console.log(
-      `✅ Código de ${codeType} verificado exitosamente para ${email}`,
+      `✅ Código de ${codeType} verificado exitosamente para usuario ${user.id}`,
     );
     return true;
   }
@@ -215,10 +218,11 @@ export class VerificationService {
     code: string,
     codeType: string,
   ): Promise<boolean> {
+    // Buscamos el código ACTIVO del usuario (sin filtrar por el valor recibido)
+    // para poder contabilizar intentos fallidos contra esa misma fila.
     const verificationCode = await this.verificationCodeRepository.findOne({
       where: {
         userId,
-        code,
         codeType, // ✅ Filtrar por tipo de código
         used: 0,
       },
@@ -233,6 +237,18 @@ export class VerificationService {
     const now = new Date();
     if (now > verificationCode.expiresAt) {
       await this.verificationCodeRepository.delete(verificationCode.id);
+      return false;
+    }
+
+    // El código recibido no coincide: contar el intento fallido y, si se supera
+    // el máximo, invalidar el código para frenar la fuerza bruta.
+    if (verificationCode.code !== code) {
+      verificationCode.attempts += 1;
+      if (verificationCode.attempts >= this.MAX_VERIFICATION_ATTEMPTS) {
+        await this.verificationCodeRepository.delete(verificationCode.id);
+      } else {
+        await this.verificationCodeRepository.save(verificationCode);
+      }
       return false;
     }
 

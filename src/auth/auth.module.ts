@@ -52,9 +52,15 @@ import { RealtimeModule } from '../realtime/realtime.module';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET') || 'clypsSecretKey',
+        // Sin fallback: si falta JWT_SECRET la app debe fallar al arrancar,
+        // nunca arrancar con un secreto predecible.
+        secret: configService.getOrThrow<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: configService.get('JWT_EXPIRES_IN') || '24h',
+          // Acepta JWT_EXPIRATION (.env.example) o JWT_EXPIRES_IN (.env actual).
+          expiresIn:
+            configService.get('JWT_EXPIRATION') ??
+            configService.get('JWT_EXPIRES_IN') ??
+            '24h',
         },
       }),
       inject: [ConfigService],

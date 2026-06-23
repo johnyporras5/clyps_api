@@ -6,7 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder, ObjectLiteral } from 'typeorm';
 import { CompanyWorker } from './entities/company_worker.entity';
 import { Company } from '../company/entities/company.entity';
 import { CreateCompanyWorkerDto } from './dto/create-company_worker.dto';
@@ -25,6 +25,30 @@ import {
   FileUploadService,
   AllowedFolder,
 } from '../common/services/file_upload.service';
+
+/** Fila cruda (getRawMany) del listado de trabajadores antes de formatear. */
+interface WorkerListRawRow {
+  companyWorkerId: number;
+  workerId: number;
+  fullName: string;
+  picture: string;
+  averageRating: string;
+  totalReviews: string;
+  startDate: Date;
+  endDate: Date;
+  isActive: number;
+  temporarilyDeleted: number;
+  permanentlyDeleted: number;
+}
+
+interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
+}
 
 @Injectable()
 export class CompanyWorkerService {
@@ -413,7 +437,7 @@ export class CompanyWorkerService {
     };
 
     // 6. Paginar los resultados
-    const paginatedResult = await this.paginateQueryBuilder<WorkerList>(
+    const paginatedResult = await this.paginateQueryBuilder<WorkerListRawRow>(
       queryBuilder,
       paginationOptions,
       company.id,
@@ -422,33 +446,31 @@ export class CompanyWorkerService {
     );
 
     // 7. Formatear los datos y construir las URLs completas
-    const formattedData: WorkerList[] = paginatedResult.data.map(
-      (result: any) => {
-        // Obtener la URL completa de la imagen
-        let pictureURL = '';
-        if (result.picture) {
-          pictureURL = this.fileUploadService.getFileUrl(
-            this.WORKER_PHOTO_FOLDER,
-            result.picture,
-          );
-        }
+    const formattedData: WorkerList[] = paginatedResult.data.map((result) => {
+      // Obtener la URL completa de la imagen
+      let pictureURL = '';
+      if (result.picture) {
+        pictureURL = this.fileUploadService.getFileUrl(
+          this.WORKER_PHOTO_FOLDER,
+          result.picture,
+        );
+      }
 
-        return {
-          companyWorkerId: result.companyWorkerId,
-          workerId: result.workerId,
-          fullName: result.fullName,
-          picture: result.picture, // Nombre original del archivo
-          pictureURL: pictureURL, // URL completa
-          averageRating: parseFloat(result.averageRating).toFixed(1),
-          totalReviews: parseInt(result.totalReviews) || 0,
-          startDate: result.startDate,
-          endDate: result.endDate,
-          isActive: result.isActive,
-          temporarilyDeleted: result.temporarilyDeleted,
-          permanentlyDeleted: result.permanentlyDeleted,
-        };
-      },
-    );
+      return {
+        companyWorkerId: result.companyWorkerId,
+        workerId: result.workerId,
+        fullName: result.fullName,
+        picture: result.picture, // Nombre original del archivo
+        pictureURL: pictureURL, // URL completa
+        averageRating: parseFloat(result.averageRating).toFixed(1),
+        totalReviews: parseInt(result.totalReviews) || 0,
+        startDate: result.startDate,
+        endDate: result.endDate,
+        isActive: result.isActive,
+        temporarilyDeleted: result.temporarilyDeleted,
+        permanentlyDeleted: result.permanentlyDeleted,
+      };
+    });
 
     return {
       data: formattedData,
@@ -459,13 +481,13 @@ export class CompanyWorkerService {
   /**
    * Función auxiliar para paginar un QueryBuilder (corregida)
    */
-  private async paginateQueryBuilder<T>(
-    queryBuilder: any,
+  private async paginateQueryBuilder<T extends ObjectLiteral>(
+    queryBuilder: SelectQueryBuilder<ObjectLiteral>,
     options: PaginationOptions,
     companyId: number,
     name?: string,
     isActive?: string,
-  ): Promise<{ data: T[]; meta: any }> {
+  ): Promise<{ data: T[]; meta: PaginationMeta }> {
     const { page, limit } = options;
     const skip = (page - 1) * limit;
 
@@ -473,7 +495,7 @@ export class CompanyWorkerService {
     // NOTA: usamos offset/limit (no skip/take) porque el query usa GROUP BY +
     // getRawMany(). skip/take aplica paginación vía subquery sobre la entidad
     // y no respeta el LIMIT en queries raw con grouping.
-    const data = await queryBuilder.offset(skip).limit(limit).getRawMany();
+    const data = await queryBuilder.offset(skip).limit(limit).getRawMany<T>();
 
     // 2. Crear una consulta de conteo separada
     const countQueryBuilder = this.workerRepository
@@ -501,7 +523,7 @@ export class CompanyWorkerService {
     // Contar trabajadores únicos
     const totalResult = await countQueryBuilder
       .select('COUNT(DISTINCT worker.id)', 'count')
-      .getRawOne();
+      .getRawOne<{ count: string }>();
 
     const total = totalResult ? parseInt(totalResult.count, 10) : 0;
 
@@ -510,7 +532,7 @@ export class CompanyWorkerService {
     const hasPrev = page > 1;
 
     return {
-      data: data as T[],
+      data: data,
       meta: {
         page,
         limit,

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull, MoreThanOrEqual } from 'typeorm'; // ✅ Agregar IsNull y MoreThanOrEqual
 import { JwtService } from '@nestjs/jwt';
 import * as jwt from 'jsonwebtoken';
+import { createHash } from 'crypto';
 import { BlacklistedToken } from '../entities/blacklisted_token.entity';
 import { ConfigService } from '@nestjs/config';
 
@@ -16,6 +17,14 @@ export class TokenBlacklistService {
   ) {}
 
   /**
+   * Calcula el hash SHA-256 de un token. Nunca almacenamos el JWT completo en
+   * texto plano: si la tabla se filtra, los hashes no son reutilizables.
+   */
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  /**
    * Agregar token a la blacklist
    */
   async addToBlacklist(
@@ -23,6 +32,8 @@ export class TokenBlacklistService {
     userId?: number,
     reason?: string,
   ): Promise<BlacklistedToken> {
+    // Guardamos el hash del token, nunca el token en texto plano.
+    const tokenHash = this.hashToken(token);
     try {
       // Decodificar el token para obtener su expiración
       const decoded = this.jwtService.decode(token);
@@ -32,17 +43,17 @@ export class TokenBlacklistService {
 
       // Crear registro en blacklist
       const blacklistedToken = this.blacklistedTokenRepository.create({
-        token,
+        token: tokenHash,
         expiresAt,
         userId,
         reason: reason || 'logout',
       });
 
       return await this.blacklistedTokenRepository.save(blacklistedToken);
-    } catch (error) {
+    } catch {
       // Si no se puede decodificar, usar expiración por defecto
       const blacklistedToken = this.blacklistedTokenRepository.create({
-        token,
+        token: tokenHash,
         expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 horas por defecto
         userId,
         reason: reason || 'logout',
@@ -58,7 +69,7 @@ export class TokenBlacklistService {
   async isTokenBlacklisted(token: string): Promise<boolean> {
     const found = await this.blacklistedTokenRepository.findOne({
       where: {
-        token,
+        token: this.hashToken(token),
         clearedAt: IsNull(), // ✅ Cambiar null por IsNull()
       },
     });
@@ -136,7 +147,7 @@ export class TokenBlacklistService {
     try {
       const secret = this.configService.get('JWT_SECRET');
       return jwt.verify(token, secret);
-    } catch (error) {
+    } catch {
       return this.jwtService.decode(token);
     }
   }

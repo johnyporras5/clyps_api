@@ -1,13 +1,6 @@
 import { CompanyFeedback } from '../../company_feedback/entities/company_feedback.entity';
 import { CalendarCompany } from '../../calendar_company/entities/calendar-company.entity';
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  PrimaryColumn,
-  Column,
-  OneToMany,
-  UpdateDateColumn,
-} from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
 import { ServiceCategory } from '../../service_category/entities/service_category.entity';
 import { CompanyCategory } from '../../company_category/entities/company_category.entity';
 

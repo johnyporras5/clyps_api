@@ -1,9 +1,7 @@
 import {
   Entity,
   PrimaryGeneratedColumn,
-  PrimaryColumn,
   Column,
-  CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
 
@@ -63,6 +61,16 @@ export class Session {
 
   @Column({ name: 'status', nullable: true })
   status: number;
+
+  /**
+   * Confirmación de asistencia del cliente (CLYP-264 / popup desde recordatorio).
+   * 0 = sin responder, 1 = confirma asistencia, 2 = no asistirá.
+   */
+  @Column({ name: 'attendance_status', type: 'tinyint', default: 0 })
+  attendanceStatus: number;
+
+  @Column({ name: 'attendance_responded_at', type: 'datetime', nullable: true })
+  attendanceRespondedAt: Date | null;
 
   @Column({ name: 'description', type: 'text', nullable: true })
   description: string;

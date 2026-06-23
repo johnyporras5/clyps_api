@@ -19,6 +19,7 @@ import {
   CompanyFeedbackPaginatedResult,
 } from './company_feedback.service';
 import { CompanyFeedback } from './entities/company_feedback.entity';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateCompanyFeedbackDto } from './dto/create-company_feedback.dto';
 import { UpdateCompanyFeedbackDto } from './dto/update-company_feedback.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -41,7 +42,7 @@ export class CompanyFeedbackController {
   async createForCompany(
     @Param('companyId', ParseIntPipe) companyId: number,
     @Body() createDto: CreateCompanyFeedbackDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<CompanyFeedback> {
     const clientId = req.user?.sub;
     return this.companyFeedbackService.create(createDto, companyId, clientId);
@@ -54,7 +55,7 @@ export class CompanyFeedbackController {
   @HttpCode(HttpStatus.OK)
   async findByCompany(
     @Query() paginationDto: PaginationDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<CompanyFeedbackPaginatedResult> {
     const userId = req.user?.sub; // ID del usuario autenticado (JWT)
     if (!userId) {
@@ -87,7 +88,7 @@ export class CompanyFeedbackController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateDto: UpdateCompanyFeedbackDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<CompanyFeedback> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;
@@ -106,7 +107,7 @@ export class CompanyFeedbackController {
   @HttpCode(HttpStatus.OK)
   async remove(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string }> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;

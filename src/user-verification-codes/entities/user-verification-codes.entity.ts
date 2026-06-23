@@ -25,6 +25,9 @@ export class UserVerificationCodes {
   @Column({ name: 'used', type: 'tinyint', default: 0 })
   used: number; // 0 = false, 1 = true
 
+  @Column({ name: 'attempts', type: 'int', default: 0 })
+  attempts: number; // Intentos fallidos de verificación contra este código
+
   @Column({
     name: 'code_type',
     type: 'varchar',

@@ -1,11 +1,4 @@
-import {
-  IsNotEmpty,
-  IsOptional,
-  IsEmail,
-  IsString,
-  IsJSON,
-  IsNumber,
-} from 'class-validator';
+import { IsNotEmpty, IsOptional, IsJSON, IsNumber } from 'class-validator';
 
 export class CreateCompanyWorkerDto {
   @IsNotEmpty()

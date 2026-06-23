@@ -19,6 +19,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { PortfolioPicturesService } from './portfolio_pictures.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 
 @Controller('portfolio-pictures')
 @UseGuards(JwtAuthGuard)
@@ -30,7 +31,10 @@ export class PortfolioPicturesController {
    */
   @Post()
   @UseInterceptors(FileInterceptor('picture'))
-  async create(@UploadedFile() file: Express.Multer.File, @Request() req) {
+  async create(
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req: AuthenticatedRequest,
+  ) {
     const userId = req.user.sub; // JWT `sub` = user.id (no worker.id)
     return this.service.create(file, userId);
   }
@@ -40,7 +44,7 @@ export class PortfolioPicturesController {
    */
   @Get()
   async findAllMyPictures(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query() paginationDto: PaginationDto,
   ) {
     const userId = req.user.sub;
@@ -51,7 +55,10 @@ export class PortfolioPicturesController {
    * Obtener una imagen específica del trabajador autenticado
    */
   @Get(':id')
-  async findOne(@Request() req, @Param('id', ParseIntPipe) id: number) {
+  async findOne(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     const userId = req.user.sub;
     return this.service.findOne(id, userId);
   }
@@ -63,7 +70,7 @@ export class PortfolioPicturesController {
   @UseInterceptors(FileInterceptor('picture'))
   async update(
     @UploadedFile() file: Express.Multer.File,
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
   ) {
     const userId = req.user.sub;
@@ -75,7 +82,10 @@ export class PortfolioPicturesController {
    */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Request() req, @Param('id', ParseIntPipe) id: number) {
+  async remove(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     const userId = req.user.sub;
     await this.service.remove(id, userId);
   }

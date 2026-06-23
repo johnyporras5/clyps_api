@@ -71,7 +71,9 @@ export class WorkerService {
     const userWithoutPassword = this.excludePasswordFromUser(worker.user);
     const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
 
-    const companyWorkerWhere: any = { workerId: id };
+    const companyWorkerWhere: { workerId: number; companyId?: number } = {
+      workerId: id,
+    };
     if (userType === 'adm' && userId) {
       const adminCompany = await this.companyRepository.findOne({
         where: { userId },
@@ -454,7 +456,7 @@ export class WorkerService {
         )
       : '';
 
-    const { password, ...userWithoutPassword } = updatedWorker.user as any;
+    const { password: _, ...userWithoutPassword } = updatedWorker.user as any;
 
     return {
       worker: { ...updatedWorker, user: userWithoutPassword, photoUrl },
@@ -482,7 +484,7 @@ export class WorkerService {
     }
 
     // Crear un nuevo objeto con todas las propiedades excepto password
-    const { password, ...userWithoutPassword } = user;
+    const { password: _, ...userWithoutPassword } = user;
 
     return userWithoutPassword;
   }
