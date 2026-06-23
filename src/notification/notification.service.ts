@@ -61,6 +61,30 @@ export class NotificationService {
     return (result?.affectedRows ?? 0) > 0;
   }
 
+  /**
+   * Variante RECURRENTE de claim (CLYP-264): permite reenviar el mismo
+   * recordatorio si la última vez fue hace más de `intervalDays` días. Útil para
+   * "1 mes sin citas", que debe poder repetirse si el cliente sigue inactivo.
+   * Devuelve true si corresponde enviar (y actualiza sent_at).
+   */
+  async claimRecurringReminder(
+    type: string,
+    referenceId: number,
+    intervalDays: number,
+  ): Promise<boolean> {
+    const recent = await this.reminderRepo.query(
+      'SELECT 1 FROM `notification_reminders` WHERE `type` = ? AND `reference_id` = ? AND `sent_at` > (NOW(6) - INTERVAL ? DAY) LIMIT 1',
+      [type, referenceId, intervalDays],
+    );
+    if (recent.length > 0) return false; // enviado recientemente
+
+    await this.reminderRepo.query(
+      'INSERT INTO `notification_reminders` (`type`, `reference_id`, `sent_at`) VALUES (?, ?, NOW(6)) ON DUPLICATE KEY UPDATE `sent_at` = NOW(6)',
+      [type, referenceId],
+    );
+    return true;
+  }
+
   // ==================== CREATE (función central §4) ====================
 
   /**
@@ -158,7 +182,8 @@ export class NotificationService {
         data: this.stringifyValues(data),
         android: { priority: 'high' },
         apns: { headers: { 'apns-priority': '10' } },
-        webpush: { fcmOptions: { link: '/' } },
+        // Deep-link: el SW del navegador abre la ruta según `data` (CLYP-264).
+        webpush: { fcmOptions: { link: this.buildWebLink(data) } },
       });
 
       await this.handleInvalidTokens(tokens, response);
@@ -195,6 +220,27 @@ export class NotificationService {
     if (invalid.length > 0) {
       await this.fcmTokenRepo.delete(invalid.map((token) => ({ token })));
       this.logger.log(`Eliminados ${invalid.length} token(s) FCM inválido(s)`);
+    }
+  }
+
+  /**
+   * Ruta a abrir en web push según `data` (CLYP-264 / opcional). Espeja el mapa
+   * de navegación de la app (§5). Las rutas son del front web — confirmar/ajustar
+   * con el equipo de web si difieren.
+   */
+  private buildWebLink(data: NotificationData | null): string {
+    if (!data) return '/';
+    switch (data.type) {
+      case 'appointment':
+      case 'reminder':
+      case 'assignment':
+        return data.entityId ? `/appointments/${data.entityId}` : '/appointments';
+      case 'offer':
+        return '/offers';
+      case 'review':
+        return '/reviews';
+      default:
+        return '/';
     }
   }
 
@@ -261,6 +307,12 @@ export class NotificationService {
       notif.read = true;
       await this.notificationRepo.save(notif);
     }
+    // Sync de "leído" entre dispositivos del usuario (best-effort).
+    try {
+      this.realtimeEmitter.emitRead(userId, id);
+    } catch {
+      /* best-effort */
+    }
     return { success: true };
   }
 
@@ -270,6 +322,11 @@ export class NotificationService {
       { userId, read: false },
       { read: true },
     );
+    try {
+      this.realtimeEmitter.emitReadAll(userId);
+    } catch {
+      /* best-effort */
+    }
     return { success: true, updated: result.affected ?? 0 };
   }
 

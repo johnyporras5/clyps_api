@@ -14,6 +14,8 @@ import { CompanyFeedback } from 'src/company_feedback/entities/company_feedback.
 import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
 import { CommonModule } from 'src/common/common.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { NotificationModule } from '../notification/notification.module';
+import { ServiceNotificationEmitter } from './service-notification.emitter';
 
 @Module({
   imports: [
@@ -31,8 +33,9 @@ import { RealtimeModule } from '../realtime/realtime.module';
     ]),
     CommonModule,
     RealtimeModule,
+    NotificationModule,
   ],
-  providers: [ServiceService],
+  providers: [ServiceService, ServiceNotificationEmitter],
   controllers: [ServiceController],
   exports: [ServiceService],
 })

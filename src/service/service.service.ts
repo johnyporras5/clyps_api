@@ -29,6 +29,7 @@ import {
   AllowedFolder,
 } from '../common/services/file_upload.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { ServiceNotificationEmitter } from './service-notification.emitter';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 
 @Injectable()
@@ -59,6 +60,7 @@ export class ServiceService {
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
     private readonly realtime: RealtimeService,
+    private readonly serviceNotifications: ServiceNotificationEmitter,
   ) {}
 
   /**
@@ -568,6 +570,13 @@ export class ServiceService {
     // 4. Obtener el servicio con información de workers
     const full = await this.findOneWithWorkers(savedService.id, adminId);
     this.emitServiceEvent('service.created', full.id, full.companyId, full);
+    // Notificar a los workers asignados al crear (todos son nuevos).
+    await this.serviceNotifications.notifyAssigned(
+      full.id,
+      full.name,
+      (createServiceDto.workers || []).map((w) => w.id),
+      adminId,
+    );
     return full;
   }
 
@@ -610,6 +619,11 @@ export class ServiceService {
       );
     }
 
+    // workers asignados ANTES de actualizar (para detectar los nuevos).
+    const previousWorkerIds = new Set(
+      (service.workers || []).map((w) => w.id),
+    );
+
     // 4. Actualizar el servicio
     Object.assign(service, updateServiceDto);
     await this.serviceRepository.save(service);
@@ -617,6 +631,18 @@ export class ServiceService {
     // 5. Devolver el servicio actualizado con información de workers
     const full = await this.findOneWithWorkers(id, adminId);
     this.emitServiceEvent('service.updated', full.id, full.companyId, full);
+    // Notificar SOLO a los workers recién agregados (si se enviaron workers).
+    if (updateServiceDto.workers) {
+      const added = updateServiceDto.workers
+        .map((w) => w.id)
+        .filter((wid) => !previousWorkerIds.has(wid));
+      await this.serviceNotifications.notifyAssigned(
+        full.id,
+        full.name,
+        added,
+        adminId,
+      );
+    }
     return full;
   }
 

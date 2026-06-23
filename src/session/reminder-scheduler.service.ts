@@ -63,8 +63,8 @@ export class ReminderSchedulerService {
   // ==================== 1 MES SIN CITAS ====================
 
   /**
-   * Clientes sin citas en ≥30 días → "¡Te extrañamos!". Idempotente por cliente
-   * (claim). En v1 se envía una sola vez por cliente.
+   * Clientes sin citas en ≥30 días → "¡Te extrañamos!". Recurrente: se puede
+   * repetir como máximo una vez cada 30 días mientras el cliente siga inactivo.
    */
   @Cron(CronExpression.EVERY_DAY_AT_9AM)
   async inactiveClientsReminder(): Promise<void> {
@@ -80,9 +80,11 @@ export class ReminderSchedulerService {
         );
 
       for (const r of rows) {
-        const claimed = await this.notifications.claimReminder(
+        // Recurrente: puede repetirse si el cliente sigue inactivo (cada 30 días).
+        const claimed = await this.notifications.claimRecurringReminder(
           'no_appointments_30d',
           r.clientId,
+          30,
         );
         if (!claimed) continue;
         await this.notifications.createNotification(r.uid, {

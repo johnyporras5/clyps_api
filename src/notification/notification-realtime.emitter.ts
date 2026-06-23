@@ -24,4 +24,20 @@ export class NotificationRealtimeEmitter {
       notification,
     );
   }
+
+  /**
+   * Sync de "leído" entre dispositivos (CLYP-264 / opcional). Avisa a TODAS las
+   * sesiones del usuario que una notificación se marcó como leída, para que el
+   * badge baje en tiempo real sin esperar al refresco.
+   */
+  emitRead(userId: number, notificationId: number): void {
+    this.realtime.emitToRooms(userRoom(userId), 'notification.read', {
+      id: notificationId,
+    });
+  }
+
+  /** Sync de "marcar todas como leídas" entre dispositivos. */
+  emitReadAll(userId: number): void {
+    this.realtime.emitToRooms(userRoom(userId), 'notification.read_all', {});
+  }
 }
