@@ -6565,6 +6565,37 @@ export class SessionService {
    * @param userRole Rol del usuario: 'adm' o 'cli'
    * @param cancelDto Opcional: motivo de cancelación
    */
+  /**
+   * El cliente confirma (o rechaza) su asistencia a la cita, desde el popup del
+   * recordatorio (CLYP-264). Valida que la cita sea del cliente autenticado.
+   * attendanceStatus: 1 = confirma, 2 = no asistirá.
+   */
+  async confirmAttendance(
+    sessionId: number,
+    userId: number,
+    attending: boolean,
+  ): Promise<{ success: true; attendanceStatus: number }> {
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      throw new NotFoundException(`Cita con ID ${sessionId} no encontrada`);
+    }
+
+    const client = await this.clientRepository.findOne({
+      where: { id: session.clientId },
+    });
+    if (!client || client.userId !== userId) {
+      throw new ForbiddenException('Esta cita no te pertenece');
+    }
+
+    session.attendanceStatus = attending ? 1 : 2;
+    session.attendanceRespondedAt = new Date();
+    await this.sessionRepository.save(session);
+
+    return { success: true, attendanceStatus: session.attendanceStatus };
+  }
+
   async cancelSession(
     sessionId: number,
     userId: number,

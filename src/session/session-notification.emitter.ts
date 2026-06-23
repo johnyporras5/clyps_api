@@ -172,6 +172,38 @@ export class SessionNotificationEmitter {
     });
   }
 
+  /**
+   * El cliente respondió a la confirmación de asistencia → avisa a admin + workers
+   * (− actor cliente). CLYP-264 (popup de asistencia).
+   */
+  async notifyAttendanceResponse(
+    sessionId: number,
+    attending: boolean,
+    actorUserId?: number,
+  ): Promise<void> {
+    await this.safe('appointment.attendance', async () => {
+      const session = await this.sessionService.findOneWithDetails(sessionId);
+      const { adminUserId, workerUserIds } =
+        await this.resolveRecipients(session);
+      const cliente = this.clientName(session);
+      await this.notifications.createNotificationForUsers(
+        this.exclude([adminUserId, ...workerUserIds], actorUserId),
+        {
+          type: 'appointment',
+          title: 'Confirmación de asistencia',
+          body: attending
+            ? `${cliente} confirmó su asistencia`
+            : `${cliente} no asistirá a su cita`,
+          data: buildNavigationData(
+            'appointment',
+            session.id,
+            session.companyId,
+          ),
+        },
+      );
+    });
+  }
+
   // ==================== RECORDATORIOS CRON (§7) ====================
 
   /** Recordatorio cliente 24h antes. */
@@ -238,6 +270,15 @@ export class SessionNotificationEmitter {
           ? [clientUserId]
           : [adminUserId, ...workerUserIds];
 
+      // Recordatorios al cliente piden confirmar asistencia: la app abre el
+      // popup al ver action='confirm_attendance' (push o socket).
+      const data = buildNavigationData(
+        'appointment',
+        session.id,
+        session.companyId,
+      );
+      if (audience === 'client') data.action = 'confirm_attendance';
+
       await this.notifications.createNotificationForUsers(recipients, {
         type: 'reminder',
         title:
@@ -245,7 +286,7 @@ export class SessionNotificationEmitter {
             ? 'Recordatorio de tu cita'
             : 'Recordatorio de cita',
         body: bodyFn(session),
-        data: buildNavigationData('appointment', session.id, session.companyId),
+        data,
       });
       return true;
     } catch (error) {

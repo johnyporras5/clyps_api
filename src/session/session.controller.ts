@@ -26,6 +26,7 @@ import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
 import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
 import { GetAvailabilityDto } from './dto/get-availability.dto';
+import { ConfirmAttendanceDto } from './dto/confirm-attendance.dto';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
 import { SessionNotificationEmitter } from './session-notification.emitter';
 
@@ -308,6 +309,30 @@ export class SessionController {
       +id,
       result?.session?.cancellationReason ?? cancelDto?.reason ?? null,
       result?.session?.cancelledBy ?? 'adm',
+    );
+    return result;
+  }
+
+  // ============ CONFIRMAR ASISTENCIA (CLIENTE) ============
+  @Patch('client/:id/confirm-attendance')
+  @Roles('cli')
+  async confirmAttendance(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() dto: ConfirmAttendanceDto,
+  ) {
+    const userId = req.user?.id || req.user?.sub;
+    const result = await this.sessionService.confirmAttendance(
+      +id,
+      userId,
+      dto.attending,
+    );
+    // Tiempo real para la UI del staff + notificación a admin/worker.
+    await this.realtimeEmitter.emitStatusChanged(+id);
+    await this.notificationEmitter.notifyAttendanceResponse(
+      +id,
+      dto.attending,
+      userId,
     );
     return result;
   }
