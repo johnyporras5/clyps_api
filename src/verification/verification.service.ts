@@ -120,7 +120,7 @@ export class VerificationService {
     await this.verificationCodeRepository.save(verificationCode);
 
     console.log(
-      `📧 Código de ${codeType} ${code} generado para usuario ${userId}, expira a las ${expiresAt.toLocaleTimeString()}`,
+      `📧 Código de ${codeType} generado para usuario ${userId}, expira a las ${expiresAt.toLocaleTimeString()}`,
     );
 
     return code;
@@ -205,7 +205,7 @@ export class VerificationService {
     }
 
     console.log(
-      `✅ Código de ${codeType} verificado exitosamente para ${email}`,
+      `✅ Código de ${codeType} verificado exitosamente para usuario ${user.id}`,
     );
     return true;
   }

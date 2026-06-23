@@ -416,7 +416,7 @@ export class AuthService {
 
     // Si no existe perfil de worker, crearlo
     if (!worker) {
-      console.log(`Creando perfil de trabajador para usuario: ${user.email}`);
+      console.log(`Creando perfil de trabajador (userId: ${user.id})`);
 
       const newWorker = this.workerRepository.create({
         name: registerDto.name,
@@ -635,7 +635,7 @@ export class AuthService {
 
     if (!client) {
       // Crear nuevo perfil de cliente
-      console.log(`Creando perfil de cliente para usuario: ${user.email}`);
+      console.log(`Creando perfil de cliente (userId: ${user.id})`);
 
       const newClient = this.clientRepository.create({
         name: registerDto.name,
@@ -655,7 +655,7 @@ export class AuthService {
       console.log(`Perfil de cliente creado con ID: ${client.id}`);
     } else {
       // ==================== VERIFICAR SI HAY CAMBIOS REALES ====================
-      console.log(`Verificando cambios para cliente existente: ${user.email}`);
+      console.log(`Verificando cambios para cliente existente (userId: ${user.id})`);
 
       // Preparar objeto con solo los campos que vienen en el DTO (no undefined)
       const updateData: any = {};
@@ -665,9 +665,7 @@ export class AuthService {
       if (registerDto.name !== undefined && registerDto.name !== client.name) {
         updateData.name = registerDto.name;
         hasChanges = true;
-        console.log(
-          `Cambio detectado en nombre: ${client.name} -> ${registerDto.name}`,
-        );
+        console.log('Cambio detectado en nombre');
       }
 
       if (
@@ -676,9 +674,7 @@ export class AuthService {
       ) {
         updateData.lastName = registerDto.lastName;
         hasChanges = true;
-        console.log(
-          `Cambio detectado en apellido: ${client.lastName} -> ${registerDto.lastName}`,
-        );
+        console.log('Cambio detectado en apellido');
       }
 
       if (
@@ -687,9 +683,7 @@ export class AuthService {
       ) {
         updateData.email = registerDto.email;
         hasChanges = true;
-        console.log(
-          `Cambio detectado en email: ${client.email} -> ${registerDto.email}`,
-        );
+        console.log('Cambio detectado en email');
       }
 
       if (
@@ -698,9 +692,7 @@ export class AuthService {
       ) {
         updateData.phone = registerDto.phone;
         hasChanges = true;
-        console.log(
-          `Cambio detectado en teléfono: ${client.phone} -> ${registerDto.phone}`,
-        );
+        console.log('Cambio detectado en teléfono');
       }
 
       if (registerDto.birthdate !== undefined) {
@@ -714,18 +706,14 @@ export class AuthService {
         if (currentBirthDate !== newBirthDate) {
           updateData.birthDate = registerDto.birthdate;
           hasChanges = true;
-          console.log(
-            `Cambio detectado en fecha de nacimiento: ${currentBirthDate} -> ${newBirthDate}`,
-          );
+          console.log('Cambio detectado en fecha de nacimiento');
         }
       }
 
       if (pictureFileName) {
         updateData.picture = pictureFileName;
         hasChanges = true;
-        console.log(
-          `Cambio detectado en foto (archivo): ${client.picture} -> ${pictureFileName}`,
-        );
+        console.log('Cambio detectado en foto (archivo)');
       }
 
       if (
@@ -734,9 +722,7 @@ export class AuthService {
       ) {
         updateData.isActive = registerDto.isActive;
         hasChanges = true;
-        console.log(
-          `Cambio detectado en estado activo: ${client.isActive} -> ${registerDto.isActive}`,
-        );
+        console.log('Cambio detectado en estado activo');
       }
 
       if (
@@ -745,9 +731,7 @@ export class AuthService {
       ) {
         updateData.location = registerDto.location;
         hasChanges = true;
-        console.log(
-          `Cambio detectado en ubicación: ${client.location} -> ${registerDto.location}`,
-        );
+        console.log('Cambio detectado en ubicación');
       }
 
       // Solo actualizar si hay cambios reales
@@ -1523,24 +1507,5 @@ export class AuthService {
   async checkUsernameExists(username: string): Promise<{ exists: boolean }> {
     const user = await this.userRepository.findOne({ where: { username } });
     return { exists: !!user };
-  }
-
-  /**
-   * Verificar si un token está en blacklist (útil para pruebas)
-   */
-  async isTokenBlacklisted(token: string): Promise<{ isBlacklisted: boolean }> {
-    const isBlacklisted =
-      await this.tokenBlacklistService.isTokenBlacklisted(token);
-    return { isBlacklisted };
-  }
-
-  /**
-   * Limpiar tokens expirados automáticamente
-   */
-  async cleanupExpiredTokens(): Promise<{ message: string }> {
-    const count = await this.tokenBlacklistService.cleanupExpiredTokens();
-    return {
-      message: `Se han limpiado ${count} tokens expirados`,
-    };
   }
 }

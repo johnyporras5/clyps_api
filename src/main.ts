@@ -151,11 +151,33 @@ async function bootstrap() {
       ),
     );
 
+    // ==================== CONFIGURACIÓN DE CORS ====================
+    // CORS solo afecta a navegadores (web). Las apps móviles nativas no envían
+    // Origin y no se ven afectadas. Lista de orígenes permitidos por env:
+    //   CORS_ORIGINS=https://app.tudominio.com,http://localhost:3000
+    // Si está vacía, se permiten todos los orígenes (fallback) con un aviso.
+    const corsOrigins = (process.env.CORS_ORIGINS ?? '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+
+    let corsOptions: any;
+    if (corsOrigins.length > 0) {
+      corsOptions = { origin: corsOrigins, credentials: true };
+      console.log(`🔒 CORS restringido a: ${corsOrigins.join(', ')}`);
+    } else {
+      corsOptions = { origin: true, credentials: true };
+      console.warn(
+        '⚠️  CORS ABIERTO a todos los orígenes (CORS_ORIGINS no definido). ' +
+          'Define CORS_ORIGINS con tus dominios de frontend antes de producción.',
+      );
+    }
+
     let app;
     try {
       app = (await Promise.race([createAppPromise, timeoutPromise])) as any;
 
-      app.enableCors();
+      app.enableCors(corsOptions);
     } catch (timeoutError) {
       if (
         timeoutError instanceof Error &&
@@ -168,11 +190,16 @@ async function bootstrap() {
           abortOnError: false,
         });
 
-        app.enableCors();
+        app.enableCors(corsOptions);
       } else {
         throw timeoutError;
       }
     }
+
+    // Detrás de Nginx / Digital Ocean: confiar en X-Forwarded-For para que el
+    // rate limiting (ThrottlerGuard) cuente por IP real del cliente y no por la
+    // IP del proxy.
+    app.set('trust proxy', 1);
 
     app.useGlobalPipes(
       new ValidationPipe({
@@ -188,18 +215,29 @@ async function bootstrap() {
     const port = process.env.PORT ?? 4000; // CAMBIADO: 4000
     console.log(`🌐 Starting HTTP server on port ${port}...`);
 
-    // Add error handlers - but don't exit immediately, log and continue
+    // Add error handlers - but don't exit immediately, log and continue.
+    // No terminamos el proceso (la app debe seguir sirviendo); solo registramos
+    // el máximo detalle posible para poder diagnosticar el error después.
     process.on('uncaughtException', (error) => {
-      console.error('❌ UNCAUGHT EXCEPTION:', error);
-      console.error('Stack:', error.stack);
+      console.error('❌ UNCAUGHT EXCEPTION');
+      console.error('🕒 Timestamp:', new Date().toISOString());
+      console.error('🏷️  Tipo:', error?.constructor?.name || typeof error);
+      console.error('💬 Mensaje:', error?.message);
+      console.error('📋 Stack:', error?.stack);
       console.error('⚠️  App will continue running despite uncaught exception');
       // Don't exit - let the app keep running
     });
 
     process.on('unhandledRejection', (reason, promise) => {
-      console.error('❌ UNHANDLED REJECTION at:', promise, 'reason:', reason);
+      console.error('❌ UNHANDLED REJECTION');
+      console.error('🕒 Timestamp:', new Date().toISOString());
+      console.error('📍 En promise:', promise);
       if (reason instanceof Error) {
-        console.error('Error stack:', reason.stack);
+        console.error('🏷️  Tipo:', reason.constructor?.name);
+        console.error('💬 Mensaje:', reason.message);
+        console.error('📋 Stack:', reason.stack);
+      } else {
+        console.error('💬 Reason:', reason);
       }
       console.error(
         '⚠️  App will continue running despite unhandled rejection',

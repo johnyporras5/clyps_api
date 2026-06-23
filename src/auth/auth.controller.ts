@@ -32,6 +32,7 @@ import {
 } from './dto/reset-password.dto';
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('auth')
 export class AuthController {
@@ -153,6 +154,7 @@ export class AuthController {
    * POST /auth/login
    */
   @Post('login')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
@@ -165,6 +167,7 @@ export class AuthController {
    * POST /auth/send-verification-code
    */
   @Post('send-verification-code')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async sendVerificationCode(@Body() body: { email: string }) {
     return this.authService.sendVerificationCode(body.email);
@@ -175,6 +178,7 @@ export class AuthController {
    * POST /auth/verify-email
    */
   @Post('verify-email')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async verifyEmail(@Body() body: { email: string; code: string }) {
     return this.authService.verifyEmail(body.email, body.code);
@@ -185,6 +189,7 @@ export class AuthController {
    * POST /auth/resend-verification-code
    */
   @Post('resend-verification-code')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async resendVerificationCode(@Body() body: { email: string }) {
     return this.authService.resendVerificationCode(body.email);
@@ -258,6 +263,7 @@ export class AuthController {
    * POST /auth/request-password-reset
    */
   @Post('request-password-reset')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async requestPasswordReset(
     @Body() requestPasswordResetDto: RequestPasswordResetDto,
@@ -270,6 +276,7 @@ export class AuthController {
    * POST /auth/verify-reset-code
    */
   @Post('verify-reset-code')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async verifyResetCode(@Body() verifyResetCodeDto: VerifyResetCodeDto) {
     return this.authService.verifyResetCode(verifyResetCodeDto);
@@ -280,6 +287,7 @@ export class AuthController {
    * POST /auth/reset-password
    */
   @Post('reset-password')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     return this.authService.resetPassword(resetPasswordDto);
@@ -290,6 +298,7 @@ export class AuthController {
    * POST /auth/change-password-without-auth
    */
   @Post('change-password-without-auth')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async changePasswordWithoutAuth(
     @Body() changePasswordDto: ChangePasswordWithoutAuthDto,
@@ -321,26 +330,5 @@ export class AuthController {
   async forceLogoutAllDevices(@Req() req: any) {
     const userId = req.user.sub;
     return this.authService.forceLogoutAllDevices(userId);
-  }
-
-  // ==================== ENDPOINTS DE TOKENS Y UTILIDADES ====================
-
-  /**
-   * Verificar si un token está en blacklist
-   * GET /auth/is-token-blacklisted
-   */
-  @Get('is-token-blacklisted')
-  async isTokenBlacklisted(@Query('token') token: string) {
-    return this.authService.isTokenBlacklisted(token);
-  }
-
-  /**
-   * Limpiar tokens expirados
-   * POST /auth/cleanup-expired-tokens
-   */
-  @Post('cleanup-expired-tokens')
-  @HttpCode(HttpStatus.OK)
-  async cleanupExpiredTokens() {
-    return this.authService.cleanupExpiredTokens();
   }
 }
