@@ -280,7 +280,9 @@ export class NotificationService {
 
   /** Marca UNA como leída; valida que sea del usuario. */
   async markRead(userId: number, id: number): Promise<{ success: true }> {
-    const notif = await this.notificationRepo.findOne({ where: { id, userId } });
+    const notif = await this.notificationRepo.findOne({
+      where: { id, userId },
+    });
     if (!notif) {
       throw new NotFoundException('Notificación no encontrada');
     }
@@ -298,7 +300,9 @@ export class NotificationService {
   }
 
   /** Marca TODAS las del usuario como leídas. */
-  async markAllRead(userId: number): Promise<{ success: true; updated: number }> {
+  async markAllRead(
+    userId: number,
+  ): Promise<{ success: true; updated: number }> {
     const result = await this.notificationRepo.update(
       { userId, read: false },
       { read: true },

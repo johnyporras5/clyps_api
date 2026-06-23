@@ -6,7 +6,6 @@ import {
   IsNumber,
   IsIn,
   Matches,
-  IsPhoneNumber,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 

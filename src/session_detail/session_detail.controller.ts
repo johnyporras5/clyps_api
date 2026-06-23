@@ -7,7 +7,6 @@ import {
   Put,
   Delete,
   ParseIntPipe,
-  ParseUUIDPipe,
 } from '@nestjs/common';
 import { SessionDetailService } from './session_detail.service';
 import { SessionDetail } from './entities/session_detail.entity';

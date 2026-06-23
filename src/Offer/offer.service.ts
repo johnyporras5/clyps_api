@@ -6,8 +6,8 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
-import { Offer } from './entities/offer.entity';
+import { Repository, In, Like } from 'typeorm';
+import { Offer, OfferStatus } from './entities/offer.entity';
 import { ServiceOffer } from './entities/service-offer.entity';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
@@ -64,16 +64,21 @@ export class OfferService {
 
   async findAllByCompany(
     adminId: number,
-    paginationOptions: PaginationOptions & { status?: string },
+    paginationOptions: PaginationOptions & { status?: string; name?: string },
   ): Promise<PaginationResult<any>> {
     const company = await this.getCompanyByAdmin(adminId);
-    const { page, limit, status } = paginationOptions;
+    const { page, limit, status, name } = paginationOptions;
     const skip = (page - 1) * limit;
 
     // Filtro por estado: '1' = activa, '0' = inactiva, ausente = todas
     const where: Record<string, any> = { companyId: company.id };
     if (status !== undefined) {
       where.status = parseInt(status, 10);
+    }
+
+    // Filtro por nombre de la oferta (búsqueda parcial, case-insensitive)
+    if (name && name.trim() !== '') {
+      where.name = Like(`%${name.trim()}%`);
     }
 
     const [offers, total] = await this.offerRepository.findAndCount({
@@ -427,25 +432,30 @@ export class OfferService {
   }> {
     const now = new Date();
     const today = this.toDateStr(now);
-    const yesterday = this.toDateStr(
-      new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1),
-    );
     const tomorrow = this.toDateStr(
       new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1),
     );
 
-    // VENCIDAS: status activo y endDate == ayer (rango [ayer, hoy)).
+    // VENCIDAS: status activo y endDate ya pasó (endDate < hoy).
+    // Se marcan inactivas automáticamente y se emite offer.expired una sola vez:
+    // al quedar status = 0 dejan de coincidir con este filtro en corridas futuras.
     const expiredOffers = await this.offerRepository
       .createQueryBuilder('offer')
       .where('offer.status = 1')
-      .andWhere('offer.endDate >= :yesterday', { yesterday })
       .andWhere('offer.endDate < :today', { today })
       .getMany();
 
-    for (const offer of expiredOffers) {
-      this.emitOfferEvent('offer.expired', offer.id, offer.companyId, {
-        offerId: offer.id,
-      });
+    if (expiredOffers.length > 0) {
+      await this.offerRepository.update(
+        { id: In(expiredOffers.map((o) => o.id)) },
+        { status: OfferStatus.INACTIVE },
+      );
+
+      for (const offer of expiredOffers) {
+        this.emitOfferEvent('offer.expired', offer.id, offer.companyId, {
+          offerId: offer.id,
+        });
+      }
     }
 
     // ACTIVADAS: status activo, startDate == hoy (rango [hoy, mañana)) y aún
@@ -548,6 +558,17 @@ export class OfferService {
       logoUrl: offer.logo
         ? this.fileUploadService.getFileUrl('offer_logo', offer.logo)
         : null,
+      company: offer.company
+        ? {
+            ...offer.company,
+            logoUrl: offer.company.logo
+              ? this.fileUploadService.getFileUrl(
+                  'company_logo',
+                  offer.company.logo,
+                )
+              : null,
+          }
+        : offer.company,
     };
   }
 

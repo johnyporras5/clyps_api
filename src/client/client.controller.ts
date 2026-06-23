@@ -15,7 +15,7 @@ import {
   ParseIntPipe,
 } from '@nestjs/common';
 import { ClientService } from './client.service';
-import { PaginationDto } from '../common/dto/pagination.dto';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Client } from './entities/client.entity';
 import { UpdateClientDto } from './dto/update-client.dto';
@@ -41,11 +41,11 @@ export class ClientController {
    */
   @Get('admin/companies')
   async findAllByAdminCompanies(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query() paginationDto: FindAllClientsDto,
   ) {
     // Extraer adminId del token JWT (soporta tanto 'id' como 'sub')
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
 
     if (!adminId) {
       throw new UnauthorizedException('Usuario no autenticado correctamente');
@@ -65,12 +65,11 @@ export class ClientController {
   @Roles('cli') // Solo usuarios tipo cliente
   @UseInterceptors(FileInterceptor('photo'))
   async updateProfileWithPhoto(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() updateClientDto: UpdateClientDto,
     @UploadedFile() photoFile?: Express.Multer.File,
   ): Promise<Client> {
-    const userId = req.user?.sub || req.user?.id;
-    const userType = req.user?.userType;
+    const userId = req.user.sub;
 
     // Validar que al menos un campo o la foto sea enviado
     const hasUpdates = Object.keys(updateClientDto).some(
@@ -92,8 +91,8 @@ export class ClientController {
 
   @Get('profile')
   @Roles('cli') // Solo usuarios tipo cliente
-  async getProfile(@Req() req: any): Promise<any> {
-    const userId = req.user?.sub || req.user?.id;
+  async getProfile(@Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.sub;
     if (!userId) {
       throw new UnauthorizedException('Usuario no autenticado');
     }
@@ -151,11 +150,11 @@ export class ClientController {
   @Roles('adm')
   @UseGuards(RolesGuard)
   async setClientAlias(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('clientId', ParseIntPipe) clientId: number,
     @Body() setCompanyAliasDto: SetCompanyAliasDto,
   ): Promise<Client> {
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
     if (!adminId) {
       throw new UnauthorizedException('Usuario no autenticado correctamente');
     }

@@ -74,7 +74,7 @@ export class SessionService {
 
   async create(
     createSessionDto: CreateSessionDto,
-    adminId: number,
+    _adminId: number,
   ): Promise<Session> {
     const existingSession = await this.checkExistingSession(createSessionDto);
 
@@ -725,8 +725,7 @@ export class SessionService {
 
     // 8. Crear los detalles de sesión
     for (const validation of serviceValidations) {
-      const { detail, service, companyWorker, calculatedAmounts, detailTime } =
-        validation;
+      const { detail, service, calculatedAmounts, detailTime } = validation;
 
       const sessionDetailData: DeepPartial<SessionDetail> = {
         cost: calculatedAmounts.cost,
@@ -925,14 +924,8 @@ export class SessionService {
     const endOfDay = new Date(appointmentDate);
     endOfDay.setHours(23, 59, 59, 999);
 
-    // Opción 2: Buscar citas con un margen de tiempo (ej: 30 minutos antes/después)
+    // Margen de tiempo (ej: 30 minutos antes/después)
     const timeMarginMinutes = 30; // Puedes ajustar este valor
-    const startTime = new Date(
-      appointmentDate.getTime() - timeMarginMinutes * 60000,
-    );
-    const endTime = new Date(
-      appointmentDate.getTime() + timeMarginMinutes * 60000,
-    );
 
     // Buscar sesiones del cliente en el mismo día (excluyendo canceladas status=5)
     const sessionsSameDay = await this.sessionRepository.find({
@@ -1604,7 +1597,6 @@ export class SessionService {
     try {
       // 4. Actualizar fecha de la sesión
       let newSessionDatetime = session.sessionDatetime;
-      let updatedSession: Session = session; // Inicializar con la sesión existente
 
       if (updateSessionDto.sessionDatetime !== undefined) {
         newSessionDatetime = new Date(updateSessionDto.sessionDatetime);
@@ -1618,15 +1610,6 @@ export class SessionService {
           },
         );
         console.log(`✅ Fecha de sesión actualizada a ${newSessionDatetime}`);
-
-        // Obtener la sesión actualizada después del update
-        const foundSession = await queryRunner.manager.findOne(Session, {
-          where: { id: sessionId },
-        });
-
-        if (foundSession) {
-          updatedSession = foundSession;
-        }
       }
 
       // 5. Actualizar fechas de TODOS los detalles
@@ -1855,7 +1838,7 @@ export class SessionService {
       Array.isArray(service.workers) &&
       service.workers.length > 0
     ) {
-      service.workers.forEach((worker, index) => {
+      service.workers.forEach((worker) => {
         if (worker.percentage < 0 || worker.percentage > 100) {
           throw new BadRequestException(
             `El porcentaje del worker ${worker.id} en el servicio ${service.id} no es válido (${worker.percentage}%). Debe estar entre 0 y 100`,
@@ -3714,10 +3697,8 @@ export class SessionService {
     const activeDetails = totalDetails - cancelledCount;
     const allFinished = finishedCount === activeDetails && activeDetails > 0;
     const allPaid = paidCount === activeDetails && activeDetails > 0;
-    const allCompleted = completedCount === activeDetails && activeDetails > 0;
     const anyInProcess = inProcessCount > 0;
     const anyScheduled = scheduledCount > 0;
-    const anyCompleted = completedCount > 0;
     const anyFinished = finishedCount > 0;
 
     // ¿Hay algún detalle activo (no cancelado) sin worker asignado?
@@ -4001,7 +3982,7 @@ export class SessionService {
   private async updateSpecificDetailStatus(
     detailId: number,
     status: number,
-    adminId: number,
+    _adminId: number,
   ): Promise<SessionDetail> {
     const detail = await this.sessionDetailRepository.findOne({
       where: { id: detailId },
@@ -5593,8 +5574,7 @@ export class SessionService {
 
     // 10. Crear los detalles de sesión
     for (const validation of serviceValidations) {
-      const { detail, service, companyWorker, calculatedAmounts, detailTime } =
-        validation;
+      const { detail, service, calculatedAmounts, detailTime } = validation;
 
       const sessionDetailData: DeepPartial<SessionDetail> = {
         cost: calculatedAmounts.cost,
@@ -6045,7 +6025,6 @@ export class SessionService {
     }> = [];
 
     let extraTotalCost = 0;
-    let extraTotalTime = 0;
 
     // 7. Pre-validar y calcular todos los servicios extras
     for (const extraService of addExtraServicesDto.extraServices) {
@@ -6288,7 +6267,7 @@ export class SessionService {
         if (isNaN(startDatetime.getTime())) {
           throw new Error('Fecha inválida');
         }
-      } catch (error) {
+      } catch {
         throw new BadRequestException(
           `Formato de fecha/hora inválido para el servicio ${service.name}: date="${extraService.date}", time="${extraService.time}"`,
         );
@@ -6334,7 +6313,6 @@ export class SessionService {
 
       // Acumular totales
       extraTotalCost += calculatedAmounts.cost;
-      extraTotalTime += detailTime;
 
       const workerName = companyWorker.worker
         ? (companyWorker.worker.name || '').trim()

@@ -13,6 +13,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { IncomeServicesQueryDto } from './dto/income-services-query.dto';
 import { ClientsReportQueryDto } from './dto/clients-report-query.dto';
 import { ClientsListQueryDto } from './dto/clients-list-query.dto';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -22,10 +23,10 @@ export class ReportsController {
   @Get('income-services')
   @Roles('adm')
   async getIncomeByServices(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query() query: IncomeServicesQueryDto,
   ) {
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
     return this.reportsService.getIncomeByServices(
       adminId,
       query.startDate,
@@ -38,10 +39,10 @@ export class ReportsController {
   @Get('income-employees')
   @Roles('adm')
   async getIncomeByEmployees(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query() query: IncomeServicesQueryDto,
   ) {
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
     return this.reportsService.getIncomeByEmployees(
       adminId,
       query.startDate,
@@ -54,10 +55,10 @@ export class ReportsController {
   @Get('clients')
   @Roles('adm')
   async getClientsReport(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query() query: ClientsReportQueryDto,
   ) {
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
 
     const hasGranularity = !!query.granularity;
     const hasRange = !!query.startDate && !!query.endDate;
@@ -77,8 +78,11 @@ export class ReportsController {
 
   @Get('clients/list')
   @Roles('adm')
-  async getClientsList(@Request() req, @Query() query: ClientsListQueryDto) {
-    const adminId = req.user?.id || req.user?.sub;
+  async getClientsList(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: ClientsListQueryDto,
+  ) {
+    const adminId = req.user.sub;
     return this.reportsService.getClientsList(adminId, query.category);
   }
 }

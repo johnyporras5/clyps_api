@@ -32,6 +32,12 @@ export type WorkerFeedbackPaginatedResult = PaginationResult<WorkerFeedback> & {
   stats: WorkerFeedbackStatsDto;
 };
 
+// Worker enriquecido en runtime con la URL de la foto y sus stats por sesión.
+type WorkerWithFeedbackExtras = Worker & {
+  pictureUrl?: string;
+  stats?: WorkerFeedbackStatsDto;
+};
+
 @Injectable()
 export class WorkerFeedbackService {
   constructor(
@@ -518,10 +524,11 @@ export class WorkerFeedbackService {
         );
       }
       if (feedback.worker?.picture) {
-        (feedback.worker as any).pictureUrl = this.fileUploadService.getFileUrl(
-          'worker_photo',
-          feedback.worker.picture,
-        );
+        (feedback.worker as WorkerWithFeedbackExtras).pictureUrl =
+          this.fileUploadService.getFileUrl(
+            'worker_photo',
+            feedback.worker.picture,
+          );
       }
       feedback.services = [];
     }
@@ -541,10 +548,10 @@ export class WorkerFeedbackService {
     for (const feedback of feedbacks) {
       if (!feedback.worker) continue;
       if (typeof feedback.sessionId !== 'number') {
-        (feedback.worker as any).stats = this.emptyStats();
+        (feedback.worker as WorkerWithFeedbackExtras).stats = this.emptyStats();
         continue;
       }
-      (feedback.worker as any).stats =
+      (feedback.worker as WorkerWithFeedbackExtras).stats =
         statsByPair.get(`${feedback.workerId}:${feedback.sessionId}`) ??
         this.emptyStats();
     }

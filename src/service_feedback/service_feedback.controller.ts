@@ -18,6 +18,7 @@ import {
   ServiceFeedbackPaginatedResult,
 } from './service_feedback.service';
 import { ServiceFeedback } from './entities/service_feedback.entity';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateServiceFeedbackDto } from './dto/create-service_feedback.dto';
 import { UpdateServiceFeedbackDto } from './dto/update-service_feedback.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -42,7 +43,7 @@ export class ServiceFeedbackController {
   async createForService(
     @Param('serviceId', ParseIntPipe) serviceId: number,
     @Body() createDto: CreateServiceFeedbackDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<ServiceFeedback> {
     const clientId = req.user?.sub;
     return this.serviceFeedbackService.create(createDto, serviceId, clientId);
@@ -78,7 +79,7 @@ export class ServiceFeedbackController {
   async findAllByAdminCompany(
     @Query() paginationDto: PaginationDto,
     @Query('serviceId') serviceIdRaw: string | undefined,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<ServiceFeedbackPaginatedResult> {
     const userId = req.user?.sub;
     const serviceId =
@@ -113,7 +114,7 @@ export class ServiceFeedbackController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateDto: UpdateServiceFeedbackDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<ServiceFeedback> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;
@@ -133,7 +134,7 @@ export class ServiceFeedbackController {
   @HttpCode(HttpStatus.OK)
   async remove(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string }> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;

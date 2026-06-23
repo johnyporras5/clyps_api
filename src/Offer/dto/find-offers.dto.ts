@@ -1,4 +1,4 @@
-import { IsOptional, IsIn } from 'class-validator';
+import { IsOptional, IsIn, IsString } from 'class-validator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class FindOffersDto extends PaginationDto {
@@ -6,4 +6,9 @@ export class FindOffersDto extends PaginationDto {
   @IsOptional()
   @IsIn(['0', '1'])
   status?: string;
+
+  // Filtro por nombre de la oferta (búsqueda parcial, case-insensitive)
+  @IsOptional()
+  @IsString()
+  name?: string;
 }

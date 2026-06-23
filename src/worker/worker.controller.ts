@@ -1,11 +1,9 @@
 import {
   Controller,
   Get,
-  Post,
   Body,
   Param,
   Put,
-  Delete,
   ParseIntPipe,
   UseGuards,
   UnauthorizedException,
@@ -15,14 +13,13 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { WorkerService } from './worker.service';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { Worker } from './entities/worker.entity';
 import { UpdateWorkerDto } from './dto/update-worker.dto';
 import { UpdateWorkerByAdminDto } from './dto/update-worker-by-admin.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { FindAllWorkersDto } from './dto/find-all-workers.dto';
-import { PaginationResult } from '../common/utils/pagination.util';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom, workerRoom, companyPublicRoom } from '../realtime/rooms';
@@ -39,7 +36,7 @@ export class WorkerController {
   @UseGuards(JwtAuthGuard)
   async findOne(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<Worker> {
     // El usuario solo puede ver su propio perfil, a menos que sea admin
     const userId = req.user.sub;
@@ -54,7 +51,7 @@ export class WorkerController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateWorkerDto: UpdateWorkerDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<Worker> {
     const userId = req.user.sub;
     return this.workerService.update(id, updateWorkerDto, userId);
@@ -63,7 +60,7 @@ export class WorkerController {
   // Obtener el perfil del worker autenticado
   @Get('profile/my-profile')
   @UseGuards(JwtAuthGuard)
-  async getMyProfile(@Req() req: any): Promise<Worker> {
+  async getMyProfile(@Req() req: AuthenticatedRequest): Promise<Worker> {
     const userId = req.user.sub;
     const userType = req.user.userType;
 
@@ -88,7 +85,7 @@ export class WorkerController {
   @UseInterceptors(FileInterceptor('photo'))
   async updateWorkerByAdmin(
     @Param('workerId', ParseIntPipe) workerId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() dto: UpdateWorkerByAdminDto,
     @UploadedFile() photoFile?: Express.Multer.File,
   ) {
@@ -168,12 +165,11 @@ export class WorkerController {
   @Roles('wrk')
   @UseInterceptors(FileInterceptor('photo'))
   async updateProfileWithPhoto(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() updateWorkerDto: UpdateWorkerDto,
     @UploadedFile() photoFile?: Express.Multer.File,
   ): Promise<Worker> {
     const userId = req.user.sub;
-    const userType = req.user.userType;
 
     // Validar que al menos un campo sea proporcionado
     const hasUpdates = Object.keys(updateWorkerDto).some(

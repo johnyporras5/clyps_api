@@ -7,7 +7,6 @@ import {
   Put,
   Delete,
   ParseIntPipe,
-  ParseUUIDPipe,
 } from '@nestjs/common';
 import { CalendarService } from './calendar.service';
 import { Calendar } from './entities/calendar.entity';

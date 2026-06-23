@@ -50,7 +50,7 @@ export class TokenBlacklistService {
       });
 
       return await this.blacklistedTokenRepository.save(blacklistedToken);
-    } catch (error) {
+    } catch {
       // Si no se puede decodificar, usar expiración por defecto
       const blacklistedToken = this.blacklistedTokenRepository.create({
         token: tokenHash,
@@ -147,7 +147,7 @@ export class TokenBlacklistService {
     try {
       const secret = this.configService.get('JWT_SECRET');
       return jwt.verify(token, secret);
-    } catch (error) {
+    } catch {
       return this.jwtService.decode(token);
     }
   }

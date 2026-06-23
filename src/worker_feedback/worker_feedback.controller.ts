@@ -18,6 +18,7 @@ import {
   WorkerFeedbackPaginatedResult,
 } from './worker_feedback.service';
 import { WorkerFeedback } from './entities/worker_feedback.entity';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateWorkerFeedbackDto } from './dto/create-worker_feedback.dto';
 import { UpdateWorkerFeedbackDto } from './dto/update-worker_feedback.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -39,7 +40,7 @@ export class WorkerFeedbackController {
   async createForWorker(
     @Param('workerId', ParseIntPipe) workerId: number,
     @Body() createDto: CreateWorkerFeedbackDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<WorkerFeedback> {
     const clientId = req.user?.sub;
     return this.workerFeedbackService.create(createDto, workerId, clientId);
@@ -70,7 +71,7 @@ export class WorkerFeedbackController {
   @Roles('wrk')
   @HttpCode(HttpStatus.OK)
   async findMyFeedbacks(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Query() paginationDto: PaginationDto,
   ): Promise<WorkerFeedbackPaginatedResult> {
     const userId = req.user?.sub; // ID del usuario autenticado
@@ -93,7 +94,7 @@ export class WorkerFeedbackController {
   async findAllPaginated(
     @Query() paginationDto: PaginationDto,
     @Query('workerId') workerIdRaw: string | undefined,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<WorkerFeedbackPaginatedResult> {
     const userId = req.user?.sub; // ID del usuario admin (desde el JWT)
     const workerId =
@@ -130,7 +131,7 @@ export class WorkerFeedbackController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateDto: UpdateWorkerFeedbackDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<WorkerFeedback> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;
@@ -151,7 +152,7 @@ export class WorkerFeedbackController {
   @HttpCode(HttpStatus.OK)
   async remove(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string }> {
     const requesterUserId = req.user?.sub;
     const requesterUserType = req.user?.userType;

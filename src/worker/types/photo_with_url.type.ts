@@ -1,6 +1,5 @@
 import { Worker } from '../entities/worker.entity';
 import { WorkerFeedback } from '../../worker_feedback/entities/worker_feedback.entity';
-import { WorkerFeedbackStatsDto } from '../dto/worker-feedback-stats.dto';
 import { CompanyWorker } from '../../company_worker/entities/company_worker.entity';
 
 export type PhotoWithUrl = Worker & {

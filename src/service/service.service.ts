@@ -32,6 +32,15 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { ServiceNotificationEmitter } from './service-notification.emitter';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 
+/** Fila cruda (getRawMany) de los workers asignados a un servicio. */
+interface ServiceWorkerRawRow {
+  companyWorkerId: string;
+  workerId: string;
+  fullName: string;
+  picture: string | null;
+  averageRating: string;
+}
+
 @Injectable()
 export class ServiceService {
   private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'worker_photo';
@@ -242,7 +251,7 @@ export class ServiceService {
   /**
    * Obtener un servicio específico con información de workers
    */
-  async findOneWithWorkers(id: number, adminId: number): Promise<any> {
+  async findOneWithWorkers(id: number, adminId: number) {
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
       where: { userId: adminId },
@@ -383,12 +392,12 @@ export class ServiceService {
         .andWhere('cw.isActive = 1')
         .groupBy('worker.id')
         .addGroupBy('cw.id')
-        .getRawMany();
+        .getRawMany<ServiceWorkerRawRow>();
 
       workers = assignments
         .map((assignment) => {
           const row = rows.find(
-            (r: any) => Number(r.companyWorkerId) === assignment.id,
+            (r) => Number(r.companyWorkerId) === assignment.id,
           );
           if (!row) return null;
 
@@ -620,9 +629,7 @@ export class ServiceService {
     }
 
     // workers asignados ANTES de actualizar (para detectar los nuevos).
-    const previousWorkerIds = new Set(
-      (service.workers || []).map((w) => w.id),
-    );
+    const previousWorkerIds = new Set((service.workers || []).map((w) => w.id));
 
     // 4. Actualizar el servicio
     Object.assign(service, updateServiceDto);

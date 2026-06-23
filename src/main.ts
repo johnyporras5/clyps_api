@@ -63,6 +63,8 @@ try {
 }
 
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 
@@ -138,13 +140,16 @@ async function bootstrap() {
     );
 
     // Create app with timeout to prevent hanging on database connection
-    const createAppPromise = NestFactory.create(AppModule, {
-      logger: ['error', 'warn', 'log'],
-      abortOnError: false, // Critical: Don't abort on TypeORM connection errors
-    });
+    const createAppPromise = NestFactory.create<NestExpressApplication>(
+      AppModule,
+      {
+        logger: ['error', 'warn', 'log'],
+        abortOnError: false, // Critical: Don't abort on TypeORM connection errors
+      },
+    );
 
     // Set a 15 second timeout for app creation - fail fast if database is blocking
-    const timeoutPromise = new Promise((_, reject) =>
+    const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(
         () => reject(new Error('App creation timeout after 15s')),
         15000,
@@ -161,7 +166,7 @@ async function bootstrap() {
       .map((o) => o.trim())
       .filter(Boolean);
 
-    let corsOptions: any;
+    let corsOptions: CorsOptions;
     if (corsOrigins.length > 0) {
       corsOptions = { origin: corsOrigins, credentials: true };
       console.log(`🔒 CORS restringido a: ${corsOrigins.join(', ')}`);
@@ -173,9 +178,9 @@ async function bootstrap() {
       );
     }
 
-    let app;
+    let app: NestExpressApplication;
     try {
-      app = (await Promise.race([createAppPromise, timeoutPromise])) as any;
+      app = await Promise.race([createAppPromise, timeoutPromise]);
 
       app.enableCors(corsOptions);
     } catch (timeoutError) {
@@ -185,7 +190,7 @@ async function bootstrap() {
       ) {
         console.error('⚠️ App creation timed out');
 
-        app = await NestFactory.create(AppModule, {
+        app = await NestFactory.create<NestExpressApplication>(AppModule, {
           logger: ['error', 'warn'],
           abortOnError: false,
         });
@@ -368,4 +373,4 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-bootstrap();
+void bootstrap();

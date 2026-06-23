@@ -7,10 +7,6 @@ import {
   IsNumber,
   IsDate,
   IsIn,
-  IsArray,
-  Min,
-  Max,
-  IsInt,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 

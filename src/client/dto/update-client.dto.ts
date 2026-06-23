@@ -4,10 +4,6 @@ import {
   IsString,
   IsIn,
   IsNumber,
-  IsArray,
-  Min,
-  Max,
-  IsInt,
   Length,
   IsDate,
 } from 'class-validator';

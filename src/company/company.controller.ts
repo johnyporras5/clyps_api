@@ -14,6 +14,7 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { CompanyService } from './company.service';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { Company } from './entities/company.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
@@ -28,6 +29,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Client } from '../client/entities/client.entity';
 import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
+import { DirectoryQueryDto } from './dto/directory-query.dto';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 
@@ -64,12 +66,42 @@ export class CompanyController {
   @UseGuards(RolesGuard)
   @Roles('adm', 'wrk', 'cli')
   async findAllDirectory(
-    @Query() paginationDto: PaginationDto,
+    @Query() query: DirectoryQueryDto,
   ): Promise<PaginationResult<any>> {
+    const categoryIds = [
+      ...(query.categoryId ?? []),
+      ...(query.categoryIds ?? []),
+    ];
     return this.companyService.findAllWithDetails({
-      page: paginationDto.page,
-      limit: paginationDto.limit,
+      page: query.page,
+      limit: query.limit,
+      city: query.city,
+      categoryIds: categoryIds.length ? categoryIds : undefined,
+      date: query.date,
+      slots: query.slot,
     });
+  }
+
+  /**
+   * Ciudades distintas (a partir de company.location) para los selectores
+   * del filtro de directorio. Lista completa (sin paginar).
+   */
+  @Get('cities')
+  @UseGuards(RolesGuard)
+  @Roles('adm', 'wrk', 'cli')
+  async getCities(): Promise<string[]> {
+    return this.companyService.getDistinctCities();
+  }
+
+  /**
+   * Categorías de compañía (deduplicadas por nombre) para los selectores
+   * del filtro de directorio.
+   */
+  @Get('categories')
+  @UseGuards(RolesGuard)
+  @Roles('adm', 'wrk', 'cli')
+  async getCategoryOptions(): Promise<{ id: number; name: string }[]> {
+    return this.companyService.getCategoryOptions();
   }
 
   @Get(':id')
@@ -78,7 +110,9 @@ export class CompanyController {
   }
 
   @Get('admin/profile')
-  async getAdminProfile(@Req() req): Promise<CompanyWithLogoUrl> {
+  async getAdminProfile(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<CompanyWithLogoUrl> {
     const userId = req.user.sub;
     return this.companyService.findByUserId(userId);
   }
@@ -104,7 +138,7 @@ export class CompanyController {
   @Put('admin/profile')
   @UseInterceptors(FileInterceptor('logo'))
   async updateAdminProfile(
-    @Req() req,
+    @Req() req: AuthenticatedRequest,
     @Body() updateAdminProfileDto: UpdateAdminProfileDto,
     @UploadedFile() logoFile?: Express.Multer.File,
   ): Promise<CompanyWithLogoUrl> {
@@ -148,7 +182,7 @@ export class CompanyController {
   @Roles('adm')
   async temporarilyRemoveWorker(
     @Param('companyWorkerId', ParseIntPipe) companyWorkerId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
     const result = await this.companyService.temporarilyRemoveWorkerFromCompany(
@@ -181,7 +215,7 @@ export class CompanyController {
   @Roles('adm')
   async permanentlyRemoveWorker(
     @Param('companyWorkerId', ParseIntPipe) companyWorkerId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
     return this.companyService.permanentlyRemoveWorkerFromCompany(
@@ -198,7 +232,7 @@ export class CompanyController {
   @Roles('adm')
   async restoreWorker(
     @Param('companyWorkerId', ParseIntPipe) companyWorkerId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string }> {
     const adminId = req.user.sub;
     return this.companyService.restoreTemporarilyRemovedWorker(
@@ -214,7 +248,7 @@ export class CompanyController {
   @UseGuards(RolesGuard)
   @Roles('adm')
   async getTemporarilyRemovedWorkers(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<CompanyWorker[]> {
     const adminId = req.user.sub;
     return this.companyService.getTemporarilyRemovedWorkers(adminId);
@@ -228,7 +262,7 @@ export class CompanyController {
   @Roles('adm')
   async temporarilyRemoveClient(
     @Param('clientId', ParseIntPipe) clientId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
     const result = await this.companyService.temporarilyRemoveClientFromCompany(
@@ -258,7 +292,7 @@ export class CompanyController {
   @Roles('adm')
   async permanentlyRemoveClient(
     @Param('clientId', ParseIntPipe) clientId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string; canRestore: boolean }> {
     const adminId = req.user.sub;
     return this.companyService.permanentlyRemoveClientFromCompany(
@@ -275,7 +309,7 @@ export class CompanyController {
   @Roles('adm')
   async restoreClient(
     @Param('clientId', ParseIntPipe) clientId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string }> {
     const adminId = req.user.sub;
     return this.companyService.restoreTemporarilyRemovedClient(
@@ -290,7 +324,9 @@ export class CompanyController {
   @Get('clients/temporarily-removed')
   @UseGuards(RolesGuard)
   @Roles('adm')
-  async getTemporarilyRemovedClients(@Req() req: any): Promise<Client[]> {
+  async getTemporarilyRemovedClients(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<Client[]> {
     const adminId = req.user.sub;
     return this.companyService.getTemporarilyRemovedClients(adminId);
   }

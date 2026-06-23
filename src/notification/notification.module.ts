@@ -19,7 +19,11 @@ import { FirebaseService } from './firebase.service';
     // RealtimeService para emitir `notification.created` a la room del usuario.
     RealtimeModule,
   ],
-  providers: [NotificationService, NotificationRealtimeEmitter, FirebaseService],
+  providers: [
+    NotificationService,
+    NotificationRealtimeEmitter,
+    FirebaseService,
+  ],
   controllers: [NotificationController, FcmTokenController],
   // NotificationService se exportará para que createNotification (§4) lo use
   // desde los services de dominio.

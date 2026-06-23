@@ -2,7 +2,9 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Request } from 'express';
 import { TokenBlacklistService } from '../services/token_blacklist.service';
+import type { JwtPayload } from '../types/authenticated-request';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -18,7 +20,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(request: Request, payload: any) {
+  async validate(request: Request, payload: JwtPayload) {
     // Verificar si el token está en la blacklist
     const authHeader = request.headers['authorization'];
     const token = this.tokenBlacklistService.extractTokenFromHeader(authHeader);

@@ -47,7 +47,8 @@ export class SessionNotificationEmitter {
   async notifyCreated(sessionId: number, actorUserId?: number): Promise<void> {
     await this.safe('appointment.created', async () => {
       const session = await this.sessionService.findOneWithDetails(sessionId);
-      const { adminUserId, workerUserIds } = await this.resolveRecipients(session);
+      const { adminUserId, workerUserIds } =
+        await this.resolveRecipients(session);
 
       const fecha = this.formatDate(session.sessionDatetime);
       await this.notifications.createNotificationForUsers(
@@ -56,7 +57,11 @@ export class SessionNotificationEmitter {
           type: 'appointment',
           title: 'Nueva cita agendada',
           body: `Nueva cita de ${this.clientName(session)} para el ${fecha}`,
-          data: buildNavigationData('appointment', session.id, session.companyId),
+          data: buildNavigationData(
+            'appointment',
+            session.id,
+            session.companyId,
+          ),
         },
       );
     });
@@ -103,7 +108,10 @@ export class SessionNotificationEmitter {
   }
 
   /** Cita cancelada → cliente + admin + workers (− actor), con texto por rol. */
-  async notifyCancelled(sessionId: number, actorUserId?: number): Promise<void> {
+  async notifyCancelled(
+    sessionId: number,
+    actorUserId?: number,
+  ): Promise<void> {
     await this.safe('appointment.cancelled', async () => {
       const session = await this.sessionService.findOneWithDetails(sessionId);
       const { adminUserId, workerUserIds, clientUserId } =
@@ -166,7 +174,11 @@ export class SessionNotificationEmitter {
           type: 'assignment',
           title: 'Te asignaron a una cita',
           body: `Te asignaron a la cita de ${this.clientName(session)}`,
-          data: buildNavigationData('appointment', session.id, session.companyId),
+          data: buildNavigationData(
+            'appointment',
+            session.id,
+            session.companyId,
+          ),
         },
       );
     });
@@ -314,7 +326,9 @@ export class SessionNotificationEmitter {
 
   private async adminUserId(companyId: number): Promise<number | null> {
     if (!companyId) return null;
-    const company = await this.companyRepo.findOne({ where: { id: companyId } });
+    const company = await this.companyRepo.findOne({
+      where: { id: companyId },
+    });
     return company?.userId ?? null;
   }
 
@@ -354,9 +368,7 @@ export class SessionNotificationEmitter {
     userIds: Array<number | null | undefined>,
     actorUserId?: number,
   ): number[] {
-    return userIds.filter(
-      (id): id is number => !!id && id !== actorUserId,
-    );
+    return userIds.filter((id): id is number => !!id && id !== actorUserId);
   }
 
   /** Fecha legible en español (ej. "12 jun"). Usa UTC (las fechas llegan en Z). */
@@ -364,8 +376,18 @@ export class SessionNotificationEmitter {
     const d = value instanceof Date ? value : new Date(value);
     if (isNaN(d.getTime())) return String(value);
     const meses = [
-      'ene', 'feb', 'mar', 'abr', 'may', 'jun',
-      'jul', 'ago', 'sep', 'oct', 'nov', 'dic',
+      'ene',
+      'feb',
+      'mar',
+      'abr',
+      'may',
+      'jun',
+      'jul',
+      'ago',
+      'sep',
+      'oct',
+      'nov',
+      'dic',
     ];
     return `${d.getUTCDate()} ${meses[d.getUTCMonth()]}`;
   }

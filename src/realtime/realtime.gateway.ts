@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
 import { TokenBlacklistService } from '../auth/services/token_blacklist.service';
 import { AuthService } from '../auth/auth.service';
+import type { JwtPayload } from '../auth/types/authenticated-request';
 import { RealtimeService } from './realtime.service';
 import {
   userRoom,
@@ -129,9 +130,9 @@ export class RealtimeGateway
     }
 
     // Verifica firma y expiración (lanza si es inválido/expirado).
-    let payload: any;
+    let payload: JwtPayload;
     try {
-      payload = this.jwtService.verify(token, {
+      payload = this.jwtService.verify<JwtPayload>(token, {
         secret: this.configService.get('JWT_SECRET') || 'clypsSecretKey',
       });
     } catch {
@@ -145,7 +146,7 @@ export class RealtimeGateway
       throw new Error('Token invalidado (sesión cerrada)');
     }
 
-    const userType = payload.userType as SocketUser['userType'];
+    const userType = payload.userType;
     let companyId: number | null = payload.companyId ?? null;
     let companyWorkerId: number | null = payload.companyWorkerId ?? null;
 
@@ -223,8 +224,8 @@ export class RealtimeGateway
    * string, número/string crudo, o el primer elemento si llega como array).
    * Herramientas como Postman a veces serializan el payload distinto.
    */
-  private extractCompanyId(body: any): number {
-    let b: any = body;
+  private extractCompanyId(body: unknown): number {
+    let b: unknown = body;
     if (Array.isArray(b)) b = b[0];
     if (typeof b === 'string') {
       const trimmed = b.trim();
@@ -235,7 +236,9 @@ export class RealtimeGateway
       }
     }
     if (typeof b === 'number') return b;
-    if (b && typeof b === 'object') return Number(b.companyId);
+    if (b && typeof b === 'object') {
+      return Number((b as { companyId?: unknown }).companyId);
+    }
     return Number(b);
   }
 

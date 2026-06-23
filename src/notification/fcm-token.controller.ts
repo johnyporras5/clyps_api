@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { NotificationService } from './notification.service';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { RegisterFcmTokenDto } from './dto/register-fcm-token.dto';
 import { DeleteFcmTokenDto } from './dto/delete-fcm-token.dto';
 
@@ -28,7 +29,7 @@ export class FcmTokenController {
   /** POST → upsert por token (si existe, actualiza userId/platform). */
   @Post()
   @HttpCode(HttpStatus.OK)
-  register(@Req() req: any, @Body() dto: RegisterFcmTokenDto) {
+  register(@Req() req: AuthenticatedRequest, @Body() dto: RegisterFcmTokenDto) {
     return this.notificationService.upsertToken(
       req.user.sub,
       dto.token,
@@ -39,7 +40,7 @@ export class FcmTokenController {
   /** DELETE → elimina ese token (se llama en logout). */
   @Delete()
   @HttpCode(HttpStatus.OK)
-  remove(@Req() req: any, @Body() dto: DeleteFcmTokenDto) {
+  remove(@Req() req: AuthenticatedRequest, @Body() dto: DeleteFcmTokenDto) {
     return this.notificationService.deleteToken(req.user.sub, dto.token);
   }
 }

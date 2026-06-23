@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddAttemptsVerificationCodes1780000000011
-  implements MigrationInterface
-{
+export class AddAttemptsVerificationCodes1780000000011 implements MigrationInterface {
   name = 'AddAttemptsVerificationCodes1780000000011';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

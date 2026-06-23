@@ -14,6 +14,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AppointmentBeforeAfterService } from './appointment-before-after.service';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 
 /**
  * Recurso "Antes y después" de una sesión (cita).
@@ -30,8 +31,11 @@ export class AppointmentBeforeAfterController {
 
   @Get()
   @Roles('adm', 'wrk', 'cli')
-  async getBeforeAfter(@Request() req, @Param('sessionId') sessionId: string) {
-    const userId = req.user?.id || req.user?.sub;
+  async getBeforeAfter(
+    @Request() req: AuthenticatedRequest,
+    @Param('sessionId') sessionId: string,
+  ) {
+    const userId = req.user.sub;
     const userRole = req.user?.userType;
     return this.service.getBeforeAfter(+sessionId, userId, userRole);
   }
@@ -41,11 +45,11 @@ export class AppointmentBeforeAfterController {
   @UseInterceptors(FileInterceptor('photo'))
   async upsertSlot(
     @UploadedFile() file: Express.Multer.File,
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('sessionId') sessionId: string,
     @Param('slot') slot: string,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userRole = req.user?.userType;
     return this.service.upsertSlot(+sessionId, slot, file, userId, userRole);
   }
@@ -53,11 +57,11 @@ export class AppointmentBeforeAfterController {
   @Delete(':slot')
   @Roles('adm', 'wrk')
   async deleteSlot(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('sessionId') sessionId: string,
     @Param('slot') slot: string,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userRole = req.user?.userType;
     return this.service.deleteSlot(+sessionId, slot, userId, userRole);
   }

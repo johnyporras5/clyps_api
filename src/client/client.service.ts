@@ -15,7 +15,6 @@ import { SessionDetail } from '../session_detail/entities/session_detail.entity'
 import { Service } from '../service/entities/service.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Offer } from '../Offer/entities/offer.entity';
-import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import {
   AllowedFolder,
@@ -501,7 +500,7 @@ export class ClientService {
 
     // Excluir la contraseña del objeto User
     if (client.user) {
-      const { password, ...userWithoutPassword } = client.user;
+      const { password: _, ...userWithoutPassword } = client.user;
       client.user = userWithoutPassword as any;
     }
 
@@ -535,7 +534,7 @@ export class ClientService {
     ]);
 
     if (client.user) {
-      const { password, ...userWithoutPassword } = client.user;
+      const { password: _, ...userWithoutPassword } = client.user;
       client.user = userWithoutPassword as any;
     }
 
@@ -625,7 +624,7 @@ export class ClientService {
       : '';
 
     if (saved.user) {
-      const { password, ...userWithoutPassword } = saved.user as any;
+      const { password: _, ...userWithoutPassword } = saved.user as any;
       saved.user = userWithoutPassword;
     }
 

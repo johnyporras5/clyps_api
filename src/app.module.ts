@@ -65,7 +65,6 @@ import { NotificationModule } from './notification/notification.module';
         const dbHost = configService.get('DB_HOST', 'localhost');
         const isLocalDocker =
           dbHost === 'localhost' && process.env.NODE_ENV !== 'production';
-        const finalHost = isLocalDocker ? 'host.docker.internal' : dbHost;
 
         const dbConfig = {
           type: 'mysql' as const,

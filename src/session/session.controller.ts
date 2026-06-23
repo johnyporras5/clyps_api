@@ -20,6 +20,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { GetSessionsDto } from './dto/get-sessions.dto';
 import { UpdateSessionDto } from './dto/update-session-and-detail.dto';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto } from './dto/add-extra-services.dto';
@@ -41,18 +42,21 @@ export class SessionController {
 
   @Post()
   @Roles('adm')
-  create(@Request() req, @Body() createSessionDto: CreateSessionDto) {
-    const adminId = req.user?.id || req.user?.sub;
+  create(
+    @Request() req: AuthenticatedRequest,
+    @Body() createSessionDto: CreateSessionDto,
+  ) {
+    const adminId = req.user.sub;
     return this.sessionService.create(createSessionDto, adminId);
   }
 
   @Post('create-with-detail')
   @Roles('adm')
   async createSessionWithDetail(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Body() createSessionWithDetailDto: CreateSessionWithDetailDto,
   ) {
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
     const result = await this.sessionService.createSessionWithDetail(
       createSessionWithDetailDto,
       adminId,
@@ -85,8 +89,11 @@ export class SessionController {
    */
   @Get(':id/details')
   @Roles('adm', 'wrk', 'cli')
-  async getSessionDetails(@Request() req, @Param('id') id: string) {
-    const userId = req.user?.id || req.user?.sub;
+  async getSessionDetails(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    const userId = req.user.sub;
     const userRole = req.user?.userType;
     return this.sessionService.getSessionDetailsWithValidation(
       +id,
@@ -97,7 +104,10 @@ export class SessionController {
 
   @Get()
   @Roles('adm')
-  async findAll(@Request() req, @Query() getSessionsDto: GetSessionsDto) {
+  async findAll(
+    @Request() req: AuthenticatedRequest,
+    @Query() getSessionsDto: GetSessionsDto,
+  ) {
     const adminId = req.user.sub;
     return this.sessionService.findAllSessionsSimple(adminId, getSessionsDto);
   }
@@ -110,11 +120,11 @@ export class SessionController {
   @Get('by-company/:companyId')
   @Roles('adm', 'cli')
   async findAllByCompany(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('companyId') companyId: string,
     @Query() getSessionsDto: GetSessionsDto,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userRole = req.user?.userType;
     return this.sessionService.findAllSessionsByCompany(
       +companyId,
@@ -127,11 +137,11 @@ export class SessionController {
   @Patch(':id')
   @Roles('adm')
   async update(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() updateSessionDto: UpdateSessionDto,
   ) {
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
     return this.sessionService.updateSessionDates(
       +id,
       updateSessionDto,
@@ -147,11 +157,11 @@ export class SessionController {
   @Put(':id/status')
   @Roles('adm')
   async updateSessionStatus(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() updateSessionStatusDto: UpdateSessionStatusDto,
   ) {
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
     const result = await this.sessionService.updateSessionStatus(
       +id,
       updateSessionStatusDto,
@@ -171,11 +181,11 @@ export class SessionController {
   @Patch(':id/assign-workers')
   @Roles('adm')
   async assignWorkersToSession(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() assignWorkersDto: AssignWorkersToSessionDto,
   ) {
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
     const result = await this.sessionService.assignWorkersToSession(
       +id,
       assignWorkersDto,
@@ -193,11 +203,11 @@ export class SessionController {
   @Put('details/:detailId/status')
   @Roles('adm', 'wrk')
   async updateDetailStatus(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('detailId') detailId: string,
     @Body() updateDetailStatusDto: UpdateDetailStatusDto,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userRole = req.user?.userType;
     const result = await this.sessionService.updateDetailStatus(
       +detailId,
@@ -221,7 +231,10 @@ export class SessionController {
   @Get('worker/my-sessions')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('wrk')
-  async getMySessions(@Request() req, @Query() getSessionsDto: GetSessionsDto) {
+  async getMySessions(
+    @Request() req: AuthenticatedRequest,
+    @Query() getSessionsDto: GetSessionsDto,
+  ) {
     // req.user contiene la información del usuario autenticado
     const userId = req.user.sub;
     return await this.sessionService.getSessionsForAuthenticatedWorker(
@@ -233,10 +246,10 @@ export class SessionController {
   @Post('client/create')
   @Roles('cli')
   async createSessionByClient(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Body() createSessionWithDetailDto: CreateSessionWithDetailDto,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const result = await this.sessionService.createSessionByClient(
       createSessionWithDetailDto,
       userId,
@@ -247,19 +260,22 @@ export class SessionController {
 
   @Post(':id/sync-status')
   @Roles('adm')
-  async syncSessionStatus(@Request() req, @Param('id') id: string) {
-    const adminId = req.user?.id || req.user?.sub;
+  async syncSessionStatus(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    const adminId = req.user.sub;
     return this.sessionService.syncSessionStatusFromDetails(+id, adminId);
   }
 
   @Post(':id/extra-services')
   @Roles('adm', 'cli')
   async addExtraServices(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() addExtraServicesDto: AddExtraServicesDto,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userRole = req.user?.userType;
     const result = await this.sessionService.addExtraServicesToSession(
       +id,
@@ -274,11 +290,11 @@ export class SessionController {
   @Delete(':id/extra-services/:detailId')
   @Roles('adm', 'cli')
   async removeExtraService(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Param('detailId') detailId: string,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userRole = req.user?.userType;
     const result = await this.sessionService.removeExtraServiceFromSession(
       +id,
@@ -294,11 +310,11 @@ export class SessionController {
   @Patch(':id/cancel')
   @Roles('adm')
   async cancelSessionByAdmin(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() cancelDto?: CancelSessionDto,
   ) {
-    const adminId = req.user?.id || req.user?.sub;
+    const adminId = req.user.sub;
     const result = await this.sessionService.cancelSession(
       +id,
       adminId,
@@ -317,11 +333,11 @@ export class SessionController {
   @Patch('client/:id/confirm-attendance')
   @Roles('cli')
   async confirmAttendance(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: ConfirmAttendanceDto,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const result = await this.sessionService.confirmAttendance(
       +id,
       userId,
@@ -341,11 +357,11 @@ export class SessionController {
   @Patch('client/:id/cancel')
   @Roles('cli')
   async cancelSessionByClient(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() cancelDto?: CancelSessionDto,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const result = await this.sessionService.cancelSession(
       +id,
       userId,
@@ -367,10 +383,10 @@ export class SessionController {
   @Get('client/my-sessions')
   @Roles('cli')
   async getMySessionsAsClient(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query() getSessionsDto: GetSessionsDto,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     return this.sessionService.getSessionsForAuthenticatedClient(
       userId,
       getSessionsDto,
@@ -386,12 +402,12 @@ export class SessionController {
   @Get('worker/my-services')
   @Roles('wrk', 'adm')
   async getMyAssignedServices(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('workerId') workerId?: string,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userType = req.user?.userType;
     const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
     const pageNum = page ? Math.max(parseInt(page, 10) || 1, 1) : 1;
@@ -414,12 +430,12 @@ export class SessionController {
   @Get('worker/my-clients')
   @Roles('wrk', 'adm')
   async getMyClientsAsWorker(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('workerId') workerId?: string,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userType = req.user?.userType;
     const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
     const pageNum = page ? Math.max(parseInt(page, 10) || 1, 1) : 1;
@@ -442,11 +458,11 @@ export class SessionController {
   @Get('worker/my-history')
   @Roles('wrk', 'adm')
   async getMyHistoryAsWorker(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query() getSessionsDto: GetSessionsDto,
     @Query('workerId') workerId?: string,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userType = req.user?.userType;
     const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
     return this.sessionService.getWorkerHistory(
@@ -465,12 +481,12 @@ export class SessionController {
   @Get('worker/income-report')
   @Roles('wrk', 'adm')
   async getMyIncomeReport(
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('workerId') workerId?: string,
   ) {
-    const userId = req.user?.id || req.user?.sub;
+    const userId = req.user.sub;
     const userType = req.user?.userType;
     const targetWorkerId = this.resolveTargetWorkerId(userType, workerId);
     return this.sessionService.getWorkerIncomeReport(

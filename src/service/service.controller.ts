@@ -15,6 +15,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ServiceService } from './service.service';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -40,7 +41,7 @@ export class ServiceController {
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
   async findMyCompanyServices(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Query() paginationDto: FindServicesDto,
   ): Promise<any> {
     const adminId = req.user.sub;
@@ -65,7 +66,7 @@ export class ServiceController {
   @HttpCode(HttpStatus.OK)
   async findOneMyCompany(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<any> {
     const userId = req.user.sub;
     const userType = req.user.userType;
@@ -104,7 +105,7 @@ export class ServiceController {
   @HttpCode(HttpStatus.OK)
   async findWorkersByService(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<any> {
     const userId = req.user.sub;
     const userType = req.user.userType;
@@ -122,7 +123,7 @@ export class ServiceController {
   @HttpCode(HttpStatus.CREATED)
   async createForMyCompany(
     @Body() createServiceDto: CreateServiceDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<any> {
     const adminId = req.user.sub;
     return this.serviceService.create(createServiceDto, adminId);
@@ -140,7 +141,7 @@ export class ServiceController {
   async updateMyCompany(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateServiceDto: UpdateServiceDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<any> {
     const adminId = req.user.sub;
     return this.serviceService.update(id, updateServiceDto, adminId);
@@ -157,7 +158,7 @@ export class ServiceController {
   @HttpCode(HttpStatus.OK)
   async inactivateMyCompany(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<any> {
     const adminId = req.user.sub;
     return this.serviceService.inactivate(id, adminId);
@@ -174,7 +175,7 @@ export class ServiceController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async removeMyCompany(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<void> {
     const adminId = req.user.sub;
     return this.serviceService.remove(id, adminId);

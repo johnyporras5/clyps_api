@@ -18,6 +18,7 @@ import {
   FileTypeValidator,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import type { AuthenticatedRequest } from './types/authenticated-request';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
 import { RegisterClientDto } from './dto/register-client.dto';
 import { RegisterAdminDto } from './dto/register-admin.dto';
@@ -76,7 +77,7 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   async registerWorker(
     @Body() registerDto: RegisterWorkerDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @UploadedFile(
       // <-- NUEVO
       new ParseFilePipe({
@@ -127,7 +128,7 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   async registerClientByAdmin(
     @Body() registerDto: RegisterClientDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @UploadedFile(
       new ParseFilePipe({
         validators: [
@@ -251,7 +252,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async changePassword(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() changePasswordDto: ChangePasswordDto,
   ) {
     const userId = req.user.sub;
@@ -315,7 +316,10 @@ export class AuthController {
   @Post('logout')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  async logout(@Headers('authorization') authHeader: string, @Req() req: any) {
+  async logout(
+    @Headers('authorization') authHeader: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const userId = req.user.sub;
     return this.authService.logout(authHeader, userId);
   }
@@ -327,7 +331,7 @@ export class AuthController {
   @Post('logout-all')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  async forceLogoutAllDevices(@Req() req: any) {
+  async forceLogoutAllDevices(@Req() req: AuthenticatedRequest) {
     const userId = req.user.sub;
     return this.authService.forceLogoutAllDevices(userId);
   }

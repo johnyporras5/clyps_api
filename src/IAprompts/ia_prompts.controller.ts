@@ -16,10 +16,11 @@ import { IAPromptsService } from './ia_prompts.service';
 import { IAPrompts } from './entities/ia_prompts.entity';
 import { CreateIAPromptDto } from './dto/create-ia_prompt.dto';
 import { UpdateIAPromptDto } from './dto/update-ia_prompt.dto';
-import { paginate, PaginationResult } from '../common/utils/pagination.util';
+import { PaginationResult } from '../common/utils/pagination.util';
 import { QueryIAPromptDto } from './dto/query-ia_prompt.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { ProcessPromptDto } from './dto/process-prompt.dto';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { Observable } from 'rxjs';
 
 @Controller('ia-prompts')
@@ -67,7 +68,10 @@ export class IAPromptsController {
    */
   @Post('process')
   @UseGuards(JwtAuthGuard)
-  async processPrompt(@Body() dto: ProcessPromptDto, @Request() req) {
+  async processPrompt(
+    @Body() dto: ProcessPromptDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
     // Extraer el userType del usuario autenticado
     const userType = req.user.userType;
 
@@ -85,7 +89,7 @@ export class IAPromptsController {
   @Sse() // 👈 Convierte el endpoint en SSE
   async processPromptStream(
     @Body() dto: ProcessPromptDto,
-    @Request() req,
+    @Request() req: AuthenticatedRequest,
   ): Promise<Observable<MessageEvent>> {
     const userType = req.user.userType;
     return this.iaPromptsService.processPromptStream(dto, userType);

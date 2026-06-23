@@ -283,7 +283,7 @@ export class CompanyService {
 
     const userWithoutPassword = user
       ? (() => {
-          const { password, ...rest } = user;
+          const { password: _, ...rest } = user;
           return rest;
         })()
       : null;
@@ -344,7 +344,7 @@ export class CompanyService {
     }
 
     // Excluir el password del usuario por seguridad
-    const { password, ...userWithoutPassword } = user;
+    const { password: _, ...userWithoutPassword } = user;
 
     const companyWithLogo: CompanyWithLogoUrl = {
       ...company,
@@ -1039,6 +1039,106 @@ export class CompanyService {
     return true;
   }
 
+  /** Convierte { hour, minute, period: 'AM'|'PM' } a minutos desde medianoche. */
+  private timeToMinutes(t: any): number | null {
+    if (!t || typeof t.hour !== 'number' || typeof t.minute !== 'number') {
+      return null;
+    }
+    let h = t.hour % 12;
+    if (t.period === 'PM') h += 12;
+    return h * 60 + t.minute;
+  }
+
+  /** Convierte un periodo { start, end } a un bloque en minutos, o null. */
+  private periodToBlock(p: any): { start: number; end: number } | null {
+    if (!p) return null;
+    const start = this.timeToMinutes(p.start);
+    const end = this.timeToMinutes(p.end);
+    if (start === null || end === null || end <= start) return null;
+    return { start, end };
+  }
+
+  /**
+   * Bloques abiertos del día para un calendario (mañana/tarde), respetando
+   * excepciones: non-working-day → cerrado; custom-schedule → ese horario.
+   */
+  private getDayBlocks(
+    calendarDetail: any,
+    date?: string,
+    dayOfWeek?: string,
+  ): Array<{ start: number; end: number }> {
+    let cal = calendarDetail;
+    if (typeof cal === 'string') {
+      try {
+        cal = JSON.parse(cal);
+      } catch {
+        return [];
+      }
+    }
+    if (!cal) return [];
+
+    let source: any;
+    if (date) {
+      // Con fecha: respeta excepciones del día y los días laborables.
+      const exception = cal.exceptions?.find((e: any) => e.date === date);
+      if (exception) {
+        if (exception.type === 'non-working-day') return [];
+        if (exception.type === 'custom-schedule') {
+          // El horario custom puede venir en `customSchedule` (compañía) o
+          // directamente en la excepción (trabajador).
+          source = exception.customSchedule ?? exception;
+        }
+      }
+      if (!source) {
+        if (!cal.schedule?.days?.includes(dayOfWeek)) return [];
+        source = cal.schedule;
+      }
+    } else {
+      // Sin fecha: evalúa contra el horario semanal base (cualquier día),
+      // sin considerar excepciones (no hay día concreto que evaluar).
+      if (!cal.schedule) return [];
+      source = cal.schedule;
+    }
+
+    const blocks: Array<{ start: number; end: number }> = [];
+    const morning = this.periodToBlock(source.morning);
+    const afternoon = this.periodToBlock(source.afternoon);
+    if (morning) blocks.push(morning);
+    if (afternoon) blocks.push(afternoon);
+    return blocks;
+  }
+
+  /** Parsea una franja "HH:mm-HH:mm" a minutos { from, to }. */
+  private parseSlot(slot: string): { from: number; to: number } | null {
+    const m = /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(slot);
+    if (!m) return null;
+    const from = Number(m[1]) * 60 + Number(m[2]);
+    const to = Number(m[3]) * 60 + Number(m[4]);
+    if (to <= from) return null;
+    return { from, to };
+  }
+
+  /**
+   * Determina si una compañía está "abierta" según su horario para la fecha
+   * dada. Si se pasan franjas, basta con que algún bloque del día se solape
+   * con al menos una franja: from < bloque.fin && to > bloque.inicio.
+   */
+  private isCompanyOpenForSlots(
+    calendarDetail: any,
+    date?: string,
+    dayOfWeek?: string,
+    slots?: string[],
+  ): boolean {
+    const blocks = this.getDayBlocks(calendarDetail, date, dayOfWeek);
+    if (blocks.length === 0) return false;
+    if (!slots || slots.length === 0) return true;
+    return slots.some((slot) => {
+      const parsed = this.parseSlot(slot);
+      if (!parsed) return false;
+      return blocks.some((b) => parsed.from < b.end && parsed.to > b.start);
+    });
+  }
+
   private mapToCompanyWithLogoUrl(company: Company): CompanyWithLogoUrl {
     return {
       ...company,
@@ -1079,27 +1179,165 @@ export class CompanyService {
    * equipo de trabajadores y servicios (con descripción, monto y duración).
    */
   async findAllWithDetails(
-    options: PaginationOptions,
+    options: PaginationOptions & {
+      city?: string;
+      categoryIds?: number[];
+      date?: string;
+      slots?: string[];
+    },
   ): Promise<PaginationResult<any>> {
-    const { page, limit } = options;
-    const skip = (page - 1) * limit;
+    const { page, limit, city, categoryIds, date, slots } = options;
+    const hasFilters =
+      !!city ||
+      (categoryIds?.length ?? 0) > 0 ||
+      !!date ||
+      (slots?.length ?? 0) > 0;
 
-    const [companies, total] = await this.companyRepository.findAndCount({
-      take: limit,
-      skip,
+    let companies: Company[];
+    let total: number;
+
+    if (!hasFilters) {
+      // Comportamiento original: paginación directa sin filtros.
+      const skip = (page - 1) * limit;
+      [companies, total] = await this.companyRepository.findAndCount({
+        take: limit,
+        skip,
+        order: { id: 'ASC' },
+      });
+    } else {
+      // Filtra primero (ciudad/categoría/disponibilidad) y luego pagina sobre
+      // el resultado ya filtrado para que meta.total sea consistente.
+      const matched = await this.filterDirectoryCompanies({
+        city,
+        categoryIds,
+        date,
+        slots,
+      });
+      total = matched.length;
+      const skip = (page - 1) * limit;
+      companies = matched.slice(skip, skip + limit);
+    }
+
+    return this.buildDirectoryDetails(companies, page, limit, total);
+  }
+
+  /**
+   * Aplica los filtros del directorio (ciudad, categoría y disponibilidad por
+   * fecha + franjas) y devuelve las compañías coincidentes (sin paginar).
+   * AND entre los filtros; OR entre categorías y entre franjas.
+   */
+  private async filterDirectoryCompanies(filter: {
+    city?: string;
+    categoryIds?: number[];
+    date?: string;
+    slots?: string[];
+  }): Promise<Company[]> {
+    const query = this.companyRepository.createQueryBuilder('company');
+
+    if (filter.categoryIds?.length) {
+      // Las categorías son por compañía (mismo nombre, ids distintos por
+      // compañía). Resolvemos los ids pedidos a nombres y hacemos match por
+      // nombre para que el filtro funcione entre compañías.
+      const requested = await this.companyCategoryRepository.find({
+        where: { id: In(filter.categoryIds) },
+      });
+      const names = [
+        ...new Set(
+          requested.map((c) => c.name).filter((n): n is string => !!n),
+        ),
+      ];
+      if (names.length === 0) return [];
+      query.innerJoin('company.categories', 'cat', 'cat.name IN (:...names)', {
+        names,
+      });
+    }
+
+    if (filter.city) {
+      query.andWhere('LOWER(company.location) LIKE LOWER(:city)', {
+        city: `%${filter.city}%`,
+      });
+    }
+
+    query.distinct(true).orderBy('company.id', 'ASC');
+    let companies = await query.getMany();
+
+    // Filtro de disponibilidad: activo si hay fecha o franjas. Con fecha se
+    // respetan excepciones/días laborables; con solo franjas se evalúa el
+    // horario semanal base.
+    const wantsAvailability = !!filter.date || (filter.slots?.length ?? 0) > 0;
+    if (wantsAvailability && companies.length > 0) {
+      const dayOfWeek = filter.date
+        ? this.getDayOfWeek(filter.date)
+        : undefined;
+      const ids = companies.map((c) => c.id);
+      const calendars = await this.calendarCompanyRepository.find({
+        where: { companyId: In(ids) },
+      });
+      const calMap = new Map<number, any[]>();
+      for (const cc of calendars) {
+        if (!calMap.has(cc.companyId)) calMap.set(cc.companyId, []);
+        if (cc.calendarDetail != null)
+          calMap.get(cc.companyId)!.push(cc.calendarDetail);
+      }
+      companies = companies.filter((c) =>
+        (calMap.get(c.id) ?? []).some((cal) =>
+          this.isCompanyOpenForSlots(cal, filter.date, dayOfWeek, filter.slots),
+        ),
+      );
+    }
+
+    return companies;
+  }
+
+  /**
+   * Ciudades distintas a partir de company.location, para los selectores del
+   * filtro de directorio.
+   */
+  async getDistinctCities(): Promise<string[]> {
+    const rows = await this.companyRepository
+      .createQueryBuilder('company')
+      .select('DISTINCT company.location', 'location')
+      .where('company.location IS NOT NULL')
+      .andWhere("TRIM(company.location) <> ''")
+      .orderBy('company.location', 'ASC')
+      .getRawMany<{ location: string }>();
+    return rows.map((r) => r.location).filter((l): l is string => !!l);
+  }
+
+  /**
+   * Categorías de compañía deduplicadas por nombre (id representativo), para
+   * los selectores del filtro de directorio.
+   */
+  async getCategoryOptions(): Promise<{ id: number; name: string }[]> {
+    const cats = await this.companyCategoryRepository.find({
       order: { id: 'ASC' },
     });
+    const byName = new Map<string, { id: number; name: string }>();
+    for (const c of cats) {
+      if (!c.name) continue;
+      const key = c.name.trim().toLowerCase();
+      if (!byName.has(key)) byName.set(key, { id: c.id, name: c.name });
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
 
+  private async buildDirectoryDetails(
+    companies: Company[],
+    page: number,
+    limit: number,
+    total: number,
+  ): Promise<PaginationResult<any>> {
     if (companies.length === 0) {
+      const totalPages = Math.ceil(total / limit);
       return {
         data: [],
         meta: {
           page,
           limit,
-          total: 0,
-          totalPages: 0,
-          hasNext: false,
-          hasPrev: false,
+          total,
+          totalPages,
+          hasNext: page < totalPages,
+          hasPrev: page > 1,
         },
       };
     }

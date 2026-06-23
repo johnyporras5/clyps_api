@@ -72,7 +72,7 @@ export class EmailService {
 
       this.logger.log(`Enviando código ${code} a ${email}`);
 
-      const { data, error } = await this.resend.emails.send({
+      const { error } = await this.resend.emails.send({
         from: this.fromEmail,
         to: email,
         subject,
@@ -108,7 +108,7 @@ export class EmailService {
         `Enviando notificación de cambio de contraseña a ${email}`,
       );
 
-      const { data, error } = await this.resend.emails.send({
+      const { error } = await this.resend.emails.send({
         from: this.fromEmail,
         to: email,
         subject: 'Contraseña cambiada',
@@ -138,7 +138,7 @@ export class EmailService {
 
       this.logger.log(`Enviando email a ${to} con asunto: ${subject}`);
 
-      const { data, error } = await this.resend.emails.send({
+      const { error } = await this.resend.emails.send({
         from: this.fromEmail,
         to: to,
         subject: subject,
@@ -1667,7 +1667,7 @@ export class EmailService {
         `Enviando credenciales a ${email} para la compañía ${companyName}`,
       );
 
-      const { data, error } = await this.resend.emails.send({
+      const { error } = await this.resend.emails.send({
         from: this.fromEmail,
         to: email,
         subject,

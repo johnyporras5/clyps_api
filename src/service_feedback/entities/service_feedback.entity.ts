@@ -7,6 +7,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { Service } from '../../service/entities/service.entity';
+import { Client } from '../../client/entities/client.entity';
 
 @Entity('service_feedback')
 export class ServiceFeedback {
@@ -29,7 +30,7 @@ export class ServiceFeedback {
   @Column({ name: 'service_id', type: 'int' })
   serviceId: number;
 
-  client?: any;
+  client?: Client & { pictureUrl?: string };
 
   @Column({ name: 'client_id', type: 'int', nullable: true })
   clientId?: number | null;

@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { ClientFavoriteCompanyService } from './client-favorite-company.service';
 import { ClientFavoriteCompany } from './entities/client-favorite-company.entity';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginationResult } from '../common/utils/pagination.util';
@@ -31,7 +32,7 @@ export class ClientFavoriteCompanyController {
   @HttpCode(HttpStatus.CREATED)
   async add(
     @Param('companyId', ParseIntPipe) companyId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<ClientFavoriteCompany> {
     const userId = req.user?.sub;
     if (!userId) throw new UnauthorizedException('User not authenticated');
@@ -46,7 +47,7 @@ export class ClientFavoriteCompanyController {
   @HttpCode(HttpStatus.OK)
   async list(
     @Query() paginationDto: PaginationDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<PaginationResult<ClientFavoriteCompany>> {
     const userId = req.user?.sub;
     if (!userId) throw new UnauthorizedException('User not authenticated');
@@ -65,7 +66,7 @@ export class ClientFavoriteCompanyController {
   @HttpCode(HttpStatus.OK)
   async status(
     @Param('companyId', ParseIntPipe) companyId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ isFavorite: boolean }> {
     const userId = req.user?.sub;
     if (!userId) throw new UnauthorizedException('User not authenticated');
@@ -80,7 +81,7 @@ export class ClientFavoriteCompanyController {
   @HttpCode(HttpStatus.OK)
   async remove(
     @Param('companyId', ParseIntPipe) companyId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string }> {
     const userId = req.user?.sub;
     if (!userId) throw new UnauthorizedException('User not authenticated');

@@ -197,20 +197,8 @@ export class AuthService {
     // Enviar código de verificación
     await this.sendVerificationCode(savedUser.email);
 
-    // Generar token JWT
-    const companyClaims = await this.buildCompanyClaims(savedUser);
-    const payload = {
-      email: savedUser.email,
-      sub: savedUser.id,
-      userType: savedUser.userType,
-      companyId: companyClaims.companyId,
-      companyWorkerId: companyClaims.companyWorkerId,
-    };
-
-    const access_token = this.jwtService.sign(payload);
-
     // Eliminar password del objeto de respuesta
-    const { password, ...userWithoutPassword } = savedUser;
+    const { password: _, ...userWithoutPassword } = savedUser;
 
     return {
       message:
@@ -459,7 +447,7 @@ export class AuthService {
     // No se genera token JWT en el registro de trabajador
 
     // Eliminar password del objeto de respuesta
-    const { password, ...userWithoutPassword } = user;
+    const { password: _, ...userWithoutPassword } = user;
 
     // ==================== CONSTRUIR MENSAJE DE RESPUESTA ====================
     // En este punto el trabajador es siempre nuevo: los casos de trabajador
@@ -520,7 +508,6 @@ export class AuthService {
     let user: User;
     let client: Client | null = null;
     const isExistingUser = false;
-    let generatedPassword: string | undefined;
 
     // ==================== EL EMAIL YA EXISTE → CONFLICTO (409) ====================
     // El registro público NO debe actualizar ni sobrescribir un perfil existente:
@@ -574,9 +561,6 @@ export class AuthService {
       const clientProvidedPassword = !!registerDto.password;
       const passwordToUse =
         registerDto.password || this.generateRandomPassword(8);
-      if (!clientProvidedPassword) {
-        generatedPassword = passwordToUse;
-      }
       const hashedPassword = await bcrypt.hash(passwordToUse, 10);
 
       const newUser = this.userRepository.create({
@@ -655,7 +639,9 @@ export class AuthService {
       console.log(`Perfil de cliente creado con ID: ${client.id}`);
     } else {
       // ==================== VERIFICAR SI HAY CAMBIOS REALES ====================
-      console.log(`Verificando cambios para cliente existente (userId: ${user.id})`);
+      console.log(
+        `Verificando cambios para cliente existente (userId: ${user.id})`,
+      );
 
       // Preparar objeto con solo los campos que vienen en el DTO (no undefined)
       const updateData: any = {};
@@ -758,7 +744,7 @@ export class AuthService {
     }
 
     // Eliminar password del objeto de respuesta
-    const { password, ...userWithoutPassword } = user;
+    const { password: _, ...userWithoutPassword } = user;
 
     // ==================== CONSTRUIR MENSAJE DE RESPUESTA ====================
     const actionParts: string[] = [];
@@ -986,7 +972,7 @@ export class AuthService {
       client = await this.clientRepository.save(newClient);
     }
 
-    const { password, ...userWithoutPassword } = user;
+    const { password: _, ...userWithoutPassword } = user;
 
     const message = isExistingUser
       ? `Cliente existente vinculado a la compañía '${company.name}' exitosamente.`

@@ -14,6 +14,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { CompanyWorkerService } from './company_worker.service';
+import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CompanyWorker } from './entities/company_worker.entity';
 import { CreateCompanyWorkerDto } from './dto/create-company_worker.dto';
 import { UpdateCompanyWorkerDto } from './dto/update-company_worker.dto';
@@ -81,7 +82,7 @@ export class CompanyWorkerController {
   @HttpCode(HttpStatus.OK)
   async updateWorkerInCompany(
     @Param('workerId', ParseIntPipe) workerId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() updateCompanyWorkerDto: UpdateCompanyWorkerDto,
   ): Promise<CompanyWorker> {
     const adminId = req.user.sub;
@@ -103,7 +104,7 @@ export class CompanyWorkerController {
   @HttpCode(HttpStatus.OK)
   async updateWorkerByUserId(
     @Param('userId', ParseIntPipe) userId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() updateCompanyWorkerDto: UpdateCompanyWorkerDto,
   ): Promise<CompanyWorker> {
     const adminId = req.user.sub;
@@ -127,7 +128,7 @@ export class CompanyWorkerController {
   @HttpCode(HttpStatus.OK)
   async removeWorkerFromCompany(
     @Param('workerId', ParseIntPipe) workerId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string }> {
     const adminId = req.user.sub;
     return this.companyWorkerService.removeWorkerFromCompany(workerId, adminId);
@@ -144,7 +145,7 @@ export class CompanyWorkerController {
   @HttpCode(HttpStatus.OK)
   async removeWorkerByUserId(
     @Param('userId', ParseIntPipe) userId: number,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ): Promise<{ message: string }> {
     const adminId = req.user.sub;
     return this.companyWorkerService.removeWorkerByUserId(userId, adminId);
@@ -161,14 +162,11 @@ export class CompanyWorkerController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('wrk')
   @HttpCode(HttpStatus.OK)
-  async getMyCompanyData(@Req() req: any): Promise<CompanyWorker> {
-    const userId = req.user.sub;
-
+  async getMyCompanyData(@Req() _req: any): Promise<CompanyWorker> {
     // Este método necesitarías crearlo en el servicio
     // return this.companyWorkerService.findByUserId(userId);
 
     // O puedes usar el endpoint existente con lógica específica
-    const adminId = req.user.sub; // Esto sería el workerId
     // Adapta según tu lógica
     throw new Error('Método no implementado aún');
   }
@@ -183,7 +181,7 @@ export class CompanyWorkerController {
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
   async getMyCompanyWorkers(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Query() paginationDto: CompanyWorkersPaginationDto,
   ): Promise<PaginatedWorkerListResult> {
     const adminId = req.user.sub;

@@ -48,7 +48,9 @@ export class ServiceNotificationEmitter {
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'desconocido';
-      this.logger.warn(`No se pudo notificar asignación de servicio: ${reason}`);
+      this.logger.warn(
+        `No se pudo notificar asignación de servicio: ${reason}`,
+      );
     }
   }
 }
