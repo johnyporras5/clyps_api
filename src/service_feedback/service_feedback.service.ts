@@ -17,6 +17,8 @@ import { FileUploadService } from '../common/services/file_upload.service';
 import { WorkerFeedbackStatsDto } from '../worker/dto/worker-feedback-stats.dto';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom } from '../realtime/rooms';
+import { NotificationService } from '../notification/notification.service';
+import { buildNavigationData } from '../notification/entities/notification.entity';
 
 export type ServiceFeedbackPaginatedResult =
   PaginationResult<ServiceFeedback> & {
@@ -34,6 +36,7 @@ export class ServiceFeedbackService {
     private companyRepository: Repository<Company>,
     private fileUploadService: FileUploadService,
     private readonly realtime: RealtimeService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async findOne(id: number): Promise<ServiceFeedback> {
@@ -91,7 +94,39 @@ export class ServiceFeedbackService {
 
     await this.emitReviewCreated(saved, service.companyId ?? null);
 
+    // Notificación (feed + socket + FCM): admin de la company del servicio.
+    await this.notifyReviewCreated(saved, service.companyId ?? null, clientId);
+
     return saved;
+  }
+
+  /** Calificación de servicio recibida → admin de la company del servicio. */
+  private async notifyReviewCreated(
+    feedback: ServiceFeedback,
+    companyId: number | null,
+    actorUserId?: number,
+  ): Promise<void> {
+    try {
+      if (!companyId) return;
+      const company = await this.companyRepository.findOne({
+        where: { id: companyId },
+      });
+      const adminId =
+        company?.userId && company.userId !== actorUserId
+          ? company.userId
+          : null;
+      await this.notifications.createNotificationForUsers(
+        adminId ? [adminId] : [],
+        {
+          type: 'review',
+          title: 'Calificación recibida',
+          body: `Recibiste una reseña de ${feedback.stars}★`,
+          data: buildNavigationData('review', feedback.id, companyId),
+        },
+      );
+    } catch {
+      // best-effort.
+    }
   }
 
   /**

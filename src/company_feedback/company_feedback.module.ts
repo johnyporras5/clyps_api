@@ -12,6 +12,7 @@ import { Worker } from '../worker/entities/worker.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { CommonModule } from '../common/common.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     ]),
     CommonModule,
     RealtimeModule,
+    NotificationModule,
   ],
   providers: [CompanyFeedbackService],
   controllers: [CompanyFeedbackController],

@@ -21,6 +21,8 @@ import { FileUploadService } from '../common/services/file_upload.service';
 import { WorkerFeedbackStatsDto } from '../worker/dto/worker-feedback-stats.dto';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom } from '../realtime/rooms';
+import { NotificationService } from '../notification/notification.service';
+import { buildNavigationData } from '../notification/entities/notification.entity';
 
 // El campo `stats` ahora va anidado dentro de cada feedback.company (un card
 // por compañía). El resultado paginado mantiene la forma estándar.
@@ -54,6 +56,7 @@ export class CompanyFeedbackService {
 
     private fileUploadService: FileUploadService,
     private readonly realtime: RealtimeService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async findOne(id: number): Promise<CompanyFeedback> {
@@ -108,7 +111,37 @@ export class CompanyFeedbackService {
 
     await this.emitReviewCreated(saved);
 
+    // Notificación (feed + socket + FCM): admin de la company. Actor excluido.
+    await this.notifyReviewCreated(saved, clientId);
+
     return saved;
+  }
+
+  /** Calificación de empresa recibida → admin de la company. */
+  private async notifyReviewCreated(
+    feedback: CompanyFeedback,
+    actorUserId?: number,
+  ): Promise<void> {
+    try {
+      const company = await this.companyRepository.findOne({
+        where: { id: feedback.companyId },
+      });
+      const adminId =
+        company?.userId && company.userId !== actorUserId
+          ? company.userId
+          : null;
+      await this.notifications.createNotificationForUsers(
+        adminId ? [adminId] : [],
+        {
+          type: 'review',
+          title: 'Calificación recibida',
+          body: `Recibiste una reseña de ${feedback.stars}★`,
+          data: buildNavigationData('review', feedback.id, feedback.companyId),
+        },
+      );
+    } catch {
+      // best-effort.
+    }
   }
 
   /**

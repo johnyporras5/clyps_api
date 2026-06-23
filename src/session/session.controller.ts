@@ -27,6 +27,7 @@ import { CancelSessionDto } from './dto/cancel-session.dto';
 import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
 import { GetAvailabilityDto } from './dto/get-availability.dto';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
+import { SessionNotificationEmitter } from './session-notification.emitter';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -34,6 +35,7 @@ export class SessionController {
   constructor(
     private readonly sessionService: SessionService,
     private readonly realtimeEmitter: SessionRealtimeEmitter,
+    private readonly notificationEmitter: SessionNotificationEmitter,
   ) {}
 
   @Post()
@@ -54,7 +56,7 @@ export class SessionController {
       createSessionWithDetailDto,
       adminId,
     );
-    await this.emitCreatedFrom(result);
+    await this.emitCreatedFrom(result, adminId);
     return result;
   }
 
@@ -156,6 +158,7 @@ export class SessionController {
       'adm',
     );
     await this.realtimeEmitter.emitStatusChanged(+id);
+    await this.notificationEmitter.notifyStatusChanged(+id, adminId);
     return result;
   }
 
@@ -178,6 +181,11 @@ export class SessionController {
       adminId,
     );
     await this.realtimeEmitter.emitWorkersAssigned(+id, result?.updates ?? []);
+    await this.notificationEmitter.notifyWorkersAssigned(
+      +id,
+      result?.updates ?? [],
+      adminId,
+    );
     return result;
   }
 
@@ -199,6 +207,7 @@ export class SessionController {
     const sessionId = result?.validation?.sessionId;
     if (sessionId) {
       await this.realtimeEmitter.emitStatusChanged(sessionId);
+      await this.notificationEmitter.notifyStatusChanged(sessionId, userId);
     }
     return result;
   }
@@ -231,7 +240,7 @@ export class SessionController {
       createSessionWithDetailDto,
       userId,
     );
-    await this.emitCreatedFrom(result);
+    await this.emitCreatedFrom(result, userId);
     return result;
   }
 
@@ -451,10 +460,14 @@ export class SessionController {
    * Emite appointment.created SOLO si realmente se creó una cita nueva.
    * El sessionId se obtiene del primer detalle creado (createdDetails[0]).
    */
-  private async emitCreatedFrom(result: any): Promise<void> {
+  private async emitCreatedFrom(
+    result: any,
+    actorUserId?: number,
+  ): Promise<void> {
     const sessionId = result?.createdDetails?.[0]?.sessionId;
     if (sessionId) {
       await this.realtimeEmitter.emitCreated(sessionId);
+      await this.notificationEmitter.notifyCreated(sessionId, actorUserId);
     }
   }
 

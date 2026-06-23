@@ -21,6 +21,8 @@ import { FileUploadService } from 'src/common/services/file_upload.service';
 import { WorkerFeedbackStatsDto } from 'src/worker/dto/worker-feedback-stats.dto';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom, workerRoom } from '../realtime/rooms';
+import { NotificationService } from '../notification/notification.service';
+import { buildNavigationData } from '../notification/entities/notification.entity';
 
 // Cada feedback trae sus stats individuales en `feedback.worker.stats`. El
 // resultado paginado también incluye `stats` a nivel root: estadísticas
@@ -51,6 +53,7 @@ export class WorkerFeedbackService {
     private serviceRepository: Repository<Service>,
     private fileUploadService: FileUploadService,
     private readonly realtime: RealtimeService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async findOne(id: number): Promise<WorkerFeedback> {
@@ -113,7 +116,61 @@ export class WorkerFeedbackService {
 
     await this.emitReviewCreated(saved);
 
+    // Notificación (feed + socket + FCM): el worker reseñado + admin(s) de su(s)
+    // company(s). Actor (cliente) excluido. CLYP-262 / §6.
+    await this.notifyReviewCreated(saved, worker, clientId);
+
     return saved;
+  }
+
+  /** Calificación recibida → worker reseñado + admin(s) de su company. */
+  private async notifyReviewCreated(
+    feedback: WorkerFeedback,
+    worker: Worker,
+    actorUserId?: number,
+  ): Promise<void> {
+    try {
+      const data = buildNavigationData('review', feedback.id);
+      const stars = feedback.stars;
+
+      // Admin(s) de las companies donde el worker está asignado.
+      const cwRows = await this.companyWorkerRepository.find({
+        where: { workerId: worker.id },
+      });
+      const companyIds = [
+        ...new Set(cwRows.map((r) => r.companyId).filter(Boolean)),
+      ];
+      const companies = companyIds.length
+        ? await this.companyRepository.find({
+            where: companyIds.map((id) => ({ id })),
+          })
+        : [];
+      const adminIds = companies
+        .map((c) => c.userId)
+        .filter((id): id is number => !!id && id !== actorUserId);
+
+      // Worker reseñado.
+      const workerUserId =
+        worker.userId && worker.userId !== actorUserId ? worker.userId : null;
+
+      await this.notifications.createNotificationForUsers(
+        workerUserId ? [workerUserId] : [],
+        {
+          type: 'review',
+          title: 'Calificación recibida',
+          body: `Recibiste una reseña de ${stars}★`,
+          data,
+        },
+      );
+      await this.notifications.createNotificationForUsers(adminIds, {
+        type: 'review',
+        title: 'Calificación recibida',
+        body: `Tu empresa recibió una reseña de ${stars}★`,
+        data,
+      });
+    } catch {
+      // best-effort: nunca rompe la creación del feedback.
+    }
   }
 
   /**

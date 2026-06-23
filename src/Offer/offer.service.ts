@@ -21,6 +21,7 @@ import {
 } from '../common/utils/pagination.util';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
+import { OfferNotificationEmitter } from './offer-notification.emitter';
 
 @Injectable()
 export class OfferService {
@@ -36,6 +37,7 @@ export class OfferService {
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
     private readonly realtime: RealtimeService,
+    private readonly offerNotifications: OfferNotificationEmitter,
   ) {}
 
   /**
@@ -163,6 +165,12 @@ export class OfferService {
     const savedOffer = await this.offerRepository.save(offer);
     const full = await this.findOne(savedOffer.id, adminId);
     this.emitOfferEvent('offer.created', full.id, full.companyId, full);
+    // Notificación (feed + socket + FCM) a clientes con cita previa en la company.
+    await this.offerNotifications.notifyCreated({
+      id: full.id,
+      companyId: full.companyId,
+      name: full.name,
+    });
     return full;
   }
 

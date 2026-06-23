@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { GeneratedModules } from './generated-modules';
@@ -37,6 +39,9 @@ import { NotificationModule } from './notification/notification.module';
       ignoreErrors: false,
     }),
     ScheduleModule.forRoot(),
+    // Rate limiting global: 100 req/min por IP. Endpoints sensibles de auth
+    // aplican un límite más estricto vía @Throttle.
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'assets'),
       serveRoot: '/assets',
@@ -122,6 +127,8 @@ import { NotificationModule } from './notification/notification.module';
     CleanupTask,
     AutoCancelSessionsTask,
     OfferExpirationTask,
+    // Activa el rate limiting de forma global en toda la app.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule {}
