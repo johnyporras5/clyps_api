@@ -60,13 +60,19 @@ export class NotificationService {
     userId: number,
     input: CreateNotificationInput,
   ): Promise<Notification> {
+    // §5: `data.type` SIEMPRE debe coincidir con el type de la notificación.
+    // Lo forzamos aquí para no depender de que el caller lo recuerde.
+    const data: NotificationData | null = input.data
+      ? { ...input.data, type: input.type }
+      : null;
+
     const notif = await this.notificationRepo.save(
       this.notificationRepo.create({
         userId,
         type: input.type,
         title: input.title,
         body: input.body,
-        data: input.data ?? null,
+        data,
         read: false,
       }),
     );
@@ -83,7 +89,7 @@ export class NotificationService {
     }
 
     // (b) Push externa — best-effort.
-    void this.sendPush(userId, input);
+    void this.sendPush(userId, input, data);
 
     return notif;
   }
@@ -117,6 +123,7 @@ export class NotificationService {
   private async sendPush(
     userId: number,
     input: CreateNotificationInput,
+    data: NotificationData | null,
   ): Promise<void> {
     try {
       const messaging = this.firebase.messaging();
@@ -129,7 +136,7 @@ export class NotificationService {
       const response = await messaging.sendEachForMulticast({
         tokens,
         notification: { title: input.title, body: input.body },
-        data: this.stringifyValues(input.data),
+        data: this.stringifyValues(data),
         android: { priority: 'high' },
         apns: { headers: { 'apns-priority': '10' } },
         webpush: { fcmOptions: { link: '/' } },
