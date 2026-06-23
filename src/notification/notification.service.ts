@@ -182,8 +182,10 @@ export class NotificationService {
         data: this.stringifyValues(data),
         android: { priority: 'high' },
         apns: { headers: { 'apns-priority': '10' } },
-        // Deep-link: el SW del navegador abre la ruta según `data` (CLYP-264).
-        webpush: { fcmOptions: { link: this.buildWebLink(data) } },
+        // El push web abre la app; la navegación la decide el Service Worker
+        // leyendo `data` (mismo mapa de §5 que usa la app móvil). El backend no
+        // hardcodea rutas web: una sola fuente de verdad (el payload `data`).
+        webpush: { fcmOptions: { link: '/' } },
       });
 
       await this.handleInvalidTokens(tokens, response);
@@ -220,27 +222,6 @@ export class NotificationService {
     if (invalid.length > 0) {
       await this.fcmTokenRepo.delete(invalid.map((token) => ({ token })));
       this.logger.log(`Eliminados ${invalid.length} token(s) FCM inválido(s)`);
-    }
-  }
-
-  /**
-   * Ruta a abrir en web push según `data` (CLYP-264 / opcional). Espeja el mapa
-   * de navegación de la app (§5). Las rutas son del front web — confirmar/ajustar
-   * con el equipo de web si difieren.
-   */
-  private buildWebLink(data: NotificationData | null): string {
-    if (!data) return '/';
-    switch (data.type) {
-      case 'appointment':
-      case 'reminder':
-      case 'assignment':
-        return data.entityId ? `/appointments/${data.entityId}` : '/appointments';
-      case 'offer':
-        return '/offers';
-      case 'review':
-        return '/reviews';
-      default:
-        return '/';
     }
   }
 
