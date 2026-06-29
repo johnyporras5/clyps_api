@@ -3,6 +3,7 @@ import {
   IsString,
   IsNumber,
   IsArray,
+  IsBoolean,
   Min,
   Max,
   IsEnum,
@@ -65,4 +66,9 @@ export class CreateServiceDto {
   @IsOptional()
   @IsNumber()
   categoryId?: number;
+
+  // Marcar como servicio para la comunidad (oculto al cliente).
+  @IsOptional()
+  @IsBoolean()
+  forCommunity?: boolean;
 }

@@ -19,6 +19,7 @@ import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity
 import { CommonModule } from '../common/common.module';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 import { CompanyCategoryModule } from 'src/company_category/company_category.module';
+import { SiteCategoryModule } from 'src/site_category/site_category.module';
 import { Service } from 'src/service/entities/service.entity';
 import { ServiceCategory } from 'src/service_category/entities/service_category.entity';
 import { CompanyCategory } from 'src/company_category/entities/company_category.entity';
@@ -27,6 +28,7 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.entity';
 import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
+import { SiteCategory } from 'src/site_category/entities/site_category.entity';
 import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
@@ -47,6 +49,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
       ServiceFeedback,
       Session,
       SessionDetail,
+      SiteCategory,
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -70,6 +73,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     VerificationModule,
     CommonModule,
     CompanyCategoryModule,
+    SiteCategoryModule,
     // forwardRef: RealtimeModule importa AuthModule (Gateway usa AuthService).
     forwardRef(() => RealtimeModule),
   ],

@@ -85,12 +85,14 @@ export class ServiceController {
   async findByCompany(
     @Param('companyId', ParseIntPipe) companyId: number,
     @Query() paginationDto: PaginationDto,
+    @Req() req: AuthenticatedRequest,
   ): Promise<any> {
     const { page, limit } = paginationDto;
-    return this.serviceService.findAllByCompanyIdWithWorkers(companyId, {
-      page,
-      limit,
-    });
+    return this.serviceService.findAllByCompanyIdWithWorkers(
+      companyId,
+      { page, limit },
+      req.user.userType,
+    );
   }
 
   /**

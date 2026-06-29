@@ -47,9 +47,15 @@ export class Service {
   @Column({ name: 'status', nullable: true, default: ServiceStatus.ACTIVE })
   status: number;
 
+  // Servicio "para la comunidad": gestionado directamente por admin/worker y
+  // oculto para el cliente. Por defecto false (servicio normal y visible).
+  @Column({ name: 'for_community', type: 'boolean', default: false })
+  forCommunity: boolean;
+
   constructor() {
     this.workers = [];
     this.status = ServiceStatus.ACTIVE;
+    this.forCommunity = false;
   }
 
   @Column({ name: 'category_id', nullable: true })

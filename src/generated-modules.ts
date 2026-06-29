@@ -14,6 +14,8 @@ import { WorkerFeedbackModule } from './worker_feedback/worker_feedback.module';
 import { CalendarCompanyModule } from './calendar_company/calendar-company.module';
 import { ServiceFeedbackModule } from './service_feedback/service_feedback.module';
 import { ClientFavoriteCompanyModule } from './client_favorite_company/client-favorite-company.module';
+import { ClientNoteModule } from './client_note/client_note.module';
+import { SiteCategoryModule } from './site_category/site_category.module';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { ClientFavoriteCompanyModule } from './client_favorite_company/client-fa
     CalendarCompanyModule,
     ServiceFeedbackModule,
     ClientFavoriteCompanyModule,
+    ClientNoteModule,
+    SiteCategoryModule,
   ],
 })
 export class GeneratedModules {}

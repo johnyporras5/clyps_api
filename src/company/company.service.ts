@@ -24,6 +24,7 @@ import { Client } from '../client/entities/client.entity';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
 import { Service } from 'src/service/entities/service.entity';
+import { ServiceStatus } from 'src/service/enum/service-status.enum';
 import { ServiceCategory } from 'src/service_category/entities/service_category.entity';
 import { CompanyCategory } from 'src/company_category/entities/company_category.entity';
 import { CompanyFeedback } from 'src/company_feedback/entities/company_feedback.entity';
@@ -31,6 +32,7 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.entity';
 import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
+import { SiteCategory } from 'src/site_category/entities/site_category.entity';
 
 @Injectable()
 export class CompanyService {
@@ -61,6 +63,8 @@ export class CompanyService {
     private sessionRepository: Repository<Session>,
     @InjectRepository(SessionDetail)
     private sessionDetailRepository: Repository<SessionDetail>,
+    @InjectRepository(SiteCategory)
+    private siteCategoryRepository: Repository<SiteCategory>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
   ) {}
@@ -119,7 +123,7 @@ export class CompanyService {
     };
   }
 
-  async findOne(id: number): Promise<any> {
+  async findOne(id: number, viewerType?: string): Promise<any> {
     const company = await this.companyRepository.findOne({ where: { id } });
     if (!company) {
       throw new NotFoundException(`Company with id ${id} not found`);
@@ -143,7 +147,9 @@ export class CompanyService {
           permanentlyDeleted: false,
         },
       }),
-      this.serviceRepository.find({ where: { companyId: id } }),
+      this.serviceRepository.find({
+        where: { companyId: id, status: ServiceStatus.ACTIVE },
+      }),
       this.serviceCategoryRepository.find({
         where: { companyId: id, isActive: true },
       }),
@@ -250,28 +256,34 @@ export class CompanyService {
         };
       });
 
-    const servicesData = services.map((s) => {
-      const cat = s.categoryId ? categoryById.get(s.categoryId) : null;
-      const rating = serviceRatingMap.get(s.id) || { average: 0, total: 0 };
-      return {
-        id: s.id,
-        name: s.name,
-        description: s.description,
-        cost: s.cost,
-        currency: s.currency,
-        standardTime: s.standardTime,
-        status: s.status,
-        category: cat
-          ? { id: cat.id, name: cat.name, description: cat.description }
-          : null,
-        rating,
-      };
-    });
+    const servicesData = services
+      // Servicios "para la comunidad": ocultos para el cliente.
+      .filter((s) => !(viewerType === 'cli' && s.forCommunity))
+      .map((s) => {
+        const cat = s.categoryId ? categoryById.get(s.categoryId) : null;
+        const rating = serviceRatingMap.get(s.id) || { average: 0, total: 0 };
+        return {
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          cost: s.cost,
+          currency: s.currency,
+          standardTime: s.standardTime,
+          status: s.status,
+          category: cat
+            ? { id: cat.id, name: cat.name, description: cat.description }
+            : null,
+          rating,
+        };
+      });
 
-    const categories = companyCategories.map((cc) => ({
-      id: cc.id,
-      name: cc.name,
-    }));
+    // Categorías mapeadas al catálogo global (id = site_category.id), para que
+    // coincidan con el directorio y el filtro ?categoryId=.
+    const slugToSite = await this.getSiteCategorySlugMap();
+    const categories = this.mapCompanyCategoriesToCatalog(
+      companyCategories,
+      slugToSite,
+    );
 
     const rating =
       companyRatingRaw && companyRatingRaw.avg
@@ -1184,9 +1196,10 @@ export class CompanyService {
       categoryIds?: number[];
       date?: string;
       slots?: string[];
+      viewerType?: string;
     },
   ): Promise<PaginationResult<any>> {
-    const { page, limit, city, categoryIds, date, slots } = options;
+    const { page, limit, city, categoryIds, date, slots, viewerType } = options;
     const hasFilters =
       !!city ||
       (categoryIds?.length ?? 0) > 0 ||
@@ -1218,7 +1231,7 @@ export class CompanyService {
       companies = matched.slice(skip, skip + limit);
     }
 
-    return this.buildDirectoryDetails(companies, page, limit, total);
+    return this.buildDirectoryDetails(companies, page, limit, total, viewerType);
   }
 
   /**
@@ -1235,21 +1248,23 @@ export class CompanyService {
     const query = this.companyRepository.createQueryBuilder('company');
 
     if (filter.categoryIds?.length) {
-      // Las categorías son por compañía (mismo nombre, ids distintos por
-      // compañía). Resolvemos los ids pedidos a nombres y hacemos match por
-      // nombre para que el filtro funcione entre compañías.
-      const requested = await this.companyCategoryRepository.find({
+      // categoryId son ids del catálogo global `site_category`. Resolvemos a
+      // sus slugs y hacemos match contra company_category.name (que guarda el
+      // slug), para que el filtro funcione entre compañías y coincida con las
+      // preferencias del cliente.
+      const sites = await this.siteCategoryRepository.find({
         where: { id: In(filter.categoryIds) },
       });
-      const names = [
-        ...new Set(
-          requested.map((c) => c.name).filter((n): n is string => !!n),
-        ),
+      const slugs = [
+        ...new Set(sites.map((s) => s.slug).filter((s): s is string => !!s)),
       ];
-      if (names.length === 0) return [];
-      query.innerJoin('company.categories', 'cat', 'cat.name IN (:...names)', {
-        names,
-      });
+      if (slugs.length === 0) return [];
+      query.innerJoin(
+        'company.categories',
+        'cat',
+        'LOWER(TRIM(cat.name)) IN (:...slugs)',
+        { slugs },
+      );
     }
 
     if (filter.city) {
@@ -1290,35 +1305,89 @@ export class CompanyService {
   }
 
   /**
-   * Ciudades distintas a partir de company.location, para los selectores del
-   * filtro de directorio.
+   * Ciudades distintas y normalizadas a partir de company.location, para los
+   * selectores del filtro de directorio.
+   *
+   * `company.location` es texto libre: puede venir como una ciudad suelta
+   * ("caracas") o como dirección completa ("Barquisimeto, Iribarren, Lara,
+   * Venezuela"). Tomamos el primer segmento como ciudad, normalizamos
+   * mayúsculas y deduplicamos sin distinguir mayúsculas/acentos de formato.
    */
   async getDistinctCities(): Promise<string[]> {
     const rows = await this.companyRepository
       .createQueryBuilder('company')
-      .select('DISTINCT company.location', 'location')
+      .select('company.location', 'location')
       .where('company.location IS NOT NULL')
       .andWhere("TRIM(company.location) <> ''")
-      .orderBy('company.location', 'ASC')
       .getRawMany<{ location: string }>();
-    return rows.map((r) => r.location).filter((l): l is string => !!l);
+
+    const byKey = new Map<string, string>();
+    for (const { location } of rows) {
+      if (!location) continue;
+      const city = this.normalizeCityName(location.split(',')[0]);
+      if (!city) continue;
+      const key = city.toLocaleLowerCase('es');
+      if (!byKey.has(key)) byKey.set(key, city);
+    }
+    return [...byKey.values()].sort((a, b) => a.localeCompare(b, 'es'));
   }
 
   /**
-   * Categorías de compañía deduplicadas por nombre (id representativo), para
-   * los selectores del filtro de directorio.
+   * Normaliza un nombre de ciudad: colapsa espacios y aplica Title Case
+   * (primera letra de cada palabra en mayúscula) respetando el locale es.
+   */
+  private normalizeCityName(raw: string): string {
+    const trimmed = raw.replace(/\s+/g, ' ').trim();
+    if (!trimmed) return '';
+    return trimmed
+      .toLocaleLowerCase('es')
+      .split(' ')
+      .map((w) =>
+        w ? w.charAt(0).toLocaleUpperCase('es') + w.slice(1) : w,
+      )
+      .join(' ');
+  }
+
+  /**
+   * Catálogo global de categorías (`site_category`) para los selectores del
+   * filtro de directorio. Los ids coinciden con `company.categories[].id` del
+   * directorio y con el `categoryId` del filtro.
    */
   async getCategoryOptions(): Promise<{ id: number; name: string }[]> {
-    const cats = await this.companyCategoryRepository.find({
-      order: { id: 'ASC' },
+    const cats = await this.siteCategoryRepository.find({
+      order: { name: 'ASC' },
     });
-    const byName = new Map<string, { id: number; name: string }>();
-    for (const c of cats) {
-      if (!c.name) continue;
-      const key = c.name.trim().toLowerCase();
-      if (!byName.has(key)) byName.set(key, { id: c.id, name: c.name });
+    return cats.map((c) => ({ id: c.id, name: c.name }));
+  }
+
+  /**
+   * Mapea las categorías por compañía (`company_category`, cuyo `name` guarda el
+   * slug) al catálogo global `site_category`, deduplicando por id de catálogo.
+   * Las que no tengan slug en el catálogo se omiten.
+   */
+  private mapCompanyCategoriesToCatalog(
+    companyCategories: CompanyCategory[],
+    slugToSite: Map<string, { id: number; name: string }>,
+  ): { id: number; name: string }[] {
+    const out = new Map<number, { id: number; name: string }>();
+    for (const cc of companyCategories) {
+      if (!cc.name) continue;
+      const site = slugToSite.get(cc.name.trim().toLowerCase());
+      if (site && !out.has(site.id)) out.set(site.id, site);
     }
-    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return [...out.values()];
+  }
+
+  /** Map slug → {id,name} del catálogo global, para resolver categorías. */
+  private async getSiteCategorySlugMap(): Promise<
+    Map<string, { id: number; name: string }>
+  > {
+    const sites = await this.siteCategoryRepository.find();
+    const map = new Map<string, { id: number; name: string }>();
+    for (const s of sites) {
+      if (s.slug) map.set(s.slug.trim().toLowerCase(), { id: s.id, name: s.name });
+    }
+    return map;
   }
 
   private async buildDirectoryDetails(
@@ -1326,6 +1395,7 @@ export class CompanyService {
     page: number,
     limit: number,
     total: number,
+    viewerType?: string,
   ): Promise<PaginationResult<any>> {
     if (companies.length === 0) {
       const totalPages = Math.ceil(total / limit);
@@ -1488,6 +1558,8 @@ export class CompanyService {
 
     const servicesByCompany = new Map<number, any[]>();
     for (const s of services) {
+      // Servicios "para la comunidad": ocultos para el cliente en el directorio.
+      if (viewerType === 'cli' && s.forCommunity) continue;
       if (!servicesByCompany.has(s.companyId)) {
         servicesByCompany.set(s.companyId, []);
       }
@@ -1508,15 +1580,22 @@ export class CompanyService {
       });
     }
 
-    const companyCategoriesByCompany = new Map<number, any[]>();
+    // Categorías mapeadas al catálogo global: `id` = site_category.id (mismo id
+    // que filtra ?categoryId= y que guardan las preferencias del cliente).
+    const slugToSite = await this.getSiteCategorySlugMap();
+    const rawCategoriesByCompany = new Map<number, CompanyCategory[]>();
     for (const cc of companyCategories) {
-      if (!companyCategoriesByCompany.has(cc.companyId)) {
-        companyCategoriesByCompany.set(cc.companyId, []);
+      if (!rawCategoriesByCompany.has(cc.companyId)) {
+        rawCategoriesByCompany.set(cc.companyId, []);
       }
-      companyCategoriesByCompany.get(cc.companyId)!.push({
-        id: cc.id,
-        name: cc.name,
-      });
+      rawCategoriesByCompany.get(cc.companyId)!.push(cc);
+    }
+    const companyCategoriesByCompany = new Map<number, any[]>();
+    for (const [companyId, ccs] of rawCategoriesByCompany) {
+      companyCategoriesByCompany.set(
+        companyId,
+        this.mapCompanyCategoriesToCatalog(ccs, slugToSite),
+      );
     }
 
     const data = companies.map((company) => ({

@@ -7,6 +7,6 @@ export class CreateIAPromptDto {
 
   @IsNotEmpty()
   @IsString()
-  @Length(1, 1, { message: 'type must be exactly 1 character' })
-  type: string; // 'p' o 'c'
+  @Length(1, 5, { message: 'type must be between 1 and 5 characters' })
+  type: string; // 'c', 'p' o 'pg'
 }

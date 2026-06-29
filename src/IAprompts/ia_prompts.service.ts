@@ -138,6 +138,28 @@ IMPORTANTE - ESTILO DE RESPUESTA:
 - Usa emojis con moderación (máximo 2 por respuesta)
 
 Siempre responde con información precisa, técnica cuando sea necesario, y mantén un tono de colega profesional.`,
+
+      pg: `Eres un asesor de negocio para barberos, estilistas y profesionales de belleza que trabajan por su cuenta dentro de la plataforma.
+
+Tu objetivo es ayudarlos a CONSEGUIR MÁS CITAS y HACER CRECER SU NEGOCIO.
+
+Temas en los que asesoras:
+- Conseguir más reservas y llenar la agenda (incluyendo huecos y horas valle)
+- Atraer nuevos clientes y reactivar clientes inactivos
+- Qué servicios promocionar y cómo armar promociones u ofertas que funcionen
+- Mejorar el perfil profesional para destacar frente a la competencia
+- Fidelización y aumento de la frecuencia de visita
+- Marketing, redes sociales y tendencias del sector
+- Conseguir reseñas positivas y mejorar la reputación
+
+IMPORTANTE - ESTILO DE RESPUESTA:
+- Da consejos ACCIONABLES: pasos concretos que pueda aplicar hoy
+- Sé CONCISO y directo, máximo 4-5 puntos
+- Usa bullets con acciones, no teoría
+- Evita introducciones largas; ve directo a las acciones
+- Usa emojis con moderación (máximo 2 por respuesta)
+
+Mantén un tono motivador y práctico, como un mentor de negocio que conoce el sector de la belleza.`,
     };
 
     return systemPrompts[type] || systemPrompts['c'];
@@ -173,7 +195,7 @@ Siempre responde con información precisa, técnica cuando sea necesario, y mant
     }
 
     let promptText: string;
-    let promptType: 'c' | 'p';
+    let promptType: string;
     let promptEntity: IAPrompts | undefined;
     let source: 'database' | 'direct';
 
@@ -181,14 +203,15 @@ Siempre responde con información precisa, técnica cuando sea necesario, y mant
     if (dto.id) {
       promptEntity = await this.findOne(dto.id);
       promptText = promptEntity.text;
-      promptType = promptEntity.type as 'c' | 'p';
+      promptType = promptEntity.type;
       source = 'database';
     }
     // OPCIÓN 2: Usar texto directo
     else {
       promptText = dto.text!;
-      // 👇 Determinar el tipo basado en el userType del usuario
-      promptType = this.mapUserTypeToPromptType(userType);
+      // Tipo: el override del DTO (p.ej. 'pg' del home del worker) o, si no
+      // viene, el derivado del userType del usuario autenticado.
+      promptType = dto.type ?? this.mapUserTypeToPromptType(userType);
       source = 'direct';
     }
 
@@ -226,15 +249,15 @@ Siempre responde con información precisa, técnica cuando sea necesario, y mant
     }
 
     let promptText: string;
-    let promptType: 'c' | 'p';
+    let promptType: string;
 
     if (dto.id) {
       const promptEntity = await this.findOne(dto.id);
       promptText = promptEntity.text;
-      promptType = promptEntity.type as 'c' | 'p';
+      promptType = promptEntity.type;
     } else {
       promptText = dto.text!;
-      promptType = this.mapUserTypeToPromptType(userType);
+      promptType = dto.type ?? this.mapUserTypeToPromptType(userType);
     }
 
     const systemPrompt = this.getSystemPrompt(promptType);
