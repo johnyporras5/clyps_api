@@ -1231,7 +1231,13 @@ export class CompanyService {
       companies = matched.slice(skip, skip + limit);
     }
 
-    return this.buildDirectoryDetails(companies, page, limit, total, viewerType);
+    return this.buildDirectoryDetails(
+      companies,
+      page,
+      limit,
+      total,
+      viewerType,
+    );
   }
 
   /**
@@ -1342,9 +1348,7 @@ export class CompanyService {
     return trimmed
       .toLocaleLowerCase('es')
       .split(' ')
-      .map((w) =>
-        w ? w.charAt(0).toLocaleUpperCase('es') + w.slice(1) : w,
-      )
+      .map((w) => (w ? w.charAt(0).toLocaleUpperCase('es') + w.slice(1) : w))
       .join(' ');
   }
 
@@ -1385,7 +1389,8 @@ export class CompanyService {
     const sites = await this.siteCategoryRepository.find();
     const map = new Map<string, { id: number; name: string }>();
     for (const s of sites) {
-      if (s.slug) map.set(s.slug.trim().toLowerCase(), { id: s.id, name: s.name });
+      if (s.slug)
+        map.set(s.slug.trim().toLowerCase(), { id: s.id, name: s.name });
     }
     return map;
   }

@@ -78,7 +78,9 @@ export class ClientService {
         ...new Set(sessionDetails.map((d) => d.serviceId).filter(Boolean)),
       ];
       const companyWorkerIds = [
-        ...new Set(sessionDetails.map((d) => d.companyWorkerId).filter(Boolean)),
+        ...new Set(
+          sessionDetails.map((d) => d.companyWorkerId).filter(Boolean),
+        ),
       ];
       const offerIds = [
         ...new Set(sessionDetails.map((d) => d.offerId).filter(Boolean)),

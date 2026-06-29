@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddProviderGrowthPrompts1780000000016
-  implements MigrationInterface
-{
+export class AddProviderGrowthPrompts1780000000016 implements MigrationInterface {
   name = 'AddProviderGrowthPrompts1780000000016';
 
   // Prompts del mini chat de IA del home del worker (type 'pg' = provider-growth),
@@ -33,7 +31,9 @@ export class AddProviderGrowthPrompts1780000000016
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query('DELETE FROM `ia_prompts` WHERE `tipo` = ?', ['pg']);
+    await queryRunner.query('DELETE FROM `ia_prompts` WHERE `tipo` = ?', [
+      'pg',
+    ]);
     // Revertir el ancho de la columna (seguro: ya no quedan filas 'pg').
     await queryRunner.query(
       'ALTER TABLE `ia_prompts` MODIFY `tipo` varchar(1) NOT NULL',

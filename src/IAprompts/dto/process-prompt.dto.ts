@@ -1,4 +1,10 @@
-import { IsOptional, IsString, IsInt, ValidateIf, Length } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsInt,
+  ValidateIf,
+  Length,
+} from 'class-validator';
 
 export class ProcessPromptDto {
   @IsOptional()
