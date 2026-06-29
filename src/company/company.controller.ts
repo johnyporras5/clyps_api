@@ -67,6 +67,7 @@ export class CompanyController {
   @Roles('adm', 'wrk', 'cli')
   async findAllDirectory(
     @Query() query: DirectoryQueryDto,
+    @Req() req: AuthenticatedRequest,
   ): Promise<PaginationResult<any>> {
     const categoryIds = [
       ...(query.categoryId ?? []),
@@ -79,14 +80,15 @@ export class CompanyController {
       categoryIds: categoryIds.length ? categoryIds : undefined,
       date: query.date,
       slots: query.slot,
+      viewerType: req.user.userType,
     });
   }
 
   /**
-   * Ciudades distintas (a partir de company.location) para los selectores
-   * del filtro de directorio. Lista completa (sin paginar).
+   * Ciudades distintas y normalizadas (a partir de company.location) para los
+   * selectores del filtro de directorio. Lista completa (sin paginar).
    */
-  @Get('cities')
+  @Get('directory/cities')
   @UseGuards(RolesGuard)
   @Roles('adm', 'wrk', 'cli')
   async getCities(): Promise<string[]> {
@@ -94,10 +96,11 @@ export class CompanyController {
   }
 
   /**
-   * Categorías de compañía (deduplicadas por nombre) para los selectores
-   * del filtro de directorio.
+   * Catálogo canónico de categorías (deduplicadas por nombre) para los
+   * selectores del filtro de directorio. El `id` devuelto es el que acepta
+   * `?categoryId=` en GET /companys/directory.
    */
-  @Get('categories')
+  @Get('directory/categories')
   @UseGuards(RolesGuard)
   @Roles('adm', 'wrk', 'cli')
   async getCategoryOptions(): Promise<{ id: number; name: string }[]> {
@@ -105,8 +108,11 @@ export class CompanyController {
   }
 
   @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number): Promise<any> {
-    return this.companyService.findOne(id);
+  async findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<any> {
+    return this.companyService.findOne(id, req.user.userType);
   }
 
   @Get('admin/profile')

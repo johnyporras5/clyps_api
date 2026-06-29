@@ -6,8 +6,10 @@ import {
   IsNumber,
   Length,
   IsDate,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { isEmailUnavailable } from '../../auth/dto/register-client-by-admin.dto';
 
 export class UpdateClientDto {
   @IsOptional()
@@ -22,7 +24,10 @@ export class UpdateClientDto {
   @IsString()
   lastName?: string;
 
+  // En edición el admin puede enviar un email real (se valida su formato) o
+  // "no disponible" (cliente sin correo).
   @IsOptional()
+  @ValidateIf((o) => !isEmailUnavailable(o.email))
   @IsEmail()
   email?: string;
   @IsOptional()

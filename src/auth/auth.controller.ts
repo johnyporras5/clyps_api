@@ -21,6 +21,7 @@ import { AuthService } from './auth.service';
 import type { AuthenticatedRequest } from './types/authenticated-request';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
 import { RegisterClientDto } from './dto/register-client.dto';
+import { RegisterClientByAdminDto } from './dto/register-client-by-admin.dto';
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -127,7 +128,7 @@ export class AuthController {
   @UseInterceptors(FileInterceptor('picture'))
   @HttpCode(HttpStatus.CREATED)
   async registerClientByAdmin(
-    @Body() registerDto: RegisterClientDto,
+    @Body() registerDto: RegisterClientByAdminDto,
     @Req() req: AuthenticatedRequest,
     @UploadedFile(
       new ParseFilePipe({

@@ -163,6 +163,7 @@ export class ServiceService {
   async findAllByCompanyIdWithWorkers(
     companyId: number,
     paginationOptions: PaginationOptions,
+    viewerType?: string,
   ): Promise<PaginationResult<any> & { company: any }> {
     const company = await this.companyRepository.findOne({
       where: { id: companyId },
@@ -176,6 +177,11 @@ export class ServiceService {
       .leftJoinAndSelect('service.category', 'category')
       .where('service.companyId = :companyId', { companyId })
       .andWhere('service.status = 1');
+
+    // Los servicios "para la comunidad" no se muestran al cliente.
+    if (viewerType === 'cli') {
+      queryBuilder.andWhere('service.for_community = 0');
+    }
 
     const paginatedServices = await paginate<Service>(
       queryBuilder,
@@ -306,6 +312,11 @@ export class ServiceService {
       throw new NotFoundException(`Service with id ${id} not found`);
     }
 
+    // Los servicios "para la comunidad" están ocultos para el cliente.
+    if (userType === 'cli' && service.forCommunity) {
+      throw new NotFoundException(`Service with id ${id} not found`);
+    }
+
     const workersInfo = await this.getWorkersInfoForService(
       service.workers,
       service.companyId,
@@ -345,6 +356,11 @@ export class ServiceService {
       where: { id: serviceId },
     });
     if (!service) {
+      throw new NotFoundException(`Service with id ${serviceId} not found`);
+    }
+
+    // Los servicios "para la comunidad" están ocultos para el cliente.
+    if (userType === 'cli' && service.forCommunity) {
       throw new NotFoundException(`Service with id ${serviceId} not found`);
     }
 

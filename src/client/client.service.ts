@@ -59,36 +59,65 @@ export class ClientService {
     companyName: string | null;
     services: string[];
     offerName: string | null;
+    details: { serviceName: string | null; workerName: string | null }[];
   }> {
-    const details = await this.sessionDetailRepository.find({
+    const sessionDetails = await this.sessionDetailRepository.find({
       where: { sessionId: session.id },
     });
 
     let companyName: string | null = null;
     let offerName: string | null = null;
     const services: string[] = [];
+    // Un elemento por cada detalle de la sesión (mismo orden que `services`):
+    // servicio + trabajador que lo atendió (workerName null si no hay asignado).
+    const details: { serviceName: string | null; workerName: string | null }[] =
+      [];
 
-    if (details.length > 0) {
+    if (sessionDetails.length > 0) {
       const serviceIds = [
-        ...new Set(details.map((d) => d.serviceId).filter(Boolean)),
+        ...new Set(sessionDetails.map((d) => d.serviceId).filter(Boolean)),
       ];
       const companyWorkerIds = [
-        ...new Set(details.map((d) => d.companyWorkerId).filter(Boolean)),
+        ...new Set(
+          sessionDetails.map((d) => d.companyWorkerId).filter(Boolean),
+        ),
       ];
       const offerIds = [
-        ...new Set(details.map((d) => d.offerId).filter(Boolean)),
+        ...new Set(sessionDetails.map((d) => d.offerId).filter(Boolean)),
       ];
 
+      const serviceMap = new Map<number, string | null>();
       if (serviceIds.length > 0) {
         const serviceRows = await this.serviceRepository.find({
           where: { id: In(serviceIds) },
           select: ['id', 'name'],
         });
-        const serviceMap = new Map(serviceRows.map((s) => [s.id, s.name]));
-        for (const d of details) {
-          const name = serviceMap.get(d.serviceId);
-          if (name) services.push(name);
+        for (const s of serviceRows) serviceMap.set(s.id, s.name ?? null);
+      }
+
+      // Trabajadores por companyWorkerId (worker y company son eager). Se usa
+      // tanto para workerName de cada detalle como para resolver companyName.
+      const workerNameMap = new Map<number, string | null>();
+      let companyWorkers: CompanyWorker[] = [];
+      if (companyWorkerIds.length > 0) {
+        companyWorkers = await this.companyWorkerRepository.find({
+          where: { id: In(companyWorkerIds) },
+        });
+        for (const cw of companyWorkers) {
+          const wn = cw.worker?.name?.trim();
+          workerNameMap.set(cw.id, wn ? wn : null);
         }
+      }
+
+      for (const d of sessionDetails) {
+        const serviceName = serviceMap.get(d.serviceId) ?? null;
+        if (serviceName) services.push(serviceName);
+        details.push({
+          serviceName,
+          workerName: d.companyWorkerId
+            ? (workerNameMap.get(d.companyWorkerId) ?? null)
+            : null,
+        });
       }
 
       if (offerIds.length > 0) {
@@ -100,12 +129,8 @@ export class ClientService {
         companyName = offer?.company?.name ?? null;
       }
 
-      if (!companyName && companyWorkerIds.length > 0) {
-        const companyWorker = await this.companyWorkerRepository.findOne({
-          where: { id: In(companyWorkerIds) },
-          relations: ['company'],
-        });
-        companyName = companyWorker?.company?.name ?? null;
+      if (!companyName && companyWorkers.length > 0) {
+        companyName = companyWorkers[0].company?.name ?? null;
       }
     }
 
@@ -116,6 +141,7 @@ export class ClientService {
       companyName,
       services,
       offerName,
+      details,
     };
   }
 
@@ -506,6 +532,7 @@ export class ClientService {
 
     return {
       ...client,
+      preferences: client.preferences ?? [],
       photoUrl,
       lastAppointment,
       nextAppointment,
@@ -538,7 +565,13 @@ export class ClientService {
       client.user = userWithoutPassword as any;
     }
 
-    return { ...client, photoUrl, lastAppointment, nextAppointment } as any;
+    return {
+      ...client,
+      preferences: client.preferences ?? [],
+      photoUrl,
+      lastAppointment,
+      nextAppointment,
+    } as any;
   }
 
   /**

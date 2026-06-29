@@ -42,6 +42,11 @@ export class Client {
   @Column({ type: 'json', nullable: true })
   companies: number[];
 
+  // Categorías de interés del cliente (ids del catálogo global `site_category`).
+  // Se setean en el registro y alimentan el filtro inicial de la búsqueda.
+  @Column({ type: 'json', nullable: true })
+  preferences: number[];
+
   // Alias del cliente por compañía. Cada admin/compañía guarda su propio
   // alias sin pisar el de otra: [{ companyId, alias }]
   @Column({ name: 'company_aliases', type: 'json', nullable: true })

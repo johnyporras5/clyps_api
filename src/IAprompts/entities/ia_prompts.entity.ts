@@ -15,8 +15,8 @@ export class IAPrompts {
   @Column({
     name: 'tipo',
     type: 'varchar',
-    length: 1,
+    length: 5,
     nullable: false,
   })
-  type: string; // Valores esperados: 'p' o 'c'
+  type: string; // Valores esperados: 'c', 'p' o 'pg' (provider-growth)
 }

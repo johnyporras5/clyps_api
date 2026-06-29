@@ -16,6 +16,10 @@ import { Worker } from '../worker/entities/worker.entity';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
 import { Client } from '../client/entities/client.entity';
 import { RegisterClientDto } from './dto/register-client.dto';
+import {
+  RegisterClientByAdminDto,
+  isEmailUnavailable,
+} from './dto/register-client-by-admin.dto';
 import { EmailService } from '../email/email.service';
 import { VerificationService } from '../verification/verification.service';
 import { TokenBlacklistService } from './services/token_blacklist.service';
@@ -33,6 +37,7 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
+import { SiteCategoryService } from '../site_category/site_category.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 
@@ -56,8 +61,24 @@ export class AuthService {
     private tokenBlacklistService: TokenBlacklistService,
     private fileUploadService: FileUploadService,
     private readonly companyCategoryService: CompanyCategoryService,
+    private readonly siteCategoryService: SiteCategoryService,
     private readonly realtime: RealtimeService,
   ) {}
+
+  /**
+   * Filtra una lista de ids de preferencias dejando sólo los que existen en el
+   * catálogo global `site_category` (descarta ids inválidos). Devuelve [] si no
+   * hay válidos, o undefined si no se enviaron preferencias.
+   */
+  private async sanitizePreferences(
+    preferences?: number[],
+  ): Promise<number[] | undefined> {
+    if (preferences === undefined) return undefined;
+    if (preferences.length === 0) return [];
+    const catalog = await this.siteCategoryService.findAll();
+    const validIds = new Set(catalog.map((c) => c.id));
+    return preferences.filter((id) => validIds.has(id));
+  }
 
   // ==================== CLAIMS PARA TIEMPO REAL (CLYP-247) ====================
   /**
@@ -621,6 +642,10 @@ export class AuthService {
       // Crear nuevo perfil de cliente
       console.log(`Creando perfil de cliente (userId: ${user.id})`);
 
+      const preferences = await this.sanitizePreferences(
+        registerDto.preferences,
+      );
+
       const newClient = this.clientRepository.create({
         name: registerDto.name,
         lastName: registerDto.lastName,
@@ -630,6 +655,7 @@ export class AuthService {
         picture: pictureFileName,
         isActive: registerDto.isActive !== undefined ? registerDto.isActive : 1,
         companies: [],
+        preferences: preferences ?? [],
         location: registerDto.location,
         userId: user.id,
       });
@@ -831,13 +857,12 @@ export class AuthService {
    * Registro de cliente por parte del administrador de la compañía
    */
   async registerClientByAdmin(
-    registerDto: RegisterClientDto,
+    registerDto: RegisterClientByAdminDto,
     adminId: number,
     pictureFile?: Express.Multer.File,
   ): Promise<{
     message: string;
     user: Partial<User>;
-    generatedPassword?: string;
   }> {
     // 1. Validar que el admin existe y tiene compañía
     const admin = await this.userRepository.findOne({
@@ -858,10 +883,14 @@ export class AuthService {
       );
     }
 
-    // 2. Verificar email
-    const existingUserByEmail = await this.userRepository.findOne({
-      where: { email: registerDto.email },
-    });
+    // 2. Verificar email. Si el cliente no tiene email ("no disponible"/vacío),
+    // se omite la búsqueda por email y la identidad se garantiza por username.
+    const emailAbsent = isEmailUnavailable(registerDto.email);
+    const existingUserByEmail = emailAbsent
+      ? null
+      : await this.userRepository.findOne({
+          where: { email: registerDto.email },
+        });
 
     let user: User;
     let client: Client | null = null;
@@ -905,12 +934,15 @@ export class AuthService {
       });
       user = await this.userRepository.save(newUser);
 
-      await this.emailService.sendClientCredentials(
-        user.email,
-        user.username,
-        generatedPassword,
-      );
-      await this.sendVerificationCode(user.email);
+      // Solo se envían credenciales/código si el cliente tiene email real.
+      if (!emailAbsent) {
+        await this.emailService.sendClientCredentials(
+          user.email,
+          user.username,
+          generatedPassword,
+        );
+        await this.sendVerificationCode(user.email);
+      }
     }
 
     // 3. Buscar el perfil del cliente
@@ -976,7 +1008,9 @@ export class AuthService {
 
     const message = isExistingUser
       ? `Cliente existente vinculado a la compañía '${company.name}' exitosamente.`
-      : `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'. Las credenciales fueron enviadas a su correo.`;
+      : emailAbsent
+        ? `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'.`
+        : `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'. Las credenciales fueron enviadas a su correo.`;
 
     // client.added (CLYP-246): notifica el alta/vinculación del cliente al canal
     // de la empresa. Best-effort.
@@ -991,7 +1025,9 @@ export class AuthService {
       // best-effort
     }
 
-    return { message, user: userWithoutPassword, generatedPassword };
+    // No se retorna `generatedPassword`: la contraseña en texto plano no debe
+    // salir en la respuesta. Cuando hay email, se envía por correo.
+    return { message, user: userWithoutPassword };
   }
 
   // ==================== MÉTODOS DE LOGIN ====================
