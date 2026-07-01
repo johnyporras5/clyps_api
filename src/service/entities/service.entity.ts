@@ -33,6 +33,7 @@ export class Service {
     id: number;
     percentage: number;
     time?: number;
+    cost?: number;
   }>;
 
   @Column({ name: 'currency', length: 10, nullable: true, default: 'VES' })

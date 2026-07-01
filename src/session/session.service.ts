@@ -540,19 +540,14 @@ export class SessionService {
           `🏷️ Servicio "${service.name}" → precio de OFERTA "${priceResolution.offerName}": ${serviceCostNumber}`,
         );
       } else {
-        // Precio normal (service.cost)
-        const serviceCost = service.cost || 0;
-        if (typeof serviceCost === 'string') {
-          serviceCostNumber = parseFloat(serviceCost);
-        } else if (typeof serviceCost === 'number') {
-          serviceCostNumber = serviceCost;
-        } else if (serviceCost && typeof serviceCost === 'object') {
-          serviceCostNumber = parseFloat(String(serviceCost));
-        } else {
-          serviceCostNumber = 0;
-        }
+        // Precio normal: costo por trabajador (CLYP-301) con fallback a
+        // service.cost. worker.cost ?? service.cost.
+        serviceCostNumber = this.resolveWorkerServiceCost(
+          service,
+          detail.companyWorkerId,
+        );
         console.log(
-          `💰 Servicio "${service.name}" → precio NORMAL: ${serviceCostNumber}`,
+          `💰 Servicio "${service.name}" → precio NORMAL (worker.cost ?? service.cost): ${serviceCostNumber}`,
         );
       }
 
@@ -5382,19 +5377,14 @@ export class SessionService {
           `🏷️ Servicio "${service.name}" → precio de OFERTA "${priceResolution.offerName}": ${serviceCostNumber}`,
         );
       } else {
-        // Precio normal (service.cost)
-        const serviceCost = service.cost || 0;
-        if (typeof serviceCost === 'string') {
-          serviceCostNumber = parseFloat(serviceCost);
-        } else if (typeof serviceCost === 'number') {
-          serviceCostNumber = serviceCost;
-        } else if (serviceCost && typeof serviceCost === 'object') {
-          serviceCostNumber = parseFloat(String(serviceCost));
-        } else {
-          serviceCostNumber = 0;
-        }
+        // Precio normal: costo por trabajador (CLYP-301) con fallback a
+        // service.cost. worker.cost ?? service.cost.
+        serviceCostNumber = this.resolveWorkerServiceCost(
+          service,
+          detail.companyWorkerId,
+        );
         console.log(
-          `💰 Servicio "${service.name}" → precio NORMAL: ${serviceCostNumber}`,
+          `💰 Servicio "${service.name}" → precio NORMAL (worker.cost ?? service.cost): ${serviceCostNumber}`,
         );
       }
 
@@ -7511,6 +7501,51 @@ export class SessionService {
         hasPrev: getSessionsDto.page > 1,
       },
     };
+  }
+
+  /**
+   * Resuelve el costo del servicio para un trabajador concreto (CLYP-301).
+   *
+   * Regla: `worker.cost ?? service.cost`.
+   * - Si el trabajador elegido tiene un `cost` propio en `service.workers[]`,
+   *   se usa ese costo específico.
+   * - Si no lo tiene (o no hay trabajador), se usa el `cost` a nivel de
+   *   servicio como precio base / fallback.
+   *
+   * Los decimales pueden venir como string desde la BD, por eso se normaliza
+   * todo a número.
+   */
+  private resolveWorkerServiceCost(
+    service: Service,
+    companyWorkerId: number | null | undefined,
+  ): number {
+    const toNumber = (value: unknown): number => {
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string') return parseFloat(value) || 0;
+      if (value && typeof value === 'object')
+        return parseFloat(String(value)) || 0;
+      return 0;
+    };
+
+    // Costo base a nivel de servicio (fallback).
+    const baseCost = toNumber(service.cost);
+
+    // Buscar la asignación del trabajador elegido dentro del JSON workers.
+    const assignment =
+      companyWorkerId !== null && companyWorkerId !== undefined
+        ? (service.workers || []).find((w) => w.id === companyWorkerId)
+        : undefined;
+
+    // Si el trabajador trae su propio cost, usarlo; si no, el del servicio.
+    if (
+      assignment &&
+      assignment.cost !== null &&
+      assignment.cost !== undefined
+    ) {
+      return toNumber(assignment.cost);
+    }
+
+    return baseCost;
   }
 
   /**
