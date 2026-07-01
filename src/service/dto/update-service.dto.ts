@@ -26,6 +26,11 @@ class WorkerAssignmentDto {
   @IsNumber()
   @Min(0)
   time?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  cost?: number;
 }
 
 export class UpdateServiceDto {
