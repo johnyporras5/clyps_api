@@ -153,7 +153,11 @@ export class VerificationService {
     // comparación estricta falla aunque el usuario escriba el código correcto.
     const submittedCode = String(code ?? '').trim();
 
-    const user = await this.userRepository.findOne({ where: { email } });
+    // El identificador puede ser email o username (igual que en el login), así
+    // que buscamos por ambos para no rechazar a quien escribe su username.
+    const user = await this.userRepository.findOne({
+      where: [{ email }, { username: email }],
+    });
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
     }
@@ -272,7 +276,10 @@ export class VerificationService {
   }
 
   async resendVerificationCode(email: string): Promise<string> {
-    const user = await this.userRepository.findOne({ where: { email } });
+    // Aceptar email o username, igual que el login y la verificación.
+    const user = await this.userRepository.findOne({
+      where: [{ email }, { username: email }],
+    });
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
     }
@@ -289,7 +296,10 @@ export class VerificationService {
    * Reenviar código de reseteo de contraseña
    */
   async resendPasswordResetCode(email: string): Promise<string> {
-    const user = await this.userRepository.findOne({ where: { email } });
+    // Aceptar email o username, igual que el login y la verificación.
+    const user = await this.userRepository.findOne({
+      where: [{ email }, { username: email }],
+    });
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
     }
@@ -371,7 +381,9 @@ export class VerificationService {
     code: string,
     codeType?: string,
   ): Promise<any> {
-    const user = await this.userRepository.findOne({ where: { email } });
+    const user = await this.userRepository.findOne({
+      where: [{ email }, { username: email }],
+    });
     if (!user) {
       return { error: 'Usuario no encontrado' };
     }
