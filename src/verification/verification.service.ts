@@ -148,6 +148,11 @@ export class VerificationService {
     code: string,
     codeType: string,
   ): Promise<boolean> {
+    // Normalizamos el código recibido: puede llegar como número o con espacios
+    // / saltos de línea (autocompletado, copiar-pegar del correo). Sin esto la
+    // comparación estricta falla aunque el usuario escriba el código correcto.
+    const submittedCode = String(code ?? '').trim();
+
     const user = await this.userRepository.findOne({ where: { email } });
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
@@ -170,8 +175,12 @@ export class VerificationService {
 
     // Verificar expiración
     const now = new Date();
+    const storedCode = String(verificationCode.code ?? '').trim();
     console.log(
-      `⏰ Verificando expiración: Ahora ${now}, Expira ${verificationCode.expiresAt}`,
+      `⏰ Verificación código ${codeType} usuario ${user.id}: ` +
+        `ahora=${now.toISOString()} expira=${verificationCode.expiresAt.toISOString()} ` +
+        `recibido="${submittedCode}"(len ${submittedCode.length}) ` +
+        `guardado="${storedCode}"(len ${storedCode.length}) match=${storedCode === submittedCode}`,
     );
 
     if (now > verificationCode.expiresAt) {
@@ -181,7 +190,7 @@ export class VerificationService {
 
     // El código recibido no coincide: contar el intento fallido y, si se supera
     // el máximo, invalidar el código para frenar la fuerza bruta.
-    if (verificationCode.code !== code) {
+    if (storedCode !== submittedCode) {
       verificationCode.attempts += 1;
       if (verificationCode.attempts >= this.MAX_VERIFICATION_ATTEMPTS) {
         await this.verificationCodeRepository.delete(verificationCode.id);
@@ -218,6 +227,8 @@ export class VerificationService {
     code: string,
     codeType: string,
   ): Promise<boolean> {
+    const submittedCode = String(code ?? '').trim();
+
     // Buscamos el código ACTIVO del usuario (sin filtrar por el valor recibido)
     // para poder contabilizar intentos fallidos contra esa misma fila.
     const verificationCode = await this.verificationCodeRepository.findOne({
@@ -242,7 +253,7 @@ export class VerificationService {
 
     // El código recibido no coincide: contar el intento fallido y, si se supera
     // el máximo, invalidar el código para frenar la fuerza bruta.
-    if (verificationCode.code !== code) {
+    if (String(verificationCode.code ?? '').trim() !== submittedCode) {
       verificationCode.attempts += 1;
       if (verificationCode.attempts >= this.MAX_VERIFICATION_ATTEMPTS) {
         await this.verificationCodeRepository.delete(verificationCode.id);
