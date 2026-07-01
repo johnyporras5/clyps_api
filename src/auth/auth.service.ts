@@ -1129,7 +1129,10 @@ export class AuthService {
   async sendVerificationCode(
     email: string,
   ): Promise<{ message: string; userId: number }> {
-    const user = await this.userRepository.findOne({ where: { email } });
+    // El identificador puede ser email o username (igual que en el login).
+    const user = await this.userRepository.findOne({
+      where: [{ email }, { username: email }],
+    });
 
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
@@ -1202,7 +1205,9 @@ export class AuthService {
   async checkUserStatus(
     email: string,
   ): Promise<{ exists: boolean; verified: boolean; userId?: number }> {
-    const user = await this.userRepository.findOne({ where: { email } });
+    const user = await this.userRepository.findOne({
+      where: [{ email }, { username: email }],
+    });
 
     if (!user) {
       return { exists: false, verified: false };
