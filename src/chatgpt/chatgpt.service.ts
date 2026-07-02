@@ -12,6 +12,7 @@ import { Observable } from 'rxjs';
 @Injectable()
 export class ChatGPTService {
   private chatModel: ChatOpenAI;
+  private visionModel: ChatOpenAI;
 
   constructor(private configService: ConfigService) {
     this.chatModel = new ChatOpenAI({
@@ -20,6 +21,44 @@ export class ChatGPTService {
       openAIApiKey: this.configService.get<string>('OPENAI_API_KEY'),
       streaming: true,
     });
+
+    this.visionModel = new ChatOpenAI({
+      modelName: 'gpt-4o',
+      temperature: 0.7,
+      openAIApiKey: this.configService.get<string>('OPENAI_API_KEY'),
+      maxTokens: 800,
+      timeout: 30000,
+      maxRetries: 1,
+      modelKwargs: { response_format: { type: 'json_object' } },
+    });
+  }
+
+  /**
+   * Envía un prompt multimodal (texto + imagen opcional) y devuelve la
+   * respuesta como texto, forzando que el modelo responda en JSON.
+   *
+   * @param imageDataUrl
+   */
+  async sendVisionJson(
+    systemPrompt: string,
+    userText: string,
+    imageDataUrl?: string,
+  ): Promise<string> {
+    const content: Array<Record<string, unknown>> = [
+      { type: 'text', text: userText },
+    ];
+    if (imageDataUrl) {
+      content.push({ type: 'image_url', image_url: { url: imageDataUrl } });
+    }
+
+    const messages: BaseMessage[] = [
+      new SystemMessage(systemPrompt),
+      new HumanMessage({ content: content as never }),
+    ];
+
+    const response = await this.visionModel.invoke(messages);
+
+    return response.content.toString();
   }
 
   async sendPrompt(promptText: string, systemPrompt?: string): Promise<string> {

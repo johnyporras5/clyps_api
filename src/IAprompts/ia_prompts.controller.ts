@@ -9,9 +9,14 @@ import {
   ParseIntPipe,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
   Request,
   Sse,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { IAPromptsService } from './ia_prompts.service';
 import { IAPrompts } from './entities/ia_prompts.entity';
 import { CreateIAPromptDto } from './dto/create-ia_prompt.dto';
@@ -19,7 +24,10 @@ import { UpdateIAPromptDto } from './dto/update-ia_prompt.dto';
 import { PaginationResult } from '../common/utils/pagination.util';
 import { QueryIAPromptDto } from './dto/query-ia_prompt.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ProcessPromptDto } from './dto/process-prompt.dto';
+import { SuggestionsDto } from './dto/suggestions.dto';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { Observable } from 'rxjs';
 
@@ -66,6 +74,19 @@ export class IAPromptsController {
    * El tipo de prompt (cliente/profesional) se determina automáticamente
    * según el userType del usuario autenticado
    */
+
+  @Post('suggestions')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('cli')
+  @UseInterceptors(FileInterceptor('image'))
+  async suggestions(
+    @Body() dto: SuggestionsDto,
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
+    return this.iaPromptsService.getSuggestions(dto, image);
+  }
+
   @Post('process')
   @UseGuards(JwtAuthGuard)
   async processPrompt(
@@ -86,7 +107,7 @@ export class IAPromptsController {
    */
   @Post('process/stream')
   @UseGuards(JwtAuthGuard)
-  @Sse() // 👈 Convierte el endpoint en SSE
+  @Sse()
   async processPromptStream(
     @Body() dto: ProcessPromptDto,
     @Request() req: AuthenticatedRequest,
