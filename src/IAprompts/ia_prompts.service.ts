@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -12,7 +13,17 @@ import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { QueryIAPromptDto } from './dto/query-ia_prompt.dto';
 import { ChatGPTService } from '../chatgpt/chatgpt.service';
 import { ProcessPromptDto } from './dto/process-prompt.dto';
+import { SuggestionsDto } from './dto/suggestions.dto';
+import { SUGGESTIONS_SYSTEM_PROMPT } from './prompts/suggestions-system.prompt';
 import { Observable } from 'rxjs';
+
+export interface SuggestionsResponse {
+  needsBetterPhoto: boolean;
+  suggestions: Array<{ title: string; reason: string }>;
+}
+
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png'];
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 @Injectable()
 export class IAPromptsService {
@@ -264,5 +275,98 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
 
     // Retorna el Observable directamente para que el controlador lo pipe a SSE
     return this.chatGPTService.sendPromptStream(promptText, systemPrompt);
+  }
+
+  async getSuggestions(
+    dto: SuggestionsDto,
+    image?: Express.Multer.File,
+  ): Promise<SuggestionsResponse> {
+    if (image) {
+      if (!ALLOWED_IMAGE_TYPES.includes(image.mimetype)) {
+        throw new BadRequestException(
+          'Formato de imagen no válido. Solo se aceptan JPG o PNG.',
+        );
+      }
+      if (image.size > MAX_IMAGE_BYTES) {
+        throw new BadRequestException(
+          'La imagen supera el tamaño máximo permitido (5 MB).',
+        );
+      }
+    }
+
+    const userText = [
+      `Servicio reservado: ${dto.serviceName}`,
+      `Descripción del servicio: ${dto.serviceDescription?.trim() || 'No especificada'}`,
+      `Categoría del servicio: ${dto.serviceCategory?.trim() || 'No especificada'}`,
+      image ? 'El cliente adjuntó una foto.' : 'El cliente no adjuntó foto.',
+      'Devuelve el JSON con 2 a 4 sugerencias dentro del alcance de este servicio.',
+    ].join('\n');
+
+    const imageDataUrl = image
+      ? `data:${image.mimetype};base64,${image.buffer.toString('base64')}`
+      : undefined;
+
+    let raw: string;
+    try {
+      raw = await this.chatGPTService.sendVisionJson(
+        SUGGESTIONS_SYSTEM_PROMPT,
+        userText,
+        imageDataUrl,
+      );
+    } catch {
+      throw new InternalServerErrorException(
+        'No pudimos generar sugerencias en este momento. Intenta de nuevo.',
+      );
+    }
+
+    return this.parseSuggestions(raw);
+  }
+
+  private parseSuggestions(raw: string): SuggestionsResponse {
+    let text = (raw || '').trim();
+
+    if (text.startsWith('```')) {
+      text = text
+        .replace(/^```(?:json)?/i, '')
+        .replace(/```$/, '')
+        .trim();
+    }
+
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new InternalServerErrorException(
+        'La IA devolvió una respuesta con formato inesperado. Intenta de nuevo.',
+      );
+    }
+
+    const obj = data as {
+      needsBetterPhoto?: unknown;
+      suggestions?: unknown;
+    };
+
+    if (obj.needsBetterPhoto === true) {
+      return { needsBetterPhoto: true, suggestions: [] };
+    }
+
+    const rawList = Array.isArray(obj.suggestions) ? obj.suggestions : [];
+    const suggestions = rawList
+      .filter(
+        (s): s is { title: string; reason: string } =>
+          !!s &&
+          typeof (s as { title?: unknown }).title === 'string' &&
+          typeof (s as { reason?: unknown }).reason === 'string',
+      )
+      .map((s) => ({ title: s.title.trim(), reason: s.reason.trim() }))
+      .slice(0, 4);
+
+    if (suggestions.length < 2) {
+      throw new InternalServerErrorException(
+        'No pudimos generar suficientes sugerencias. Intenta de nuevo.',
+      );
+    }
+
+    return { needsBetterPhoto: false, suggestions };
   }
 }
