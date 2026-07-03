@@ -3,12 +3,19 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { PortfolioPicturesService } from './portfolio_pictures.service';
 import { PortfolioPicturesController } from './portfolio_pictures.controller';
 import { PortfolioPictures } from './entities/portfolio_pictures.entity';
+import { CompanyPortfolioPictures } from './entities/company_portfolio_pictures.entity';
 import { Worker } from '../worker/entities/worker.entity';
+import { Company } from '../company/entities/company.entity';
 import { CommonModule } from 'src/common/common.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([PortfolioPictures, Worker]),
+    TypeOrmModule.forFeature([
+      PortfolioPictures,
+      CompanyPortfolioPictures,
+      Worker,
+      Company,
+    ]),
     CommonModule,
   ],
   providers: [PortfolioPicturesService],

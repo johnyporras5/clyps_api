@@ -2,11 +2,14 @@ import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PortfolioPictures } from './entities/portfolio_pictures.entity';
+import { CompanyPortfolioPictures } from './entities/company_portfolio_pictures.entity';
 import { Worker } from '../worker/entities/worker.entity';
+import { Company } from '../company/entities/company.entity';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { PortfolioPictureWithUrl } from './types/portfolio-picture-with-url.type';
+import { CompanyPortfolioPictureWithUrl } from './types/company-portfolio-picture-with-url.type';
 
 @Injectable()
 export class PortfolioPicturesService {
@@ -16,8 +19,12 @@ export class PortfolioPicturesService {
   constructor(
     @InjectRepository(PortfolioPictures)
     private repository: Repository<PortfolioPictures>,
+    @InjectRepository(CompanyPortfolioPictures)
+    private companyPortfolioRepository: Repository<CompanyPortfolioPictures>,
     @InjectRepository(Worker)
     private workerRepository: Repository<Worker>,
+    @InjectRepository(Company)
+    private companyRepository: Repository<Company>,
     private fileUploadService: FileUploadService,
   ) {}
 
@@ -204,5 +211,129 @@ export class PortfolioPicturesService {
 
     // Eliminar registro
     await this.repository.remove(picture);
+  }
+
+  private async resolveCompanyIdFromUser(userId: number): Promise<number> {
+    const company = await this.companyRepository.findOne({
+      where: { userId },
+      select: ['id'],
+    });
+
+    if (!company) {
+      throw new NotFoundException(
+        `No se encontró una compañía para el usuario ${userId}`,
+      );
+    }
+
+    return company.id;
+  }
+
+  async createForCompany(
+    file: Express.Multer.File,
+    userId: number,
+  ): Promise<CompanyPortfolioPictureWithUrl> {
+    const companyId = await this.resolveCompanyIdFromUser(userId);
+
+    const fileInfo = await this.fileUploadService.saveFile(
+      file,
+      this.FOLDER,
+      'company',
+      companyId,
+    );
+
+    const picture = this.companyPortfolioRepository.create({
+      companyId,
+      picture: fileInfo.fileName,
+    });
+
+    const saved = await this.companyPortfolioRepository.save(picture);
+
+    return {
+      ...saved,
+      pictureUrl: fileInfo.fileUrl,
+    };
+  }
+
+  async findAllByCompanyUser(
+    userId: number,
+    paginationDto: PaginationDto,
+  ): Promise<PaginationResult<CompanyPortfolioPictureWithUrl>> {
+    const companyId = await this.resolveCompanyIdFromUser(userId);
+    return this.findAllByCompany(companyId, paginationDto);
+  }
+
+  async findAllByCompany(
+    companyId: number,
+    paginationDto: PaginationDto,
+  ): Promise<PaginationResult<CompanyPortfolioPictureWithUrl>> {
+    const queryBuilder = this.companyPortfolioRepository
+      .createQueryBuilder('picture')
+      .where('picture.companyId = :companyId', { companyId })
+      .orderBy('picture.createdAt', 'DESC');
+
+    const result = await paginate<CompanyPortfolioPictures>(
+      queryBuilder,
+      paginationDto,
+    );
+
+    const dataWithUrls = result.data.map((picture) => ({
+      ...picture,
+      pictureUrl: this.fileUploadService.getFileUrl(
+        this.FOLDER,
+        picture.picture,
+      ),
+    }));
+
+    return {
+      data: dataWithUrls,
+      meta: result.meta,
+    };
+  }
+
+  async updateForCompany(
+    id: number,
+    file: Express.Multer.File,
+    userId: number,
+  ): Promise<CompanyPortfolioPictureWithUrl> {
+    const companyId = await this.resolveCompanyIdFromUser(userId);
+
+    const existing = await this.companyPortfolioRepository.findOne({
+      where: { id, companyId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Imagen con ID ${id} no encontrada`);
+    }
+
+    await this.fileUploadService.deleteFile(this.FOLDER, existing.picture);
+    const fileInfo = await this.fileUploadService.saveFile(
+      file,
+      this.FOLDER,
+      'company',
+      companyId,
+    );
+
+    existing.picture = fileInfo.fileName;
+    const updated = await this.companyPortfolioRepository.save(existing);
+
+    return {
+      ...updated,
+      pictureUrl: fileInfo.fileUrl,
+    };
+  }
+
+  async removeForCompany(id: number, userId: number): Promise<void> {
+    const companyId = await this.resolveCompanyIdFromUser(userId);
+
+    const picture = await this.companyPortfolioRepository.findOne({
+      where: { id, companyId },
+    });
+
+    if (!picture) {
+      throw new NotFoundException(`Imagen con ID ${id} no encontrada`);
+    }
+
+    await this.fileUploadService.deleteFile(this.FOLDER, picture.picture);
+    await this.companyPortfolioRepository.remove(picture);
   }
 }
