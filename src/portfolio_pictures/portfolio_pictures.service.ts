@@ -10,6 +10,8 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { PortfolioPictureWithUrl } from './types/portfolio-picture-with-url.type';
 import { CompanyPortfolioPictureWithUrl } from './types/company-portfolio-picture-with-url.type';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 
 @Injectable()
 export class PortfolioPicturesService {
@@ -26,6 +28,7 @@ export class PortfolioPicturesService {
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
     private fileUploadService: FileUploadService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   /**
@@ -228,6 +231,18 @@ export class PortfolioPicturesService {
     return company.id;
   }
 
+  private emitCompanyPortfolioEvent(
+    type: string,
+    entityId: number,
+    companyId: number,
+    data: unknown,
+  ): void {
+    this.realtime.emitEntity(
+      [companyRoom(companyId), companyPublicRoom(companyId)],
+      { type, entityId, companyId, data },
+    );
+  }
+
   async createForCompany(
     file: Express.Multer.File,
     userId: number,
@@ -248,10 +263,19 @@ export class PortfolioPicturesService {
 
     const saved = await this.companyPortfolioRepository.save(picture);
 
-    return {
+    const result: CompanyPortfolioPictureWithUrl = {
       ...saved,
       pictureUrl: fileInfo.fileUrl,
     };
+
+    this.emitCompanyPortfolioEvent(
+      'portfolio.company_created',
+      saved.id,
+      companyId,
+      result,
+    );
+
+    return result;
   }
 
   async findAllByCompanyUser(
@@ -316,10 +340,19 @@ export class PortfolioPicturesService {
     existing.picture = fileInfo.fileName;
     const updated = await this.companyPortfolioRepository.save(existing);
 
-    return {
+    const result: CompanyPortfolioPictureWithUrl = {
       ...updated,
       pictureUrl: fileInfo.fileUrl,
     };
+
+    this.emitCompanyPortfolioEvent(
+      'portfolio.company_updated',
+      updated.id,
+      companyId,
+      result,
+    );
+
+    return result;
   }
 
   async removeForCompany(id: number, userId: number): Promise<void> {
@@ -335,5 +368,9 @@ export class PortfolioPicturesService {
 
     await this.fileUploadService.deleteFile(this.FOLDER, picture.picture);
     await this.companyPortfolioRepository.remove(picture);
+
+    this.emitCompanyPortfolioEvent('portfolio.company_deleted', id, companyId, {
+      id,
+    });
   }
 }

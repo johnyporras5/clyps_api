@@ -7,6 +7,7 @@ import { CompanyPortfolioPictures } from './entities/company_portfolio_pictures.
 import { Worker } from '../worker/entities/worker.entity';
 import { Company } from '../company/entities/company.entity';
 import { CommonModule } from 'src/common/common.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { CommonModule } from 'src/common/common.module';
       Company,
     ]),
     CommonModule,
+    RealtimeModule,
   ],
   providers: [PortfolioPicturesService],
   controllers: [PortfolioPicturesController],
