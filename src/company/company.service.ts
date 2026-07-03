@@ -550,16 +550,72 @@ export class CompanyService {
       }
     }
 
+    if (updateAdminProfileDto.categories !== undefined) {
+      await this.replaceCompanyCategories(
+        company.id,
+        updateAdminProfileDto.categories,
+      );
+    }
+
+    const companyCategories = await this.companyCategoryRepository.find({
+      where: { companyId: company.id },
+    });
+
     // ✅ INCLUIR calendarDetail EN LA RESPUESTA (ya parseado como objeto)
     const companyWithLogo: CompanyWithLogoUrl = {
       ...updatedCompany,
       logoUrl: updatedCompany.logo
         ? this.fileUploadService.getFileUrl('company_logo', updatedCompany.logo)
         : null,
-      calendarDetail: calendarDetail, // ✅ Ya es un objeto, no un string
+      calendarDetail: calendarDetail,
+      categories: companyCategories,
     };
 
     return companyWithLogo;
+  }
+
+  private async replaceCompanyCategories(
+    companyId: number,
+    slugs: string[],
+  ): Promise<void> {
+    const desired = [
+      ...new Set(
+        slugs.map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0),
+      ),
+    ];
+
+    const slugToSite = await this.getSiteCategorySlugMap();
+    const invalid = desired.filter((s) => !slugToSite.has(s));
+    if (invalid.length > 0) {
+      throw new BadRequestException(
+        `Categorías inválidas (no existen en el catálogo): ${invalid.join(', ')}`,
+      );
+    }
+
+    await this.companyCategoryRepository.manager.transaction(
+      async (manager) => {
+        const repo = manager.getRepository(CompanyCategory);
+        const existing = await repo.find({ where: { companyId } });
+        const existingSlugs = new Set(
+          existing.map((c) => (c.name || '').trim().toLowerCase()),
+        );
+        const desiredSet = new Set(desired);
+
+        const toDelete = existing.filter(
+          (c) => !desiredSet.has((c.name || '').trim().toLowerCase()),
+        );
+        if (toDelete.length > 0) {
+          await repo.remove(toDelete);
+        }
+
+        const toInsert = desired
+          .filter((s) => !existingSlugs.has(s))
+          .map((s) => repo.create({ companyId, name: s }));
+        if (toInsert.length > 0) {
+          await repo.save(toInsert);
+        }
+      },
+    );
   }
 
   /**

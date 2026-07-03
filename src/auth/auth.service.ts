@@ -40,6 +40,7 @@ import { CompanyCategoryService } from '../company_category/company_category.ser
 import { SiteCategoryService } from '../site_category/site_category.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
+import type { AuthenticatedUser } from './types/authenticated-request';
 
 @Injectable()
 export class AuthService {
@@ -105,7 +106,7 @@ export class AuthService {
 
     if (user.userType === 'wrk') {
       const companyWorker = await this.companyWorkerRepository.findOne({
-        where: { userId: user.id },
+        where: { userId: user.id, isActive: 1 },
       });
       return {
         companyId: companyWorker?.companyId ?? null,
@@ -854,32 +855,74 @@ export class AuthService {
     return response;
   }
   /**
-   * Registro de cliente por parte del administrador de la compañía
+   * Registro de cliente por parte del administrador/worker de la compañía
    */
+  private async resolveWorkerCompanyContext(
+    caller: AuthenticatedUser,
+  ): Promise<{ companyId: number; companyWorkerId: number }> {
+    if (caller.companyWorkerId != null) {
+      const tokenCw = await this.companyWorkerRepository.findOne({
+        where: { id: caller.companyWorkerId, userId: caller.sub, isActive: 1 },
+      });
+      if (tokenCw) {
+        return { companyId: tokenCw.companyId, companyWorkerId: tokenCw.id };
+      }
+    }
+    const cw = await this.companyWorkerRepository.findOne({
+      where: { userId: caller.sub, isActive: 1 },
+    });
+    if (!cw) {
+      throw new NotFoundException(
+        'El trabajador no está asociado a ninguna compañía activa',
+      );
+    }
+    return { companyId: cw.companyId, companyWorkerId: cw.id };
+  }
+
   async registerClientByAdmin(
     registerDto: RegisterClientByAdminDto,
-    adminId: number,
+    caller: AuthenticatedUser,
     pictureFile?: Express.Multer.File,
   ): Promise<{
     message: string;
     user: Partial<User>;
   }> {
-    // 1. Validar que el admin existe y tiene compañía
-    const admin = await this.userRepository.findOne({
-      where: { id: adminId, userType: 'adm' },
-    });
-    if (!admin) {
-      throw new UnauthorizedException(
-        'Solo los administradores pueden registrar clientes',
-      );
-    }
+    let company: Company;
+    let createdByCompanyWorkerId: number | null = null;
 
-    const company = await this.companyRepository.findOne({
-      where: { userId: adminId },
-    });
-    if (!company) {
-      throw new NotFoundException(
-        'El administrador no tiene una compañía asignada',
+    if (caller.userType === 'adm') {
+      const admin = await this.userRepository.findOne({
+        where: { id: caller.sub, userType: 'adm' },
+      });
+      if (!admin) {
+        throw new UnauthorizedException(
+          'Solo los administradores pueden registrar clientes',
+        );
+      }
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId: caller.sub },
+      });
+      if (!adminCompany) {
+        throw new NotFoundException(
+          'El administrador no tiene una compañía asignada',
+        );
+      }
+      company = adminCompany;
+    } else if (caller.userType === 'wrk') {
+      const ctx = await this.resolveWorkerCompanyContext(caller);
+      const workerCompany = await this.companyRepository.findOne({
+        where: { id: ctx.companyId },
+      });
+      if (!workerCompany) {
+        throw new NotFoundException(
+          'El trabajador no tiene una compañía asignada',
+        );
+      }
+      company = workerCompany;
+      createdByCompanyWorkerId = ctx.companyWorkerId;
+    } else {
+      throw new UnauthorizedException(
+        'Solo administradores o trabajadores pueden registrar clientes',
       );
     }
 
@@ -969,8 +1012,13 @@ export class AuthService {
       }
 
       currentCompanies.push(company.id);
+
+      const shouldSetCreator =
+        createdByCompanyWorkerId != null &&
+        client.createdByCompanyWorkerId == null;
       await this.clientRepository.update(client.id, {
         companies: currentCompanies,
+        ...(shouldSetCreator ? { createdByCompanyWorkerId } : {}),
       });
     } else {
       // No existe perfil de cliente: procesamos la foto (si la hay) y lo creamos.
@@ -1000,6 +1048,7 @@ export class AuthService {
         companies: [company.id],
         location: registerDto.location,
         userId: user.id,
+        createdByCompanyWorkerId,
       });
       client = await this.clientRepository.save(newClient);
     }

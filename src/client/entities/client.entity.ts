@@ -42,6 +42,9 @@ export class Client {
   @Column({ type: 'json', nullable: true })
   companies: number[];
 
+  @Column({ name: 'created_by_company_worker_id', type: 'int', nullable: true })
+  createdByCompanyWorkerId: number | null;
+
   // Categorías de interés del cliente (ids del catálogo global `site_category`).
   // Se setean en el registro y alimentan el filtro inicial de la búsqueda.
   @Column({ type: 'json', nullable: true })

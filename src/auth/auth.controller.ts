@@ -141,10 +141,9 @@ export class AuthController {
     )
     pictureFile?: Express.Multer.File,
   ) {
-    const adminId = req.user.sub;
     return this.authService.registerClientByAdmin(
       registerDto,
-      adminId,
+      req.user,
       pictureFile,
     );
   }
