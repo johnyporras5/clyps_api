@@ -13,6 +13,7 @@ import {
   CreateSessionWithDetailDto,
   SessionDetailItemDto,
 } from './dto/create-session-with-detail.dto';
+import type { AuthenticatedUser } from '../auth/types/authenticated-request';
 import { Client } from '../client/entities/client.entity';
 import { Company } from '../company/entities/company.entity';
 import { User } from '../user/entities/user.entity';
@@ -295,9 +296,31 @@ export class SessionService {
     return existingDetail;
   }
 
+  private async resolveWorkerContext(
+    caller: AuthenticatedUser,
+  ): Promise<{ companyId: number; companyWorkerId: number }> {
+    if (caller.companyWorkerId != null) {
+      const tokenCw = await this.companyWorkerRepository.findOne({
+        where: { id: caller.companyWorkerId, userId: caller.sub, isActive: 1 },
+      });
+      if (tokenCw) {
+        return { companyId: tokenCw.companyId, companyWorkerId: tokenCw.id };
+      }
+    }
+    const cw = await this.companyWorkerRepository.findOne({
+      where: { userId: caller.sub, isActive: 1 },
+    });
+    if (!cw) {
+      throw new NotFoundException(
+        'El trabajador no está asociado a ninguna compañía activa',
+      );
+    }
+    return { companyId: cw.companyId, companyWorkerId: cw.id };
+  }
+
   async createSessionWithDetail(
     createSessionWithDetailDto: CreateSessionWithDetailDto,
-    adminId: number,
+    caller: AuthenticatedUser,
   ): Promise<{
     message: string;
     isNew: boolean;
@@ -332,18 +355,64 @@ export class SessionService {
       throw new BadRequestException('La sesión debe tener un cliente asociado');
     }
 
-    const adminCompany = await this.companyRepository.findOne({
-      where: { userId: adminId },
-    });
+    const adminId = caller.sub;
+
+    // CLYP-306: el creador puede ser admin (empresa por userId) o worker
+    // (provider): su empresa y company_worker vienen del token.
+    const isWorker = caller.userType === 'wrk';
+    let callerCompanyWorkerId: number | null = null;
+    let adminCompany: Company | null;
+
+    if (isWorker) {
+      const ctx = await this.resolveWorkerContext(caller);
+      callerCompanyWorkerId = ctx.companyWorkerId;
+      adminCompany = await this.companyRepository.findOne({
+        where: { id: ctx.companyId },
+      });
+    } else {
+      adminCompany = await this.companyRepository.findOne({
+        where: { userId: adminId },
+      });
+    }
 
     if (!adminCompany) {
       throw new NotFoundException(
-        'El administrador no tiene una compañía asignada',
+        isWorker
+          ? 'El trabajador no tiene una compañía asignada'
+          : 'El administrador no tiene una compañía asignada',
       );
     }
 
     const companyId = adminCompany.id;
     const companyName = adminCompany.name;
+
+    // CLYP-306: un trabajador solo puede agendar citas asignadas a SÍ MISMO.
+    // Cualquier detail con otro companyWorkerId (o sin trabajador) → 403.
+    if (isWorker) {
+      const allSelf = (createSessionWithDetailDto.details || []).every(
+        (d) =>
+          d.companyWorkerId !== null &&
+          d.companyWorkerId !== undefined &&
+          d.companyWorkerId === callerCompanyWorkerId,
+      );
+      if (!allSelf) {
+        throw new ForbiddenException(
+          'Un trabajador solo puede crear citas asignadas a sí mismo.',
+        );
+      }
+
+      // El cliente debe pertenecer a la empresa del trabajador.
+      const client = await this.clientRepository.findOne({
+        where: { id: createSessionWithDetailDto.clientId },
+      });
+      const belongs =
+        !!client &&
+        Array.isArray(client.companies) &&
+        client.companies.includes(companyId);
+      if (!belongs) {
+        throw new ForbiddenException('El cliente no pertenece a tu empresa.');
+      }
+    }
 
     if (
       !createSessionWithDetailDto.details ||
@@ -7911,83 +7980,112 @@ export class SessionService {
     const { companyWorkerIds, companyIds } =
       await this.resolveWorkerCompanyWorkerIds(userId, targetWorkerId);
 
-    const baseQuery = this.sessionDetailRepository
+    const apptRows = await this.sessionDetailRepository
       .createQueryBuilder('detail')
       .innerJoin('session', 'session', 'session.id = detail.session_id')
-      .leftJoin('client', 'client', 'client.id = session.client_id')
-      .where('detail.company_worker_id IN (:...companyWorkerIds)', {
-        companyWorkerIds,
-      });
-
-    const dataQuery = baseQuery
-      .clone()
-      .select('client.id', 'clientId')
-      .addSelect('client.name', 'clientName')
-      .addSelect('client.last_name', 'clientLastName')
-      .addSelect('client.phone', 'clientPhone')
-      .addSelect('client.email', 'clientEmail')
-      .addSelect('client.picture', 'clientPicture')
+      .select('session.client_id', 'clientId')
       .addSelect('COUNT(DISTINCT session.id)', 'totalAppointments')
       .addSelect('MAX(session.session_datetime)', 'lastAppointmentDate')
-      .groupBy('client.id')
-      .addGroupBy('client.name')
-      .addGroupBy('client.last_name')
-      .addGroupBy('client.phone')
-      .addGroupBy('client.email')
-      .addGroupBy('client.picture')
-      .orderBy('lastAppointmentDate', 'DESC')
-      .offset((page - 1) * limit)
-      .limit(limit);
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', {
+        companyWorkerIds,
+      })
+      .andWhere('session.client_id IS NOT NULL')
+      .groupBy('session.client_id')
+      .getRawMany();
 
-    const rows = await dataQuery.getRawMany();
-
-    const totalRow = await baseQuery
-      .clone()
-      .select('COUNT(DISTINCT session.client_id)', 'total')
-      .getRawOne();
-
-    const total = parseInt(totalRow?.total || '0', 10);
-
-    // Alias que la compañía del worker le puso al cliente.
-    // Un worker pertenece a una sola compañía, así que tomamos el alias cuya
-    // companyId coincida con la de su asignación activa.
-    const workerCompanyId = companyIds[0] ?? null;
-    const pageClientIds = rows
-      .map((r) => Number(r.clientId))
-      .filter((id) => Number.isFinite(id));
-    const aliasByClient = new Map<number, string | null>();
-    if (pageClientIds.length > 0 && workerCompanyId !== null) {
-      const aliasRows = await this.clientRepository.find({
-        where: { id: In(pageClientIds) },
-        select: ['id', 'companyAliases'],
+    const apptByClient = new Map<
+      number,
+      { totalAppointments: number; lastAppointmentDate: Date | null }
+    >();
+    for (const r of apptRows) {
+      apptByClient.set(Number(r.clientId), {
+        totalAppointments: parseInt(r.totalAppointments, 10) || 0,
+        lastAppointmentDate: r.lastAppointmentDate ?? null,
       });
-      for (const c of aliasRows) {
-        const entry = (c.companyAliases ?? []).find(
-          (a) => Number(a.companyId) === workerCompanyId,
-        );
-        aliasByClient.set(c.id, entry?.alias ?? null);
-      }
     }
 
-    const data = rows
-      .filter((r) => r.clientId !== null && r.clientId !== undefined)
-      .map((r) => {
-        const alias = aliasByClient.get(Number(r.clientId)) ?? null;
+    const createdClients = companyWorkerIds.length
+      ? await this.clientRepository.find({
+          where: { createdByCompanyWorkerId: In(companyWorkerIds) },
+          select: ['id'],
+        })
+      : [];
+
+    const allIds = Array.from(
+      new Set<number>([
+        ...apptByClient.keys(),
+        ...createdClients.map((c) => c.id),
+      ]),
+    );
+    const total = allIds.length;
+    const totalPages = Math.ceil(total / limit);
+
+    allIds.sort((a, b) => {
+      const da = apptByClient.get(a)?.lastAppointmentDate;
+      const db = apptByClient.get(b)?.lastAppointmentDate;
+      const ta = da ? new Date(da).getTime() : 0;
+      const tb = db ? new Date(db).getTime() : 0;
+      return tb - ta;
+    });
+
+    const pageIds = allIds.slice((page - 1) * limit, page * limit);
+
+    if (pageIds.length === 0) {
+      return {
+        data: [],
+        meta: {
+          page,
+          limit,
+          total,
+          totalPages,
+          hasNext: page < totalPages,
+          hasPrev: page > 1,
+        },
+      };
+    }
+
+    const workerCompanyId = companyIds[0] ?? null;
+    const clients = await this.clientRepository.find({
+      where: { id: In(pageIds) },
+      select: [
+        'id',
+        'name',
+        'lastName',
+        'phone',
+        'email',
+        'picture',
+        'companyAliases',
+      ],
+    });
+    const clientById = new Map<number, Client>(clients.map((c) => [c.id, c]));
+
+    const data = pageIds
+      .map((id) => clientById.get(id))
+      .filter((c): c is Client => !!c)
+      .map((c) => {
+        const appt = apptByClient.get(c.id);
+        const aliasEntry =
+          workerCompanyId !== null
+            ? (c.companyAliases ?? []).find(
+                (a) => Number(a.companyId) === workerCompanyId,
+              )
+            : undefined;
+        const alias = aliasEntry?.alias ?? null;
         return {
-          id: Number(r.clientId),
-          name: r.clientName,
-          lastName: r.clientLastName,
-          phone: r.clientPhone,
-          email: r.clientEmail,
+          id: c.id,
+          name: c.name,
+          lastName: c.lastName,
+          phone: c.phone,
+          email: c.email,
           alias,
           displayName: alias
             ? alias
-            : `${r.clientName || ''} ${r.clientLastName || ''}`.trim(),
-          photoUrl: r.clientPicture
-            ? this.fileUploadService.getFileUrl('client_photo', r.clientPicture)
+            : `${c.name || ''} ${c.lastName || ''}`.trim(),
+          photoUrl: c.picture
+            ? this.fileUploadService.getFileUrl('client_photo', c.picture)
             : null,
-          totalAppointments: parseInt(r.totalAppointments, 10) || 0,
-          lastAppointmentDate: r.lastAppointmentDate,
+          totalAppointments: appt?.totalAppointments ?? 0,
+          lastAppointmentDate: appt?.lastAppointmentDate ?? null,
         };
       });
 
@@ -7997,8 +8095,8 @@ export class SessionService {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit),
-        hasNext: page < Math.ceil(total / limit),
+        totalPages,
+        hasNext: page < totalPages,
         hasPrev: page > 1,
       },
     };

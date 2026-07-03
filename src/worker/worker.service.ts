@@ -71,8 +71,17 @@ export class WorkerService {
     const userWithoutPassword = this.excludePasswordFromUser(worker.user);
     const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
 
-    const companyWorkerWhere: { workerId: number; companyId?: number } = {
+    const companyWorkerWhere: {
+      workerId: number;
+      companyId?: number;
+      isActive: number;
+      temporarilyDeleted: boolean;
+      permanentlyDeleted: boolean;
+    } = {
       workerId: id,
+      isActive: 1,
+      temporarilyDeleted: false,
+      permanentlyDeleted: false,
     };
     if (userType === 'adm' && userId) {
       const adminCompany = await this.companyRepository.findOne({

@@ -51,7 +51,7 @@ export class SessionController {
   }
 
   @Post('create-with-detail')
-  @Roles('adm')
+  @Roles('adm', 'wrk')
   async createSessionWithDetail(
     @Request() req: AuthenticatedRequest,
     @Body() createSessionWithDetailDto: CreateSessionWithDetailDto,
@@ -59,7 +59,7 @@ export class SessionController {
     const adminId = req.user.sub;
     const result = await this.sessionService.createSessionWithDetail(
       createSessionWithDetailDto,
-      adminId,
+      req.user,
     );
     await this.emitCreatedFrom(result, adminId);
     return result;
