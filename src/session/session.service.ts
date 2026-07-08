@@ -6317,18 +6317,29 @@ export class SessionService {
         companyPercentage,
       );
 
-      // Parsear la fecha y hora
       let startDatetime: Date;
-      try {
-        const dateTimeParts = `${extraService.date} ${extraService.time}`;
-        startDatetime = new Date(dateTimeParts);
-
+      if (extraService.startDatetime) {
+        startDatetime = new Date(extraService.startDatetime);
         if (isNaN(startDatetime.getTime())) {
-          throw new Error('Fecha inválida');
+          throw new BadRequestException(
+            `startDatetime inválido para el servicio ${service.name}`,
+          );
         }
-      } catch {
+      } else if (extraService.date && extraService.time) {
+        try {
+          const dateTimeParts = `${extraService.date} ${extraService.time}`;
+          startDatetime = new Date(dateTimeParts);
+          if (isNaN(startDatetime.getTime())) {
+            throw new Error('Fecha inválida');
+          }
+        } catch {
+          throw new BadRequestException(
+            `Formato de fecha/hora inválido para el servicio ${service.name}: date="${extraService.date}", time="${extraService.time}"`,
+          );
+        }
+      } else {
         throw new BadRequestException(
-          `Formato de fecha/hora inválido para el servicio ${service.name}: date="${extraService.date}", time="${extraService.time}"`,
+          `Debe enviar startDatetime (UTC) o date+time para el servicio ${service.name}`,
         );
       }
 
