@@ -6,6 +6,7 @@ import {
   IsString,
   ValidateNested,
   IsEnum,
+  IsDate,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -26,13 +27,19 @@ export class ExtraServiceItemDto {
   @IsString()
   providerName: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  date: string; // "2026-02-15"
+  date?: string; // "2026-02-15"
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  time: string; // "9:30 AM"
+  time?: string; // "9:30 AM"
+
+  // Instante UTC explícito (ISO con Z), ej. "2026-02-15T14:00:00.000Z".
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  startDatetime?: Date;
 
   @IsNotEmpty()
   @IsNumber()
