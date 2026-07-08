@@ -4,6 +4,7 @@ import {
   BadRequestException,
   Logger,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, Between, Not, DeepPartial, Brackets } from 'typeorm';
@@ -14,6 +15,7 @@ import {
   SessionDetailItemDto,
 } from './dto/create-session-with-detail.dto';
 import type { AuthenticatedUser } from '../auth/types/authenticated-request';
+import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { Client } from '../client/entities/client.entity';
 import { Company } from '../company/entities/company.entity';
 import { User } from '../user/entities/user.entity';
@@ -318,6 +320,274 @@ export class SessionService {
     return { companyId: cw.companyId, companyWorkerId: cw.id };
   }
 
+  /** Duración en minutos entre dos instantes (fin - inicio); null si inválido. */
+  private durationMinutesFromRange(
+    start?: Date | string | null,
+    end?: Date | string | null,
+  ): number | null {
+    if (!start || !end) return null;
+    const s = new Date(start).getTime();
+    const e = new Date(end).getTime();
+    if (isNaN(s) || isNaN(e) || e <= s) return null;
+    return Math.round((e - s) / 60000);
+  }
+
+  /**
+   * Resuelve el fin de un detalle: el fin explícito si viene; si no, inicio +
+   * duración (minutos). Devuelve null si no hay inicio (CLYP-311).
+   */
+  private resolveDetailEnd(
+    start: Date | string | null | undefined,
+    explicitEnd: Date | string | null | undefined,
+    totalTimeMinutes: number,
+  ): Date | null {
+    if (explicitEnd) {
+      const e = new Date(explicitEnd);
+      if (!isNaN(e.getTime())) return e;
+    }
+    if (!start) return null;
+    const s = new Date(start).getTime();
+    if (isNaN(s)) return null;
+    return new Date(s + (totalTimeMinutes || 0) * 60000);
+  }
+
+  /**
+   * CLYP-311: reprogramar / mover / redimensionar una cita.
+   * - Gate por status: agendada (1/8) → inicio+fin; en proceso (2) → solo fin;
+   *   completada(3)/pagada(4,6)/cancelada(5) → 409.
+   * - Rol: admin cualquiera de su empresa; worker solo sus propias citas y no
+   *   puede reasignar a otra trabajadora.
+   * - Persiste startDatetime/endDatetime y recalcula totalTime. NO bloquea solape
+   *   (admin/worker pueden solapar — regla del calendario).
+   */
+  async rescheduleSession(
+    sessionId: number,
+    dto: RescheduleSessionDto,
+    caller: AuthenticatedUser,
+  ): Promise<{ message: string; session: Session; details: SessionDetail[] }> {
+    // 1. Empresa del que reprograma.
+    const isWorker = caller.userType === 'wrk';
+    let callerCompanyId: number;
+    let callerCompanyWorkerId: number | null = null;
+    if (isWorker) {
+      const ctx = await this.resolveWorkerContext(caller);
+      callerCompanyId = ctx.companyId;
+      callerCompanyWorkerId = ctx.companyWorkerId;
+    } else {
+      const company = await this.companyRepository.findOne({
+        where: { userId: caller.sub },
+      });
+      if (!company) {
+        throw new NotFoundException('No tienes una compañía asignada');
+      }
+      callerCompanyId = company.id;
+    }
+
+    // 2. Cargar la sesión y sus detalles.
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      throw new NotFoundException(`Sesión ${sessionId} no encontrada`);
+    }
+    const details = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    if (details.length === 0) {
+      throw new NotFoundException(`La sesión ${sessionId} no tiene servicios`);
+    }
+
+    // 3. La cita debe ser de la empresa del que reprograma.
+    const sampleService = await this.serviceRepository.findOne({
+      where: { id: details[0].serviceId },
+    });
+    if (!sampleService || sampleService.companyId !== callerCompanyId) {
+      throw new ForbiddenException('Esta cita no pertenece a tu empresa');
+    }
+
+    // 4. Gate por status de la cita.
+    const st = session.sessionStatus;
+    if (st === 3 || st === 4 || st === 6) {
+      throw new ConflictException(
+        'No se puede reprogramar una cita completada, pagada o calificada',
+      );
+    }
+    if (st === 5) {
+      throw new ConflictException('No se puede reprogramar una cita cancelada');
+    }
+    const inProgress = st === 2;
+
+    // 5. Detalles objetivo (uno puntual o toda la cita).
+    const targetDetails = dto.detailId
+      ? details.filter((d) => d.id === dto.detailId)
+      : details;
+    if (dto.detailId && targetDetails.length === 0) {
+      throw new NotFoundException(
+        `Detalle ${dto.detailId} no encontrado en la cita`,
+      );
+    }
+
+    // 6. Worker: solo sus propias citas y sin reasignar a otra persona.
+    if (isWorker) {
+      const notOwn = targetDetails.some(
+        (d) => d.companyWorkerId !== callerCompanyWorkerId,
+      );
+      if (notOwn) {
+        throw new ForbiddenException(
+          'Solo puedes reprogramar tus propias citas',
+        );
+      }
+      if (
+        dto.companyWorkerId != null &&
+        dto.companyWorkerId !== callerCompanyWorkerId
+      ) {
+        throw new ForbiddenException(
+          'Un trabajador no puede reasignar la cita a otra persona',
+        );
+      }
+    }
+
+    // CLYP-311: reasignar a otra trabajadora (mover de columna, solo admin) →
+    // validar que exista, sea de la empresa y esté activa.
+    if (dto.companyWorkerId != null && !isWorker) {
+      const targetCw = await this.companyWorkerRepository.findOne({
+        where: {
+          id: dto.companyWorkerId,
+          companyId: callerCompanyId,
+          isActive: 1,
+        },
+      });
+      if (!targetCw) {
+        throw new BadRequestException(
+          'La trabajadora destino no existe, no es de tu empresa o no está activa',
+        );
+      }
+    }
+
+    const newStart = dto.startDatetime ? new Date(dto.startDatetime) : null;
+    const newEnd = dto.endDatetime ? new Date(dto.endDatetime) : null;
+
+    // 7. En proceso: solo se puede cambiar el fin, no el inicio.
+    if (inProgress && newStart) {
+      const currentStart = dto.detailId
+        ? targetDetails[0].startDatetime
+        : session.startDatetime;
+      if (
+        currentStart &&
+        new Date(currentStart).getTime() !== newStart.getTime()
+      ) {
+        throw new BadRequestException(
+          'Una cita en proceso solo puede cambiar su hora de fin, no el inicio',
+        );
+      }
+    }
+
+    // 8. Fin > inicio (mínimo 15 min) cuando vienen ambos.
+    // El fin debe ser posterior al inicio (duración positiva). No se impone un
+    // mínimo fijo: hay servicios cortos (ej. 10 min) que son válidos.
+    if (newStart && newEnd && newEnd.getTime() <= newStart.getTime()) {
+      throw new BadRequestException(
+        'La hora de fin debe ser posterior a la de inicio',
+      );
+    }
+
+    // 9. Aplicar cambios.
+    const moveWholeMultiDetail = !dto.detailId && details.length > 1;
+
+    if (moveWholeMultiDetail) {
+      // Mover toda la cita por el delta (inicio nuevo - inicio actual).
+      if (!newStart) {
+        throw new BadRequestException(
+          'Falta startDatetime para mover la cita completa',
+        );
+      }
+      const oldStartMs = session.startDatetime
+        ? new Date(session.startDatetime).getTime()
+        : details[0].startDatetime
+          ? new Date(details[0].startDatetime).getTime()
+          : null;
+      if (oldStartMs === null) {
+        throw new BadRequestException(
+          'La cita no tiene una hora de inicio para mover',
+        );
+      }
+      const delta = newStart.getTime() - oldStartMs;
+      for (const d of details) {
+        if (d.startDatetime) {
+          const ns = new Date(new Date(d.startDatetime).getTime() + delta);
+          d.startDatetime = ns;
+          d.endDatetime = d.endDatetime
+            ? new Date(new Date(d.endDatetime).getTime() + delta)
+            : d.totalTime
+              ? new Date(ns.getTime() + d.totalTime * 60000)
+              : null;
+        }
+        if (dto.companyWorkerId != null && !isWorker) {
+          d.companyWorkerId = dto.companyWorkerId;
+        }
+      }
+      await this.sessionDetailRepository.save(details);
+      session.startDatetime = newStart;
+      session.sessionDatetime = newStart;
+    } else {
+      // Un solo detalle (o cita de un servicio): mover/resize ese detalle.
+      const d = targetDetails[0];
+      const start = newStart ?? d.startDatetime;
+      let end: Date | null;
+      if (newEnd) {
+        end = newEnd;
+      } else if (start && d.totalTime) {
+        end = new Date(new Date(start).getTime() + d.totalTime * 60000);
+      } else {
+        end = d.endDatetime;
+      }
+      d.startDatetime = start;
+      if (end) {
+        d.endDatetime = end;
+        if (start) {
+          d.totalTime = Math.max(
+            0,
+            Math.round((end.getTime() - new Date(start).getTime()) / 60000),
+          );
+        }
+      }
+      if (dto.companyWorkerId != null && !isWorker) {
+        d.companyWorkerId = dto.companyWorkerId;
+      }
+      await this.sessionDetailRepository.save(d);
+      if (start) {
+        session.startDatetime = start;
+        session.sessionDatetime = start;
+      }
+    }
+
+    // 10. Recalcular totalTime de la cita = span (max fin - min inicio).
+    const refreshed = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    const starts = refreshed
+      .map((d) =>
+        d.startDatetime ? new Date(d.startDatetime).getTime() : null,
+      )
+      .filter((v): v is number => v !== null);
+    const ends = refreshed
+      .map((d) => (d.endDatetime ? new Date(d.endDatetime).getTime() : null))
+      .filter((v): v is number => v !== null);
+    if (starts.length && ends.length) {
+      session.totalTime = Math.max(
+        0,
+        Math.round((Math.max(...ends) - Math.min(...starts)) / 60000),
+      );
+    }
+    const savedSession = await this.sessionRepository.save(session);
+
+    return {
+      message: 'Cita reprogramada correctamente',
+      session: savedSession,
+      details: refreshed,
+    };
+  }
+
   async createSessionWithDetail(
     createSessionWithDetailDto: CreateSessionWithDetailDto,
     caller: AuthenticatedUser,
@@ -421,47 +691,12 @@ export class SessionService {
       throw new BadRequestException('Debe proporcionar al menos un servicio');
     }
 
-    // 2. Verificar si el cliente ya tiene una cita en la misma fecha y hora
-    if (createSessionWithDetailDto.sessionDatetime) {
-      const existingAppointment =
-        await this.checkIfClientHasAppointmentAtSameTime(
-          createSessionWithDetailDto.clientId,
-          createSessionWithDetailDto.sessionDatetime,
-          companyId,
-        );
-
-      if (existingAppointment) {
-        // Formatear la fecha y hora para mostrar en el mensaje
-        const appointmentDate = new Date(existingAppointment.sessionDatetime);
-        const formattedDate = appointmentDate.toLocaleDateString('es-ES', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-        });
-        const formattedTime = appointmentDate.toLocaleTimeString('es-ES', {
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-
-        throw new BadRequestException({
-          message: `El cliente ya tiene una cita agendada para la misma fecha y hora.`,
-          details: {
-            existingAppointmentId: existingAppointment.id,
-            clientId: existingAppointment.clientId,
-            appointmentDateTime: existingAppointment.sessionDatetime,
-            formattedDate: formattedDate,
-            formattedTime: formattedTime,
-            sessionStatus: existingAppointment.sessionStatus,
-            statusText: this.getSessionStatusText(
-              existingAppointment.sessionStatus,
-            ),
-          },
-          suggestion:
-            'Por favor, seleccione una fecha y hora diferente para esta cita.',
-        });
-      }
-    }
+    // 2. CLYP-311: en el flujo admin/worker NO se bloquea que el cliente tenga
+    // otra cita a la misma hora. Un cliente puede recibir servicios simultáneos
+    // de trabajadoras DISTINTAS (ej. manicura + cabello a la vez). El solape de
+    // una MISMA trabajadora sí se rechaza más abajo (checkIfWorkerHasAppointment
+    // AtSameTime). El flujo del cliente (createSessionByClient) sí mantiene el
+    // bloqueo de "cliente a la misma hora".
 
     // 3. Definir tipo para las validaciones de servicio
     type ServiceValidationType = {
@@ -532,7 +767,13 @@ export class SessionService {
       let workerPercentage = 0;
       let companyPercentage = 100;
       let workerAssigned = false;
-      let detailTime = Number(service.standardTime) || 0;
+      // CLYP-311: si viene fin explícito (detailEndDatetime), la duración =
+      // fin - inicio y tiene prioridad sobre el tiempo del servicio/worker.
+      const overrideMinutes = this.durationMinutesFromRange(
+        detail.detailStartDatetime,
+        detail.detailEndDatetime,
+      );
+      let detailTime = overrideMinutes ?? (Number(service.standardTime) || 0);
 
       // Validar estructura general de porcentajes/tiempos del servicio siempre.
       this.validateServicePercentagesAndTime(service);
@@ -565,7 +806,7 @@ export class SessionService {
         workerPercentage = perc.workerPercentage;
         companyPercentage = perc.companyPercentage;
         workerAssigned = perc.workerAssigned;
-        detailTime = perc.time;
+        detailTime = overrideMinutes ?? perc.time;
 
         // Verificar si el trabajador ya tiene una cita que se solape con este horario
         const detailStartDatetime =
@@ -791,13 +1032,23 @@ export class SessionService {
     for (const validation of serviceValidations) {
       const { detail, service, calculatedAmounts, detailTime } = validation;
 
+      // CLYP-311: persistir endDatetime (fin explícito o inicio + duración) para
+      // que el calendario tenga el fin de cada servicio.
+      const detailStart = detail.detailStartDatetime || session.startDatetime;
+      const detailEnd = this.resolveDetailEnd(
+        detailStart,
+        detail.detailEndDatetime,
+        detailTime,
+      );
+
       const sessionDetailData: DeepPartial<SessionDetail> = {
         cost: calculatedAmounts.cost,
         serviceId: detail.serviceId,
         companyWorkerId: (detail.companyWorkerId ?? null) as unknown as number,
         sessionId: session.id,
-        startDatetime: detail.detailStartDatetime || session.startDatetime,
+        startDatetime: detailStart,
         totalTime: detailTime,
+        endDatetime: detailEnd,
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
@@ -1528,6 +1779,8 @@ export class SessionService {
         // Tiempo real del servicio (inicio→fin; 0 si no está completado)
         realDuration: realTime,
         startDatetime: detail.startDatetime,
+        // CLYP-311 (B4): fin por detalle para el calendario.
+        endDatetime: detail.endDatetime,
         companyWorkerId: detail.companyWorkerId,
         workerName: companyWorker?.worker
           ? (companyWorker.worker.name || '').trim()
@@ -2447,6 +2700,8 @@ export class SessionService {
                 // Tiempo real del servicio (inicio→fin; 0 si no está completado)
                 realDuration: realTime,
                 startDatetime: detail.startDatetime,
+                // CLYP-311 (B4): fin por detalle para el calendario.
+                endDatetime: detail.endDatetime,
                 companyWorkerId: detail.companyWorkerId,
                 workerName: companyWorker?.worker
                   ? (companyWorker.worker.name || '').trim()
@@ -4953,6 +5208,8 @@ export class SessionService {
         detailStatus: detail.detailStatus || 1,
         detailStatusText: this.getDetailStatusText(detail.detailStatus || 1),
         startDatetime: detail.detailStartDatetime,
+        // CLYP-311 (B4): fin por detalle para dibujar el bloque en el calendario.
+        endDatetime: detail.detailEndDatetime,
         isExtra: detail.isExtra === true || detail.isExtra === 1,
         companyId: detail.companyId,
         companyName: detail.companyName || 'Compañía no encontrada',
@@ -5369,7 +5626,13 @@ export class SessionService {
       let workerPercentage = 0;
       let companyPercentage = 100;
       let workerAssigned = false;
-      let detailTime = Number(service.standardTime) || 0;
+      // CLYP-311: si viene fin explícito (detailEndDatetime), la duración =
+      // fin - inicio y tiene prioridad sobre el tiempo del servicio/worker.
+      const overrideMinutes = this.durationMinutesFromRange(
+        detail.detailStartDatetime,
+        detail.detailEndDatetime,
+      );
+      let detailTime = overrideMinutes ?? (Number(service.standardTime) || 0);
 
       // Validar estructura general de porcentajes/tiempos del servicio siempre.
       this.validateServicePercentagesAndTime(service);
@@ -5402,7 +5665,7 @@ export class SessionService {
         workerPercentage = perc.workerPercentage;
         companyPercentage = perc.companyPercentage;
         workerAssigned = perc.workerAssigned;
-        detailTime = perc.time;
+        detailTime = overrideMinutes ?? perc.time;
 
         // Verificar si el trabajador ya tiene una cita que se solape con este horario
         const detailStartDatetime =
@@ -5635,13 +5898,23 @@ export class SessionService {
     for (const validation of serviceValidations) {
       const { detail, service, calculatedAmounts, detailTime } = validation;
 
+      // CLYP-311: persistir endDatetime (fin explícito o inicio + duración) para
+      // que el calendario tenga el fin de cada servicio.
+      const detailStart = detail.detailStartDatetime || session.startDatetime;
+      const detailEnd = this.resolveDetailEnd(
+        detailStart,
+        detail.detailEndDatetime,
+        detailTime,
+      );
+
       const sessionDetailData: DeepPartial<SessionDetail> = {
         cost: calculatedAmounts.cost,
         serviceId: detail.serviceId,
         companyWorkerId: (detail.companyWorkerId ?? null) as unknown as number,
         sessionId: session.id,
-        startDatetime: detail.detailStartDatetime || session.startDatetime,
+        startDatetime: detailStart,
         totalTime: detailTime,
+        endDatetime: detailEnd,
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
@@ -7513,6 +7786,8 @@ export class SessionService {
         detailStatus: detail.detailStatus || 1,
         detailStatusText: this.getDetailStatusText(detail.detailStatus || 1),
         startDatetime: detail.detailStartDatetime,
+        // CLYP-311 (B4): fin por detalle para dibujar el bloque en el calendario.
+        endDatetime: detail.detailEndDatetime,
         isExtra: detail.isExtra === true || detail.isExtra === 1,
         workerPercentage,
         companyPercentage,

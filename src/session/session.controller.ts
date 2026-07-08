@@ -25,6 +25,7 @@ import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
+import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
 import { GetAvailabilityDto } from './dto/get-availability.dto';
 import { ConfirmAttendanceDto } from './dto/confirm-attendance.dto';
@@ -304,6 +305,17 @@ export class SessionController {
     );
     await this.realtimeEmitter.emitExtraServicesChanged(+id);
     return result;
+  }
+
+  // ============ REPROGRAMAR / MOVER / RESIZE (CLYP-311) ============
+  @Patch(':id/reschedule')
+  @Roles('adm', 'wrk')
+  async reschedule(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: RescheduleSessionDto,
+  ) {
+    return this.sessionService.rescheduleSession(+id, dto, req.user);
   }
 
   // ============ CANCELACIÓN POR ADMIN ============

@@ -31,6 +31,11 @@ export class SessionDetailItemDto {
   @IsOptional()
   detailStartDatetime?: Date;
 
+  // Fin explícito del servicio (UTC con Z). Si viene, la duración = fin - inicio
+  // (override manual del calendario, CLYP-311). Si no, se deriva del servicio.
+  @IsOptional()
+  detailEndDatetime?: Date;
+
   @IsOptional()
   @IsNumber()
   detailStatus?: number;
