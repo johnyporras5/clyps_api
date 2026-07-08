@@ -44,6 +44,8 @@ export interface SessionDetailResponse {
   // Tiempo real del servicio (inicio→fin; 0 si no está completado)
   realDuration: number;
   startDatetime: Date;
+  // Fin por detalle (CLYP-311 / B4): para dibujar el bloque en el calendario.
+  endDatetime?: Date | null;
   companyWorkerId: number | null;
   workerName: string;
   originalPrice: number;
