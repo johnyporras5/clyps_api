@@ -10,5 +10,6 @@ export interface WorkerList {
   startDate: Date;
   endDate: Date;
   isActive: number;
+  calendar: Record<string, any> | null;
 }
 export type PaginatedWorkerListResult = PaginationResult<WorkerList>;

@@ -64,6 +64,16 @@ export class SessionDetail {
   @Column({ name: 'end_datetime', type: 'datetime', nullable: true })
   endDatetime: Date | null;
 
+  // Hora AGENDADA original del servicio (inicio/fin). Se fija al crear la cita
+  // y NUNCA se mueve con Comenzar/Terminar ni con el arrastre (ripple). Sirve
+  // para mostrar "agendada 1:30 · movida a 1:45". start_datetime/end_datetime
+  // son la posición VIVA (real / calendario), estas son la referencia original.
+  @Column({ name: 'original_start_datetime', type: 'datetime', nullable: true })
+  originalStartDatetime: Date | null;
+
+  @Column({ name: 'original_end_datetime', type: 'datetime', nullable: true })
+  originalEndDatetime: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

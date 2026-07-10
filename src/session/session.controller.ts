@@ -171,6 +171,8 @@ export class SessionController {
     );
     await this.realtimeEmitter.emitStatusChanged(+id);
     await this.notificationEmitter.notifyStatusChanged(+id, adminId);
+    // Citas AGENDADAS que el arrastre empujó (no la que se está atendiendo).
+    await this.notifyRippleMoved(result?.movedByRipple, adminId);
     return result;
   }
 
@@ -221,6 +223,8 @@ export class SessionController {
       await this.realtimeEmitter.emitStatusChanged(sessionId);
       await this.notificationEmitter.notifyStatusChanged(sessionId, userId);
     }
+    // Citas AGENDADAS que el arrastre empujó (no la que se está atendiendo).
+    await this.notifyRippleMoved(result?.movedByRipple, userId);
     return result;
   }
 
@@ -270,7 +274,7 @@ export class SessionController {
   }
 
   @Post(':id/extra-services')
-  @Roles('adm', 'cli')
+  @Roles('adm', 'cli', 'wrk')
   async addExtraServices(
     @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
@@ -289,7 +293,7 @@ export class SessionController {
   }
 
   @Delete(':id/extra-services/:detailId')
-  @Roles('adm', 'cli')
+  @Roles('adm', 'cli', 'wrk')
   async removeExtraService(
     @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
@@ -315,7 +319,17 @@ export class SessionController {
     @Param('id') id: string,
     @Body() dto: RescheduleSessionDto,
   ) {
-    return this.sessionService.rescheduleSession(+id, dto, req.user);
+    const result = await this.sessionService.rescheduleSession(
+      +id,
+      dto,
+      req.user,
+    );
+    // Refrescar calendario y avisar al cliente de la cita movida manualmente...
+    await this.realtimeEmitter.emitStatusChanged(+id);
+    await this.notificationEmitter.notifyRescheduled(+id, req.user.sub);
+    // ...y a los clientes de las citas que el arrastre empujó.
+    await this.notifyRippleMoved(result?.movedByRipple, req.user.sub);
+    return result;
   }
 
   // ============ CANCELACIÓN POR ADMIN ============
@@ -521,6 +535,24 @@ export class SessionController {
     if (sessionId) {
       await this.realtimeEmitter.emitCreated(sessionId);
       await this.notificationEmitter.notifyCreated(sessionId, actorUserId);
+    }
+  }
+
+  /**
+   * Notifica las citas que el arrastre (ripple) movió de hora: refresca el
+   * calendario en tiempo real y avisa a cada cliente afectado (push + correo).
+   * Dedup por cita. Best-effort (el emitter no rompe la mutación).
+   */
+  private async notifyRippleMoved(
+    moved: Array<{ sessionId: number }> | undefined,
+    actorUserId?: number,
+  ): Promise<void> {
+    const sessionIds = [
+      ...new Set((moved ?? []).map((m) => m.sessionId).filter(Boolean)),
+    ];
+    for (const sid of sessionIds) {
+      await this.realtimeEmitter.emitStatusChanged(sid);
+      await this.notificationEmitter.notifyRescheduled(sid, actorUserId);
     }
   }
 

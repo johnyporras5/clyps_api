@@ -158,6 +158,35 @@ export class EmailService {
     }
   }
 
+  /**
+   * Aviso al cliente de que la HORA de su cita se modificó (arrastre / ripple).
+   * No incluye una hora local concreta a propósito: el backend guarda UTC y el
+   * front localiza; el cliente ve el nuevo horario exacto en la app.
+   */
+  async sendSessionRescheduleToClient(
+    clientEmail: string,
+    clientName: string,
+    companyName: string,
+  ): Promise<boolean> {
+    const nombre = (clientName || '').trim() || 'Hola';
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; color: #222;">
+        <h2 style="color: #6b4eff;">Tu cita cambió de hora</h2>
+        <p>${nombre},</p>
+        <p>El horario de tu cita en <strong>${companyName}</strong> fue modificado.</p>
+        <p>Abre la app para ver el nuevo horario de tu cita.</p>
+        <p style="color: #888; font-size: 12px; margin-top: 24px;">
+          Este es un aviso automático, no respondas a este correo.
+        </p>
+      </div>
+    `;
+    return this.sendEmail(
+      clientEmail,
+      `Tu cita en ${companyName} cambió de hora`,
+      html,
+    );
+  }
+
   async sendSessionConfirmationToClient(
     clientEmail: string,
     clientName: string,

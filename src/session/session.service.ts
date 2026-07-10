@@ -45,6 +45,19 @@ import { FileUploadService } from '../common/services/file_upload.service';
 import { Offer } from 'src/Offer/entities/offer.entity';
 import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
 
+/**
+ * Un servicio (detalle) que el arrastre (ripple) movió de hora: la agendada
+ * siguiente que se empujó para no solaparse con la cita que se atrasó/extendió.
+ * Lo devuelven las mutaciones (Comenzar/Terminar/reprogramar) para que el
+ * controller notifique (push + correo) al cliente afectado.
+ */
+export interface RippleMovedDetail {
+  detailId: number;
+  sessionId: number;
+  oldStart: Date;
+  newStart: Date;
+}
+
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
@@ -106,6 +119,9 @@ export class SessionService {
         createSessionDto.sessionDatetime ||
         new Date(),
     };
+    // Hora agendada original de la cita: se fija al crear y no se mueve luego.
+    (sessionData as DeepPartial<Session>).originalStartDatetime =
+      sessionData.startDatetime;
 
     console.log('📝 Datos de sesión a crear (admin):', {
       sessionDatetime: createSessionDto.sessionDatetime,
@@ -352,6 +368,136 @@ export class SessionService {
   }
 
   /**
+   * Arrastre (ripple) de la agenda de UN worker en UN día. Tras mover/extender
+   * un servicio (Comenzar/Terminar o reprogramar), barre en orden cronológico
+   * los servicios de ese company_worker y empuja hacia abajo SOLO los AGENDADOS
+   * (status 1) que se solapan con el bloque anterior, y solo lo justo para
+   * quitar el cruce (respeta huecos). Es idempotente: recalcula desde las
+   * posiciones actuales, no acumula desplazamientos.
+   *
+   * No mueve: cancelados (5), ya iniciados/completados (2/3/4), ni el propio
+   * detalle disparador (respeta donde lo dejó el usuario). Solo la columna de
+   * ESE worker; las de otros workers quedan intactas (decisión de negocio).
+   *
+   * Devuelve los detalles que cambiaron de hora (viejo→nuevo) para notificar a
+   * sus clientes (push + correo).
+   */
+  private async rippleWorkerColumn(
+    companyWorkerId: number | null | undefined,
+    dayAnchor: Date | string | null | undefined,
+    protectedDetailIds: number[] = [],
+  ): Promise<RippleMovedDetail[]> {
+    const moved: RippleMovedDetail[] = [];
+    if (!companyWorkerId || !dayAnchor) return moved;
+    const protectedSet = new Set(protectedDetailIds);
+
+    const anchor = new Date(dayAnchor);
+    if (isNaN(anchor.getTime())) return moved;
+
+    try {
+      // Ventana [00:00, 24:00) del día del ancla. UTC: las fechas llegan en Z, y
+      // no arrastramos citas de otro día (tope al final de la jornada).
+      const startOfDay = new Date(
+        Date.UTC(
+          anchor.getUTCFullYear(),
+          anchor.getUTCMonth(),
+          anchor.getUTCDate(),
+          0,
+          0,
+          0,
+        ),
+      );
+      const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+
+      const dayDetails = await this.sessionDetailRepository.find({
+        where: {
+          companyWorkerId,
+          startDatetime: Between(startOfDay, endOfDay),
+        },
+      });
+
+      // Orden cronológico por inicio; ignoramos cancelados y sin fecha.
+      const ordered = dayDetails
+        .filter((d) => d.status !== 5 && d.startDatetime)
+        .sort(
+          (a, b) =>
+            new Date(a.startDatetime).getTime() -
+            new Date(b.startDatetime).getTime(),
+        );
+
+      const toSave: SessionDetail[] = [];
+      let cursor: number | null = null; // fin (ms) del último bloque colocado
+
+      for (const d of ordered) {
+        const s = new Date(d.startDatetime).getTime();
+        const e = d.endDatetime
+          ? new Date(d.endDatetime).getTime()
+          : d.totalTime
+            ? s + d.totalTime * 60000
+            : s;
+        const duration = Math.max(0, e - s);
+
+        const overlaps = cursor !== null && s < cursor;
+        // Solo se empuja lo AGENDADO y que no esté protegido (el/los detalles que
+        // el usuario acaba de mover: se respetan donde los dejó).
+        const pushable = d.status === 1 && !protectedSet.has(d.id);
+
+        if (overlaps && pushable) {
+          const newStartMs = cursor as number;
+          const newStart = new Date(newStartMs);
+          const newEnd = new Date(newStartMs + duration);
+          moved.push({
+            detailId: d.id,
+            sessionId: d.sessionId,
+            oldStart: new Date(s),
+            newStart,
+          });
+          d.startDatetime = newStart;
+          d.endDatetime = newEnd;
+          toSave.push(d);
+          cursor = newEnd.getTime();
+        } else {
+          // No se mueve (fijo o sin solape): el cursor avanza a su fin.
+          cursor = cursor === null ? e : Math.max(cursor, e);
+        }
+      }
+
+      if (toSave.length > 0) {
+        await this.sessionDetailRepository.save(toSave);
+
+        // Mantener session.start_datetime en sync con el detalle más temprano de
+        // cada cita movida, para que la tarjeta/listado refleje el arrastre.
+        const movedSessionIds = [...new Set(moved.map((m) => m.sessionId))];
+        for (const sid of movedSessionIds) {
+          const sdetails = await this.sessionDetailRepository.find({
+            where: { sessionId: sid },
+          });
+          const startsMs = sdetails
+            .filter((d) => d.status !== 5 && d.startDatetime)
+            .map((d) => new Date(d.startDatetime).getTime());
+          if (!startsMs.length) continue;
+          const s = await this.sessionRepository.findOne({
+            where: { id: sid },
+          });
+          if (s) {
+            s.startDatetime = new Date(Math.min(...startsMs));
+            await this.sessionRepository.save(s);
+          }
+        }
+      }
+
+      return moved;
+    } catch (error) {
+      // El arrastre no debe romper la mutación principal (Comenzar/Terminar/
+      // reprogramar). Si algo falla, se registra y se sigue sin arrastre.
+      console.warn(
+        `⚠️ Ripple (arrastre) falló para worker ${companyWorkerId}: ${(error as Error).message}`,
+      );
+      return [];
+    }
+  }
+
+  /**
    * CLYP-311: reprogramar / mover / redimensionar una cita.
    * - Gate por status: agendada (1/8) → inicio+fin; en proceso (2) → solo fin;
    *   completada(3)/pagada(4,6)/cancelada(5) → 409.
@@ -364,7 +510,12 @@ export class SessionService {
     sessionId: number,
     dto: RescheduleSessionDto,
     caller: AuthenticatedUser,
-  ): Promise<{ message: string; session: Session; details: SessionDetail[] }> {
+  ): Promise<{
+    message: string;
+    session: Session;
+    details: SessionDetail[];
+    movedByRipple: RippleMovedDetail[];
+  }> {
     // 1. Empresa del que reprograma.
     const isWorker = caller.userType === 'wrk';
     let callerCompanyId: number;
@@ -581,10 +732,32 @@ export class SessionService {
     }
     const savedSession = await this.sessionRepository.save(session);
 
+    // Arrastre (ripple): mover/extender manual puede solapar con las citas
+    // siguientes del mismo worker. Empujar las AGENDADAS posteriores de cada
+    // columna afectada (protegiendo los detalles que el usuario acaba de mover).
+    const movedByRipple: RippleMovedDetail[] = [];
+    const ownIds = refreshed.map((d) => d.id);
+    const workerIds = [
+      ...new Set(
+        refreshed
+          .map((d) => d.companyWorkerId)
+          .filter((id): id is number => !!id),
+      ),
+    ];
+    for (const cwId of workerIds) {
+      const moved = await this.rippleWorkerColumn(
+        cwId,
+        savedSession.startDatetime,
+        ownIds,
+      );
+      movedByRipple.push(...moved);
+    }
+
     return {
       message: 'Cita reprogramada correctamente',
       session: savedSession,
       details: refreshed,
+      movedByRipple,
     };
   }
 
@@ -1049,6 +1222,10 @@ export class SessionService {
         startDatetime: detailStart,
         totalTime: detailTime,
         endDatetime: detailEnd,
+        // Hora agendada original: se fija aquí y no se mueve con Comenzar/
+        // Terminar ni con el arrastre (ripple).
+        originalStartDatetime: detailStart,
+        originalEndDatetime: detailEnd,
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
@@ -1781,6 +1958,9 @@ export class SessionService {
         startDatetime: detail.startDatetime,
         // CLYP-311 (B4): fin por detalle para el calendario.
         endDatetime: detail.endDatetime,
+        // Hora agendada original (para mostrar "agendada X · movida a Y").
+        originalStartDatetime: detail.originalStartDatetime,
+        originalEndDatetime: detail.originalEndDatetime,
         companyWorkerId: detail.companyWorkerId,
         workerName: companyWorker?.worker
           ? (companyWorker.worker.name || '').trim()
@@ -1847,6 +2027,9 @@ export class SessionService {
       // Duración real total de la cita (suma de realDuration de cada servicio)
       realTotalTime: parseFloat(realTotalTime.toFixed(2)),
       startDatetime: session.startDatetime || session.sessionDatetime,
+      // Hora agendada original de la cita (para la tarjeta).
+      originalStartDatetime:
+        session.originalStartDatetime || session.sessionDatetime,
       status: session.status || 1,
       iaResponse: session.iaResponse,
       servicesCount: details.length,
@@ -2702,6 +2885,9 @@ export class SessionService {
                 startDatetime: detail.startDatetime,
                 // CLYP-311 (B4): fin por detalle para el calendario.
                 endDatetime: detail.endDatetime,
+                // Hora agendada original (para "agendada X · movida a Y").
+                originalStartDatetime: detail.originalStartDatetime,
+                originalEndDatetime: detail.originalEndDatetime,
                 companyWorkerId: detail.companyWorkerId,
                 workerName: companyWorker?.worker
                   ? (companyWorker.worker.name || '').trim()
@@ -3119,6 +3305,7 @@ export class SessionService {
       allDetailsCompleted: boolean;
       errorMessage?: string;
     };
+    movedByRipple: RippleMovedDetail[];
   }> {
     console.log(
       `🔄 Actualizando estado de sesión ${sessionId} a ${updateSessionStatusDto.sessionStatus}. Usuario: ${userId}, Rol: ${userRole}`,
@@ -3241,19 +3428,37 @@ export class SessionService {
         //  - status 2 (En progreso) → start_datetime = ahora (SOBRESCRIBE la
         //    hora agendada con la hora real). Para no re-pisar el inicio real
         //    de detalles que YA estaban en progreso, se excluyen con status != 2.
-        //  - status 3 (Completada)  → end_datetime = ahora, solo si está vacío
-        //    (COALESCE) para no pisar un fin real ya registrado por el worker.
+        //  - status 3 (Completada)  → end_datetime = ahora (fin REAL) en los
+        //    detalles que estaban EN PROGRESO; los ya completados conservan su
+        //    fin real (se maneja en un UPDATE aparte, ver abajo).
+
+        // Completada (3): grabar el fin REAL en los detalles EN PROGRESO
+        // (status 2) ANTES de cambiar su status. Necesario porque Comenzar deja
+        // un fin PROYECTADO (no NULL); si no lo pisamos aquí, se perdería la hora
+        // real de terminación (y el arrastre no detectaría el solape). Los ya
+        // completados y los agendados no se tocan. Se hace en un UPDATE separado
+        // para no depender del orden de evaluación del SET.
+        if (newStatus === 3) {
+          await queryRunner.manager
+            .createQueryBuilder()
+            .update(SessionDetail)
+            .set({ endDatetime: now })
+            .where('sessionId = :sessionId', { sessionId })
+            .andWhere('status = :inProgress', { inProgress: 2 })
+            .execute();
+        }
+
         const setValues: Record<string, unknown> = { status: newStatus };
         if (newStatus === 5) {
           setValues.cancelledBy = 'adm';
         }
         if (newStatus === 2) {
           setValues.startDatetime = () => ':now';
-          // Re-inicio: anular fin previo para no dejar end < start al recompletar.
-          setValues.endDatetime = () => 'NULL';
-        }
-        if (newStatus === 3) {
-          setValues.endDatetime = () => 'COALESCE(end_datetime, :now)';
+          // El bloque se mueve a la hora real conservando su duración planificada
+          // (piso de 1 min para no dejar altura cero). Fin proyectado para dibujar
+          // el bloque y para que el arrastre detecte solapes.
+          setValues.endDatetime = () =>
+            'DATE_ADD(:now, INTERVAL GREATEST(COALESCE(total_time, 0), 1) MINUTE)';
         }
 
         let cascadeQuery = queryRunner.manager
@@ -3290,12 +3495,32 @@ export class SessionService {
       `✅ Estado de sesión ${sessionId} actualizado de ${previousStatus} a ${newStatus}. Detalles propagados: ${detailsUpdated}. Cita bloqueada para trabajadores.`,
     );
 
+    // Arrastre (ripple): al Comenzar (2) / Terminar (3) los bloques de la cita
+    // se movieron/crecieron. Empujar las citas AGENDADAS siguientes de CADA
+    // columna de worker de la cita (cada worker es independiente).
+    const movedByRipple: RippleMovedDetail[] = [];
+    if (newStatus === 2 || newStatus === 3) {
+      const workerIds = [
+        ...new Set(
+          sessionDetails
+            .map((d) => d.companyWorkerId)
+            .filter((id): id is number => !!id),
+        ),
+      ];
+      const ownDetailIds = sessionDetails.map((d) => d.id);
+      for (const cwId of workerIds) {
+        const moved = await this.rippleWorkerColumn(cwId, now, ownDetailIds);
+        movedByRipple.push(...moved);
+      }
+    }
+
     return {
       message: `Estado de cita actualizado de "${this.getSessionStatusText(previousStatus)}" a "${this.getSessionStatusText(newStatus)}". ${detailsUpdated} servicio(s) actualizados. La cita queda bajo control del administrador.`,
       session: updatedSession,
       updated: true,
       detailsUpdated,
       validationDetails: validationResult,
+      movedByRipple,
     };
   }
 
@@ -3320,6 +3545,7 @@ export class SessionService {
       updated: boolean;
       reason: string;
     };
+    movedByRipple: RippleMovedDetail[];
   }> {
     console.log(
       `🔄 Actualizando estado del detalle ${detailId} a ${updateDetailStatusDto.status}. Usuario: ${userId}, Rol: ${userRole}`,
@@ -3341,13 +3567,13 @@ export class SessionService {
     });
 
     // 1.1 Si el admin tomó el control de la cita (statusLocked):
-    //     - el ADMIN gestiona el estado a nivel de cita con
-    //       PUT /sessions/:id/status, así que no toca detalles por este endpoint;
-    //     - el TRABAJADOR sí puede seguir actualizando su servicio, pero solo
-    //       para AVANZAR el estado, nunca para retrocederlo (ver paso 4.2).
-    if (parentSession?.statusLocked && userRole === 'adm') {
+    if (
+      parentSession?.statusLocked &&
+      userRole === 'adm' &&
+      updateDetailStatusDto.status !== 5
+    ) {
       throw new BadRequestException(
-        'La cita está bajo control del administrador. Gestiona su estado con PUT /sessions/:id/status',
+        'La cita está bajo control del administrador. Gestiona su estado con PUT /sessions/:id/status (salvo cancelar un servicio puntual).',
       );
     }
 
@@ -3481,12 +3707,14 @@ export class SessionService {
     //    tiempo con `new Date()` para que quede registrado el momento exacto
     //    en que se marcó "En proceso" / "Completado".
     if (updateDetailStatusDto.status === 2) {
-      detail.startDatetime = new Date(); // inicio real
-      // Re-inicio: anular cualquier fin previo. Si el servicio había sido
-      // completado antes (endDatetime con valor) y vuelve a "En proceso", ese
-      // fin ya no es válido; de lo contrario quedaría end < start (tiempo
-      // negativo) al recompletar.
-      detail.endDatetime = null;
+      const realStart = new Date();
+      detail.startDatetime = realStart; // inicio real
+      // El bloque se mueve a la hora real CONSERVANDO su duración planificada
+      // (piso de 1 min para que nunca quede de altura cero). Se guarda el fin
+      // proyectado para que (a) el calendario dibuje el bloque y (b) el arrastre
+      // detecte el solape con la cita siguiente. Al Terminar se pisa con el real.
+      const durMin = Math.max(detail.totalTime || 0, 1);
+      detail.endDatetime = new Date(realStart.getTime() + durMin * 60000);
     }
     if (updateDetailStatusDto.status === 3) {
       detail.endDatetime = new Date(); // fin real
@@ -3520,6 +3748,22 @@ export class SessionService {
       userRole,
     );
 
+    // 7. Arrastre (ripple): al Comenzar (2) o Terminar (3) el bloque se movió/
+    //    creció; empujar las citas AGENDADAS siguientes del MISMO worker ese día
+    //    para que no se solapen (solo lo necesario). Devuelve las movidas para
+    //    que el controller notifique (push + correo) a esos clientes.
+    let movedByRipple: RippleMovedDetail[] = [];
+    if (
+      detail.companyWorkerId &&
+      (updateDetailStatusDto.status === 2 || updateDetailStatusDto.status === 3)
+    ) {
+      movedByRipple = await this.rippleWorkerColumn(
+        detail.companyWorkerId,
+        detail.startDatetime,
+        [detail.id],
+      );
+    }
+
     return {
       message: `Estado del detalle actualizado exitosamente de ${this.getDetailStatusText(previousStatus)} a ${this.getDetailStatusText(updateDetailStatusDto.status)}`,
       detail: updatedDetail,
@@ -3538,6 +3782,7 @@ export class SessionService {
         updated: autoUpdateResult.updated,
         reason: autoUpdateResult.reason,
       },
+      movedByRipple,
     };
   }
 
@@ -4774,6 +5019,7 @@ export class SessionService {
         'session.total_cost AS sessionTotalCost',
         'session.total_time AS sessionTotalTime',
         'session.start_datetime AS sessionStartDatetime',
+        'session.original_start_datetime AS sessionOriginalStartDatetime',
         'session.status AS sessionStatusFlag',
         'session.ia_response AS iaResponse',
         'session.updated_at AS sessionUpdatedAt',
@@ -4803,6 +5049,8 @@ export class SessionService {
         'detail.status AS detailStatus',
         'detail.start_datetime AS detailStartDatetime',
         'detail.end_datetime AS detailEndDatetime',
+        'detail.original_start_datetime AS detailOriginalStartDatetime',
+        'detail.original_end_datetime AS detailOriginalEndDatetime',
         'detail.is_extra AS isExtra',
         'detail.offer_id AS detailOfferId',
         'detail.description AS detailDescription',
@@ -5105,6 +5353,8 @@ export class SessionService {
           // Dirección de la cita (dirección de la compañía)
           address: detail.companyAddress ?? null,
           startDatetime: detail.sessionStartDatetime,
+          // Hora agendada original de la cita (para la tarjeta).
+          originalStartDatetime: detail.sessionOriginalStartDatetime,
           status: detail.sessionStatusFlag,
           iaResponse: detail.iaResponse,
           descriptionWorker: detail.descriptionWorker,
@@ -5210,6 +5460,9 @@ export class SessionService {
         startDatetime: detail.detailStartDatetime,
         // CLYP-311 (B4): fin por detalle para dibujar el bloque en el calendario.
         endDatetime: detail.detailEndDatetime,
+        // Hora agendada original (para "agendada X · movida a Y").
+        originalStartDatetime: detail.detailOriginalStartDatetime,
+        originalEndDatetime: detail.detailOriginalEndDatetime,
         isExtra: detail.isExtra === true || detail.isExtra === 1,
         companyId: detail.companyId,
         companyName: detail.companyName || 'Compañía no encontrada',
@@ -5915,6 +6168,10 @@ export class SessionService {
         startDatetime: detailStart,
         totalTime: detailTime,
         endDatetime: detailEnd,
+        // Hora agendada original: se fija aquí y no se mueve con Comenzar/
+        // Terminar ni con el arrastre (ripple).
+        originalStartDatetime: detailStart,
+        originalEndDatetime: detailEnd,
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
@@ -6263,6 +6520,38 @@ export class SessionService {
           relations: ['company'],
         });
         adminCompany = cw?.company || null;
+      }
+    } else if (userRole === 'wrk') {
+      const workerCws = await this.companyWorkerRepository.find({
+        where: { userId, isActive: 1 },
+        relations: ['company'],
+      });
+      if (workerCws.length === 0) {
+        throw new ForbiddenException(
+          'El trabajador no tiene una compañía activa',
+        );
+      }
+      const workerCwIds = new Set(workerCws.map((cw) => cw.id));
+
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId },
+      });
+      const ownDetail = sessionDetails.find(
+        (d) => d.companyWorkerId != null && workerCwIds.has(d.companyWorkerId),
+      );
+      if (!ownDetail) {
+        throw new ForbiddenException(
+          'No tienes permiso para modificar esta sesión',
+        );
+      }
+      const owningCw = workerCws.find(
+        (cw) => cw.id === ownDetail.companyWorkerId,
+      );
+      adminCompany = owningCw?.company || null;
+      if (!adminCompany) {
+        throw new NotFoundException(
+          'El trabajador no tiene una compañía asignada',
+        );
       }
     } else {
       adminCompany = await this.companyRepository.findOne({
@@ -7285,6 +7574,7 @@ export class SessionService {
         'session.total_cost AS sessionTotalCost',
         'session.total_time AS sessionTotalTime',
         'session.start_datetime AS sessionStartDatetime',
+        'session.original_start_datetime AS sessionOriginalStartDatetime',
         'session.status AS sessionStatusFlag',
         'session.ia_response AS iaResponse',
         'session.updated_at AS sessionUpdatedAt',
@@ -7303,6 +7593,8 @@ export class SessionService {
         'detail.status AS detailStatus',
         'detail.start_datetime AS detailStartDatetime',
         'detail.end_datetime AS detailEndDatetime',
+        'detail.original_start_datetime AS detailOriginalStartDatetime',
+        'detail.original_end_datetime AS detailOriginalEndDatetime',
         'detail.is_extra AS isExtra',
         'detail.offer_id AS detailOfferId',
         'detail.description AS detailDescription',
@@ -7624,6 +7916,8 @@ export class SessionService {
           // Dirección de la cita (dirección de la compañía)
           address: detail.companyAddress ?? null,
           startDatetime: detail.sessionStartDatetime,
+          // Hora agendada original de la cita (para la tarjeta).
+          originalStartDatetime: detail.sessionOriginalStartDatetime,
           status: detail.sessionStatusFlag,
           iaResponse: detail.iaResponse,
           descriptionIA: detail.descriptionIA,
@@ -7788,6 +8082,9 @@ export class SessionService {
         startDatetime: detail.detailStartDatetime,
         // CLYP-311 (B4): fin por detalle para dibujar el bloque en el calendario.
         endDatetime: detail.detailEndDatetime,
+        // Hora agendada original (para "agendada X · movida a Y").
+        originalStartDatetime: detail.detailOriginalStartDatetime,
+        originalEndDatetime: detail.detailOriginalEndDatetime,
         isExtra: detail.isExtra === true || detail.isExtra === 1,
         workerPercentage,
         companyPercentage,
@@ -8017,6 +8314,23 @@ export class SessionService {
         throw new NotFoundException('Cliente no encontrado');
       }
       if (session.clientId !== client.id) {
+        throw new ForbiddenException(
+          'No tienes permiso para modificar esta sesión',
+        );
+      }
+    } else if (userRole === 'wrk') {
+      const workerCws = await this.companyWorkerRepository.find({
+        where: { userId, isActive: 1 },
+        select: ['id'],
+      });
+      const workerCwIds = new Set(workerCws.map((cw) => cw.id));
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId },
+      });
+      const ownsSession = sessionDetails.some(
+        (d) => d.companyWorkerId != null && workerCwIds.has(d.companyWorkerId),
+      );
+      if (!ownsSession) {
         throw new ForbiddenException(
           'No tienes permiso para modificar esta sesión',
         );
