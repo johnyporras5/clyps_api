@@ -8053,6 +8053,23 @@ export class SessionService {
           'No tienes permiso para modificar esta sesión',
         );
       }
+    } else if (userRole === 'wrk') {
+      const workerCws = await this.companyWorkerRepository.find({
+        where: { userId, isActive: 1 },
+        select: ['id'],
+      });
+      const workerCwIds = new Set(workerCws.map((cw) => cw.id));
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId },
+      });
+      const ownsSession = sessionDetails.some(
+        (d) => d.companyWorkerId != null && workerCwIds.has(d.companyWorkerId),
+      );
+      if (!ownsSession) {
+        throw new ForbiddenException(
+          'No tienes permiso para modificar esta sesión',
+        );
+      }
     }
 
     // 5. Restar los totales del detalle de la sesión
