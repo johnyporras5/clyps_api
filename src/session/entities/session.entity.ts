@@ -59,6 +59,11 @@ export class Session {
   @Column({ name: 'start_datetime', nullable: true })
   startDatetime: Date;
 
+  // Hora AGENDADA original de la cita. Se fija al crear y no se mueve con
+  // Comenzar/Terminar ni con el arrastre; start_datetime es la posición viva.
+  @Column({ name: 'original_start_datetime', type: 'datetime', nullable: true })
+  originalStartDatetime: Date | null;
+
   @Column({ name: 'status', nullable: true })
   status: number;
 

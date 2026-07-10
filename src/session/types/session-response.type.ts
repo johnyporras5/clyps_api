@@ -46,6 +46,10 @@ export interface SessionDetailResponse {
   startDatetime: Date;
   // Fin por detalle (CLYP-311 / B4): para dibujar el bloque en el calendario.
   endDatetime?: Date | null;
+  // Hora AGENDADA original del servicio (no se mueve con Comenzar/Terminar ni
+  // con el arrastre). Para mostrar "agendada X · movida a Y".
+  originalStartDatetime?: Date | null;
+  originalEndDatetime?: Date | null;
   companyWorkerId: number | null;
   workerName: string;
   originalPrice: number;
@@ -87,6 +91,9 @@ export interface SessionResponse {
   // Duración real total de la cita (suma de realDuration de cada servicio)
   realTotalTime: number;
   startDatetime: Date;
+  // Hora AGENDADA original de la cita (no se mueve con Comenzar/Terminar ni con
+  // el arrastre). Para mostrar la hora original en la tarjeta.
+  originalStartDatetime?: Date | null;
   status: number;
   iaResponse: any;
   servicesCount: number;
