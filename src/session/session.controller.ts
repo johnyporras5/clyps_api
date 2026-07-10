@@ -270,7 +270,7 @@ export class SessionController {
   }
 
   @Post(':id/extra-services')
-  @Roles('adm', 'cli')
+  @Roles('adm', 'cli', 'wrk')
   async addExtraServices(
     @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
@@ -289,7 +289,7 @@ export class SessionController {
   }
 
   @Delete(':id/extra-services/:detailId')
-  @Roles('adm', 'cli')
+  @Roles('adm', 'cli', 'wrk')
   async removeExtraService(
     @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
