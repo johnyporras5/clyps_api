@@ -8,6 +8,7 @@ import { SessionService } from './session.service';
 import { SessionResponse } from './types/session-response.type';
 import { NotificationService } from '../notification/notification.service';
 import { buildNavigationData } from '../notification/entities/notification.entity';
+import { EmailService } from '../email/email.service';
 
 /**
  * Crea notificaciones (feed + socket + FCM) para los eventos de Citas (CLYP-262 / §6).
@@ -39,6 +40,7 @@ export class SessionNotificationEmitter {
     private readonly companyWorkerRepo: Repository<CompanyWorker>,
     @InjectRepository(Client)
     private readonly clientRepo: Repository<Client>,
+    private readonly email: EmailService,
   ) {}
 
   // ==================== EVENTOS ====================
@@ -144,6 +146,50 @@ export class SessionNotificationEmitter {
           data,
         },
       );
+    });
+  }
+
+  /**
+   * La hora de una cita cambió por el arrastre (ripple): avisa SOLO al cliente
+   * afectado, por push (feed + socket + FCM) y por correo. No se afirma una hora
+   * local concreta (el backend guarda UTC y la app localiza); el cliente ve el
+   * nuevo horario en la app. Best-effort: nunca rompe la mutación.
+   */
+  async notifyRescheduled(
+    sessionId: number,
+    actorUserId?: number,
+  ): Promise<void> {
+    await this.safe('appointment.rescheduled', async () => {
+      const session = await this.sessionService.findOneWithDetails(sessionId);
+      const { clientUserId } = await this.resolveRecipients(session);
+      const data = buildNavigationData(
+        'appointment',
+        session.id,
+        session.companyId,
+      );
+
+      // Push al cliente (− actor).
+      await this.notifications.createNotificationForUsers(
+        this.exclude([clientUserId], actorUserId),
+        {
+          type: 'appointment',
+          title: 'Tu cita cambió de hora',
+          body: `La hora de tu cita en ${session.companyName} fue modificada. Abre la app para ver el nuevo horario`,
+          data,
+        },
+      );
+
+      // Correo al cliente (best-effort, no bloquea).
+      const client = session.clientId
+        ? await this.clientRepo.findOne({ where: { id: session.clientId } })
+        : null;
+      if (client?.email) {
+        await this.email.sendSessionRescheduleToClient(
+          client.email,
+          this.clientName(session),
+          session.companyName,
+        );
+      }
     });
   }
 
