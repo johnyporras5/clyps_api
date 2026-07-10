@@ -3428,8 +3428,26 @@ export class SessionService {
         //  - status 2 (En progreso) → start_datetime = ahora (SOBRESCRIBE la
         //    hora agendada con la hora real). Para no re-pisar el inicio real
         //    de detalles que YA estaban en progreso, se excluyen con status != 2.
-        //  - status 3 (Completada)  → end_datetime = ahora, solo si está vacío
-        //    (COALESCE) para no pisar un fin real ya registrado por el worker.
+        //  - status 3 (Completada)  → end_datetime = ahora (fin REAL) en los
+        //    detalles que estaban EN PROGRESO; los ya completados conservan su
+        //    fin real (se maneja en un UPDATE aparte, ver abajo).
+
+        // Completada (3): grabar el fin REAL en los detalles EN PROGRESO
+        // (status 2) ANTES de cambiar su status. Necesario porque Comenzar deja
+        // un fin PROYECTADO (no NULL); si no lo pisamos aquí, se perdería la hora
+        // real de terminación (y el arrastre no detectaría el solape). Los ya
+        // completados y los agendados no se tocan. Se hace en un UPDATE separado
+        // para no depender del orden de evaluación del SET.
+        if (newStatus === 3) {
+          await queryRunner.manager
+            .createQueryBuilder()
+            .update(SessionDetail)
+            .set({ endDatetime: now })
+            .where('sessionId = :sessionId', { sessionId })
+            .andWhere('status = :inProgress', { inProgress: 2 })
+            .execute();
+        }
+
         const setValues: Record<string, unknown> = { status: newStatus };
         if (newStatus === 5) {
           setValues.cancelledBy = 'adm';
@@ -3441,9 +3459,6 @@ export class SessionService {
           // para que el calendario dibuje el bloque y el arrastre detecte solapes.)
           setValues.endDatetime = () =>
             'DATE_ADD(:now, INTERVAL COALESCE(total_time, 0) MINUTE)';
-        }
-        if (newStatus === 3) {
-          setValues.endDatetime = () => 'COALESCE(end_datetime, :now)';
         }
 
         let cascadeQuery = queryRunner.manager
