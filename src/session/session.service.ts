@@ -3454,11 +3454,11 @@ export class SessionService {
         }
         if (newStatus === 2) {
           setValues.startDatetime = () => ':now';
-          // El bloque se mueve a la hora real pero CONSERVA su duración:
-          // fin = inicio real + total_time. (Antes se anulaba; ahora se proyecta
-          // para que el calendario dibuje el bloque y el arrastre detecte solapes.)
+          // El bloque se mueve a la hora real conservando su duración planificada
+          // (piso de 1 min para no dejar altura cero). Fin proyectado para dibujar
+          // el bloque y para que el arrastre detecte solapes.
           setValues.endDatetime = () =>
-            'DATE_ADD(:now, INTERVAL COALESCE(total_time, 0) MINUTE)';
+            'DATE_ADD(:now, INTERVAL GREATEST(COALESCE(total_time, 0), 1) MINUTE)';
         }
 
         let cascadeQuery = queryRunner.manager
@@ -3709,15 +3709,12 @@ export class SessionService {
     if (updateDetailStatusDto.status === 2) {
       const realStart = new Date();
       detail.startDatetime = realStart; // inicio real
-      // El bloque se mueve a la hora real pero CONSERVA su duración planificada:
-      // fin = inicio real + totalTime. Antes se anulaba el fin; ahora lo
-      // proyectamos para que (a) el calendario siga dibujando el bloque y (b) el
-      // arrastre (ripple) pueda detectar el solape con la cita siguiente.
-      detail.endDatetime = this.resolveDetailEnd(
-        realStart,
-        null,
-        detail.totalTime,
-      );
+      // El bloque se mueve a la hora real CONSERVANDO su duración planificada
+      // (piso de 1 min para que nunca quede de altura cero). Se guarda el fin
+      // proyectado para que (a) el calendario dibuje el bloque y (b) el arrastre
+      // detecte el solape con la cita siguiente. Al Terminar se pisa con el real.
+      const durMin = Math.max(detail.totalTime || 0, 1);
+      detail.endDatetime = new Date(realStart.getTime() + durMin * 60000);
     }
     if (updateDetailStatusDto.status === 3) {
       detail.endDatetime = new Date(); // fin real
