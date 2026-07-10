@@ -39,6 +39,7 @@ interface WorkerListRawRow {
   isActive: number;
   temporarilyDeleted: number;
   permanentlyDeleted: number;
+  calendar: unknown;
 }
 
 interface PaginationMeta {
@@ -407,6 +408,7 @@ export class CompanyWorkerService {
         'cw.is_active AS isActive',
         'cw.temporarily_deleted AS temporarilyDeleted',
         'cw.permanently_deleted AS permanentlyDeleted',
+        'cw.calendar AS calendar',
         'COALESCE(AVG(wf.stars), 0) AS averageRating',
         'COUNT(wf.id) AS totalReviews',
       ])
@@ -469,6 +471,7 @@ export class CompanyWorkerService {
         isActive: result.isActive,
         temporarilyDeleted: result.temporarilyDeleted,
         permanentlyDeleted: result.permanentlyDeleted,
+        calendar: this.parseCalendar(result.calendar),
       };
     });
 
@@ -476,6 +479,27 @@ export class CompanyWorkerService {
       data: formattedData,
       meta: paginatedResult.meta,
     };
+  }
+
+  /**
+   * Normaliza el calendar del trabajador tomado de una query raw.
+   * El driver de MySQL puede devolver la columna JSON como objeto ya
+   * parseado o como string; en ambos casos devolvemos el objeto, o null
+   * si el trabajador no tiene horario. Es el mismo shape que ya se expone
+   * en services[].workersInfo[].companyWorkerInfo.calendar.
+   */
+  private parseCalendar(calendar: unknown): Record<string, any> | null {
+    if (calendar === null || calendar === undefined || calendar === '') {
+      return null;
+    }
+    if (typeof calendar === 'string') {
+      try {
+        return JSON.parse(calendar) as Record<string, any>;
+      } catch {
+        return null;
+      }
+    }
+    return calendar as Record<string, any>;
   }
 
   /**
