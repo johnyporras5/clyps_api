@@ -3567,13 +3567,13 @@ export class SessionService {
     });
 
     // 1.1 Si el admin tomó el control de la cita (statusLocked):
-    //     - el ADMIN gestiona el estado a nivel de cita con
-    //       PUT /sessions/:id/status, así que no toca detalles por este endpoint;
-    //     - el TRABAJADOR sí puede seguir actualizando su servicio, pero solo
-    //       para AVANZAR el estado, nunca para retrocederlo (ver paso 4.2).
-    if (parentSession?.statusLocked && userRole === 'adm') {
+    if (
+      parentSession?.statusLocked &&
+      userRole === 'adm' &&
+      updateDetailStatusDto.status !== 5
+    ) {
       throw new BadRequestException(
-        'La cita está bajo control del administrador. Gestiona su estado con PUT /sessions/:id/status',
+        'La cita está bajo control del administrador. Gestiona su estado con PUT /sessions/:id/status (salvo cancelar un servicio puntual).',
       );
     }
 
