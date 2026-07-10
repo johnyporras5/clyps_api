@@ -6264,6 +6264,38 @@ export class SessionService {
         });
         adminCompany = cw?.company || null;
       }
+    } else if (userRole === 'wrk') {
+      const workerCws = await this.companyWorkerRepository.find({
+        where: { userId, isActive: 1 },
+        relations: ['company'],
+      });
+      if (workerCws.length === 0) {
+        throw new ForbiddenException(
+          'El trabajador no tiene una compañía activa',
+        );
+      }
+      const workerCwIds = new Set(workerCws.map((cw) => cw.id));
+
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId },
+      });
+      const ownDetail = sessionDetails.find(
+        (d) => d.companyWorkerId != null && workerCwIds.has(d.companyWorkerId),
+      );
+      if (!ownDetail) {
+        throw new ForbiddenException(
+          'No tienes permiso para modificar esta sesión',
+        );
+      }
+      const owningCw = workerCws.find(
+        (cw) => cw.id === ownDetail.companyWorkerId,
+      );
+      adminCompany = owningCw?.company || null;
+      if (!adminCompany) {
+        throw new NotFoundException(
+          'El trabajador no tiene una compañía asignada',
+        );
+      }
     } else {
       adminCompany = await this.companyRepository.findOne({
         where: { userId: userId },

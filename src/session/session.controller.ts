@@ -270,7 +270,7 @@ export class SessionController {
   }
 
   @Post(':id/extra-services')
-  @Roles('adm', 'cli')
+  @Roles('adm', 'cli', 'wrk')
   async addExtraServices(
     @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
