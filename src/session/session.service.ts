@@ -1810,6 +1810,67 @@ export class SessionService {
     }
     return session;
   }
+  /**
+   * Máximo de días permitido en un rango de fechas (startDate..endDate).
+   * Evita que el calendario pida un año entero de golpe.
+   */
+  private readonly MAX_RANGE_DAYS = 62;
+
+  /**
+   * Resuelve un rango `startDate`..`endDate` (YYYY-MM-DD) a los instantes
+   * [00:00:00.000 del primer día, 23:59:59.999 del último día], en hora LOCAL,
+   * igual que el filtro de un solo día. Es INCLUSIVO en ambos extremos.
+   *
+   * Valida que endDate no sea anterior a startDate y que el rango no supere
+   * MAX_RANGE_DAYS.
+   */
+  private resolveDateRange(
+    startDate: string,
+    endDate: string,
+  ): { startOfDay: Date; endOfDay: Date } {
+    const { startOfDay, endOfDay, days } = this.toInclusiveDayRange(
+      startDate,
+      endDate,
+    );
+
+    if (days > this.MAX_RANGE_DAYS) {
+      throw new BadRequestException(
+        `El rango de fechas no puede superar ${this.MAX_RANGE_DAYS} días (se solicitaron ${days}). Divide la consulta en tramos más cortos.`,
+      );
+    }
+
+    return { startOfDay, endOfDay };
+  }
+
+  private toInclusiveDayRange(
+    startDate: string,
+    endDate: string,
+  ): { startOfDay: Date; endOfDay: Date; days: number } {
+    const parse = (value: string) =>
+      value.split('T')[0].split(' ')[0].split('-').map(Number);
+
+    const [sy, sm, sd] = parse(startDate);
+    const [ey, em, ed] = parse(endDate);
+
+    const startOfDay = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
+    const endOfDay = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+
+    if (endOfDay < startOfDay) {
+      throw new BadRequestException(
+        'El rango es inválido: endDate no puede ser anterior a startDate',
+      );
+    }
+
+    const days =
+      Math.round(
+        (new Date(ey, em - 1, ed).getTime() -
+          new Date(sy, sm - 1, sd).getTime()) /
+          86400000,
+      ) + 1;
+
+    return { startOfDay, endOfDay, days };
+  }
+
   private calculateRealTime(detail: SessionDetail): number {
     return this.calculateRealTimeRaw(
       detail.status,
@@ -2693,38 +2754,16 @@ export class SessionService {
           `📅 Filtrando por día actual: ${startOfDay.toLocaleDateString()}`,
         );
       }
-      // PRIORIDAD 3: Filtrar por rango de fechas
+      // PRIORIDAD 3: Filtrar por rango de fechas (inclusivo en ambos extremos)
       else if (getSessionsDto.startDate && getSessionsDto.endDate) {
-        const startDateStr = getSessionsDto.startDate
-          .split('T')[0]
-          .split(' ')[0];
-        const [startYear, startMonth, startDay] = startDateStr
-          .split('-')
-          .map(Number);
-        const startOfDay = new Date(
-          startYear,
-          startMonth - 1,
-          startDay,
-          0,
-          0,
-          0,
-          0,
+        const { startOfDay, endOfDay } = this.resolveDateRange(
+          getSessionsDto.startDate,
+          getSessionsDto.endDate,
         );
-
-        const endDateStr = getSessionsDto.endDate.split('T')[0].split(' ')[0];
-        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-        const endOfDay = new Date(
-          endYear,
-          endMonth - 1,
-          endDay,
-          23,
-          59,
-          59,
-          999,
-        );
-
         whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
-        console.log(`📅 Filtrando por rango: ${startDateStr} - ${endDateStr}`);
+        console.log(
+          `📅 Filtrando por rango: ${getSessionsDto.startDate} - ${getSessionsDto.endDate}`,
+        );
       }
 
       // ===================================================================
@@ -3096,12 +3135,10 @@ export class SessionService {
       );
       whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
     } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
-      const startDateStr = getSessionsDto.startDate.split('T')[0].split(' ')[0];
-      const [sy, sm, sd] = startDateStr.split('-').map(Number);
-      const startOfDay = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
-      const endDateStr = getSessionsDto.endDate.split('T')[0].split(' ')[0];
-      const [ey, em, ed] = endDateStr.split('-').map(Number);
-      const endOfDay = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+      const { startOfDay, endOfDay } = this.resolveDateRange(
+        getSessionsDto.startDate,
+        getSessionsDto.endDate,
+      );
       whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
     }
 
@@ -5143,14 +5180,17 @@ export class SessionService {
         `📅 Trabajador: Filtrando por día actual en session_datetime (${today.toLocaleDateString()})`,
       );
     }
-    // PRIORIDAD 3: Filtrar por rango de fechas
+    // PRIORIDAD 3: Filtrar por rango de fechas (inclusivo en ambos extremos).
+    // Antes usaba `new Date(endDate)` = medianoche del último día, así que las
+    // citas de ese día quedaban fuera. El helper resuelve el fin del día.
     else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      const { startOfDay, endOfDay } = this.resolveDateRange(
+        getSessionsDto.startDate,
+        getSessionsDto.endDate,
+      );
       query.andWhere(
         'session.session_datetime BETWEEN :startDate AND :endDate',
-        {
-          startDate: new Date(getSessionsDto.startDate),
-          endDate: new Date(getSessionsDto.endDate),
-        },
+        { startDate: startOfDay, endDate: endOfDay },
       );
     }
 
@@ -5261,12 +5301,12 @@ export class SessionService {
         { startOfDay, endOfDay },
       );
     } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      // Mismo rango inclusivo que la query principal, para que meta.total cuadre.
+      const { startOfDay: rangeStart, endOfDay: rangeEnd } =
+        this.resolveDateRange(getSessionsDto.startDate, getSessionsDto.endDate);
       countQuery.andWhere(
         'session.session_datetime BETWEEN :startDate AND :endDate',
-        {
-          startDate: new Date(getSessionsDto.startDate),
-          endDate: new Date(getSessionsDto.endDate),
-        },
+        { startDate: rangeStart, endDate: rangeEnd },
       );
     }
 
@@ -7703,14 +7743,18 @@ export class SessionService {
         `📅 Cliente: Filtrando por día actual (${today.toLocaleDateString()})`,
       );
     }
-    // PRIORIDAD 3: Rango de fechas
+    // PRIORIDAD 3: Rango de fechas (inclusivo en ambos extremos).
+    // Antes usaba `new Date(endDate)` = medianoche del último día, así que las
+    // citas de ese día quedaban fuera. Aquí NO se aplica el tope de días: el
+    // historial del cliente puede ser legítimamente largo.
     else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      const { startOfDay, endOfDay } = this.toInclusiveDayRange(
+        getSessionsDto.startDate,
+        getSessionsDto.endDate,
+      );
       query.andWhere(
         'session.session_datetime BETWEEN :startDate AND :endDate',
-        {
-          startDate: new Date(getSessionsDto.startDate),
-          endDate: new Date(getSessionsDto.endDate),
-        },
+        { startDate: startOfDay, endDate: endOfDay },
       );
     }
 
@@ -7793,12 +7837,15 @@ export class SessionService {
         { startOfDay, endOfDay },
       );
     } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
+      // Mismo rango inclusivo que la query principal, para que meta.total cuadre.
+      const { startOfDay: rangeStart, endOfDay: rangeEnd } =
+        this.toInclusiveDayRange(
+          getSessionsDto.startDate,
+          getSessionsDto.endDate,
+        );
       countQuery.andWhere(
         'session.session_datetime BETWEEN :startDate AND :endDate',
-        {
-          startDate: new Date(getSessionsDto.startDate),
-          endDate: new Date(getSessionsDto.endDate),
-        },
+        { startDate: rangeStart, endDate: rangeEnd },
       );
     }
 
