@@ -31,29 +31,33 @@ export class ClientController {
   constructor(private readonly clientService: ClientService) {}
 
   /**
-   * Endpoint principal para listar clientes según las reglas de visibilidad
+   * Endpoint principal para listar los clientes de la compañía.
    *
-   * Reglas:
-   * 1. Clientes PÚBLICOS: Visibles para TODOS los administradores logueados
-   * 2. Clientes PRIVADOS: Solo visibles para administradores cuyas compañías
-   *    están en el array 'companies' del cliente
-   * 3. Admin sin compañías: Solo puede ver clientes públicos
+   * Lo usan ADMIN y TRABAJADOR (ambos necesitan poder agendarle una cita a
+   * cualquier cliente de la empresa, no solo a los que ya atendieron):
+   *  - admin:  la compañía se resuelve por las compañías que POSEE.
+   *  - worker: la compañía se resuelve por su membresía ACTIVA (company_worker).
+   * En ambos casos se devuelven los clientes de esa(s) compañía(s) más los que
+   * el propio usuario haya creado, con la misma forma de respuesta y paginación.
    */
   @Get('admin/companies')
+  @Roles('adm', 'wrk')
+  @UseGuards(RolesGuard)
   async findAllByAdminCompanies(
     @Request() req: AuthenticatedRequest,
     @Query() paginationDto: FindAllClientsDto,
   ) {
-    // Extraer adminId del token JWT (soporta tanto 'id' como 'sub')
-    const adminId = req.user.sub;
+    // Extraer userId del token JWT (soporta tanto 'id' como 'sub')
+    const userId = req.user.sub;
 
-    if (!adminId) {
+    if (!userId) {
       throw new UnauthorizedException('Usuario no autenticado correctamente');
     }
 
     return await this.clientService.findAllByAdminCompanies(
-      adminId,
+      userId,
       paginationDto,
+      req.user?.userType,
     );
   }
 
