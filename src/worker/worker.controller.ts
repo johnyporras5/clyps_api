@@ -17,6 +17,7 @@ import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { Worker } from './entities/worker.entity';
 import { UpdateWorkerDto } from './dto/update-worker.dto';
 import { UpdateWorkerByAdminDto } from './dto/update-worker-by-admin.dto';
+import { UpdateWorkerCalendarDto } from './dto/update-worker-calendar.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -186,5 +187,50 @@ export class WorkerController {
       updateWorkerDto,
       photoFile,
     );
+  }
+
+  /**
+   * Guardar el horario del trabajador autenticado
+   * PUT /workers/profile/calendar
+   * Solo trabajadores; escribe sobre su propio company_worker.
+   */
+  @Put('profile/calendar')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('wrk')
+  async updateMyCalendar(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: UpdateWorkerCalendarDto,
+  ) {
+    const userId = req.user.sub;
+    const companyWorker = await this.workerService.updateMyCalendar(
+      userId,
+      dto.calendar,
+    );
+
+    // Mismos eventos que emite el admin al editar el calendar del worker
+    // (CLYP-245): el calendario de la empresa y la disponibilidad pública
+    // deben refrescarse igual, sin importar quién guardó el horario.
+    const { id: companyWorkerId, companyId, workerId } = companyWorker;
+    this.realtime.emitEntity(
+      [
+        companyRoom(companyId),
+        workerRoom(companyWorkerId),
+        companyPublicRoom(companyId),
+      ],
+      {
+        type: 'schedule.worker_updated',
+        entityId: companyWorkerId,
+        companyId,
+        data: { companyWorkerId, workerId, calendar: companyWorker.calendar },
+      },
+    );
+    this.realtime.emitEntity(companyPublicRoom(companyId), {
+      type: 'availability.changed',
+      entityId: companyId,
+      companyId,
+      data: { companyId, date: null, companyWorkerIds: [companyWorkerId] },
+    });
+
+    return companyWorker;
   }
 }

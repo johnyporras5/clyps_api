@@ -23,6 +23,20 @@ import {
 import { PhotoWithUrl } from '../worker/types/photo_with_url.type';
 import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.entity';
 import { FeedbackSummary } from './types/feedback_summary.type';
+import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
+import { WorkerCalendarDto } from './dto/update-worker-calendar.dto';
+
+/** Nombres de días en español para los mensajes de validación del horario. */
+const DAY_LABELS_ES: Record<string, string> = {
+  monday: 'lunes',
+  tuesday: 'martes',
+  wednesday: 'miércoles',
+  thursday: 'jueves',
+  friday: 'viernes',
+  saturday: 'sábado',
+  sunday: 'domingo',
+};
+
 @Injectable()
 export class WorkerService {
   private readonly WORKER_PHOTO_FOLDER: AllowedFolder = 'worker_photo';
@@ -39,6 +53,8 @@ export class WorkerService {
     private companyRepository: Repository<Company>,
     @InjectRepository(WorkerFeedback) // <<-- agregar
     private workerFeedbackRepository: Repository<WorkerFeedback>,
+    @InjectRepository(CalendarCompany)
+    private calendarCompanyRepository: Repository<CalendarCompany>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
   ) {}
@@ -123,11 +139,23 @@ export class WorkerService {
     const userWithoutPassword = this.excludePasswordFromUser(worker.user);
     const feedbackSummary = await this.getFeedbackSummary(worker.id, 5);
 
+    // companyWorker de su empresa activa: permite al front leer su propio
+    // horario desde el perfil, sin una segunda llamada a GET /workers/:id.
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        workerId: worker.id,
+        isActive: 1,
+        temporarilyDeleted: false,
+        permanentlyDeleted: false,
+      },
+    });
+
     return {
       ...worker,
       photoUrl,
       user: userWithoutPassword,
       feedbackSummary,
+      companyWorker: companyWorker ?? null,
     };
   }
 
@@ -471,6 +499,131 @@ export class WorkerService {
       worker: { ...updatedWorker, user: userWithoutPassword, photoUrl },
       companyWorker: updatedCW,
     };
+  }
+
+  /**
+   * Actualizar el horario del propio trabajador autenticado.
+   * Se guarda sobre el company_worker de su empresa activa, con la misma forma
+   * que ya escribe el admin en `company_worker.calendar`.
+   */
+  async updateMyCalendar(
+    userId: number,
+    calendar: WorkerCalendarDto,
+  ): Promise<CompanyWorker> {
+    // 1. Worker del token
+    const worker = await this.workerRepository.findOne({ where: { userId } });
+    if (!worker) {
+      throw new NotFoundException(
+        `Perfil de trabajador para el usuario ${userId} no encontrado`,
+      );
+    }
+
+    // 2. Su company_worker activo (empresa actual)
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        workerId: worker.id,
+        isActive: 1,
+        temporarilyDeleted: false,
+        permanentlyDeleted: false,
+      },
+    });
+    if (!companyWorker) {
+      throw new NotFoundException(
+        'No tienes una empresa activa asignada, no es posible guardar tu horario',
+      );
+    }
+
+    // 3. Validar contra el horario del negocio (días y turnos; las horas son libres)
+    await this.validateCalendarAgainstCompany(
+      companyWorker.companyId,
+      calendar,
+    );
+
+    // 4. Guardar
+    await this.companyWorkerRepository.update(companyWorker.id, {
+      calendar,
+    } as Partial<CompanyWorker>);
+
+    const updated = await this.companyWorkerRepository.findOne({
+      where: { id: companyWorker.id },
+    });
+    if (!updated) {
+      throw new NotFoundException(
+        'No fue posible recuperar el horario guardado',
+      );
+    }
+    return updated;
+  }
+
+  /**
+   * Regla del editor del admin: el horario del trabajador no puede salirse de
+   * los DÍAS ni de los TURNOS que abre la empresa.
+   *
+   * Las HORAS de cada turno son libres a propósito: hay trabajadores que
+   * entran antes o salen después que el negocio y validarlas rompería horarios
+   * ya existentes.
+   */
+  private async validateCalendarAgainstCompany(
+    companyId: number,
+    calendar: WorkerCalendarDto,
+  ): Promise<void> {
+    const companyCalendar = await this.calendarCompanyRepository.findOne({
+      where: { companyId },
+    });
+
+    const schedule = this.getCompanySchedule(companyCalendar?.calendarDetail);
+    // Si la empresa aún no configuró su horario no hay nada contra qué validar.
+    if (!schedule) return;
+
+    const companyDays: string[] = Array.isArray(schedule.days)
+      ? schedule.days
+      : [];
+    const workerDays = calendar.days ?? [];
+
+    const invalidDays = workerDays.filter((d) => !companyDays.includes(d));
+    if (invalidDays.length > 0) {
+      throw new BadRequestException(
+        `Tu horario incluye días en los que el negocio no abre: ${invalidDays
+          .map((d) => DAY_LABELS_ES[d] ?? d)
+          .join(', ')}.`,
+      );
+    }
+
+    if (calendar.morning && !this.hasShift(schedule.morning)) {
+      throw new BadRequestException(
+        'El negocio no abre en la mañana, no puedes tener un turno de mañana.',
+      );
+    }
+    if (calendar.afternoon && !this.hasShift(schedule.afternoon)) {
+      throw new BadRequestException(
+        'El negocio no abre en la tarde, no puedes tener un turno de tarde.',
+      );
+    }
+  }
+
+  /**
+   * El calendario de la compañía guarda el horario semanal anidado bajo
+   * `schedule` (a diferencia del trabajador, que lo guarda plano). Se
+   * contempla la forma plana como respaldo.
+   */
+  private getCompanySchedule(calendarDetail: any): any | null {
+    let detail: any = calendarDetail;
+    if (typeof detail === 'string') {
+      try {
+        detail = JSON.parse(detail);
+      } catch {
+        return null;
+      }
+    }
+    if (!detail) return null;
+    const schedule = detail.schedule ?? detail;
+    if (!schedule || typeof schedule !== 'object') return null;
+    return Array.isArray(schedule.days) ? schedule : null;
+  }
+
+  /** Un turno "existe" solo si trae start y end utilizables. */
+  private hasShift(period: any): boolean {
+    return Boolean(period?.start && period?.end);
   }
 
   // Método para verificar si un usuario es dueño del worker
