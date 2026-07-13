@@ -19,6 +19,7 @@ import {
   PaginationResult,
 } from '../common/utils/pagination.util';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
+import { normalizeCompanyCalendarDetail } from '../common/utils/company-calendar.util';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Client } from '../client/entities/client.entity';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
@@ -507,6 +508,14 @@ export class CompanyService {
             updateAdminProfileDto.calendarDetail,
           );
         }
+
+        // Canonizar a la Forma A (excepciones en la raíz). Hasta ahora se
+        // guardaba el JSON tal como llegaba, y por eso convivían dos formas en
+        // la misma columna; normalizando aquí, la forma heredada no puede
+        // volver a entrar aunque un cliente viejo la mande.
+        parsedCalendarDetail =
+          normalizeCompanyCalendarDetail(parsedCalendarDetail) ??
+          parsedCalendarDetail;
 
         // Buscar si ya existe un calendario para esta compañía
         const calendarCompany = await this.calendarCompanyRepository.findOne({
@@ -1102,9 +1111,37 @@ export class CompanyService {
     }
     if (!cal?.schedule?.days) return false;
     if (!cal.schedule.days.includes(dayOfWeek)) return false;
-    const exception = cal.exceptions?.find((e: any) => e.date === date);
+    const exception = this.findException(cal, date);
     if (exception?.type === 'non-working-day') return false;
     return true;
+  }
+
+  /**
+   * Busca la excepción de una fecha tolerando las dos formas que conviven en
+   * `calendar_company.calendar_detail`:
+   *
+   *   raíz    → { schedule: {...}, exceptions: [...] }        (forma actual)
+   *   anidada → { schedule: { ..., exceptions: [...] } }      (editor web viejo)
+   *
+   * El editor viejo del admin web guardaba las excepciones dentro de `schedule`
+   * y dejaba la raíz vacía, así que leerlas solo de la raíz las ignoraba en
+   * silencio: la empresa aparecía disponible en días que había declarado
+   * cerrados. La raíz tiene prioridad si la misma fecha está en ambas.
+   *
+   * También sirve para el calendario del trabajador (`company_worker.calendar`),
+   * que es plano y lleva sus excepciones en la raíz del objeto.
+   */
+  private findException(cal: any, date?: string): any | null {
+    if (!cal || !date) return null;
+    const root: any[] = Array.isArray(cal.exceptions) ? cal.exceptions : [];
+    const nested: any[] = Array.isArray(cal.schedule?.exceptions)
+      ? cal.schedule.exceptions
+      : [];
+    return (
+      root.find((e) => e?.date === date) ??
+      nested.find((e) => e?.date === date) ??
+      null
+    );
   }
 
   /** Convierte { hour, minute, period: 'AM'|'PM' } a minutos desde medianoche. */
@@ -1148,7 +1185,7 @@ export class CompanyService {
     let source: any;
     if (date) {
       // Con fecha: respeta excepciones del día y los días laborables.
-      const exception = cal.exceptions?.find((e: any) => e.date === date);
+      const exception = this.findException(cal, date);
       if (exception) {
         if (exception.type === 'non-working-day') return [];
         if (exception.type === 'custom-schedule') {
