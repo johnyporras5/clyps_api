@@ -191,21 +191,37 @@ export class ClientService {
   async findAllByAdminCompanies(
     adminId: number,
     options: FindAllClientsDto,
+    userRole?: string,
   ): Promise<PaginationResult<any>> {
     this.logger.log(
-      `=== SERVICE: LISTANDO CLIENTES PARA ADMIN ID: ${adminId} ===`,
+      `=== SERVICE: LISTANDO CLIENTES PARA USER ID: ${adminId} (rol: ${userRole ?? 'adm'}) ===`,
     );
 
     await this.validateUserExists(adminId);
 
-    // 1. Obtener las compañías del admin (si las tiene)
-    const adminCompanies = await this.companyRepository.find({
-      where: { userId: adminId },
-    });
+    let adminCompanies: Company[] = [];
+
+    if (userRole === 'wrk') {
+      const memberships = await this.companyWorkerRepository.find({
+        where: { userId: adminId, isActive: 1 },
+      });
+      const workerCompanyIds = [
+        ...new Set(memberships.map((cw) => cw.companyId)),
+      ];
+      if (workerCompanyIds.length > 0) {
+        adminCompanies = await this.companyRepository.find({
+          where: { id: In(workerCompanyIds) },
+        });
+      }
+    } else {
+      adminCompanies = await this.companyRepository.find({
+        where: { userId: adminId },
+      });
+    }
 
     const adminCompanyIds = adminCompanies.map((company) => company.id);
     this.logger.log(
-      `[DEBUG] IDs de compañías del admin ${adminId}: ${adminCompanyIds}`,
+      `[DEBUG] IDs de compañías del usuario ${adminId}: ${adminCompanyIds}`,
     );
 
     // 2. Construir query (incluye clientes activos e inactivos)
