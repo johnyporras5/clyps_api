@@ -108,12 +108,17 @@ export class ClientController {
    * GET /clients/admin/:clientId/profile
    */
   @Get('admin/:clientId/profile')
-  @Roles('adm')
+  @Roles('adm', 'wrk')
   @UseGuards(RolesGuard)
   async getClientProfileByAdmin(
+    @Request() req: AuthenticatedRequest,
     @Param('clientId', ParseIntPipe) clientId: number,
   ): Promise<any> {
-    return this.clientService.findByClientId(clientId);
+    return this.clientService.findByClientId(
+      clientId,
+      req.user.sub,
+      req.user?.userType,
+    );
   }
 
   /**
@@ -121,10 +126,11 @@ export class ClientController {
    * PUT /clients/admin/:clientId/update
    */
   @Put('admin/:clientId/update')
-  @Roles('adm')
+  @Roles('adm', 'wrk')
   @UseGuards(RolesGuard)
   @UseInterceptors(FileInterceptor('photo'))
   async updateClientProfileByAdmin(
+    @Request() req: AuthenticatedRequest,
     @Param('clientId', ParseIntPipe) clientId: number,
     @Body() updateClientDto: UpdateClientDto,
     @UploadedFile() photoFile?: Express.Multer.File,
@@ -141,6 +147,8 @@ export class ClientController {
       clientId,
       updateClientDto,
       photoFile,
+      req.user.sub,
+      req.user?.userType,
     );
   }
 
