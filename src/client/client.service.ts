@@ -49,6 +49,12 @@ export class ClientService {
     private fileUploadService: FileUploadService,
   ) {}
 
+  private normalizeBirthdate(updateClientDto: UpdateClientDto): void {
+    if (updateClientDto.birthdate !== undefined) {
+      updateClientDto.birthDate = updateClientDto.birthdate;
+    }
+  }
+
   /**
    * Construye el resumen de una sesión (compañía + servicios) para el perfil del cliente.
    */
@@ -456,6 +462,8 @@ export class ClientService {
     }
 
     // 3. Campos permitidos (exactamente los que puede actualizar el cliente)
+    this.normalizeBirthdate(updateClientDto);
+
     const allowedFields = [
       'name',
       'lastName',
@@ -637,6 +645,8 @@ export class ClientService {
       });
       client.user.username = updateClientDto.username;
     }
+
+    this.normalizeBirthdate(updateClientDto);
 
     const allowedFields = [
       'name',

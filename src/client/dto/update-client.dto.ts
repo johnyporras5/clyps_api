@@ -34,6 +34,16 @@ export class UpdateClientDto {
   @IsString()
   @Length(0, 20)
   phone?: string;
+
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  birthdate?: Date;
+
+  /**
+   * @deprecated Usar `birthdate`. Se mantiene por compatibilidad con clientes
+   * que ya envían este nombre; el servicio da prioridad a `birthdate`.
+   */
   @IsOptional()
   @Type(() => Date)
   @IsDate()
