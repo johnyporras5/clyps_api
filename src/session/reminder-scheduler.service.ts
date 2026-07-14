@@ -100,6 +100,105 @@ export class ReminderSchedulerService {
     }
   }
 
+  @Cron(CronExpression.EVERY_DAY_AT_9AM)
+  async clientBirthdayReminder(): Promise<void> {
+    try {
+      const clients: Array<{
+        id: number;
+        name: string | null;
+        lastName: string | null;
+        createdByCompanyWorkerId: number | null;
+      }> = await this.dataSource.query(
+        `SELECT id,
+                name,
+                last_name AS lastName,
+                created_by_company_worker_id AS createdByCompanyWorkerId
+           FROM client
+          WHERE birth_date IS NOT NULL
+            AND is_active = 1
+            AND (
+                  -- Cumpleaños normal: coinciden mes y día.
+                  (MONTH(birth_date) = MONTH(CURDATE())
+                   AND DAY(birth_date) = DAY(CURDATE()))
+
+                  -- Nacidos un 29 de febrero: en los años NO bisiestos ese día
+                  -- no existe, así que se felicita el 28. LAST_DAY del febrero
+                  -- en curso vale 28 si el año no es bisiesto; si lo es, vale 29
+                  -- y esos clientes ya entran por la condición normal (sin
+                  -- duplicarse, porque entonces esta rama no se cumple).
+               OR (MONTH(birth_date) = 2 AND DAY(birth_date) = 29
+                   AND MONTH(CURDATE()) = 2 AND DAY(CURDATE()) = 28
+                   AND DAY(LAST_DAY(CONCAT(YEAR(CURDATE()), '-02-01'))) = 28)
+                )`,
+      );
+
+      for (const client of clients) {
+        const claimed = await this.notifications.claimRecurringReminder(
+          'client_birthday',
+          client.id,
+          300,
+        );
+        if (!claimed) continue;
+
+        const recipients = await this.birthdayRecipients(
+          client.id,
+          client.createdByCompanyWorkerId,
+        );
+        if (recipients.length === 0) continue;
+
+        const fullName =
+          [client.name, client.lastName]
+            .map((part) => (part ?? '').trim())
+            .filter(Boolean)
+            .join(' ') || 'Un cliente';
+
+        await this.notifications.createNotificationForUsers(recipients, {
+          type: 'system',
+          title: '🎂 ¡Hoy es su cumpleaños!',
+          body: `${fullName} cumple años hoy. Aprovecha para felicitarlo.`,
+          data: buildNavigationData('system'),
+        });
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'desconocido';
+      this.logger.warn(`Job clientBirthdayReminder falló: ${reason}`);
+    }
+  }
+
+  private async birthdayRecipients(
+    clientId: number,
+    createdByCompanyWorkerId: number | null,
+  ): Promise<number[]> {
+    const admins: Array<{ uid: number }> = await this.dataSource.query(
+      `SELECT DISTINCT co.user_id AS uid
+         FROM company co
+         JOIN client cl ON cl.id = ?
+        WHERE co.user_id IS NOT NULL
+          AND JSON_CONTAINS(COALESCE(cl.companies, JSON_ARRAY()), CAST(co.id AS JSON))`,
+      [clientId],
+    );
+
+    const workers: Array<{ uid: number }> = await this.dataSource.query(
+      `SELECT DISTINCT cw.user_id AS uid
+         FROM company_worker cw
+        WHERE cw.is_active = 1
+          AND cw.user_id IS NOT NULL
+          AND (
+                cw.id = ?
+             OR EXISTS (
+                  SELECT 1
+                    FROM session_detail d
+                    JOIN session s ON s.id = d.session_id
+                   WHERE d.company_worker_id = cw.id
+                     AND s.client_id = ?
+                )
+          )`,
+      [createdByCompanyWorkerId ?? 0, clientId],
+    );
+
+    return [...admins, ...workers].map((r) => Number(r.uid));
+  }
+
   // ==================== HELPERS ====================
 
   /**
