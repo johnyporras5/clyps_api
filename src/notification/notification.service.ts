@@ -17,6 +17,7 @@ export interface CreateNotificationInput {
   title: string;
   body: string;
   data?: NotificationData | null;
+  pushTitle?: string;
 }
 
 /** Forma de Notification que consume la app (sin la relación `user`). */
@@ -178,7 +179,10 @@ export class NotificationService {
 
       const response = await messaging.sendEachForMulticast({
         tokens,
-        notification: { title: input.title, body: input.body },
+        notification: {
+          title: input.pushTitle ?? input.title,
+          body: input.body,
+        },
         data: this.stringifyValues(data),
         android: { priority: 'high' },
         apns: { headers: { 'apns-priority': '10' } },

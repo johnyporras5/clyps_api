@@ -153,6 +153,7 @@ export class ReminderSchedulerService {
           {
             type: 'system',
             title: '¡Hoy cumple años tu trabajador!',
+            pushTitle: '🎂 ¡Hoy cumple años tu trabajador!',
             body: `${fullName} cumple años hoy. Aprovecha para felicitarlo.`,
             data: {
               ...buildNavigationData('system', worker.id),
@@ -209,6 +210,7 @@ export class ReminderSchedulerService {
         await this.notifications.createNotificationForUsers(recipients, {
           type: 'system',
           title: '¡Hoy es su cumpleaños!',
+          pushTitle: '🎂 ¡Hoy es su cumpleaños!',
           body: `${fullName} cumple años hoy. Aprovecha para felicitarlo.`,
           data: {
             ...buildNavigationData('system', client.id),
