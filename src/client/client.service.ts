@@ -225,7 +225,7 @@ export class ClientService {
    */
   private async getLastCompletedAppointment(clientId: number) {
     const session = await this.sessionRepository.findOne({
-      where: { clientId, sessionStatus: In([3, 4]) },
+      where: { clientId, sessionStatus: In([3, 4, 6]) },
       order: { sessionDatetime: 'DESC' },
     });
     if (!session) return null;
@@ -407,6 +407,9 @@ export class ClientService {
       .select('s.client_id', 'clientId')
       .addSelect('MAX(s.session_datetime)', 'lastDate')
       .where('s.client_id IN (:...clientIds)', { clientIds })
+      .andWhere('s.session_status IN (:...attendedStatuses)', {
+        attendedStatuses: [3, 4, 6],
+      })
       .groupBy('s.client_id')
       .getRawMany();
 
