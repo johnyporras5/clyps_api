@@ -100,6 +100,168 @@ export class ReminderSchedulerService {
     }
   }
 
+  private static birthdayIsToday(column: string): string {
+    return `(
+              (MONTH(${column}) = MONTH(CURDATE())
+               AND DAY(${column}) = DAY(CURDATE()))
+           OR (MONTH(${column}) = 2 AND DAY(${column}) = 29
+               AND MONTH(CURDATE()) = 2 AND DAY(CURDATE()) = 28
+               AND DAY(LAST_DAY(CONCAT(YEAR(CURDATE()), '-02-01'))) = 28)
+            )`;
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_9AM)
+  async workerBirthdayReminder(): Promise<void> {
+    try {
+      const workers: Array<{ id: number; name: string | null }> =
+        await this.dataSource.query(
+          `SELECT DISTINCT w.id AS id, w.name AS name
+             FROM worker w
+             JOIN company_worker cw ON cw.worker_id = w.id AND cw.is_active = 1
+            WHERE w.birthdate IS NOT NULL
+              AND ${ReminderSchedulerService.birthdayIsToday('w.birthdate')}`,
+        );
+
+      for (const worker of workers) {
+        const claimed = await this.notifications.claimRecurringReminder(
+          'worker_birthday',
+          worker.id,
+          300,
+        );
+        if (!claimed) continue;
+
+        // Admins dueños de las compañías donde el trabajador está activo.
+        const admins: Array<{ uid: number }> = await this.dataSource.query(
+          `SELECT DISTINCT co.user_id AS uid
+             FROM company_worker cw
+             JOIN company co ON co.id = cw.company_id
+             JOIN user u ON u.id = co.user_id
+            WHERE cw.worker_id = ?
+              AND cw.is_active = 1
+              AND co.user_id IS NOT NULL
+              -- Blindaje: esta notificación es solo para el staff. Nunca puede
+              -- acabar en la bandeja de un cliente.
+              AND u.user_type IN ('adm', 'wrk')`,
+          [worker.id],
+        );
+        if (admins.length === 0) continue;
+
+        const fullName = (worker.name ?? '').trim() || 'Un trabajador';
+
+        await this.notifications.createNotificationForUsers(
+          admins.map((a) => Number(a.uid)),
+          {
+            type: 'system',
+            title: '¡Hoy cumple años tu trabajador!',
+            pushTitle: '🎂 ¡Hoy cumple años tu trabajador!',
+            body: `${fullName} cumple años hoy. Aprovecha para felicitarlo.`,
+            data: {
+              ...buildNavigationData('system', worker.id),
+              subtype: 'worker_birthday',
+            },
+          },
+        );
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'desconocido';
+      this.logger.warn(`Job workerBirthdayReminder falló: ${reason}`);
+    }
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_9AM)
+  async clientBirthdayReminder(): Promise<void> {
+    try {
+      const clients: Array<{
+        id: number;
+        name: string | null;
+        lastName: string | null;
+        createdByCompanyWorkerId: number | null;
+      }> = await this.dataSource.query(
+        `SELECT id,
+                name,
+                last_name AS lastName,
+                created_by_company_worker_id AS createdByCompanyWorkerId
+           FROM client
+          WHERE birth_date IS NOT NULL
+            AND is_active = 1
+            AND ${ReminderSchedulerService.birthdayIsToday('birth_date')}`,
+      );
+
+      for (const client of clients) {
+        const claimed = await this.notifications.claimRecurringReminder(
+          'client_birthday',
+          client.id,
+          300,
+        );
+        if (!claimed) continue;
+
+        const recipients = await this.birthdayRecipients(
+          client.id,
+          client.createdByCompanyWorkerId,
+        );
+        if (recipients.length === 0) continue;
+
+        const fullName =
+          [client.name, client.lastName]
+            .map((part) => (part ?? '').trim())
+            .filter(Boolean)
+            .join(' ') || 'Un cliente';
+
+        await this.notifications.createNotificationForUsers(recipients, {
+          type: 'system',
+          title: '¡Hoy es su cumpleaños!',
+          pushTitle: '🎂 ¡Hoy es su cumpleaños!',
+          body: `${fullName} cumple años hoy. Aprovecha para felicitarlo.`,
+          data: {
+            ...buildNavigationData('system', client.id),
+            subtype: 'client_birthday',
+          },
+        });
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'desconocido';
+      this.logger.warn(`Job clientBirthdayReminder falló: ${reason}`);
+    }
+  }
+
+  private async birthdayRecipients(
+    clientId: number,
+    createdByCompanyWorkerId: number | null,
+  ): Promise<number[]> {
+    const admins: Array<{ uid: number }> = await this.dataSource.query(
+      `SELECT DISTINCT co.user_id AS uid
+         FROM company co
+         JOIN client cl ON cl.id = ?
+         JOIN user u ON u.id = co.user_id
+        WHERE co.user_id IS NOT NULL
+          AND u.user_type IN ('adm', 'wrk')
+          AND JSON_CONTAINS(COALESCE(cl.companies, JSON_ARRAY()), CAST(co.id AS JSON))`,
+      [clientId],
+    );
+
+    const workers: Array<{ uid: number }> = await this.dataSource.query(
+      `SELECT DISTINCT cw.user_id AS uid
+         FROM company_worker cw
+         JOIN user u ON u.id = cw.user_id
+        WHERE cw.is_active = 1
+          AND cw.user_id IS NOT NULL
+          AND u.user_type IN ('adm', 'wrk')
+          AND (
+                cw.id = ?
+             OR EXISTS (
+                  SELECT 1
+                    FROM session_detail d
+                    JOIN session s ON s.id = d.session_id
+                   WHERE d.company_worker_id = cw.id
+                     AND s.client_id = ?
+                )
+          )`,
+      [createdByCompanyWorkerId ?? 0, clientId],
+    );
+
+    return [...admins, ...workers].map((r) => Number(r.uid));
+  }
+
   // ==================== HELPERS ====================
 
   /**

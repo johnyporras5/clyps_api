@@ -49,6 +49,81 @@ export class ClientService {
     private fileUploadService: FileUploadService,
   ) {}
 
+  private normalizeBirthdate(updateClientDto: UpdateClientDto): void {
+    if (updateClientDto.birthdate !== undefined) {
+      updateClientDto.birthDate = updateClientDto.birthdate;
+    }
+  }
+
+  /**
+   * Compañías del usuario autenticado, según su rol:
+   *  - `adm`: las compañías que POSEE (company.user_id).
+   *  - `wrk`: aquellas donde tiene membresía ACTIVA (company_worker.is_active).
+   *
+   * Es la misma resolución que usa el listado de clientes, extraída para poder
+   * reutilizarla en las validaciones de acceso a un cliente concreto.
+   */
+  private async resolveCallerCompanyIds(
+    userId: number,
+    userRole?: string,
+  ): Promise<number[]> {
+    if (userRole === 'wrk') {
+      const memberships = await this.companyWorkerRepository.find({
+        where: { userId, isActive: 1 },
+        select: ['companyId'],
+      });
+      return [...new Set(memberships.map((cw) => cw.companyId))];
+    }
+
+    const companies = await this.companyRepository.find({
+      where: { userId },
+      select: ['id'],
+    });
+    return companies.map((c) => c.id);
+  }
+
+  /**
+   * Garantiza que el usuario autenticado puede ver/editar este cliente, y lo
+   * devuelve. El criterio es el MISMO que el del listado de clientes: se puede
+   * acceder si el cliente lo creó él, o si pertenece a alguna de sus compañías.
+   *
+   * Aplica igual a admin y a trabajador: antes no había ninguna comprobación y
+   * un admin podía editar clientes de otras empresas con solo saber su ID.
+   */
+  private async assertCanAccessClient(
+    clientId: number,
+    userId: number,
+    userRole?: string,
+  ): Promise<Client> {
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+    });
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    // Lo creó el propio usuario autenticado.
+    if (client.userId === userId) {
+      return client;
+    }
+
+    // O comparte compañía con él.
+    const callerCompanyIds = await this.resolveCallerCompanyIds(
+      userId,
+      userRole,
+    );
+    const clientCompanyIds = (client.companies ?? []).map((id) => Number(id));
+    const shares = clientCompanyIds.some((id) => callerCompanyIds.includes(id));
+
+    if (!shares) {
+      throw new ForbiddenException(
+        'No tienes permiso para acceder a este cliente: no pertenece a tu compañía',
+      );
+    }
+
+    return client;
+  }
+
   /**
    * Construye el resumen de una sesión (compañía + servicios) para el perfil del cliente.
    */
@@ -456,6 +531,8 @@ export class ClientService {
     }
 
     // 3. Campos permitidos (exactamente los que puede actualizar el cliente)
+    this.normalizeBirthdate(updateClientDto);
+
     const allowedFields = [
       'name',
       'lastName',
@@ -548,6 +625,10 @@ export class ClientService {
 
     return {
       ...client,
+      // La entidad guarda la propiedad como `birthDate`, pero el contrato
+      // público del API es `birthdate` (igual que en el alta y que en worker).
+      // Se expone en minúscula y se mantiene `birthDate` por compatibilidad.
+      birthdate: client.birthDate ?? null,
       preferences: client.preferences ?? [],
       photoUrl,
       lastAppointment,
@@ -560,7 +641,15 @@ export class ClientService {
    */
   async findByClientId(
     clientId: number,
+    callerId?: number,
+    callerRole?: string,
   ): Promise<Client & { photoUrl: string }> {
+    // Si viene el usuario autenticado, se valida que el cliente sea suyo o de
+    // su compañía (aplica a admin y a trabajador).
+    if (callerId) {
+      await this.assertCanAccessClient(clientId, callerId, callerRole);
+    }
+
     const client = await this.clientRepository.findOne({
       where: { id: clientId },
       relations: ['user'],
@@ -583,6 +672,10 @@ export class ClientService {
 
     return {
       ...client,
+      // La entidad guarda la propiedad como `birthDate`, pero el contrato
+      // público del API es `birthdate` (igual que en el alta y que en worker).
+      // Se expone en minúscula y se mantiene `birthDate` por compatibilidad.
+      birthdate: client.birthDate ?? null,
       preferences: client.preferences ?? [],
       photoUrl,
       lastAppointment,
@@ -597,7 +690,16 @@ export class ClientService {
     clientId: number,
     updateClientDto: UpdateClientDto,
     photoFile?: Express.Multer.File,
+    callerId?: number,
+    callerRole?: string,
   ): Promise<Client> {
+    // El cliente debe ser del usuario autenticado o de su compañía. Aplica a
+    // admin y trabajador; antes no se validaba nada y se podía editar cualquier
+    // cliente conociendo su ID.
+    if (callerId) {
+      await this.assertCanAccessClient(clientId, callerId, callerRole);
+    }
+
     const client = await this.clientRepository.findOne({
       where: { id: clientId },
       relations: ['user'],
@@ -637,6 +739,8 @@ export class ClientService {
       });
       client.user.username = updateClientDto.username;
     }
+
+    this.normalizeBirthdate(updateClientDto);
 
     const allowedFields = [
       'name',
