@@ -152,9 +152,12 @@ export class ReminderSchedulerService {
           admins.map((a) => Number(a.uid)),
           {
             type: 'system',
-            title: '🎂 ¡Hoy cumple años tu trabajador!',
+            title: '¡Hoy cumple años tu trabajador!',
             body: `${fullName} cumple años hoy. Aprovecha para felicitarlo.`,
-            data: buildNavigationData('system'),
+            data: {
+              ...buildNavigationData('system', worker.id),
+              subtype: 'worker_birthday',
+            },
           },
         );
       }
@@ -205,9 +208,12 @@ export class ReminderSchedulerService {
 
         await this.notifications.createNotificationForUsers(recipients, {
           type: 'system',
-          title: '🎂 ¡Hoy es su cumpleaños!',
+          title: '¡Hoy es su cumpleaños!',
           body: `${fullName} cumple años hoy. Aprovecha para felicitarlo.`,
-          data: buildNavigationData('system'),
+          data: {
+            ...buildNavigationData('system', client.id),
+            subtype: 'client_birthday',
+          },
         });
       }
     } catch (error) {
