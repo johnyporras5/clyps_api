@@ -100,6 +100,70 @@ export class ReminderSchedulerService {
     }
   }
 
+  private static birthdayIsToday(column: string): string {
+    return `(
+              (MONTH(${column}) = MONTH(CURDATE())
+               AND DAY(${column}) = DAY(CURDATE()))
+           OR (MONTH(${column}) = 2 AND DAY(${column}) = 29
+               AND MONTH(CURDATE()) = 2 AND DAY(CURDATE()) = 28
+               AND DAY(LAST_DAY(CONCAT(YEAR(CURDATE()), '-02-01'))) = 28)
+            )`;
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_9AM)
+  async workerBirthdayReminder(): Promise<void> {
+    try {
+      const workers: Array<{ id: number; name: string | null }> =
+        await this.dataSource.query(
+          `SELECT DISTINCT w.id AS id, w.name AS name
+             FROM worker w
+             JOIN company_worker cw ON cw.worker_id = w.id AND cw.is_active = 1
+            WHERE w.birthdate IS NOT NULL
+              AND ${ReminderSchedulerService.birthdayIsToday('w.birthdate')}`,
+        );
+
+      for (const worker of workers) {
+        const claimed = await this.notifications.claimRecurringReminder(
+          'worker_birthday',
+          worker.id,
+          300,
+        );
+        if (!claimed) continue;
+
+        // Admins dueños de las compañías donde el trabajador está activo.
+        const admins: Array<{ uid: number }> = await this.dataSource.query(
+          `SELECT DISTINCT co.user_id AS uid
+             FROM company_worker cw
+             JOIN company co ON co.id = cw.company_id
+             JOIN user u ON u.id = co.user_id
+            WHERE cw.worker_id = ?
+              AND cw.is_active = 1
+              AND co.user_id IS NOT NULL
+              -- Blindaje: esta notificación es solo para el staff. Nunca puede
+              -- acabar en la bandeja de un cliente.
+              AND u.user_type IN ('adm', 'wrk')`,
+          [worker.id],
+        );
+        if (admins.length === 0) continue;
+
+        const fullName = (worker.name ?? '').trim() || 'Un trabajador';
+
+        await this.notifications.createNotificationForUsers(
+          admins.map((a) => Number(a.uid)),
+          {
+            type: 'system',
+            title: '🎂 ¡Hoy cumple años tu trabajador!',
+            body: `${fullName} cumple años hoy. Aprovecha para felicitarlo.`,
+            data: buildNavigationData('system'),
+          },
+        );
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'desconocido';
+      this.logger.warn(`Job workerBirthdayReminder falló: ${reason}`);
+    }
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_9AM)
   async clientBirthdayReminder(): Promise<void> {
     try {
@@ -116,20 +180,7 @@ export class ReminderSchedulerService {
            FROM client
           WHERE birth_date IS NOT NULL
             AND is_active = 1
-            AND (
-                  -- Cumpleaños normal: coinciden mes y día.
-                  (MONTH(birth_date) = MONTH(CURDATE())
-                   AND DAY(birth_date) = DAY(CURDATE()))
-
-                  -- Nacidos un 29 de febrero: en los años NO bisiestos ese día
-                  -- no existe, así que se felicita el 28. LAST_DAY del febrero
-                  -- en curso vale 28 si el año no es bisiesto; si lo es, vale 29
-                  -- y esos clientes ya entran por la condición normal (sin
-                  -- duplicarse, porque entonces esta rama no se cumple).
-               OR (MONTH(birth_date) = 2 AND DAY(birth_date) = 29
-                   AND MONTH(CURDATE()) = 2 AND DAY(CURDATE()) = 28
-                   AND DAY(LAST_DAY(CONCAT(YEAR(CURDATE()), '-02-01'))) = 28)
-                )`,
+            AND ${ReminderSchedulerService.birthdayIsToday('birth_date')}`,
       );
 
       for (const client of clients) {
@@ -173,7 +224,9 @@ export class ReminderSchedulerService {
       `SELECT DISTINCT co.user_id AS uid
          FROM company co
          JOIN client cl ON cl.id = ?
+         JOIN user u ON u.id = co.user_id
         WHERE co.user_id IS NOT NULL
+          AND u.user_type IN ('adm', 'wrk')
           AND JSON_CONTAINS(COALESCE(cl.companies, JSON_ARRAY()), CAST(co.id AS JSON))`,
       [clientId],
     );
@@ -181,8 +234,10 @@ export class ReminderSchedulerService {
     const workers: Array<{ uid: number }> = await this.dataSource.query(
       `SELECT DISTINCT cw.user_id AS uid
          FROM company_worker cw
+         JOIN user u ON u.id = cw.user_id
         WHERE cw.is_active = 1
           AND cw.user_id IS NOT NULL
+          AND u.user_type IN ('adm', 'wrk')
           AND (
                 cw.id = ?
              OR EXISTS (
