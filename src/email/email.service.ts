@@ -196,6 +196,7 @@ export class EmailService {
       time: string;
       serviceName: string;
       serviceCost: number;
+      serviceCurrency?: string;
       serviceDuration: number;
     },
     workerInfo: {
@@ -232,6 +233,7 @@ export class EmailService {
       clientName: string;
       clientPhone?: string;
       serviceCost: number;
+      serviceCurrency?: string;
       serviceDuration: number;
     },
     clientInfo: {
@@ -266,6 +268,7 @@ export class EmailService {
       time: string;
       serviceName: string;
       serviceCost: number;
+      serviceCurrency?: string;
       serviceDuration: number;
     },
     clientInfo: {
@@ -297,6 +300,22 @@ export class EmailService {
       `📋 Nueva cita agendada - ${sessionData.date}`,
       html,
     );
+  }
+
+  /** Símbolo de la moneda del servicio. Fallback: el propio código. */
+  private currencySymbol(currency?: string | null): string {
+    const code = (currency || 'USD').toUpperCase();
+    const symbols: Record<string, string> = {
+      USD: '$',
+      EUR: '€',
+      VES: 'Bs',
+    };
+    return symbols[code] ?? `${code} `;
+  }
+
+  /** Precio con el símbolo de la moneda del servicio (ej.: "€100.00"). */
+  private formatMoney(amount: number, currency?: string | null): string {
+    return `${this.currencySymbol(currency)}${(amount ?? 0).toFixed(2)}`;
   }
 
   formatSessionDate(date: Date): { date: string; time: string } {
@@ -2797,6 +2816,7 @@ export class EmailService {
       time: string;
       serviceName: string;
       serviceCost: number;
+      serviceCurrency?: string;
       serviceDuration: number;
     },
     workerInfo: {
@@ -3244,7 +3264,7 @@ export class EmailService {
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">💰</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Costo</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">$${sessionData.serviceCost.toFixed(2)}</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.formatMoney(sessionData.serviceCost, sessionData.serviceCurrency)}</div>
                         </div>
                         
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
@@ -3381,6 +3401,7 @@ export class EmailService {
       clientName: string;
       clientPhone?: string;
       serviceCost: number;
+      serviceCurrency?: string;
       serviceDuration: number;
     },
     clientInfo: {
@@ -3828,7 +3849,7 @@ export class EmailService {
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">💰</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Costo</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">$${sessionData.serviceCost.toFixed(2)}</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.formatMoney(sessionData.serviceCost, sessionData.serviceCurrency)}</div>
                         </div>
                         
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
@@ -4124,6 +4145,7 @@ export class EmailService {
       time: string;
       serviceName: string;
       serviceCost: number;
+      serviceCurrency?: string;
       serviceDuration: number;
     },
     clientInfo: {
@@ -4142,10 +4164,11 @@ export class EmailService {
       email?: string;
     },
   ): string {
-    const formattedCost = new Intl.NumberFormat('es-ES', {
+    const amount = new Intl.NumberFormat('es-ES', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(Number(sessionData.serviceCost) || 0);
+    const formattedCost = `${this.currencySymbol(sessionData.serviceCurrency)}${amount}`;
 
     return `
 <!DOCTYPE html>
@@ -4211,7 +4234,7 @@ export class EmailService {
       <div class="service-box">
         <div class="service-name">💼 ${sessionData.serviceName}</div>
         <div class="service-meta">
-          <span>💰 <strong>$${formattedCost}</strong></span>
+          <span>💰 <strong>${formattedCost}</strong></span>
           <span>⏱️ <strong>${sessionData.serviceDuration} min</strong></span>
         </div>
       </div>

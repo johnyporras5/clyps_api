@@ -2470,6 +2470,7 @@ export class SessionService {
             time: formattedDate.time,
             serviceName: service?.name || 'Servicio',
             serviceCost: detailCost,
+            serviceCurrency: service?.currency,
             serviceDuration: detailDuration,
           },
           {
@@ -2498,6 +2499,7 @@ export class SessionService {
             clientName: clientInfo.name,
             clientPhone: clientInfo.phone,
             serviceCost: detailCost,
+            serviceCurrency: service?.currency,
             serviceDuration: detailDuration,
           },
           {
@@ -2530,6 +2532,7 @@ export class SessionService {
               time: formattedDate.time,
               serviceName: service?.name || 'Servicio',
               serviceCost: detailCost,
+              serviceCurrency: service?.currency,
               serviceDuration: detailDuration,
             },
             {
