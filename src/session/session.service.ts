@@ -26,6 +26,7 @@ import { Worker } from '../worker/entities/worker.entity';
 import { EmailService } from '../email/email.service';
 import { PaginationResult } from '../common/dto/pagination.dto';
 import {
+  BUSINESS_TIMEZONE,
   businessDayBounds,
   businessDayBoundsForInstant,
   businessRangeBounds,
@@ -1011,7 +1012,7 @@ export class SessionService {
               ? (companyWorker.worker.name || '').trim()
               : `Trabajador ID: ${companyWorker.id}`;
             throw new BadRequestException(
-              `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`,
+              `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIMEZONE })}). Por favor, seleccione otro horario o trabajador.`,
             );
           }
         }
@@ -4057,7 +4058,7 @@ export class SessionService {
       if (externalConflict) {
         const conflictStart = new Date(externalConflict.startDatetime);
         throw new BadRequestException(
-          `El trabajador "${plan.workerName}" ya tiene una cita asignada que se solapa con el horario (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Detalle: ${plan.detail.id}`,
+          `El trabajador "${plan.workerName}" ya tiene una cita asignada que se solapa con el horario (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIMEZONE })}). Detalle: ${plan.detail.id}`,
         );
       }
     }
@@ -5706,10 +5707,12 @@ export class SessionService {
           year: 'numeric',
           month: 'long',
           day: 'numeric',
+          timeZone: BUSINESS_TIMEZONE,
         });
         const formattedTime = appointmentDate.toLocaleTimeString('es-ES', {
           hour: '2-digit',
           minute: '2-digit',
+          timeZone: BUSINESS_TIMEZONE,
         });
 
         throw new BadRequestException({
@@ -5864,7 +5867,7 @@ export class SessionService {
               ? (companyWorker.worker.name || '').trim()
               : `Trabajador ID: ${companyWorker.id}`;
             throw new BadRequestException(
-              `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`,
+              `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIMEZONE })}). Por favor, seleccione otro horario o trabajador.`,
             );
           }
         }
@@ -6845,7 +6848,7 @@ export class SessionService {
 
         if (newStart < existEnd && newEnd > existStart) {
           throw new BadRequestException(
-            `El servicio "${service.name}" ya está asignado en esta sesión en un horario que se solapa (${new Date(existingDetail.startDatetime).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). No se puede agregar el mismo servicio dos veces en el mismo horario.`,
+            `El servicio "${service.name}" ya está asignado en esta sesión en un horario que se solapa (${new Date(existingDetail.startDatetime).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIMEZONE })}). No se puede agregar el mismo servicio dos veces en el mismo horario.`,
           );
         }
       }
@@ -6864,7 +6867,7 @@ export class SessionService {
           ? (companyWorker.worker.name || '').trim()
           : `Trabajador ID: ${companyWorker.id}`;
         throw new BadRequestException(
-          `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}). Por favor, seleccione otro horario o trabajador.`,
+          `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIMEZONE })}). Por favor, seleccione otro horario o trabajador.`,
         );
       }
 
