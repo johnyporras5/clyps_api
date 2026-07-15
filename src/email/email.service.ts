@@ -312,9 +312,11 @@ export class EmailService {
       timeZone: BUSINESS_TIMEZONE,
     });
 
-    const timeStr = sessionDate.toLocaleTimeString('es-ES', {
-      hour: '2-digit',
+    // Hora en formato 12h con AM/PM (estilo de la app), en la zona del negocio.
+    const timeStr = sessionDate.toLocaleTimeString('en-US', {
+      hour: 'numeric',
       minute: '2-digit',
+      hour12: true,
       timeZone: BUSINESS_TIMEZONE,
     });
 
