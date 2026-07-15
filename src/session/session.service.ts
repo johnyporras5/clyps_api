@@ -25,6 +25,13 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { Worker } from '../worker/entities/worker.entity';
 import { EmailService } from '../email/email.service';
 import { PaginationResult } from '../common/dto/pagination.dto';
+import {
+  businessDayBounds,
+  businessDayBoundsForInstant,
+  businessRangeBounds,
+  businessToday,
+  inclusiveDayCount,
+} from '../common/utils/business-time.util';
 import { UpdateSessionDto } from './dto/update-session-and-detail.dto';
 import { GetSessionsDto } from './dto/get-sessions.dto';
 import {
@@ -218,12 +225,16 @@ export class SessionService {
           workerAssigned = true;
         }
 
-        // Si el trabajador tiene tiempo específico, usarlo
+        // Si el trabajador tiene un tiempo específico VÁLIDO (> 0), usarlo. Un
+        // tiempo en 0/negativo NO debe pisar el standardTime del servicio: si no,
+        // la cita se guardaría con duración 0 (fin = inicio) y el chequeo de
+        // solape se saltaría por completo.
         if (
           workerAssignment.time !== undefined &&
-          workerAssignment.time !== null
+          workerAssignment.time !== null &&
+          Number(workerAssignment.time) > 0
         ) {
-          time = workerAssignment.time;
+          time = Number(workerAssignment.time);
         }
       }
     }
@@ -1406,15 +1417,10 @@ export class SessionService {
       return null;
     }
 
-    // Convertir a fecha para comparación
-    const appointmentDate = new Date(sessionDatetime);
-
-    // Opción 1: Buscar citas en la misma fecha exacta
-    const startOfDay = new Date(appointmentDate);
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date(appointmentDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    // Día del negocio que contiene la cita (no la zona del servidor), para no
+    // perder las citas de noche.
+    const { startOfDay, endOfDay } =
+      businessDayBoundsForInstant(sessionDatetime);
 
     // Margen de tiempo (ej: 30 minutos antes/después)
     const timeMarginMinutes = 30; // Puedes ajustar este valor
@@ -1437,7 +1443,7 @@ export class SessionService {
       const existingAppointmentTime = new Date(
         session.sessionDatetime,
       ).getTime();
-      const newAppointmentTime = appointmentDate.getTime();
+      const newAppointmentTime = new Date(sessionDatetime).getTime();
 
       // Calcular diferencia en minutos
       const timeDifference =
@@ -1520,11 +1526,9 @@ export class SessionService {
       );
     }
 
-    // Rango del día seleccionado (misma convención que el resto de filtros por fecha)
-    const dateStr = date.split('T')[0].split(' ')[0];
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
-    const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+    // Rango del día seleccionado EN LA ZONA DEL NEGOCIO (misma convención que
+    // el resto de filtros por fecha), para no perder las citas de noche.
+    const { startOfDay, endOfDay } = businessDayBounds(date);
 
     // Se usa getMany() (entidades) en lugar de getRawMany() para que
     // `startDatetime` se serialice EXACTAMENTE igual que en el resto de la API.
@@ -1604,11 +1608,10 @@ export class SessionService {
     const newStart = new Date(startDatetime).getTime();
     const newEnd = newStart + totalTimeMinutes * 60000;
 
-    const appointmentDate = new Date(startDatetime);
-    const startOfDay = new Date(appointmentDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(appointmentDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    // Día del negocio que contiene la cita (no la zona del servidor): así el
+    // pre-filtro no descarta las citas de noche antes de la comparación de
+    // solape (que sí se hace por instantes, más abajo).
+    const { startOfDay, endOfDay } = businessDayBoundsForInstant(startDatetime);
 
     // Buscar detalles del trabajador en el mismo día (excluyendo cancelados status=5)
     const workerDetails = await this.sessionDetailRepository
@@ -1692,12 +1695,8 @@ export class SessionService {
       return null;
     }
 
-    const appointmentDate = new Date(sessionDatetime);
-    const startOfDay = new Date(appointmentDate);
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date(appointmentDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    const { startOfDay, endOfDay } =
+      businessDayBoundsForInstant(sessionDatetime);
 
     // Buscar sesiones del cliente en el mismo día (excluyendo canceladas status=5)
     const sessions = await this.sessionRepository.find({
@@ -1782,11 +1781,8 @@ export class SessionService {
     clientId: number,
     sessionDatetime: Date,
   ): Promise<Session[]> {
-    const startOfDay = new Date(sessionDatetime);
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date(sessionDatetime);
-    endOfDay.setHours(23, 59, 59, 999);
+    const { startOfDay, endOfDay } =
+      businessDayBoundsForInstant(sessionDatetime);
 
     return await this.sessionRepository.find({
       where: {
@@ -1817,9 +1813,9 @@ export class SessionService {
   private readonly MAX_RANGE_DAYS = 62;
 
   /**
-   * Resuelve un rango `startDate`..`endDate` (YYYY-MM-DD) a los instantes
-   * [00:00:00.000 del primer día, 23:59:59.999 del último día], en hora LOCAL,
-   * igual que el filtro de un solo día. Es INCLUSIVO en ambos extremos.
+   * Resuelve un rango `startDate`..`endDate` (YYYY-MM-DD) a los instantes de la
+   * medianoche del primer día y el fin del último día, EN LA ZONA DEL NEGOCIO.
+   * Es INCLUSIVO en ambos extremos.
    *
    * Valida que endDate no sea anterior a startDate y que el rango no supere
    * MAX_RANGE_DAYS.
@@ -1828,11 +1824,12 @@ export class SessionService {
     startDate: string,
     endDate: string,
   ): { startOfDay: Date; endOfDay: Date } {
-    const { startOfDay, endOfDay, days } = this.toInclusiveDayRange(
+    const { startOfDay, endOfDay } = this.toInclusiveDayRange(
       startDate,
       endDate,
     );
 
+    const days = inclusiveDayCount(startDate, endDate);
     if (days > this.MAX_RANGE_DAYS) {
       throw new BadRequestException(
         `El rango de fechas no puede superar ${this.MAX_RANGE_DAYS} días (se solicitaron ${days}). Divide la consulta en tramos más cortos.`,
@@ -1842,33 +1839,22 @@ export class SessionService {
     return { startOfDay, endOfDay };
   }
 
+  /**
+   * Igual que `resolveDateRange` pero SIN el tope de días: límites del rango en
+   * la ZONA DEL NEGOCIO, inclusivo en ambos extremos. Se usa donde el rango
+   * puede ser legítimamente largo (p. ej. el historial de citas del cliente).
+   */
   private toInclusiveDayRange(
     startDate: string,
     endDate: string,
-  ): { startOfDay: Date; endOfDay: Date; days: number } {
-    const parse = (value: string) =>
-      value.split('T')[0].split(' ')[0].split('-').map(Number);
-
-    const [sy, sm, sd] = parse(startDate);
-    const [ey, em, ed] = parse(endDate);
-
-    const startOfDay = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
-    const endOfDay = new Date(ey, em - 1, ed, 23, 59, 59, 999);
-
+  ): { startOfDay: Date; endOfDay: Date } {
+    const { startOfDay, endOfDay } = businessRangeBounds(startDate, endDate);
     if (endOfDay < startOfDay) {
       throw new BadRequestException(
         'El rango es inválido: endDate no puede ser anterior a startDate',
       );
     }
-
-    const days =
-      Math.round(
-        (new Date(ey, em - 1, ed).getTime() -
-          new Date(sy, sm - 1, sd).getTime()) /
-          86400000,
-      ) + 1;
-
-    return { startOfDay, endOfDay, days };
+    return { startOfDay, endOfDay };
   }
 
   private calculateRealTime(detail: SessionDetail): number {
@@ -2712,47 +2698,19 @@ export class SessionService {
       // FILTROS DE FECHA
       // ===================================================================
 
-      // PRIORIDAD 1: Filtrar por un día específico
+      // PRIORIDAD 1: Filtrar por un día específico (en la zona del negocio)
       if (getSessionsDto.date) {
-        // Parsear la fecha correctamente (solo YYYY-MM-DD del string)
-        const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0]; // Obtener solo la parte de fecha
-        const [year, month, day] = dateStr.split('-').map(Number);
-
-        // Crear fechas en zona horaria local
-        const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
-        const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
-
+        const { startOfDay, endOfDay } = businessDayBounds(getSessionsDto.date);
         whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
         console.log(
-          `📅 Filtrando por fecha específica: ${dateStr} (${startOfDay.toISOString()} - ${endOfDay.toISOString()})`,
+          `📅 Filtrando por fecha: ${getSessionsDto.date} (${startOfDay.toISOString()} - ${endOfDay.toISOString()})`,
         );
       }
-      // PRIORIDAD 2: Filtrar por día de hoy
+      // PRIORIDAD 2: Filtrar por día de hoy (en la zona del negocio)
       else if (getSessionsDto.today) {
-        const today = new Date();
-        const startOfDay = new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          today.getDate(),
-          0,
-          0,
-          0,
-          0,
-        );
-        const endOfDay = new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          today.getDate(),
-          23,
-          59,
-          59,
-          999,
-        );
-
+        const { startOfDay, endOfDay } = businessDayBounds(businessToday());
         whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
-        console.log(
-          `📅 Filtrando por día actual: ${startOfDay.toLocaleDateString()}`,
-        );
+        console.log(`📅 Filtrando por día actual (${businessToday()})`);
       }
       // PRIORIDAD 3: Filtrar por rango de fechas (inclusivo en ambos extremos)
       else if (getSessionsDto.startDate && getSessionsDto.endDate) {
@@ -3108,31 +3066,10 @@ export class SessionService {
     const whereConditions: any = { id: In(sessionIds) };
 
     if (getSessionsDto.date) {
-      const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
-      const [year, month, day] = dateStr.split('-').map(Number);
-      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
-      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+      const { startOfDay, endOfDay } = businessDayBounds(getSessionsDto.date);
       whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
     } else if (getSessionsDto.today) {
-      const today = new Date();
-      const startOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        0,
-        0,
-        0,
-        0,
-      );
-      const endOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        23,
-        59,
-        59,
-        999,
-      );
+      const { startOfDay, endOfDay } = businessDayBounds(businessToday());
       whereConditions.sessionDatetime = Between(startOfDay, endOfDay);
     } else if (getSessionsDto.startDate && getSessionsDto.endDate) {
       const { startOfDay, endOfDay } = this.resolveDateRange(
@@ -5131,58 +5068,27 @@ export class SessionService {
 
     // PRIORIDAD 1: Filtrar por una fecha específica (date)
     if (getSessionsDto.date) {
-      const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
-      const [year, month, day] = dateStr.split('-').map(Number);
-      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
-      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
-
+      const { startOfDay, endOfDay } = businessDayBounds(getSessionsDto.date);
       query.andWhere(
         'session.session_datetime BETWEEN :startOfDay AND :endOfDay',
-        {
-          startOfDay,
-          endOfDay,
-        },
+        { startOfDay, endOfDay },
       );
       console.log(
-        `📅 Trabajador: Filtrando por fecha específica en session_datetime: ${dateStr}`,
+        `📅 Trabajador: Filtrando por fecha ${getSessionsDto.date} (zona negocio)`,
       );
     }
-    // PRIORIDAD 2: Filtrar por día actual (today)
+    // PRIORIDAD 2: Filtrar por día actual (today), en la zona del negocio
     else if (getSessionsDto.today) {
-      const today = new Date();
-      const startOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        0,
-        0,
-        0,
-        0,
-      );
-      const endOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        23,
-        59,
-        59,
-        999,
-      );
-
+      const { startOfDay, endOfDay } = businessDayBounds(businessToday());
       query.andWhere(
         'session.session_datetime BETWEEN :startOfDay AND :endOfDay',
-        {
-          startOfDay,
-          endOfDay,
-        },
+        { startOfDay, endOfDay },
       );
       console.log(
-        `📅 Trabajador: Filtrando por día actual en session_datetime (${today.toLocaleDateString()})`,
+        `📅 Trabajador: Filtrando por día actual (${businessToday()})`,
       );
     }
     // PRIORIDAD 3: Filtrar por rango de fechas (inclusivo en ambos extremos).
-    // Antes usaba `new Date(endDate)` = medianoche del último día, así que las
-    // citas de ese día quedaban fuera. El helper resuelve el fin del día.
     else if (getSessionsDto.startDate && getSessionsDto.endDate) {
       const { startOfDay, endOfDay } = this.resolveDateRange(
         getSessionsDto.startDate,
@@ -5268,34 +5174,13 @@ export class SessionService {
 
     // Replicar los mismos filtros de fecha sobre session.session_datetime
     if (getSessionsDto.date) {
-      const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
-      const [year, month, day] = dateStr.split('-').map(Number);
-      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
-      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+      const { startOfDay, endOfDay } = businessDayBounds(getSessionsDto.date);
       countQuery.andWhere(
         'session.session_datetime BETWEEN :startOfDay AND :endOfDay',
         { startOfDay, endOfDay },
       );
     } else if (getSessionsDto.today) {
-      const today = new Date();
-      const startOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        0,
-        0,
-        0,
-        0,
-      );
-      const endOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        23,
-        59,
-        59,
-        999,
-      );
+      const { startOfDay, endOfDay } = businessDayBounds(businessToday());
       countQuery.andWhere(
         'session.session_datetime BETWEEN :startOfDay AND :endOfDay',
         { startOfDay, endOfDay },
@@ -7696,52 +7581,21 @@ export class SessionService {
 
     // PRIORIDAD 1: Fecha específica
     if (getSessionsDto.date) {
-      const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
-      const [year, month, day] = dateStr.split('-').map(Number);
-      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
-      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
-
+      const { startOfDay, endOfDay } = businessDayBounds(getSessionsDto.date);
       query.andWhere(
         'session.session_datetime BETWEEN :startOfDay AND :endOfDay',
-        {
-          startOfDay,
-          endOfDay,
-        },
+        { startOfDay, endOfDay },
       );
-      console.log(`📅 Cliente: Filtrando por fecha específica: ${dateStr}`);
+      console.log(`📅 Cliente: Filtrando por fecha ${getSessionsDto.date}`);
     }
-    // PRIORIDAD 2: Día actual
+    // PRIORIDAD 2: Día actual (en la zona del negocio)
     else if (getSessionsDto.today) {
-      const today = new Date();
-      const startOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        0,
-        0,
-        0,
-        0,
-      );
-      const endOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        23,
-        59,
-        59,
-        999,
-      );
-
+      const { startOfDay, endOfDay } = businessDayBounds(businessToday());
       query.andWhere(
         'session.session_datetime BETWEEN :startOfDay AND :endOfDay',
-        {
-          startOfDay,
-          endOfDay,
-        },
+        { startOfDay, endOfDay },
       );
-      console.log(
-        `📅 Cliente: Filtrando por día actual (${today.toLocaleDateString()})`,
-      );
+      console.log(`📅 Cliente: Filtrando por día actual (${businessToday()})`);
     }
     // PRIORIDAD 3: Rango de fechas (inclusivo en ambos extremos).
     // Antes usaba `new Date(endDate)` = medianoche del último día, así que las
@@ -7804,34 +7658,13 @@ export class SessionService {
 
     // Replicar los mismos filtros de fecha
     if (getSessionsDto.date) {
-      const dateStr = getSessionsDto.date.split('T')[0].split(' ')[0];
-      const [year, month, day] = dateStr.split('-').map(Number);
-      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
-      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+      const { startOfDay, endOfDay } = businessDayBounds(getSessionsDto.date);
       countQuery.andWhere(
         'session.session_datetime BETWEEN :startOfDay AND :endOfDay',
         { startOfDay, endOfDay },
       );
     } else if (getSessionsDto.today) {
-      const today = new Date();
-      const startOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        0,
-        0,
-        0,
-        0,
-      );
-      const endOfDay = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate(),
-        23,
-        59,
-        59,
-        999,
-      );
+      const { startOfDay, endOfDay } = businessDayBounds(businessToday());
       countQuery.andWhere(
         'session.session_datetime BETWEEN :startOfDay AND :endOfDay',
         { startOfDay, endOfDay },
@@ -8888,16 +8721,10 @@ export class SessionService {
         completedStatus: [3, 4],
       });
 
-    // Normalizar: startDate al inicio del día (00:00:00) y endDate al final (23:59:59.999),
-    // para que el rango sea inclusivo del día completo (ej. "hasta hoy" incluye hoy entero).
-    const toStartOfDay = (d: string): Date => {
-      const [y, m, day] = d.split('T')[0].split(' ')[0].split('-').map(Number);
-      return new Date(y, m - 1, day, 0, 0, 0, 0);
-    };
-    const toEndOfDay = (d: string): Date => {
-      const [y, m, day] = d.split('T')[0].split(' ')[0].split('-').map(Number);
-      return new Date(y, m - 1, day, 23, 59, 59, 999);
-    };
+    // Normalizar el rango al inicio/fin del día EN LA ZONA DEL NEGOCIO, para que
+    // sea inclusivo del día completo y no pierda las citas de noche.
+    const toStartOfDay = (d: string): Date => businessDayBounds(d).startOfDay;
+    const toEndOfDay = (d: string): Date => businessDayBounds(d).endOfDay;
 
     if (startDate && endDate) {
       query.andWhere(
