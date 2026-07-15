@@ -37,6 +37,8 @@ export interface SessionDetailResponse {
   serviceName: string;
   serviceDescription: string;
   serviceCost: number;
+  // Código ISO de la moneda del servicio (ej. "USD", "EUR", "VES").
+  currency: string | null;
   // Tiempo estimado del servicio definido por la compañía (en minutos)
   standardTime: number | null;
   // Tiempo planificado del trabajador para este servicio (en minutos)
