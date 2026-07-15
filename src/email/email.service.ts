@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
+import { BUSINESS_TIMEZONE } from '../common/utils/business-time.util';
 
 @Injectable()
 export class EmailService {
@@ -301,16 +302,22 @@ export class EmailService {
   formatSessionDate(date: Date): { date: string; time: string } {
     const sessionDate = new Date(date);
 
+    // El instante se guarda en UTC; para el correo hay que mostrarlo en la zona
+    // del negocio, si no en producción (servidor UTC) la hora sale +4h.
     const dateStr = sessionDate.toLocaleDateString('es-ES', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric',
+      timeZone: BUSINESS_TIMEZONE,
     });
 
-    const timeStr = sessionDate.toLocaleTimeString('es-ES', {
-      hour: '2-digit',
+    // Hora en formato 12h con AM/PM (estilo de la app), en la zona del negocio.
+    const timeStr = sessionDate.toLocaleTimeString('en-US', {
+      hour: 'numeric',
       minute: '2-digit',
+      hour12: true,
+      timeZone: BUSINESS_TIMEZONE,
     });
 
     return {
@@ -1590,6 +1597,7 @@ export class EmailService {
                         day: 'numeric',
                         hour: '2-digit',
                         minute: '2-digit',
+                        timeZone: BUSINESS_TIMEZONE,
                       })}
                   </div>
                   
