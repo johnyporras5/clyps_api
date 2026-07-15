@@ -1996,6 +1996,7 @@ export class SessionService {
         serviceName: service?.name || 'Servicio no encontrado',
         serviceDescription: service?.description || '',
         serviceCost: Number(detail.cost || 0),
+        currency: service?.currency ?? null,
         // Tiempo estimado del servicio definido por la compañía (en minutos)
         standardTime:
           service?.standardTime != null ? Number(service.standardTime) : null,
@@ -2874,6 +2875,7 @@ export class SessionService {
                 serviceName: service?.name || '',
                 serviceDescription: service?.description || '',
                 serviceCost: Number(detail.cost || 0),
+                currency: service?.currency ?? null,
                 // Tiempo estimado del servicio definido por la compañía (en minutos)
                 standardTime:
                   service?.standardTime != null
@@ -3165,6 +3167,7 @@ export class SessionService {
             serviceName: service?.name || '',
             serviceDescription: service?.description || '',
             serviceCost: Number(detail.cost || 0),
+            currency: service?.currency ?? null,
             totalTime: realTime,
             startDatetime: detail.startDatetime,
             companyWorkerId: detail.companyWorkerId,
@@ -5040,6 +5043,7 @@ export class SessionService {
         'service.id AS serviceId',
         'service.name AS serviceName',
         'service.description AS serviceDescription',
+        'service.currency AS serviceCurrency',
         'service.cost AS serviceOriginalCost',
         'service.standard_time AS serviceStandardTime',
 
@@ -5367,6 +5371,7 @@ export class SessionService {
         serviceId: detail.serviceId,
         serviceName: detail.serviceName || 'Servicio no encontrado',
         serviceDescription: detail.serviceDescription || '',
+        currency: detail.serviceCurrency ?? null,
         // Tiempo estimado del servicio definido por la compañía (en minutos)
         standardTime:
           detail.serviceStandardTime != null
@@ -7537,6 +7542,7 @@ export class SessionService {
         'service.id AS serviceId',
         'service.name AS serviceName',
         'service.description AS serviceDescription',
+        'service.currency AS serviceCurrency',
         'service.cost AS serviceOriginalCost',
         'service.standard_time AS serviceStandardTime',
 
@@ -7947,6 +7953,7 @@ export class SessionService {
         serviceId: detail.serviceId,
         serviceName: detail.serviceName || 'Servicio no encontrado',
         serviceDescription: detail.serviceDescription || '',
+        currency: detail.serviceCurrency ?? null,
         // Tiempo estimado del servicio definido por la compañía (en minutos)
         standardTime:
           detail.serviceStandardTime != null
