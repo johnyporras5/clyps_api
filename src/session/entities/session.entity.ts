@@ -45,7 +45,8 @@ export class Session {
     nullable: true,
     transformer: {
       to: (value: number) => value,
-      from: (value: string) => parseFloat(value),
+      from: (value: string | null) =>
+        value == null ? null : parseFloat(value),
     },
   })
   totalCost: number;
