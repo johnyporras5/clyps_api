@@ -5,10 +5,15 @@ import {
   Logger,
   ForbiddenException,
   ConflictException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, Between, Not, DeepPartial, Brackets } from 'typeorm';
 import { Session } from './entities/session.entity';
+import { SessionPayment } from './entities/session-payment.entity';
+import { SessionPaymentLine } from './entities/session-payment-line.entity';
+import { SessionPaymentTip } from './entities/session-payment-tip.entity';
+import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
 import { CreateSessionDto } from './dto/create-session.dto';
 import {
   CreateSessionWithDetailDto,
@@ -93,6 +98,12 @@ export class SessionService {
     private offerRepository: Repository<Offer>,
     @InjectRepository(ServiceOffer)
     private serviceOfferRepository: Repository<ServiceOffer>,
+    @InjectRepository(SessionPayment)
+    private sessionPaymentRepository: Repository<SessionPayment>,
+    @InjectRepository(SessionPaymentLine)
+    private sessionPaymentLineRepository: Repository<SessionPaymentLine>,
+    @InjectRepository(SessionPaymentTip)
+    private sessionPaymentTipRepository: Repository<SessionPaymentTip>,
     private fileUploadService: FileUploadService,
   ) {}
 
@@ -394,6 +405,22 @@ export class SessionService {
    * Devuelve los detalles que cambiaron de hora (viejo→nuevo) para notificar a
    * sus clientes (push + correo).
    */
+  /**
+   * Tolerancia (±min) para considerar que un Comenzar/Terminar ocurrió "a
+   * tiempo". Dentro de la tolerancia se conserva el horario pautado: no se
+   * mueve el bloque, no se arrastran las citas siguientes y no se notifica
+   * (empezar 1-5 min tarde no amerita reagendar a nadie). Mismo valor que usa
+   * el front (LATE_START_TOLERANCE_MIN) para decidir si muestra el modal.
+   */
+  private static readonly SCHEDULE_TOLERANCE_MIN = 5;
+
+  private static withinScheduleTolerance(a: Date, b: Date): boolean {
+    return (
+      Math.abs(a.getTime() - b.getTime()) <=
+      SessionService.SCHEDULE_TOLERANCE_MIN * 60000
+    );
+  }
+
   private async rippleWorkerColumn(
     companyWorkerId: number | null | undefined,
     dayAnchor: Date | string | null | undefined,
@@ -2084,6 +2111,8 @@ export class SessionService {
       servicesCount: details.length,
       services: details,
       extraServices: session.extraServices || [],
+      // Cobro registrado (POST /sessions/:id/payment); null si aún no se cobró.
+      payment: await this.getSessionPaymentResponse(session.id),
       cancellationReason: session.cancellationReason ?? null,
       cancelledBy: session.cancelledBy ?? null,
       cancelledByText: this.getCancelledByText(session.cancelledBy),
@@ -3380,12 +3409,44 @@ export class SessionService {
     const cascadeToDetails = newStatus >= 1 && newStatus <= 5;
     let detailsUpdated = 0;
 
+    const now = new Date();
+
+    // Conservar el horario pautado (keptSchedule): si el front manda
+    // keepOriginalSchedule=true ("la cita SÍ ocurrió a su hora", el botón se
+    // pulsó tarde por olvido) o si la petición llega dentro de la tolerancia
+    // de ±5 min, NO se registra la hora de la petición: los bloques quedan en
+    // su horario, no se arrastran las citas siguientes y no se notifica.
+    let keptSchedule = false;
+    if (newStatus === 2) {
+      const scheduledStart =
+        session.startDatetime ?? session.sessionDatetime ?? null;
+      keptSchedule =
+        updateSessionStatusDto.keepOriginalSchedule === true ||
+        (scheduledStart !== null &&
+          SessionService.withinScheduleTolerance(
+            now,
+            new Date(scheduledStart),
+          ));
+    } else if (newStatus === 3) {
+      // Referencia: el fin planificado de la cita = el mayor fin de sus
+      // detalles activos (proyectado al Comenzar o pautado al crear).
+      const plannedEnds = sessionDetails
+        .filter((d) => d.status !== 5 && d.endDatetime)
+        .map((d) => new Date(d.endDatetime as Date).getTime());
+      const plannedEnd = plannedEnds.length
+        ? new Date(Math.max(...plannedEnds))
+        : null;
+      keptSchedule =
+        updateSessionStatusDto.keepOriginalSchedule === true ||
+        (plannedEnd !== null &&
+          SessionService.withinScheduleTolerance(now, plannedEnd));
+    }
+
     const queryRunner =
       this.sessionRepository.manager.connection.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
-    const now = new Date();
     let updatedSession: Session;
     try {
       session.sessionStatus = newStatus;
@@ -3396,8 +3457,9 @@ export class SessionService {
       }
       // Al iniciar la cita (En progreso), sobrescribir su startDatetime con la
       // hora real, igual que en los detalles. Solo cuando realmente cambia a 2
-      // para no re-pisar el inicio real si ya estaba en progreso.
-      if (newStatus === 2 && previousStatus !== 2) {
+      // para no re-pisar el inicio real si ya estaba en progreso, y solo si NO
+      // se está conservando el horario pautado.
+      if (newStatus === 2 && previousStatus !== 2 && !keptSchedule) {
         session.startDatetime = now;
       }
       updatedSession = await queryRunner.manager.save(session);
@@ -3419,7 +3481,7 @@ export class SessionService {
         // real de terminación (y el arrastre no detectaría el solape). Los ya
         // completados y los agendados no se tocan. Se hace en un UPDATE separado
         // para no depender del orden de evaluación del SET.
-        if (newStatus === 3) {
+        if (newStatus === 3 && !keptSchedule) {
           await queryRunner.manager
             .createQueryBuilder()
             .update(SessionDetail)
@@ -3433,7 +3495,7 @@ export class SessionService {
         if (newStatus === 5) {
           setValues.cancelledBy = 'adm';
         }
-        if (newStatus === 2) {
+        if (newStatus === 2 && !keptSchedule) {
           setValues.startDatetime = () => ':now';
           // El bloque se mueve a la hora real conservando su duración planificada
           // (piso de 1 min para no dejar altura cero). Fin proyectado para dibujar
@@ -3479,8 +3541,10 @@ export class SessionService {
     // Arrastre (ripple): al Comenzar (2) / Terminar (3) los bloques de la cita
     // se movieron/crecieron. Empujar las citas AGENDADAS siguientes de CADA
     // columna de worker de la cita (cada worker es independiente).
+    // Si se CONSERVÓ el horario (keptSchedule) nada se movió: sin arrastre ni
+    // notificaciones.
     const movedByRipple: RippleMovedDetail[] = [];
-    if (newStatus === 2 || newStatus === 3) {
+    if (!keptSchedule && (newStatus === 2 || newStatus === 3)) {
       const workerIds = [
         ...new Set(
           sessionDetails
@@ -3503,6 +3567,447 @@ export class SessionService {
       validationDetails: validationResult,
       movedByRipple,
     };
+  }
+
+  // ==================== COBRO DE CITA (Registrar pago) ====================
+
+  /** Comparación de dinero con tolerancia de ±0.01. */
+  private static moneyEquals(a: number, b: number): boolean {
+    return Math.abs(a - b) <= 0.01 + 1e-9;
+  }
+
+  async registerSessionPayment(
+    sessionId: number,
+    dto: RegisterSessionPaymentDto,
+    adminId: number,
+  ): Promise<{
+    session: Session;
+    payment: {
+      id: number;
+      sessionId: number;
+      method: string | null;
+      reference: string | null;
+      tipCurrency: string | null;
+      tip: number;
+      tipExchangeRate: number | null;
+      tipBs: number | null;
+      totalBs: number | null;
+      paidBy: number;
+      paidAt: Date;
+      lines: Array<{
+        currency: string;
+        subtotal: number;
+        exchangeRate: number | null;
+        subtotalBs: number | null;
+      }>;
+      tips: Array<{ companyWorkerId: number; amount: number }>;
+    };
+  }> {
+    // 1. Cita + detalles
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      throw new NotFoundException(`Cita con ID ${sessionId} no encontrada`);
+    }
+    const sessionDetails = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    if (sessionDetails.length === 0) {
+      throw new NotFoundException(
+        `La cita ${sessionId} no tiene servicios asociados`,
+      );
+    }
+
+    // 2. El admin debe ser dueño de la company de la cita (403)
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!adminCompany) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+    let sessionBelongsToAdmin = false;
+    for (const detail of sessionDetails) {
+      if (!detail.companyWorkerId) continue;
+      const cw = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['company'],
+      });
+      if (cw?.company?.id === adminCompany.id) {
+        sessionBelongsToAdmin = true;
+        break;
+      }
+    }
+    if (!sessionBelongsToAdmin) {
+      throw new ForbiddenException(
+        'No tienes permiso para registrar el cobro de esta cita',
+      );
+    }
+
+    // 3. Estado: solo se cobra una cita Completada (3) (409)
+    if (session.sessionStatus !== 3) {
+      const estado = this.getSessionStatusText(session.sessionStatus);
+      throw new ConflictException(
+        session.sessionStatus === 4 || session.sessionStatus === 6
+          ? `La cita ya está "${estado}"`
+          : `La cita debe estar "Completada" para registrar el cobro (estado actual: "${estado}")`,
+      );
+    }
+
+    // 4. Sin cobro previo (409, idempotencia)
+    const existing = await this.sessionPaymentRepository.findOne({
+      where: { sessionId },
+    });
+    if (existing) {
+      throw new ConflictException(
+        `La cita ya tiene un cobro registrado (payment ${existing.id})`,
+      );
+    }
+
+    // 5. Validaciones de negocio (422)
+    const tip = dto.tip ?? 0;
+    const tips = dto.tips ?? [];
+    const tipsSum = tips.reduce((acc, t) => acc + (t.amount || 0), 0);
+    if (!SessionService.moneyEquals(tipsSum, tip)) {
+      throw new UnprocessableEntityException(
+        `El reparto de propinas (${tipsSum.toFixed(2)}) no coincide con la propina total (${tip.toFixed(2)})`,
+      );
+    }
+    const sessionCwIds = new Set(
+      sessionDetails
+        .map((d) => d.companyWorkerId)
+        .filter((id): id is number => id != null),
+    );
+    for (const t of tips) {
+      if (!sessionCwIds.has(t.companyWorkerId)) {
+        throw new UnprocessableEntityException(
+          `El trabajador ${t.companyWorkerId} no participa en esta cita`,
+        );
+      }
+    }
+    for (const line of dto.lines) {
+      const isVes = line.currency.toUpperCase() === 'VES';
+      if (!isVes && !(Number(line.exchangeRate) > 0)) {
+        throw new UnprocessableEntityException(
+          `Falta la tasa de cambio (Bs por 1 ${line.currency}) del renglón ${line.currency}`,
+        );
+      }
+    }
+
+    // 6. Chequeo de descuadre (criterio A: aceptar y LOGGEAR, nunca bloquear).
+    //    Se compara lines[] contra la suma de los servicios NO cancelados de la
+    //    cita por moneda (precios congelados en session_detail.cost; la moneda
+    //    sale del servicio).
+    try {
+      const activeDetails = sessionDetails.filter((d) => d.status !== 5);
+      const serviceIds = [
+        ...new Set(activeDetails.map((d) => d.serviceId).filter(Boolean)),
+      ];
+      const services = serviceIds.length
+        ? await this.serviceRepository.find({
+            where: { id: In(serviceIds) },
+            select: ['id', 'currency'],
+          })
+        : [];
+      const currencyByService = new Map(
+        services.map((s) => [s.id, (s.currency || 'USD').toUpperCase()]),
+      );
+      const expectedByCurrency = new Map<string, number>();
+      for (const d of activeDetails) {
+        const cur = currencyByService.get(d.serviceId) || 'USD';
+        expectedByCurrency.set(
+          cur,
+          (expectedByCurrency.get(cur) || 0) + Number(d.cost || 0),
+        );
+      }
+      for (const [cur, expected] of expectedByCurrency) {
+        const line = dto.lines.find((l) => l.currency.toUpperCase() === cur);
+        const sent = line ? Number(line.subtotal) : 0;
+        if (!SessionService.moneyEquals(sent, expected)) {
+          this.logger.warn(
+            `⚠️ Cobro de cita ${sessionId}: descuadre en ${cur} — lines dice ${sent.toFixed(2)}, los servicios suman ${expected.toFixed(2)}. Se registra igual (criterio A).`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo verificar el descuadre del cobro de la cita ${sessionId}: ${(error as Error).message}`,
+      );
+    }
+
+    // 7. Transacción: persistir cobro + marcar pagada + cascada a detalles
+    const queryRunner =
+      this.sessionRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    const paidAt = new Date();
+    let savedPayment: SessionPayment;
+    let updatedSession: Session;
+    try {
+      savedPayment = await queryRunner.manager.save(SessionPayment, {
+        sessionId,
+        method: dto.method ?? null,
+        reference: dto.reference ?? null,
+        tipCurrency: dto.tipCurrency ?? null,
+        tip,
+        tipExchangeRate: dto.tipExchangeRate ?? null,
+        tipBs: dto.tipBs ?? null,
+        totalBs: dto.totalBs ?? null,
+        paidBy: adminId,
+        paidAt,
+      });
+
+      if (dto.lines.length > 0) {
+        await queryRunner.manager.save(
+          SessionPaymentLine,
+          dto.lines.map((l) => ({
+            paymentId: savedPayment.id,
+            currency: l.currency.toUpperCase(),
+            subtotal: l.subtotal,
+            exchangeRate: l.exchangeRate ?? null,
+            subtotalBs: l.subtotalBs ?? null,
+          })),
+        );
+      }
+      if (tips.length > 0) {
+        await queryRunner.manager.save(
+          SessionPaymentTip,
+          tips.map((t) => ({
+            paymentId: savedPayment.id,
+            companyWorkerId: t.companyWorkerId,
+            amount: t.amount,
+          })),
+        );
+      }
+
+      // Marcar la cita como Pagada, igual que PUT /:id/status (cascada + lock).
+      // UPDATE dirigido (solo las columnas que cambian): guardar la entidad
+      // completa reescribiría columnas ajenas y el transformer de total_cost
+      // convierte NULL en NaN, lo que rompería el UPDATE.
+      await queryRunner.manager
+        .createQueryBuilder()
+        .update(Session)
+        .set({ sessionStatus: 4, statusLocked: true })
+        .where('id = :sessionId', { sessionId })
+        .execute();
+      session.sessionStatus = 4;
+      session.statusLocked = true;
+      updatedSession = session;
+
+      await queryRunner.manager
+        .createQueryBuilder()
+        .update(SessionDetail)
+        .set({ status: 4 })
+        .where('sessionId = :sessionId', { sessionId })
+        .andWhere('status != :cancelled', { cancelled: 5 })
+        .execute();
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      // Carrera contra el UNIQUE de session_id (doble clic): 409, no 500.
+      const code =
+        (error as { code?: string; driverError?: { code?: string } })?.code ??
+        (error as { driverError?: { code?: string } })?.driverError?.code;
+      if (code === 'ER_DUP_ENTRY') {
+        throw new ConflictException('La cita ya tiene un cobro registrado');
+      }
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+
+    this.logger.log(
+      `💵 Cobro registrado para cita ${sessionId} (payment ${savedPayment.id}) por admin ${adminId}. Total Bs: ${dto.totalBs ?? 'n/a'}`,
+    );
+
+    return {
+      session: updatedSession,
+      payment: {
+        id: savedPayment.id,
+        sessionId,
+        method: dto.method ?? null,
+        reference: dto.reference ?? null,
+        tipCurrency: dto.tipCurrency ?? null,
+        tip,
+        tipExchangeRate: dto.tipExchangeRate ?? null,
+        tipBs: dto.tipBs ?? null,
+        totalBs: dto.totalBs ?? null,
+        paidBy: adminId,
+        paidAt,
+        lines: dto.lines.map((l) => ({
+          currency: l.currency.toUpperCase(),
+          subtotal: l.subtotal,
+          exchangeRate: l.exchangeRate ?? null,
+          subtotalBs: l.subtotalBs ?? null,
+        })),
+        tips: tips.map((t) => ({
+          companyWorkerId: t.companyWorkerId,
+          amount: t.amount,
+        })),
+      },
+    };
+  }
+
+  /**
+   * Cobro de una cita con la misma forma del payload de registro (+ paidAt /
+   * paidBy), para exponerlo en GET /sessions/:id. Devuelve null si no hay.
+   */
+  private async getSessionPaymentResponse(sessionId: number) {
+    const payment = await this.sessionPaymentRepository.findOne({
+      where: { sessionId },
+    });
+    if (!payment) return null;
+
+    const [lines, tips] = await Promise.all([
+      this.sessionPaymentLineRepository.find({
+        where: { paymentId: payment.id },
+      }),
+      this.sessionPaymentTipRepository.find({
+        where: { paymentId: payment.id },
+      }),
+    ]);
+
+    return {
+      id: payment.id,
+      method: payment.method,
+      reference: payment.reference,
+      tipCurrency: payment.tipCurrency,
+      tip: payment.tip != null ? Number(payment.tip) : 0,
+      tipExchangeRate:
+        payment.tipExchangeRate != null
+          ? Number(payment.tipExchangeRate)
+          : null,
+      tipBs: payment.tipBs != null ? Number(payment.tipBs) : null,
+      totalBs: payment.totalBs != null ? Number(payment.totalBs) : null,
+      paidBy: payment.paidBy,
+      paidAt: payment.paidAt,
+      lines: lines.map((l) => ({
+        currency: l.currency,
+        subtotal: Number(l.subtotal),
+        exchangeRate: l.exchangeRate != null ? Number(l.exchangeRate) : null,
+        subtotalBs: l.subtotalBs != null ? Number(l.subtotalBs) : null,
+      })),
+      tips: tips.map((t) => ({
+        companyWorkerId: t.companyWorkerId,
+        amount: Number(t.amount),
+      })),
+    };
+  }
+
+  /**
+   * Propinas por trabajador en un rango de fechas (para nómina). Devuelve un
+   * registro por (cobro, trabajador) + totales agregados por trabajador y
+   * moneda. Solo trabajadores de la company del admin autenticado.
+   */
+  async getWorkerTipsReport(
+    adminId: number,
+    startDate: string,
+    endDate: string,
+    companyWorkerId?: number,
+  ): Promise<{
+    data: Array<{
+      companyWorkerId: number;
+      workerName: string;
+      amount: number;
+      tipCurrency: string | null;
+      paidAt: Date;
+      sessionId: number;
+    }>;
+    totals: Array<{
+      companyWorkerId: number;
+      workerName: string;
+      tipCurrency: string | null;
+      total: number;
+    }>;
+  }> {
+    if (!startDate || !endDate) {
+      throw new BadRequestException(
+        'startDate y endDate (YYYY-MM-DD) son requeridos',
+      );
+    }
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!adminCompany) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+
+    // Rango inclusivo en la zona del negocio (misma convención del calendario)
+    const { startOfDay, endOfDay } = this.resolveDateRange(startDate, endDate);
+
+    const qb = this.sessionPaymentTipRepository
+      .createQueryBuilder('t')
+      .innerJoin('session_payments', 'p', 'p.id = t.payment_id')
+      .innerJoin(
+        'company_worker',
+        'cw',
+        'cw.id = t.company_worker_id AND cw.company_id = :companyId',
+        { companyId: adminCompany.id },
+      )
+      .leftJoin('worker', 'w', 'w.id = cw.worker_id')
+      .select('t.company_worker_id', 'companyWorkerId')
+      .addSelect('w.name', 'workerName')
+      .addSelect('t.amount', 'amount')
+      .addSelect('p.tip_currency', 'tipCurrency')
+      .addSelect('p.paid_at', 'paidAt')
+      .addSelect('p.session_id', 'sessionId')
+      .where('p.paid_at BETWEEN :start AND :end', {
+        start: startOfDay,
+        end: endOfDay,
+      })
+      .orderBy('p.paid_at', 'ASC');
+
+    if (companyWorkerId) {
+      qb.andWhere('t.company_worker_id = :cwId', { cwId: companyWorkerId });
+    }
+
+    const rows: Array<{
+      companyWorkerId: string | number;
+      workerName: string | null;
+      amount: string;
+      tipCurrency: string | null;
+      paidAt: Date;
+      sessionId: string | number;
+    }> = await qb.getRawMany();
+
+    const data = rows.map((r) => ({
+      companyWorkerId: Number(r.companyWorkerId),
+      workerName: (r.workerName || '').trim(),
+      amount: Number(r.amount),
+      tipCurrency: r.tipCurrency,
+      paidAt: r.paidAt,
+      sessionId: Number(r.sessionId),
+    }));
+
+    // Totales por (trabajador, moneda) — lo que consume payroll como concepto.
+    const totalsMap = new Map<
+      string,
+      {
+        companyWorkerId: number;
+        workerName: string;
+        tipCurrency: string | null;
+        total: number;
+      }
+    >();
+    for (const row of data) {
+      const key = `${row.companyWorkerId}|${row.tipCurrency ?? ''}`;
+      const acc = totalsMap.get(key) ?? {
+        companyWorkerId: row.companyWorkerId,
+        workerName: row.workerName,
+        tipCurrency: row.tipCurrency,
+        total: 0,
+      };
+      acc.total = Math.round((acc.total + row.amount) * 100) / 100;
+      totalsMap.set(key, acc);
+    }
+
+    return { data, totals: [...totalsMap.values()] };
   }
 
   async updateDetailStatus(
@@ -3687,18 +4192,56 @@ export class SessionService {
     //    admin (que puede gestionar el estado). Cada transición sobrescribe el
     //    tiempo con `new Date()` para que quede registrado el momento exacto
     //    en que se marcó "En proceso" / "Completado".
+    //
+    //    EXCEPCIÓN — conservar el horario pautado (keptSchedule): si el front
+    //    manda keepOriginalSchedule=true ("el servicio SÍ comenzó a su hora",
+    //    el botón se pulsó tarde por olvido) o si la petición llega dentro de
+    //    la tolerancia de ±5 min, NO se registra la hora de la petición: el
+    //    bloque se queda en su horario, no se arrastran las citas siguientes
+    //    y no se envían correos/notificaciones de reprogramación.
+    let keptSchedule = false;
     if (updateDetailStatusDto.status === 2) {
       const realStart = new Date();
-      detail.startDatetime = realStart; // inicio real
-      // El bloque se mueve a la hora real CONSERVANDO su duración planificada
-      // (piso de 1 min para que nunca quede de altura cero). Se guarda el fin
-      // proyectado para que (a) el calendario dibuje el bloque y (b) el arrastre
-      // detecte el solape con la cita siguiente. Al Terminar se pisa con el real.
-      const durMin = Math.max(detail.totalTime || 0, 1);
-      detail.endDatetime = new Date(realStart.getTime() + durMin * 60000);
+      const scheduledStart = detail.startDatetime
+        ? new Date(detail.startDatetime)
+        : null;
+      keptSchedule =
+        updateDetailStatusDto.keepOriginalSchedule === true ||
+        (scheduledStart !== null &&
+          SessionService.withinScheduleTolerance(realStart, scheduledStart));
+
+      if (!keptSchedule) {
+        detail.startDatetime = realStart; // inicio real
+        // El bloque se mueve a la hora real CONSERVANDO su duración planificada
+        // (piso de 1 min para que nunca quede de altura cero). Se guarda el fin
+        // proyectado para que (a) el calendario dibuje el bloque y (b) el
+        // arrastre detecte el solape con la cita siguiente. Al Terminar se pisa
+        // con el real.
+        const durMin = Math.max(detail.totalTime || 0, 1);
+        detail.endDatetime = new Date(realStart.getTime() + durMin * 60000);
+      } else if (!detail.endDatetime && detail.startDatetime) {
+        // Conservando horario pero sin fin guardado: proyectar el fin PAUTADO
+        // (inicio pautado + duración) para que el bloque tenga altura.
+        const durMin = Math.max(detail.totalTime || 0, 1);
+        detail.endDatetime = new Date(
+          new Date(detail.startDatetime).getTime() + durMin * 60000,
+        );
+      }
     }
     if (updateDetailStatusDto.status === 3) {
-      detail.endDatetime = new Date(); // fin real
+      const realEnd = new Date();
+      const scheduledEnd = detail.endDatetime
+        ? new Date(detail.endDatetime)
+        : null;
+      keptSchedule =
+        updateDetailStatusDto.keepOriginalSchedule === true ||
+        (scheduledEnd !== null &&
+          SessionService.withinScheduleTolerance(realEnd, scheduledEnd));
+
+      if (!keptSchedule || !detail.endDatetime) {
+        // Fin real. (Sin fin previo no hay horario pautado que conservar.)
+        detail.endDatetime = realEnd;
+      }
       // Si por algún motivo el servicio se completa sin haber pasado por
       // "En proceso", igualamos startDatetime al fin para que el cálculo
       // del tiempo real no quede en blanco.
@@ -3733,8 +4276,11 @@ export class SessionService {
     //    creció; empujar las citas AGENDADAS siguientes del MISMO worker ese día
     //    para que no se solapen (solo lo necesario). Devuelve las movidas para
     //    que el controller notifique (push + correo) a esos clientes.
+    //    Si se CONSERVÓ el horario (keptSchedule) el bloque no se movió: no hay
+    //    nada que arrastrar ni nadie a quien notificar.
     let movedByRipple: RippleMovedDetail[] = [];
     if (
+      !keptSchedule &&
       detail.companyWorkerId &&
       (updateDetailStatusDto.status === 2 || updateDetailStatusDto.status === 3)
     ) {

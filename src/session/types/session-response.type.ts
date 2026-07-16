@@ -30,6 +30,27 @@ export interface OfferDetailResponse {
   discountPercentage: number;
 }
 
+// Cobro de la cita (POST /sessions/:id/payment). Tasas y montos históricos.
+export interface SessionPaymentResponse {
+  id: number;
+  method: string | null;
+  reference: string | null;
+  tipCurrency: string | null;
+  tip: number;
+  tipExchangeRate: number | null;
+  tipBs: number | null;
+  totalBs: number | null;
+  paidBy: number;
+  paidAt: Date;
+  lines: Array<{
+    currency: string;
+    subtotal: number;
+    exchangeRate: number | null;
+    subtotalBs: number | null;
+  }>;
+  tips: Array<{ companyWorkerId: number; amount: number }>;
+}
+
 // Mismo shape que cada servicio del listado de admin (findAllSessionsSimple).
 export interface SessionDetailResponse {
   detailId: number;
@@ -101,6 +122,9 @@ export interface SessionResponse {
   servicesCount: number;
   services: SessionDetailResponse[];
   extraServices?: ExtraServiceResponse[];
+  // Cobro registrado al marcar la cita como pagada (POST /sessions/:id/payment).
+  // Misma forma que el payload de registro + paidAt/paidBy. Null si no hay.
+  payment?: SessionPaymentResponse | null;
   createdAt?: Date;
   updatedAt?: Date;
   // Datos de cancelación de la cita (sólo cuando sessionStatus = 5 = Cancelada)
