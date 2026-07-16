@@ -394,6 +394,22 @@ export class SessionService {
    * Devuelve los detalles que cambiaron de hora (viejo→nuevo) para notificar a
    * sus clientes (push + correo).
    */
+  /**
+   * Tolerancia (±min) para considerar que un Comenzar/Terminar ocurrió "a
+   * tiempo". Dentro de la tolerancia se conserva el horario pautado: no se
+   * mueve el bloque, no se arrastran las citas siguientes y no se notifica
+   * (empezar 1-5 min tarde no amerita reagendar a nadie). Mismo valor que usa
+   * el front (LATE_START_TOLERANCE_MIN) para decidir si muestra el modal.
+   */
+  private static readonly SCHEDULE_TOLERANCE_MIN = 5;
+
+  private static withinScheduleTolerance(a: Date, b: Date): boolean {
+    return (
+      Math.abs(a.getTime() - b.getTime()) <=
+      SessionService.SCHEDULE_TOLERANCE_MIN * 60000
+    );
+  }
+
   private async rippleWorkerColumn(
     companyWorkerId: number | null | undefined,
     dayAnchor: Date | string | null | undefined,
@@ -3380,12 +3396,44 @@ export class SessionService {
     const cascadeToDetails = newStatus >= 1 && newStatus <= 5;
     let detailsUpdated = 0;
 
+    const now = new Date();
+
+    // Conservar el horario pautado (keptSchedule): si el front manda
+    // keepOriginalSchedule=true ("la cita SÍ ocurrió a su hora", el botón se
+    // pulsó tarde por olvido) o si la petición llega dentro de la tolerancia
+    // de ±5 min, NO se registra la hora de la petición: los bloques quedan en
+    // su horario, no se arrastran las citas siguientes y no se notifica.
+    let keptSchedule = false;
+    if (newStatus === 2) {
+      const scheduledStart =
+        session.startDatetime ?? session.sessionDatetime ?? null;
+      keptSchedule =
+        updateSessionStatusDto.keepOriginalSchedule === true ||
+        (scheduledStart !== null &&
+          SessionService.withinScheduleTolerance(
+            now,
+            new Date(scheduledStart),
+          ));
+    } else if (newStatus === 3) {
+      // Referencia: el fin planificado de la cita = el mayor fin de sus
+      // detalles activos (proyectado al Comenzar o pautado al crear).
+      const plannedEnds = sessionDetails
+        .filter((d) => d.status !== 5 && d.endDatetime)
+        .map((d) => new Date(d.endDatetime as Date).getTime());
+      const plannedEnd = plannedEnds.length
+        ? new Date(Math.max(...plannedEnds))
+        : null;
+      keptSchedule =
+        updateSessionStatusDto.keepOriginalSchedule === true ||
+        (plannedEnd !== null &&
+          SessionService.withinScheduleTolerance(now, plannedEnd));
+    }
+
     const queryRunner =
       this.sessionRepository.manager.connection.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
-    const now = new Date();
     let updatedSession: Session;
     try {
       session.sessionStatus = newStatus;
@@ -3396,8 +3444,9 @@ export class SessionService {
       }
       // Al iniciar la cita (En progreso), sobrescribir su startDatetime con la
       // hora real, igual que en los detalles. Solo cuando realmente cambia a 2
-      // para no re-pisar el inicio real si ya estaba en progreso.
-      if (newStatus === 2 && previousStatus !== 2) {
+      // para no re-pisar el inicio real si ya estaba en progreso, y solo si NO
+      // se está conservando el horario pautado.
+      if (newStatus === 2 && previousStatus !== 2 && !keptSchedule) {
         session.startDatetime = now;
       }
       updatedSession = await queryRunner.manager.save(session);
@@ -3419,7 +3468,7 @@ export class SessionService {
         // real de terminación (y el arrastre no detectaría el solape). Los ya
         // completados y los agendados no se tocan. Se hace en un UPDATE separado
         // para no depender del orden de evaluación del SET.
-        if (newStatus === 3) {
+        if (newStatus === 3 && !keptSchedule) {
           await queryRunner.manager
             .createQueryBuilder()
             .update(SessionDetail)
@@ -3433,7 +3482,7 @@ export class SessionService {
         if (newStatus === 5) {
           setValues.cancelledBy = 'adm';
         }
-        if (newStatus === 2) {
+        if (newStatus === 2 && !keptSchedule) {
           setValues.startDatetime = () => ':now';
           // El bloque se mueve a la hora real conservando su duración planificada
           // (piso de 1 min para no dejar altura cero). Fin proyectado para dibujar
@@ -3479,8 +3528,10 @@ export class SessionService {
     // Arrastre (ripple): al Comenzar (2) / Terminar (3) los bloques de la cita
     // se movieron/crecieron. Empujar las citas AGENDADAS siguientes de CADA
     // columna de worker de la cita (cada worker es independiente).
+    // Si se CONSERVÓ el horario (keptSchedule) nada se movió: sin arrastre ni
+    // notificaciones.
     const movedByRipple: RippleMovedDetail[] = [];
-    if (newStatus === 2 || newStatus === 3) {
+    if (!keptSchedule && (newStatus === 2 || newStatus === 3)) {
       const workerIds = [
         ...new Set(
           sessionDetails
@@ -3687,18 +3738,56 @@ export class SessionService {
     //    admin (que puede gestionar el estado). Cada transición sobrescribe el
     //    tiempo con `new Date()` para que quede registrado el momento exacto
     //    en que se marcó "En proceso" / "Completado".
+    //
+    //    EXCEPCIÓN — conservar el horario pautado (keptSchedule): si el front
+    //    manda keepOriginalSchedule=true ("el servicio SÍ comenzó a su hora",
+    //    el botón se pulsó tarde por olvido) o si la petición llega dentro de
+    //    la tolerancia de ±5 min, NO se registra la hora de la petición: el
+    //    bloque se queda en su horario, no se arrastran las citas siguientes
+    //    y no se envían correos/notificaciones de reprogramación.
+    let keptSchedule = false;
     if (updateDetailStatusDto.status === 2) {
       const realStart = new Date();
-      detail.startDatetime = realStart; // inicio real
-      // El bloque se mueve a la hora real CONSERVANDO su duración planificada
-      // (piso de 1 min para que nunca quede de altura cero). Se guarda el fin
-      // proyectado para que (a) el calendario dibuje el bloque y (b) el arrastre
-      // detecte el solape con la cita siguiente. Al Terminar se pisa con el real.
-      const durMin = Math.max(detail.totalTime || 0, 1);
-      detail.endDatetime = new Date(realStart.getTime() + durMin * 60000);
+      const scheduledStart = detail.startDatetime
+        ? new Date(detail.startDatetime)
+        : null;
+      keptSchedule =
+        updateDetailStatusDto.keepOriginalSchedule === true ||
+        (scheduledStart !== null &&
+          SessionService.withinScheduleTolerance(realStart, scheduledStart));
+
+      if (!keptSchedule) {
+        detail.startDatetime = realStart; // inicio real
+        // El bloque se mueve a la hora real CONSERVANDO su duración planificada
+        // (piso de 1 min para que nunca quede de altura cero). Se guarda el fin
+        // proyectado para que (a) el calendario dibuje el bloque y (b) el
+        // arrastre detecte el solape con la cita siguiente. Al Terminar se pisa
+        // con el real.
+        const durMin = Math.max(detail.totalTime || 0, 1);
+        detail.endDatetime = new Date(realStart.getTime() + durMin * 60000);
+      } else if (!detail.endDatetime && detail.startDatetime) {
+        // Conservando horario pero sin fin guardado: proyectar el fin PAUTADO
+        // (inicio pautado + duración) para que el bloque tenga altura.
+        const durMin = Math.max(detail.totalTime || 0, 1);
+        detail.endDatetime = new Date(
+          new Date(detail.startDatetime).getTime() + durMin * 60000,
+        );
+      }
     }
     if (updateDetailStatusDto.status === 3) {
-      detail.endDatetime = new Date(); // fin real
+      const realEnd = new Date();
+      const scheduledEnd = detail.endDatetime
+        ? new Date(detail.endDatetime)
+        : null;
+      keptSchedule =
+        updateDetailStatusDto.keepOriginalSchedule === true ||
+        (scheduledEnd !== null &&
+          SessionService.withinScheduleTolerance(realEnd, scheduledEnd));
+
+      if (!keptSchedule || !detail.endDatetime) {
+        // Fin real. (Sin fin previo no hay horario pautado que conservar.)
+        detail.endDatetime = realEnd;
+      }
       // Si por algún motivo el servicio se completa sin haber pasado por
       // "En proceso", igualamos startDatetime al fin para que el cálculo
       // del tiempo real no quede en blanco.
@@ -3733,8 +3822,11 @@ export class SessionService {
     //    creció; empujar las citas AGENDADAS siguientes del MISMO worker ese día
     //    para que no se solapen (solo lo necesario). Devuelve las movidas para
     //    que el controller notifique (push + correo) a esos clientes.
+    //    Si se CONSERVÓ el horario (keptSchedule) el bloque no se movió: no hay
+    //    nada que arrastrar ni nadie a quien notificar.
     let movedByRipple: RippleMovedDetail[] = [];
     if (
+      !keptSchedule &&
       detail.companyWorkerId &&
       (updateDetailStatusDto.status === 2 || updateDetailStatusDto.status === 3)
     ) {
