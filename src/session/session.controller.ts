@@ -22,6 +22,7 @@ import { GetSessionsDto } from './dto/get-sessions.dto';
 import { UpdateSessionDto } from './dto/update-session-and-detail.dto';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
+import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
@@ -78,6 +79,22 @@ export class SessionController {
   @Roles('cli', 'adm', 'wrk')
   async getAvailability(@Query() getAvailabilityDto: GetAvailabilityDto) {
     return this.sessionService.getAvailability(getAvailabilityDto);
+  }
+
+  @Get('payments/tips')
+  @Roles('adm')
+  async getWorkerTipsReport(
+    @Request() req: AuthenticatedRequest,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @Query('companyWorkerId') companyWorkerId?: string,
+  ) {
+    return this.sessionService.getWorkerTipsReport(
+      req.user.sub,
+      startDate,
+      endDate,
+      companyWorkerId ? +companyWorkerId : undefined,
+    );
   }
 
   @Get(':id')
@@ -173,6 +190,25 @@ export class SessionController {
     await this.notificationEmitter.notifyStatusChanged(+id, adminId);
     // Citas AGENDADAS que el arrastre empujó (no la que se está atendiendo).
     await this.notifyRippleMoved(result?.movedByRipple, adminId);
+    return result;
+  }
+
+  @Post(':id/payment')
+  @Roles('adm')
+  async registerSessionPayment(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() registerSessionPaymentDto: RegisterSessionPaymentDto,
+  ) {
+    const adminId = req.user.sub;
+    const result = await this.sessionService.registerSessionPayment(
+      +id,
+      registerSessionPaymentDto,
+      adminId,
+    );
+    // La cita cambió a Pagada: mismo refresco/notificación que PUT /:id/status.
+    await this.realtimeEmitter.emitStatusChanged(+id);
+    await this.notificationEmitter.notifyStatusChanged(+id, adminId);
     return result;
   }
 

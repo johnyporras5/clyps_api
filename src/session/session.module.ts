@@ -7,6 +7,9 @@ import { Client } from 'src/client/entities/client.entity';
 import { Company } from 'src/company/entities/company.entity';
 import { User } from 'src/user/entities/user.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
+import { SessionPayment } from './entities/session-payment.entity';
+import { SessionPaymentLine } from './entities/session-payment-line.entity';
+import { SessionPaymentTip } from './entities/session-payment-tip.entity';
 import { Service } from 'src/service/entities/service.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { Worker } from 'src/worker/entities/worker.entity';
@@ -41,6 +44,9 @@ import { AppointmentBeforeAfterService } from './appointment-before-after.servic
       Offer,
       ServiceOffer,
       AppointmentBeforeAfter,
+      SessionPayment,
+      SessionPaymentLine,
+      SessionPaymentTip,
     ]),
     EmailModule,
     RealtimeModule,
