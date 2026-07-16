@@ -1,0 +1,96 @@
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+} from 'typeorm';
+
+/**
+ * Métodos de pago aceptados en el registro de cobro de una cita.
+ */
+export const PAYMENT_METHODS = [
+  'cash',
+  'mobile_payment',
+  'transfer',
+  'card',
+  'other',
+] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/**
+ * Cobro registrado al marcar una cita como pagada (uno por cita).
+ *
+ * Los montos en Bs y las tasas se guardan tal como se cobraron (histórico):
+ * NUNCA se recalculan con tasas futuras. `session_id` es único: una cita solo
+ * puede tener un cobro (idempotencia, respaldada por la constraint).
+ */
+@Entity('session_payments')
+export class SessionPayment {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ name: 'session_id', unique: true })
+  sessionId: number;
+
+  // Método de pago (enum PAYMENT_METHODS) — opcional.
+  @Column({ name: 'method', type: 'varchar', length: 20, nullable: true })
+  method: string | null;
+
+  // Referencia bancaria — opcional.
+  @Column({ name: 'reference', type: 'varchar', length: 64, nullable: true })
+  reference: string | null;
+
+  // Moneda de la propina (regla del front: USD, o EUR si todo es EUR).
+  @Column({ name: 'tip_currency', type: 'varchar', length: 10, nullable: true })
+  tipCurrency: string | null;
+
+  // Propina total, en tipCurrency.
+  @Column({
+    name: 'tip',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
+  tip: number | null;
+
+  // Tasa Bs por 1 unidad de tipCurrency al momento del cobro.
+  @Column({
+    name: 'tip_exchange_rate',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
+  tipExchangeRate: number | null;
+
+  // Propina convertida a Bs con la tasa histórica.
+  @Column({
+    name: 'tip_bs',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
+  tipBs: number | null;
+
+  // Gran total (servicios + propina) en Bs; null si faltó alguna tasa.
+  @Column({
+    name: 'total_bs',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
+  totalBs: number | null;
+
+  // userId del admin que registró el cobro.
+  @Column({ name: 'paid_by' })
+  paidBy: number;
+
+  @Column({ name: 'paid_at', type: 'datetime' })
+  paidAt: Date;
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
+}
