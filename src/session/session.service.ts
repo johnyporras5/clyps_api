@@ -15,6 +15,7 @@ import { SessionPaymentLine } from './entities/session-payment-line.entity';
 import { SessionPaymentTip } from './entities/session-payment-tip.entity';
 import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
 import { PayrollPeriodService } from '../payroll/payroll-period.service';
+import { PayrollEarningsService } from '../payroll/payroll-earnings.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import {
   CreateSessionWithDetailDto,
@@ -107,6 +108,7 @@ export class SessionService {
     private sessionPaymentTipRepository: Repository<SessionPaymentTip>,
     private fileUploadService: FileUploadService,
     private payrollPeriodService: PayrollPeriodService,
+    private payrollEarningsService: PayrollEarningsService,
   ) {}
 
   async create(
@@ -3826,13 +3828,56 @@ export class SessionService {
       `💵 Cobro registrado para cita ${sessionId} (payment ${savedPayment.id}) por admin ${adminId}. Total Bs: ${dto.totalBs ?? 'n/a'}`,
     );
 
-    // Nómina (PAY-2): al pagar, asegurar que exista un periodo abierto. Best-
-    // effort: si falla, no rompe el cobro (el próximo pago lo reintenta).
+    // Nómina (PAY-2 + PAY-3): al pagar, asegurar el periodo abierto y generar los
+    // conceptos de comisión (uno por servicio, en Bs con la tasa del cobro).
+    // Best-effort: si falla, no rompe el cobro; la idempotencia permite reintentar.
     try {
       await this.payrollPeriodService.ensureOpenPeriod(adminCompany.id, paidAt);
+
+      const rateByCurrency = new Map(
+        dto.lines.map((l) => [
+          l.currency.toUpperCase(),
+          l.exchangeRate ?? null,
+        ]),
+      );
+      const serviceIds = [
+        ...new Set(sessionDetails.map((d) => d.serviceId).filter(Boolean)),
+      ];
+      const services = serviceIds.length
+        ? await this.serviceRepository.find({
+            where: { id: In(serviceIds) },
+            select: ['id', 'currency', 'name'],
+          })
+        : [];
+      const svcById = new Map(services.map((s) => [s.id, s]));
+
+      const commissionItems = sessionDetails
+        .filter((d) => d.status !== 5 && d.companyWorkerId)
+        .map((d) => {
+          const svc = svcById.get(d.serviceId);
+          const currency = (svc?.currency || 'USD').toUpperCase();
+          const rawRate = rateByCurrency.get(currency);
+          const rate =
+            rawRate !== undefined ? rawRate : currency === 'VES' ? 1 : null;
+          return {
+            sessionDetailId: d.id,
+            companyWorkerId: d.companyWorkerId,
+            workerAmount: Number(d.totalWorker || 0),
+            serviceCost: Number(d.cost || 0),
+            currency,
+            exchangeRate: rate,
+            label: `Comisión — ${svc?.name || 'Servicio'}`,
+          };
+        });
+
+      await this.payrollEarningsService.recordCommissions(
+        adminCompany.id,
+        paidAt,
+        commissionItems,
+      );
     } catch (error) {
       this.logger.warn(
-        `No se pudo asegurar el periodo de nómina de company ${adminCompany.id}: ${(error as Error).message}`,
+        `Nómina: no se pudieron registrar comisiones de la cita ${sessionId}: ${(error as Error).message}`,
       );
     }
 
