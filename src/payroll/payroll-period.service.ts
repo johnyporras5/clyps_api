@@ -43,6 +43,54 @@ export class PayrollPeriodService {
     return cfg?.frequency ?? 'quincenal';
   }
 
+  /** Company del admin autenticado (la que posee). */
+  private async resolveAdminCompanyId(adminId: number): Promise<number> {
+    const company = await this.companyRepo.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+    return company.id;
+  }
+
+  /** PAY-9: frecuencia actual de la empresa del admin (para la tarjeta de config). */
+  async getFrequencyConfig(
+    adminId: number,
+  ): Promise<{ frequency: PayrollFrequency }> {
+    const companyId = await this.resolveAdminCompanyId(adminId);
+    return { frequency: await this.resolveFrequency(companyId) };
+  }
+
+  /**
+   * PAY-9: fija la frecuencia de pago. El cambio aplica al PRÓXIMO periodo: el
+   * abierto actual no se toca (su frecuencia quedó congelada). La primera vez
+   * (sin periodo aún) dispara el bootstrap del primer periodo (decisión C).
+   */
+  async setFrequency(
+    adminId: number,
+    frequency: PayrollFrequency,
+  ): Promise<{ frequency: PayrollFrequency }> {
+    const companyId = await this.resolveAdminCompanyId(adminId);
+
+    const cfg = await this.configRepo.findOne({ where: { companyId } });
+    if (cfg) {
+      cfg.frequency = frequency;
+      await this.configRepo.save(cfg);
+    } else {
+      await this.configRepo.save(
+        this.configRepo.create({ companyId, frequency }),
+      );
+    }
+
+    // Idempotente: crea el primer periodo solo si aún no hay ninguno.
+    await this.bootstrapFirstPeriod(companyId, frequency, new Date());
+
+    return { frequency };
+  }
+
   /** El (único) periodo abierto de la empresa, o null. */
   findOpenPeriodFor(companyId: number): Promise<PayrollPeriod | null> {
     return this.periodRepo.findOne({ where: { companyId, status: 'open' } });
