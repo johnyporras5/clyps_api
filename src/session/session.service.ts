@@ -3749,6 +3749,7 @@ export class SessionService {
 
     const paidAt = new Date();
     let savedPayment: SessionPayment;
+    let savedTips: SessionPaymentTip[] = [];
     let updatedSession: Session;
     try {
       savedPayment = await queryRunner.manager.save(SessionPayment, {
@@ -3777,7 +3778,7 @@ export class SessionService {
         );
       }
       if (tips.length > 0) {
-        await queryRunner.manager.save(
+        savedTips = await queryRunner.manager.save(
           SessionPaymentTip,
           tips.map((t) => ({
             paymentId: savedPayment.id,
@@ -3875,9 +3876,23 @@ export class SessionService {
         paidAt,
         commissionItems,
       );
+
+      // PAY-4: propinas cobradas por la empresa → concepto tip en Bs por worker.
+      const tipItems = savedTips.map((t) => ({
+        tipId: t.id,
+        companyWorkerId: t.companyWorkerId,
+        amount: Number(t.amount || 0),
+        currency: (dto.tipCurrency || 'USD').toUpperCase(),
+        exchangeRate: dto.tipExchangeRate ?? null,
+      }));
+      await this.payrollEarningsService.recordTips(
+        adminCompany.id,
+        paidAt,
+        tipItems,
+      );
     } catch (error) {
       this.logger.warn(
-        `Nómina: no se pudieron registrar comisiones de la cita ${sessionId}: ${(error as Error).message}`,
+        `Nómina: no se pudieron registrar conceptos de la cita ${sessionId}: ${(error as Error).message}`,
       );
     }
 

@@ -23,6 +23,15 @@ export interface CommissionItem {
   label: string;
 }
 
+// Datos de una propina a registrar (una fila de session_payment_tips).
+export interface TipItem {
+  tipId: number; // → source_id (idempotencia)
+  companyWorkerId: number;
+  amount: number; // propina del worker, en tipCurrency
+  currency: string; // moneda de la propina
+  exchangeRate: number | null; // Bs por 1 unidad (VES = 1)
+}
+
 @Injectable()
 export class PayrollEarningsService {
   private readonly logger = new Logger(PayrollEarningsService.name);
@@ -121,6 +130,64 @@ export class PayrollEarningsService {
     if (created > 0) {
       this.logger.log(
         `${created} comisión(es) registrada(s) en el periodo ${period.id} (company ${companyId})`,
+      );
+    }
+    return created;
+  }
+
+  /**
+   * Genera los conceptos de propina de un pago (una por cada propina que pasó
+   * por la empresa). Idempotente por propina. El monto se lleva a Bs con la tasa
+   * del cobro. Devuelve cuántos creó.
+   */
+  async recordTips(
+    companyId: number,
+    whenPaid: Date,
+    items: TipItem[],
+  ): Promise<number> {
+    if (items.length === 0) return 0;
+
+    const period = await this.periodService.ensureOpenPeriod(
+      companyId,
+      whenPaid,
+    );
+    let created = 0;
+
+    for (const it of items) {
+      const rate = it.exchangeRate ?? (it.currency === 'VES' ? 1 : null);
+      if (rate == null || !(it.amount > 0)) continue;
+      const amountMinor = toMinor(it.amount * rate);
+      if (amountMinor <= 0) continue;
+
+      const detail = await this.ensurePeriodDetail(
+        companyId,
+        period.id,
+        it.companyWorkerId,
+      );
+
+      try {
+        await this.conceptRepo.save(
+          this.conceptRepo.create({
+            companyId,
+            periodDetailId: detail.id,
+            type: 'tip',
+            sign: 1,
+            label: 'Propina',
+            amountMinor,
+            sourceType: 'tip',
+            sourceId: it.tipId,
+            metadata: { currency: it.currency, exchangeRate: rate },
+          }),
+        );
+        created++;
+      } catch (e) {
+        if (!isDupEntry(e)) throw e; // ya existía → idempotente
+      }
+    }
+
+    if (created > 0) {
+      this.logger.log(
+        `${created} propina(s) registrada(s) en el periodo ${period.id} (company ${companyId})`,
       );
     }
     return created;
