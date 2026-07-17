@@ -23,6 +23,7 @@ import { Offer } from 'src/Offer/entities/offer.entity';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
 import { NotificationModule } from '../notification/notification.module';
+import { PayrollModule } from '../payroll/payroll.module';
 import { SessionNotificationEmitter } from './session-notification.emitter';
 import { ReminderSchedulerService } from './reminder-scheduler.service';
 import { AppointmentBeforeAfter } from './entities/appointment-before-after.entity';
@@ -51,6 +52,7 @@ import { AppointmentBeforeAfterService } from './appointment-before-after.servic
     EmailModule,
     RealtimeModule,
     NotificationModule,
+    PayrollModule,
   ],
   providers: [
     SessionService,

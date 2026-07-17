@@ -14,6 +14,7 @@ import { SessionPayment } from './entities/session-payment.entity';
 import { SessionPaymentLine } from './entities/session-payment-line.entity';
 import { SessionPaymentTip } from './entities/session-payment-tip.entity';
 import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
+import { PayrollPeriodService } from '../payroll/payroll-period.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import {
   CreateSessionWithDetailDto,
@@ -105,6 +106,7 @@ export class SessionService {
     @InjectRepository(SessionPaymentTip)
     private sessionPaymentTipRepository: Repository<SessionPaymentTip>,
     private fileUploadService: FileUploadService,
+    private payrollPeriodService: PayrollPeriodService,
   ) {}
 
   async create(
@@ -3823,6 +3825,16 @@ export class SessionService {
     this.logger.log(
       `💵 Cobro registrado para cita ${sessionId} (payment ${savedPayment.id}) por admin ${adminId}. Total Bs: ${dto.totalBs ?? 'n/a'}`,
     );
+
+    // Nómina (PAY-2): al pagar, asegurar que exista un periodo abierto. Best-
+    // effort: si falla, no rompe el cobro (el próximo pago lo reintenta).
+    try {
+      await this.payrollPeriodService.ensureOpenPeriod(adminCompany.id, paidAt);
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo asegurar el periodo de nómina de company ${adminCompany.id}: ${(error as Error).message}`,
+      );
+    }
 
     return {
       session: updatedSession,
