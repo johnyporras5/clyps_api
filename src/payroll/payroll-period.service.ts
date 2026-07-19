@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, EntityManager } from 'typeorm';
 import { PayrollPeriod } from './entities/payroll-period.entity';
 import { PayrollConfig } from './entities/payroll-config.entity';
 import { Company } from '../company/entities/company.entity';
@@ -211,7 +211,37 @@ export class PayrollPeriodService {
     if (newStatus === 'approved') {
       period.approvedByUserId = adminId;
       period.approvedAt = new Date();
+      // Congelar totales y aprobar en una sola transacción: lo aprobado es
+      // exactamente lo que se paga.
+      return this.periodRepo.manager.transaction(async (m) => {
+        await this.freezeTotals(periodId, m);
+        return m.save(PayrollPeriod, period);
+      });
     }
     return this.periodRepo.save(period);
+  }
+
+  /**
+   * PAY-6: toma la "foto" de los totales de cada empleado del periodo, sumando
+   * sus conceptos (Neto = Σ amount × sign). A partir de aquí los totales salen
+   * de este snapshot, no de un recálculo en vivo.
+   */
+  async freezeTotals(periodId: number, manager?: EntityManager): Promise<void> {
+    const m = manager ?? this.periodRepo.manager;
+    await m.query(
+      `UPDATE period_detail d
+         LEFT JOIN (
+           SELECT period_detail_id,
+                  SUM(CASE WHEN sign = 1  THEN amount_minor ELSE 0 END) AS earned,
+                  SUM(CASE WHEN sign = -1 THEN amount_minor ELSE 0 END) AS deducted
+             FROM payroll_concept
+            GROUP BY period_detail_id
+         ) c ON c.period_detail_id = d.id
+          SET d.earned_minor   = COALESCE(c.earned, 0),
+              d.deducted_minor = COALESCE(c.deducted, 0),
+              d.net_minor      = COALESCE(c.earned, 0) - COALESCE(c.deducted, 0)
+        WHERE d.period_id = ?`,
+      [periodId],
+    );
   }
 }

@@ -208,6 +208,122 @@ export class PayrollEarningsService {
   }
 
   /**
+   * PAY-6: resumen del periodo para la pantalla del dueño.
+   *
+   * Antes de aprobar los totales se calculan EN VIVO desde los conceptos (van
+   * creciendo con cada cita pagada). Una vez aprobado salen del SNAPSHOT
+   * congelado, para que lo aprobado sea exactamente lo que se paga.
+   *
+   * Mientras el periodo esté open/review se materializa la fila de todos los
+   * trabajadores activos, así la pantalla los lista a todos (y el modal de
+   * concepto manual siempre tiene un periodDetailId al que apuntar).
+   */
+  async getPeriodSummary(periodId: number, adminId: number) {
+    const period = await this.periodRepo.findOne({ where: { id: periodId } });
+    if (!period) {
+      throw new NotFoundException(`Periodo ${periodId} no encontrado`);
+    }
+    const company = await this.companyRepo.findOne({
+      where: { id: period.companyId },
+    });
+    if (!company || company.userId !== adminId) {
+      throw new ForbiddenException('No tienes permiso sobre este periodo');
+    }
+
+    const frozen = ['approved', 'paid', 'closed'].includes(period.status);
+
+    if (!frozen) {
+      const workers: Array<{ id: number }> = await this.detailRepo.query(
+        'SELECT id FROM company_worker WHERE company_id = ? AND is_active = 1',
+        [period.companyId],
+      );
+      for (const w of workers) {
+        await this.ensurePeriodDetail(period.companyId, period.id, w.id);
+      }
+    }
+
+    const rows: Array<{
+      periodDetailId: number;
+      companyWorkerId: number;
+      workerName: string | null;
+      earnedMinor: string;
+      deductedMinor: string;
+      netMinor: string;
+      paidMinor: string;
+      liveEarned: string;
+      liveDeducted: string;
+      servicesCount: string;
+    }> = await this.detailRepo.query(
+      `SELECT d.id AS periodDetailId,
+              d.company_worker_id AS companyWorkerId,
+              w.name AS workerName,
+              d.earned_minor AS earnedMinor,
+              d.deducted_minor AS deductedMinor,
+              d.net_minor AS netMinor,
+              d.paid_minor AS paidMinor,
+              COALESCE(SUM(CASE WHEN c.sign = 1  THEN c.amount_minor ELSE 0 END), 0) AS liveEarned,
+              COALESCE(SUM(CASE WHEN c.sign = -1 THEN c.amount_minor ELSE 0 END), 0) AS liveDeducted,
+              COALESCE(SUM(CASE WHEN c.type = 'commission' THEN 1 ELSE 0 END), 0) AS servicesCount
+         FROM period_detail d
+         LEFT JOIN company_worker cw ON cw.id = d.company_worker_id
+         LEFT JOIN worker w ON w.id = cw.worker_id
+         LEFT JOIN payroll_concept c ON c.period_detail_id = d.id
+        WHERE d.period_id = ?
+        GROUP BY d.id, d.company_worker_id, w.name,
+                 d.earned_minor, d.deducted_minor, d.net_minor, d.paid_minor
+        ORDER BY w.name`,
+      [periodId],
+    );
+
+    const employees = rows.map((r) => {
+      const earned = frozen ? Number(r.earnedMinor) : Number(r.liveEarned);
+      const deducted = frozen
+        ? Number(r.deductedMinor)
+        : Number(r.liveDeducted);
+      const net = frozen ? Number(r.netMinor) : earned - deducted;
+      const paid = Number(r.paidMinor);
+      return {
+        periodDetailId: r.periodDetailId,
+        companyWorkerId: r.companyWorkerId,
+        workerName: (r.workerName || '').trim(),
+        servicesCount: Number(r.servicesCount),
+        earnedMinor: earned,
+        deductedMinor: deducted,
+        netMinor: net,
+        paidMinor: paid,
+        balanceMinor: net - paid,
+      };
+    });
+
+    const sum = (k: keyof (typeof employees)[0]) =>
+      employees.reduce((acc, e) => acc + Number(e[k] ?? 0), 0);
+
+    return {
+      period: {
+        id: period.id,
+        label: period.label,
+        status: period.status,
+        frequency: period.frequency,
+        startsAt: period.startsAt,
+        endsAt: period.endsAt,
+        approvedAt: period.approvedAt,
+        approvedByUserId: period.approvedByUserId,
+        totalsFrozen: frozen,
+      },
+      totals: {
+        earnedMinor: sum('earnedMinor'),
+        deductedMinor: sum('deductedMinor'),
+        netMinor: sum('netMinor'),
+        paidMinor: sum('paidMinor'),
+        balanceMinor: sum('balanceMinor'),
+        employees: employees.length,
+        servicesCount: sum('servicesCount'),
+      },
+      employees,
+    };
+  }
+
+  /**
    * PAY-5: agrega un concepto manual (bono/deducción/ajuste) al detalle de un
    * empleado. Solo mientras el periodo esté `open` o `review`; después de
    * aprobado las correcciones van por reversión (PAY-7).

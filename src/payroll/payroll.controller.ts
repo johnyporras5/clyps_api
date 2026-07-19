@@ -42,6 +42,16 @@ export class PayrollController {
     return this.periodService.setFrequency(req.user.sub, dto.frequency);
   }
 
+  // PAY-6: resumen del periodo (totales en vivo, o del snapshot si ya se aprobó).
+  @Get('periods/:id/summary')
+  @Roles('adm')
+  async getPeriodSummary(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.earningsService.getPeriodSummary(+id, req.user.sub);
+  }
+
   // Avanza el periodo por la máquina de estados (open→review→approved→paid→closed).
   @Patch('periods/:id/status')
   @Roles('adm')
