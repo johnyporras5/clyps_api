@@ -326,6 +326,95 @@ export class PayrollEarningsService {
   }
 
   /**
+   * PAY-7: revierte un concepto sin tocar el periodo donde nació.
+   *
+   * Los conceptos de periodos aprobados/pagados/cerrados son inmutables: la
+   * corrección se crea como un `adjustment` de signo OPUESTO en el periodo
+   * ABIERTO actual, referenciando el original (metadata.reversalOf + reason).
+   * Así el pago histórico queda intacto y la corrección visible y con fecha.
+   *
+   * No se puede revertir dos veces el mismo concepto (se descontaría doble).
+   */
+  async reverseConcept(
+    originalConceptId: number,
+    reason: string | undefined,
+    adminId: number,
+  ): Promise<PayrollConcept> {
+    const original = await this.conceptRepo.findOne({
+      where: { id: originalConceptId },
+    });
+    if (!original) {
+      throw new NotFoundException(
+        `Concepto ${originalConceptId} no encontrado`,
+      );
+    }
+
+    const company = await this.companyRepo.findOne({
+      where: { id: original.companyId },
+    });
+    if (!company || company.userId !== adminId) {
+      throw new ForbiddenException('No tienes permiso sobre este concepto');
+    }
+
+    // Una sola reversión por concepto.
+    const already: Array<{ id: number }> = await this.conceptRepo.query(
+      `SELECT id FROM payroll_concept
+        WHERE type = 'adjustment'
+          AND JSON_EXTRACT(metadata, '$.reversalOf') = ?
+        LIMIT 1`,
+      [originalConceptId],
+    );
+    if (already.length > 0) {
+      throw new ConflictException(
+        `El concepto ${originalConceptId} ya fue revertido (ajuste ${already[0].id})`,
+      );
+    }
+
+    // La reversión va SIEMPRE al periodo abierto actual, no al original.
+    const period = await this.periodService.ensureOpenPeriod(
+      original.companyId,
+      new Date(),
+    );
+    const originalDetail = await this.detailRepo.findOne({
+      where: { id: original.periodDetailId },
+    });
+    if (!originalDetail) {
+      throw new NotFoundException(
+        'Detalle del concepto original no encontrado',
+      );
+    }
+    const detail = await this.ensurePeriodDetail(
+      original.companyId,
+      period.id,
+      originalDetail.companyWorkerId,
+    );
+
+    const reversal = await this.conceptRepo.save(
+      this.conceptRepo.create({
+        companyId: original.companyId,
+        periodDetailId: detail.id,
+        type: 'adjustment',
+        sign: original.sign === 1 ? -1 : 1,
+        label: `Reversión: ${original.label}`,
+        amountMinor: original.amountMinor,
+        sourceType: 'manual',
+        sourceId: null,
+        createdByUserId: adminId,
+        metadata: {
+          reversalOf: original.id,
+          reason: reason ?? null,
+          originalPeriodId: originalDetail.periodId,
+        },
+      }),
+    );
+
+    this.logger.log(
+      `Concepto ${original.id} revertido con el ajuste ${reversal.id} en el periodo ${period.id}`,
+    );
+    return reversal;
+  }
+
+  /**
    * PAY-8: registra un pago al empleado contra su detalle del periodo.
    *
    * Solo con el periodo `approved` (o `paid`, para saldar lo que falte). Guard

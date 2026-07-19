@@ -18,6 +18,7 @@ import { ChangePeriodStatusDto } from './dto/change-period-status.dto';
 import { SetFrequencyDto } from './dto/set-frequency.dto';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
 import { CreatePayoutDto } from './dto/create-payout.dto';
+import { ReverseConceptDto } from './dto/reverse-concept.dto';
 
 @Controller('payroll')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -73,6 +74,17 @@ export class PayrollController {
     @Body() dto: CreateManualConceptDto,
   ) {
     return this.earningsService.addManualConcept(+id, dto, req.user.sub);
+  }
+
+  // PAY-7: revertir un concepto (el ajuste nace en el periodo abierto actual).
+  @Post('concepts/:id/reverse')
+  @Roles('adm')
+  async reverseConcept(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ReverseConceptDto,
+  ) {
+    return this.earningsService.reverseConcept(+id, dto.reason, req.user.sub);
   }
 
   // PAY-8: registrar un pago (total o parcial) al empleado.
