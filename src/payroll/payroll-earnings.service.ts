@@ -11,10 +11,12 @@ import { Repository } from 'typeorm';
 import { PeriodDetail } from './entities/period-detail.entity';
 import { PayrollConcept } from './entities/payroll-concept.entity';
 import { PayrollPeriod } from './entities/payroll-period.entity';
+import { Payout } from './entities/payout.entity';
 import { Company } from '../company/entities/company.entity';
 import { PayrollPeriodService } from './payroll-period.service';
-import { toMinor } from './payroll-money.util';
+import { toMinor, fromMinor } from './payroll-money.util';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
+import { CreatePayoutDto } from './dto/create-payout.dto';
 
 const isDupEntry = (e: unknown): boolean =>
   (e as { code?: string; driverError?: { code?: string } })?.code ===
@@ -321,6 +323,97 @@ export class PayrollEarningsService {
       },
       employees,
     };
+  }
+
+  /**
+   * PAY-8: registra un pago al empleado contra su detalle del periodo.
+   *
+   * Solo con el periodo `approved` (o `paid`, para saldar lo que falte). Guard
+   * de sobrepago: Σ(pagos) nunca puede superar el neto congelado. Soporta pagos
+   * parciales; cuando el saldo llega a 0 el empleado queda saldado.
+   *
+   * La fila del detalle se bloquea (FOR UPDATE) dentro de la transacción para
+   * que dos pagos simultáneos no puedan colarse y pasarse del neto.
+   */
+  async recordPayout(
+    periodDetailId: number,
+    dto: CreatePayoutDto,
+    adminId: number,
+  ) {
+    const detail = await this.detailRepo.findOne({
+      where: { id: periodDetailId },
+    });
+    if (!detail) {
+      throw new NotFoundException(
+        `Detalle de periodo ${periodDetailId} no encontrado`,
+      );
+    }
+
+    const company = await this.companyRepo.findOne({
+      where: { id: detail.companyId },
+    });
+    if (!company || company.userId !== adminId) {
+      throw new ForbiddenException('No tienes permiso sobre este periodo');
+    }
+
+    const period = await this.periodRepo.findOne({
+      where: { id: detail.periodId },
+    });
+    if (!period) {
+      throw new NotFoundException(`Periodo ${detail.periodId} no encontrado`);
+    }
+    if (period.status !== 'approved' && period.status !== 'paid') {
+      throw new ConflictException(
+        `El periodo está "${period.status}": solo se registran pagos una vez aprobado`,
+      );
+    }
+
+    const amountMinor = toMinor(dto.amount);
+    if (amountMinor <= 0) {
+      throw new UnprocessableEntityException('El monto debe ser mayor a 0');
+    }
+
+    return this.detailRepo.manager.transaction(async (m) => {
+      // Bloquear la fila: el saldo que leemos no puede cambiar bajo nuestros pies.
+      const locked: Array<{ net_minor: string; paid_minor: string }> =
+        await m.query(
+          'SELECT net_minor, paid_minor FROM period_detail WHERE id = ? FOR UPDATE',
+          [periodDetailId],
+        );
+      const net = Number(locked[0].net_minor);
+      const paid = Number(locked[0].paid_minor);
+      const balance = net - paid;
+
+      if (amountMinor > balance) {
+        throw new UnprocessableEntityException(
+          `El pago (${fromMinor(amountMinor)} Bs) excede el saldo pendiente (${fromMinor(balance)} Bs)`,
+        );
+      }
+
+      const payout = await m.save(Payout, {
+        companyId: detail.companyId,
+        periodDetailId,
+        amountMinor,
+        method: dto.method,
+        reference: dto.reference ?? null,
+        recordedByUserId: adminId,
+        paidAt: new Date(),
+      });
+
+      const newPaid = paid + amountMinor;
+      await m.query('UPDATE period_detail SET paid_minor = ? WHERE id = ?', [
+        newPaid,
+        periodDetailId,
+      ]);
+
+      return {
+        payout,
+        netMinor: net,
+        paidMinor: newPaid,
+        balanceMinor: net - newPaid,
+        settled: net - newPaid === 0,
+      };
+    });
   }
 
   /**

@@ -17,6 +17,7 @@ import { PayrollEarningsService } from './payroll-earnings.service';
 import { ChangePeriodStatusDto } from './dto/change-period-status.dto';
 import { SetFrequencyDto } from './dto/set-frequency.dto';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
+import { CreatePayoutDto } from './dto/create-payout.dto';
 
 @Controller('payroll')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -72,5 +73,16 @@ export class PayrollController {
     @Body() dto: CreateManualConceptDto,
   ) {
     return this.earningsService.addManualConcept(+id, dto, req.user.sub);
+  }
+
+  // PAY-8: registrar un pago (total o parcial) al empleado.
+  @Post('period-details/:id/payouts')
+  @Roles('adm')
+  async recordPayout(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CreatePayoutDto,
+  ) {
+    return this.earningsService.recordPayout(+id, dto, req.user.sub);
   }
 }
