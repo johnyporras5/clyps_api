@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Patch,
   Param,
   Body,
@@ -12,13 +13,18 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { PayrollPeriodService } from './payroll-period.service';
+import { PayrollEarningsService } from './payroll-earnings.service';
 import { ChangePeriodStatusDto } from './dto/change-period-status.dto';
 import { SetFrequencyDto } from './dto/set-frequency.dto';
+import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
 
 @Controller('payroll')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PayrollController {
-  constructor(private readonly periodService: PayrollPeriodService) {}
+  constructor(
+    private readonly periodService: PayrollPeriodService,
+    private readonly earningsService: PayrollEarningsService,
+  ) {}
 
   // PAY-9: frecuencia de pago de la empresa (tarjeta de config).
   @Get('config')
@@ -45,5 +51,16 @@ export class PayrollController {
     @Body() dto: ChangePeriodStatusDto,
   ) {
     return this.periodService.changeStatus(+id, dto.status, req.user.sub);
+  }
+
+  // PAY-5: concepto manual (bono/deducción/ajuste) sobre el detalle de un empleado.
+  @Post('period-details/:id/concepts')
+  @Roles('adm')
+  async addManualConcept(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CreateManualConceptDto,
+  ) {
+    return this.earningsService.addManualConcept(+id, dto, req.user.sub);
   }
 }
