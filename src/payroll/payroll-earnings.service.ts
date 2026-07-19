@@ -328,6 +328,137 @@ export class PayrollEarningsService {
   }
 
   /**
+   * PAY-11: histórico de periodos ya no abiertos (approved/paid/closed) de la
+   * empresa del admin, filtrable por año y paginado. Los totales salen del
+   * snapshot congelado, así el reporte es estable para siempre.
+   */
+  async listHistoricPeriods(
+    adminId: number,
+    opts: { year?: number; page?: number; limit?: number } = {},
+  ) {
+    const company = await this.companyRepo.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(100, Math.max(1, opts.limit ?? 12));
+    const params: unknown[] = [company.id];
+    let yearFilter = '';
+    if (opts.year) {
+      yearFilter = 'AND YEAR(p.starts_at) = ?';
+      params.push(opts.year);
+    }
+
+    const countRows: Array<{ total: number }> = await this.periodRepo.query(
+      `SELECT COUNT(*) AS total FROM payroll_period p
+        WHERE p.company_id = ? AND p.status IN ('approved','paid','closed') ${yearFilter}`,
+      params,
+    );
+    const total = Number(countRows[0]?.total ?? 0);
+
+    const rows: Array<Record<string, string | number | Date | null>> =
+      await this.periodRepo.query(
+        `SELECT p.id, p.label, p.status, p.frequency, p.starts_at AS startsAt,
+                p.ends_at AS endsAt, p.approved_at AS approvedAt,
+                COUNT(DISTINCT d.id) AS employees,
+                COALESCE(SUM(d.net_minor), 0)  AS netMinor,
+                COALESCE(SUM(d.paid_minor), 0) AS paidMinor,
+                (SELECT COUNT(*) FROM payroll_concept c2
+                   JOIN period_detail d2 ON d2.id = c2.period_detail_id
+                  WHERE d2.period_id = p.id AND c2.type = 'commission') AS servicesCount
+           FROM payroll_period p
+           LEFT JOIN period_detail d ON d.period_id = p.id
+          WHERE p.company_id = ? AND p.status IN ('approved','paid','closed') ${yearFilter}
+          GROUP BY p.id
+          ORDER BY p.starts_at DESC
+          LIMIT ? OFFSET ?`,
+        [...params, limit, (page - 1) * limit],
+      );
+
+    return {
+      data: rows.map((r) => ({
+        id: Number(r.id),
+        label: r.label,
+        status: r.status,
+        frequency: r.frequency,
+        startsAt: r.startsAt,
+        endsAt: r.endsAt,
+        approvedAt: r.approvedAt,
+        employees: Number(r.employees),
+        servicesCount: Number(r.servicesCount),
+        netMinor: Number(r.netMinor),
+        paidMinor: Number(r.paidMinor),
+      })),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 0,
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  /**
+   * PAY-11: exporta un periodo a CSV (una fila por empleado) para entregárselo
+   * al contador. Montos en Bs con 2 decimales.
+   */
+  async exportPeriodCsv(
+    periodId: number,
+    adminId: number,
+  ): Promise<{ filename: string; csv: string }> {
+    const summary = await this.getPeriodSummary(periodId, adminId);
+    const esc = (v: unknown) => {
+      const s = String(v ?? '');
+      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const money = (m: number) => fromMinor(m).toFixed(2);
+
+    const lines = [
+      `Periodo;${esc(summary.period.label)}`,
+      `Estado;${esc(summary.period.status)}`,
+      '',
+      'Empleado;Servicios;Devengado (Bs);Deducciones (Bs);Neto (Bs);Pagado (Bs);Saldo (Bs)',
+      ...summary.employees.map((e) =>
+        [
+          esc(e.workerName),
+          e.servicesCount,
+          money(e.earnedMinor),
+          money(e.deductedMinor),
+          money(e.netMinor),
+          money(e.paidMinor),
+          money(e.balanceMinor),
+        ].join(';'),
+      ),
+      [
+        'TOTAL',
+        summary.totals.servicesCount,
+        money(summary.totals.earnedMinor),
+        money(summary.totals.deductedMinor),
+        money(summary.totals.netMinor),
+        money(summary.totals.paidMinor),
+        money(summary.totals.balanceMinor),
+      ].join(';'),
+    ];
+    const slug = String(summary.period.label ?? `periodo-${periodId}`)
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .toLowerCase();
+    return {
+      filename: `nomina-${slug || periodId}.csv`,
+      csv: lines.join('\n'),
+    };
+  }
+
+  /**
    * PAY-10: arma el estado de cuenta de un empleado en un periodo (solo lectura).
    * Totales en vivo mientras el periodo está abierto; del snapshot si ya se aprobó.
    */

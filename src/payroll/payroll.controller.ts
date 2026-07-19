@@ -5,9 +5,13 @@ import {
   Patch,
   Param,
   Body,
+  Query,
+  Header,
   Request,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -19,6 +23,7 @@ import { SetFrequencyDto } from './dto/set-frequency.dto';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
 import { CreatePayoutDto } from './dto/create-payout.dto';
 import { ReverseConceptDto } from './dto/reverse-concept.dto';
+import { ListPeriodsDto } from './dto/list-periods.dto';
 
 @Controller('payroll')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -63,6 +68,34 @@ export class PayrollController {
     @Param('id') id: string,
   ) {
     return this.earningsService.getEmployeeStatement(+id, req.user.sub);
+  }
+
+  // PAY-11: histórico de periodos ya cerrados/aprobados, filtrable por año.
+  @Get('periods')
+  @Roles('adm')
+  async listPeriods(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: ListPeriodsDto,
+  ) {
+    return this.earningsService.listHistoricPeriods(req.user.sub, query);
+  }
+
+  // PAY-11: exporta el periodo a CSV (una fila por empleado) para el contador.
+  @Get('periods/:id/export.csv')
+  @Roles('adm')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  async exportPeriod(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { filename, csv } = await this.earningsService.exportPeriodCsv(
+      +id,
+      req.user.sub,
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    // BOM: sin él Excel en Windows rompe los acentos.
+    return '﻿' + csv;
   }
 
   // PAY-6: resumen del periodo (totales en vivo, o del snapshot si ya se aprobó).
