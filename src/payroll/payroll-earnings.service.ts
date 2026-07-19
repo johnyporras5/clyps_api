@@ -7,7 +7,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { PeriodDetail } from './entities/period-detail.entity';
 import { PayrollConcept } from './entities/payroll-concept.entity';
 import { PayrollPeriod } from './entities/payroll-period.entity';
@@ -57,6 +57,8 @@ export class PayrollEarningsService {
     private readonly periodRepo: Repository<PayrollPeriod>,
     @InjectRepository(Company)
     private readonly companyRepo: Repository<Company>,
+    @InjectRepository(Payout)
+    private readonly payoutRepo: Repository<Payout>,
     private readonly periodService: PayrollPeriodService,
   ) {}
 
@@ -323,6 +325,166 @@ export class PayrollEarningsService {
       },
       employees,
     };
+  }
+
+  /**
+   * PAY-10: arma el estado de cuenta de un empleado en un periodo (solo lectura).
+   * Totales en vivo mientras el periodo está abierto; del snapshot si ya se aprobó.
+   */
+  private async buildStatement(detail: PeriodDetail, period: PayrollPeriod) {
+    const frozen = ['approved', 'paid', 'closed'].includes(period.status);
+
+    const [concepts, payouts] = await Promise.all([
+      this.conceptRepo.find({
+        where: { periodDetailId: detail.id },
+        order: { id: 'ASC' },
+      }),
+      this.payoutRepo.find({
+        where: { periodDetailId: detail.id },
+        order: { id: 'ASC' },
+      }),
+    ]);
+
+    const nameRows: Array<{ name: string | null }> =
+      await this.detailRepo.query(
+        `SELECT w.name FROM company_worker cw
+         LEFT JOIN worker w ON w.id = cw.worker_id
+        WHERE cw.id = ?`,
+        [detail.companyWorkerId],
+      );
+
+    const liveEarned = concepts
+      .filter((c) => c.sign === 1)
+      .reduce((a, c) => a + c.amountMinor, 0);
+    const liveDeducted = concepts
+      .filter((c) => c.sign === -1)
+      .reduce((a, c) => a + c.amountMinor, 0);
+
+    const earnedMinor = frozen ? detail.earnedMinor : liveEarned;
+    const deductedMinor = frozen ? detail.deductedMinor : liveDeducted;
+    const netMinor = frozen ? detail.netMinor : earnedMinor - deductedMinor;
+    const paidMinor = detail.paidMinor;
+
+    // Desglose por tipo (monto con signo, como se muestra en la app).
+    const byType = new Map<
+      string,
+      { type: string; count: number; amountMinor: number }
+    >();
+    for (const c of concepts) {
+      const acc = byType.get(c.type) ?? {
+        type: c.type,
+        count: 0,
+        amountMinor: 0,
+      };
+      acc.count += 1;
+      acc.amountMinor += c.amountMinor * c.sign;
+      byType.set(c.type, acc);
+    }
+
+    return {
+      period: {
+        id: period.id,
+        label: period.label,
+        status: period.status,
+        startsAt: period.startsAt,
+        endsAt: period.endsAt,
+        approvedAt: period.approvedAt,
+        totalsFrozen: frozen,
+      },
+      employee: {
+        periodDetailId: detail.id,
+        companyWorkerId: detail.companyWorkerId,
+        workerName: (nameRows[0]?.name || '').trim(),
+      },
+      totals: {
+        earnedMinor,
+        deductedMinor,
+        netMinor,
+        paidMinor,
+        balanceMinor: netMinor - paidMinor,
+        settled: netMinor - paidMinor === 0 && netMinor > 0,
+      },
+      breakdown: [...byType.values()],
+      concepts: concepts.map((c) => ({
+        id: c.id,
+        type: c.type,
+        label: c.label,
+        sign: c.sign,
+        amountMinor: c.amountMinor,
+        sourceType: c.sourceType,
+        sourceId: c.sourceId,
+        metadata: c.metadata,
+        createdAt: c.createdAt,
+      })),
+      payouts: payouts.map((p) => ({
+        id: p.id,
+        amountMinor: p.amountMinor,
+        method: p.method,
+        reference: p.reference,
+        paidAt: p.paidAt,
+      })),
+    };
+  }
+
+  /**
+   * PAY-10 (proveedor): su PROPIO estado de cuenta del periodo. Los permisos se
+   * resuelven desde el token: se buscan sus membresías ACTIVAS y solo se sirve
+   * el detalle que le pertenece. Nunca el de otro empleado ni el de otra empresa.
+   */
+  async getMyPeriodStatement(periodId: number, userId: number) {
+    const memberships: Array<{ id: number; company_id: number }> =
+      await this.detailRepo.query(
+        'SELECT id, company_id FROM company_worker WHERE user_id = ? AND is_active = 1',
+        [userId],
+      );
+    if (memberships.length === 0) {
+      throw new ForbiddenException(
+        'No tienes asignaciones activas en ninguna compañía',
+      );
+    }
+    const myIds = memberships.map((m) => m.id);
+
+    const detail = await this.detailRepo.findOne({
+      where: { periodId, companyWorkerId: In(myIds) },
+    });
+    if (!detail) {
+      throw new NotFoundException('No tienes un detalle en ese periodo');
+    }
+
+    const period = await this.periodRepo.findOne({ where: { id: periodId } });
+    if (
+      !period ||
+      !memberships.some((m) => m.company_id === period.companyId)
+    ) {
+      throw new ForbiddenException('No tienes permiso sobre este periodo');
+    }
+
+    return this.buildStatement(detail, period);
+  }
+
+  /** PAY-10 (admin): el estado de cuenta de cualquier empleado de SU empresa. */
+  async getEmployeeStatement(periodDetailId: number, adminId: number) {
+    const detail = await this.detailRepo.findOne({
+      where: { id: periodDetailId },
+    });
+    if (!detail) {
+      throw new NotFoundException(
+        `Detalle de periodo ${periodDetailId} no encontrado`,
+      );
+    }
+    const company = await this.companyRepo.findOne({
+      where: { id: detail.companyId },
+    });
+    if (!company || company.userId !== adminId) {
+      throw new ForbiddenException('No tienes permiso sobre este periodo');
+    }
+    const period = await this.periodRepo.findOne({
+      where: { id: detail.periodId },
+    });
+    if (!period) {
+      throw new NotFoundException(`Periodo ${detail.periodId} no encontrado`);
+    }
+    return this.buildStatement(detail, period);
   }
 
   /**

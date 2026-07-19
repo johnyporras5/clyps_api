@@ -44,6 +44,27 @@ export class PayrollController {
     return this.periodService.setFrequency(req.user.sub, dto.frequency);
   }
 
+  // PAY-10: el proveedor ve SU propio estado de cuenta del periodo (solo lectura).
+  // Los permisos salen del token: nunca puede pedir el de otro empleado/empresa.
+  @Get('me/periods/:id')
+  @Roles('wrk')
+  async getMyStatement(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.earningsService.getMyPeriodStatement(+id, req.user.sub);
+  }
+
+  // PAY-10 (admin): el estado de cuenta de cualquier empleado de su empresa.
+  @Get('period-details/:id/statement')
+  @Roles('adm')
+  async getEmployeeStatement(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.earningsService.getEmployeeStatement(+id, req.user.sub);
+  }
+
   // PAY-6: resumen del periodo (totales en vivo, o del snapshot si ya se aprobó).
   @Get('periods/:id/summary')
   @Roles('adm')
