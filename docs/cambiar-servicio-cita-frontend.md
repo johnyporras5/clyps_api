@@ -111,14 +111,36 @@ Si el nuevo servicio tiene una **lista de trabajadores habilitados** (`service.w
 - El **nuevo servicio** debe existir y ser de la misma compañía.
 - No puede ser el **mismo servicio** que ya tiene el detalle.
 - El trabajador no puede quedar con el **mismo servicio dos veces** en la misma cita.
-- **Solapamiento:** si el nuevo servicio **dura más** y se solaparía con otro servicio del mismo trabajador (en esta cita o en otra), el cambio **se rechaza**. El backend **no** arrastra las citas siguientes; si hay choque, hay que ajustar antes. El mensaje indica con qué choca y la nueva duración.
+- **Solapamiento → arrastre automático (ripple):** si el nuevo servicio **dura más** y pisaría las citas **agendadas** siguientes de ese trabajador, el backend **las corre hacia abajo** automáticamente (lo justo para quitar el cruce, respetando huecos). No se rechaza. Ver sección 4.
 - **Servicios extra:** este endpoint **no** aplica a servicios agregados como "extra" (`isExtra`). Para esos, usar quitar + volver a agregar con los endpoints de extra-services (`DELETE`/`POST /sessions/:id/extra-services`). Si se intenta, el error lo indica.
 
 ---
 
-## 4. Tiempo real (no requiere polling)
+## 4. Arrastre (ripple) y notificaciones
 
-Tras un cambio exitoso, el backend emite el evento realtime **`appointment.extra_services_changed`** a la compañía, al trabajador y al cliente de la cita, con la sesión completa y los `newTotals`. Si ya escuchas ese evento (mismo que usan add/remove de servicios extra), el calendario/detalle se refresca solo; no hace falta recargar a mano.
+### Qué pasa si el nuevo servicio dura más
+
+Cuando el nuevo servicio es **más largo** que el anterior, su bloque se extiende y puede pisar las citas **agendadas** siguientes de ese mismo trabajador. En lugar de rechazar, el backend **corre esas citas hacia abajo** automáticamente (igual que al reprogramar): las empuja lo justo para quitar el cruce, respetando los huecos que ya haya.
+
+Detalles del arrastre:
+- Solo mueve citas **Agendadas (status 1)** de **ese mismo trabajador**, en **el mismo día**.
+- **No** mueve las que ya empezaron/completaron/pagaron, ni las canceladas, ni las de otros trabajadores.
+- Si una cita ya iniciada bloquea el paso, no la mueve (puede quedar un solape con esa; es una decisión de negocio, igual que en reprogramar).
+
+### Quién se entera (sin polling)
+
+Tras un cambio exitoso el backend dispara, best-effort:
+
+| Evento / aviso | A quién | Qué |
+|---|---|---|
+| realtime `appointment.extra_services_changed` | compañía + trabajador + cliente de **esta** cita | Sesión completa + `newTotals` para refrescar |
+| realtime `appointment.status_changed` | por **cada** cita que el arrastre movió | Refresca esa cita en el calendario |
+| push + correo "Tu cita cambió de hora" | **cliente** de cada cita movida | Avisa que su cita se corrió |
+| push "La agenda cambió de hora" | **trabajador** de la agenda **+ admin** de la compañía | Avisa que se corrieron N cita(s) por el cambio de servicio |
+
+> El actor que hizo el cambio **no** se auto-notifica (si el worker cambió el servicio, no se manda push a sí mismo).
+
+Si ya escuchas `appointment.extra_services_changed` y `appointment.status_changed` (los mismos de add/remove de extras y de reprogramar), el calendario se refresca solo; no hace falta recargar a mano.
 
 ---
 

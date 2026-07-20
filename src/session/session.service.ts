@@ -8919,6 +8919,11 @@ export class SessionService {
       appliedOfferId: number | null;
       offerName: string | null;
     };
+    // Citas AGENDADAS del mismo trabajador que el arrastre (ripple) corrió de
+    // hora al aplicar la nueva duración. El controller notifica a los afectados.
+    movedByRipple: RippleMovedDetail[];
+    // Trabajador del detalle (para notificar el arrastre a worker + admin).
+    companyWorkerId: number;
   }> {
     // 1. Sesión y detalle
     const session = await this.sessionRepository.findOne({
@@ -9128,52 +9133,14 @@ export class SessionService {
     const newEnd =
       start && newTime > 0 ? new Date(start.getTime() + newTime * 60000) : null;
 
-    // 10. Validar solapes con la nueva duración: contra otros servicios del
-    //     mismo trabajador en esta cita y contra otras citas.
-    if (start && newTime > 0) {
-      const newStartMs = start.getTime();
-      const newEndMs = newStartMs + newTime * 60000;
-
-      const siblings = await this.sessionDetailRepository.find({
-        where: { sessionId },
-      });
-      for (const sib of siblings) {
-        if (sib.id === detail.id) continue;
-        if (sib.status === 5) continue; // ignorar cancelados
-        if (sib.companyWorkerId !== detail.companyWorkerId) continue;
-        if (!sib.startDatetime || !sib.totalTime) continue;
-        const sibStart = new Date(sib.startDatetime).getTime();
-        const sibEnd = sibStart + (sib.totalTime || 0) * 60000;
-        if (newStartMs < sibEnd && newEndMs > sibStart) {
-          throw new BadRequestException(
-            `El servicio "${service.name}" (${newTime} min) se solaparía con otro servicio de ${detailWorkerName} en esta cita. Ajusta el horario o la duración.`,
-          );
-        }
-      }
-
-      const externalConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
-        detail.companyWorkerId,
-        start,
-        newTime,
-        sessionId,
-      );
-      if (externalConflict) {
-        const conflictStart = new Date(externalConflict.startDatetime);
-        throw new BadRequestException(
-          `${detailWorkerName} ya tiene una cita que se solapa con el horario (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIMEZONE })}) al aplicar la nueva duración (${newTime} min).`,
-        );
-      }
-    }
-
     const previousServiceId = detail.serviceId;
 
-    // 11. Persistir el cambio y recalcular los totales de la cita en una
-    //     transacción. `service_id` es parte de la PK compuesta, así que se
-    //     actualiza con un UPDATE directo por `id + session_id` (se conserva el
-    //     mismo id del detalle, del que dependen el front y las notificaciones).
+    // 10. Persistir el cambio del detalle. `service_id` es parte de la PK
+    //     compuesta, así que se actualiza con un UPDATE directo por
+    //     `id + session_id` (se conserva el mismo id del detalle, del que
+    //     dependen el front y las notificaciones).
     await this.sessionRepository.manager.transaction(async (manager) => {
       const sdRepo = manager.getRepository(SessionDetail);
-      const sRepo = manager.getRepository(Session);
 
       const setFields: Partial<SessionDetail> = {
         serviceId: dto.serviceId,
@@ -9199,30 +9166,45 @@ export class SessionService {
           sessionId,
         })
         .execute();
-
-      // Recalcular totales de la cita a partir de los detalles resultantes
-      // (excluyendo cancelados), coherente con el resto de mutaciones.
-      const allDetails = await sdRepo.find({ where: { sessionId } });
-      const active = allDetails.filter((d) => d.status !== 5);
-      const newTotalCost = active.reduce(
-        (sum, d) => sum + Number(d.cost || 0),
-        0,
-      );
-      const newTotalTime = this.calculateRealTotalTime(
-        active
-          .filter((d) => d.startDatetime && d.totalTime)
-          .map((d) => ({
-            startDatetime: d.startDatetime,
-            totalTime: d.totalTime || 0,
-          })),
-      );
-      await sRepo.update(
-        { id: sessionId },
-        { totalCost: newTotalCost, totalTime: newTotalTime },
-      );
     });
 
-    // 12. Releer el detalle y la cita ya actualizados
+    // 11. Arrastre (ripple): si la nueva duración pisa las citas AGENDADAS
+    //     siguientes del mismo trabajador, se corren hacia abajo (no se
+    //     rechaza), protegiendo el detalle recién cambiado. Best-effort: si el
+    //     arrastre falla, el cambio de servicio ya quedó guardado.
+    let movedByRipple: RippleMovedDetail[] = [];
+    if (start) {
+      movedByRipple = await this.rippleWorkerColumn(
+        detail.companyWorkerId,
+        start,
+        [detailId],
+      );
+    }
+
+    // 12. Recalcular los totales de la cita DESPUÉS del arrastre (por si un
+    //     servicio hermano de esta misma cita se movió de hora).
+    const afterDetails = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    const active = afterDetails.filter((d) => d.status !== 5);
+    const newTotalCost = active.reduce(
+      (sum, d) => sum + Number(d.cost || 0),
+      0,
+    );
+    const newTotalTime = this.calculateRealTotalTime(
+      active
+        .filter((d) => d.startDatetime && d.totalTime)
+        .map((d) => ({
+          startDatetime: d.startDatetime,
+          totalTime: d.totalTime || 0,
+        })),
+    );
+    await this.sessionRepository.update(
+      { id: sessionId },
+      { totalCost: newTotalCost, totalTime: newTotalTime },
+    );
+
+    // 13. Releer el detalle y la cita ya actualizados
     const updatedDetail = await this.sessionDetailRepository.findOne({
       where: { id: detailId, sessionId },
     });
@@ -9251,6 +9233,8 @@ export class SessionService {
         appliedOfferId: priceResolution.appliedOfferId,
         offerName: priceResolution.offerName,
       },
+      movedByRipple,
+      companyWorkerId: detail.companyWorkerId,
     };
   }
 

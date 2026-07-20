@@ -291,6 +291,18 @@ export class SessionController {
     );
     // Los servicios/totales de la cita cambiaron: refrescar calendario en vivo.
     await this.realtimeEmitter.emitExtraServicesChanged(+id, result?.newTotals);
+    // Si la nueva duración corrió las citas siguientes (ripple): avisar a los
+    // clientes de esas citas (push + correo) y refrescar su calendario...
+    await this.notifyRippleMoved(result?.movedByRipple, userId);
+    // ...y avisar al trabajador de esa agenda y al admin de la compañía.
+    const movedSessionIds = [
+      ...new Set((result?.movedByRipple ?? []).map((m) => m.sessionId)),
+    ];
+    await this.notificationEmitter.notifyRippleToStaff(
+      result?.companyWorkerId,
+      movedSessionIds,
+      userId,
+    );
     return result;
   }
 
