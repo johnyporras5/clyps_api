@@ -114,16 +114,21 @@ PATCH /payroll/config
 → { "frequency": "quincenal", "realigned": true }
 ```
 
-El cambio de frecuencia aplica al **próximo** periodo — el abierto actual conserva la suya. La primera vez que se guarda, se crea automáticamente el primer periodo.
+El cambio de frecuencia aplica al **próximo** periodo — el abierto actual conserva la suya. La primera vez que se guarda, se crea automáticamente el primer periodo a partir del `startDate`.
 
-**`startDate` (solo en la primera configuración):** como el salón puede llevar tiempo operando cuando activa la nómina, el admin elige **desde qué día empieza a contar**. Va en formato `YYYY-MM-DD`.
+**`startDate` — la nómina arranca en limpio desde el día que elija el admin.**
 
-- Si se **omite**, el primer periodo arranca **hoy** (parcial si hoy cae a mitad de ciclo: activar un día 20 en quincenal → periodo 20–31).
-- Si se **envía**, arranca ese día (activar con `startDate: "2026-07-16"` en quincenal → periodo completo 16–31).
-- **Solo cuenta en el primer arranque.** Una vez existe un periodo, `startDate` se ignora (el cambio de frecuencia aplica al próximo).
-- **Guard:** si la fecha cae en un ciclo que **ya terminó** (p. ej. una semana pasada), responde **409** con el motivo — ese periodo nacería vencido. Elegir una fecha del ciclo en curso. Formato inválido → **400**.
+En el **onboarding** (primera vez) el admin abre un **calendario, elige un día (hoy o a futuro)** y ese día es el **inicio exacto** del primer periodo. La nómina **no cuenta nada antes de esa fecha** — los cobros anteriores simplemente no entran.
 
-Sugerencia de UI: en el onboarding, un date-picker junto al selector de frecuencia, con default hoy. En configuraciones posteriores, ocultar el date-picker (ya no aplica).
+- El periodo arranca **justo en el día elegido** y corre lo que dure la frecuencia, sin alinear al calendario:
+  - `startDate: "2026-07-30"` + semanal → **30 jul – 5 ago** (7 días), luego 6–12 ago, etc.
+  - `startDate: "2026-07-30"` + quincenal → **30 jul – 13 ago** (15 días).
+- De ahí en adelante los periodos **encadenan solos** (cada uno empieza donde terminó el anterior). No hay huecos ni periodos a medias.
+- **Cobros anteriores al día elegido → no cuentan.** Si eliges el 1 de agosto, lo que se cobre hasta el 31 de julio no entra en la nómina.
+- Formato `YYYY-MM-DD`. **Solo hoy o a futuro** — una fecha pasada responde **409** (*"no puede ser anterior a hoy"*); formato inválido → **400**.
+- **Se usa una sola vez.** Una vez que existe el primer periodo, `startDate` se ignora; de ahí en más el admin **solo cambia la frecuencia** (la estructura ya quedó guardada).
+
+**UI:** en el onboarding, un **date-picker (desde hoy en adelante)** junto al selector de frecuencia. En la tarjeta de configuración normal (posterior), **solo el selector de frecuencia** — sin date-picker.
 
 **Excepción — el campo `realigned`:** si el periodo abierto todavía **no tiene ni una cita cobrada**, se reajusta a la nueva frecuencia en el momento (cubre el caso "me equivoqué al elegir"). En cuanto tiene dinero adentro ya no se toca.
 

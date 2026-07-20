@@ -72,6 +72,26 @@ export class PayrollEarningsService {
       : null;
   }
 
+  /**
+   * ¿El cobro es anterior al día en que arrancó la nómina? Esos no cuentan: la
+   * nómina empieza en limpio desde la fecha que el admin eligió.
+   */
+  private async isBeforeActivation(
+    companyId: number,
+    whenPaid: Date,
+  ): Promise<boolean> {
+    const activation =
+      await this.periodService.resolveActivationDate(companyId);
+    if (activation && whenPaid.getTime() < activation.getTime()) {
+      this.logger.log(
+        `Cobro (${whenPaid.toISOString()}) anterior a la activación de nómina ` +
+          `(${activation.toISOString()}); se omite (company ${companyId})`,
+      );
+      return true;
+    }
+    return false;
+  }
+
   /** Fila del empleado en el periodo (get-or-create, seguro ante carreras). */
   async ensurePeriodDetail(
     companyId: number,
@@ -107,6 +127,7 @@ export class PayrollEarningsService {
     items: CommissionItem[],
   ): Promise<number> {
     if (items.length === 0) return 0;
+    if (await this.isBeforeActivation(companyId, whenPaid)) return 0;
 
     const period = await this.periodService.ensureOpenPeriod(
       companyId,
@@ -174,6 +195,7 @@ export class PayrollEarningsService {
     items: TipItem[],
   ): Promise<number> {
     if (items.length === 0) return 0;
+    if (await this.isBeforeActivation(companyId, whenPaid)) return 0;
 
     const period = await this.periodService.ensureOpenPeriod(
       companyId,

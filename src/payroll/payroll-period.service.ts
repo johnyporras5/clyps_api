@@ -13,10 +13,12 @@ import { Company } from '../company/entities/company.entity';
 import { PayrollFrequency, PeriodStatus } from './payroll.enums';
 import { canTransition } from './payroll-period.state';
 import {
-  calendarBoundsFor,
-  firstPeriodBoundsFor,
+  anchoredBoundsFromStart,
+  anchoredWindowContaining,
+  nextChainStart,
   periodLabel,
 } from './payroll-calendar.util';
+import { businessDateOf } from '../common/utils/business-time.util';
 
 const isDupEntry = (e: unknown): boolean =>
   (e as { code?: string; driverError?: { code?: string } })?.code ===
@@ -95,16 +97,14 @@ export class PayrollPeriodService {
     });
     let anchor = new Date();
     if (!hasPeriod && startDate) {
-      // Mediodía UTC: evita el corrimiento de día por zona horaria.
-      anchor = new Date(`${startDate}T12:00:00.000Z`);
-      const bounds = firstPeriodBoundsFor(frequency, anchor);
-      if (bounds.endsAt.getTime() < Date.now()) {
+      // Solo hoy o a futuro: no se arranca la nómina en el pasado.
+      if (startDate < businessDateOf(new Date())) {
         throw new ConflictException(
-          `La fecha ${startDate} cae en un periodo que ya terminó ` +
-            `(${periodLabel(bounds.startsAt, bounds.endsAt)}). ` +
-            'Elige una fecha del ciclo en curso.',
+          `La fecha de inicio (${startDate}) no puede ser anterior a hoy.`,
         );
       }
+      // Mediodía UTC: evita el corrimiento de día por zona horaria.
+      anchor = new Date(`${startDate}T12:00:00.000Z`);
     }
 
     // Idempotente: crea el primer periodo solo si aún no hay ninguno.
@@ -134,7 +134,11 @@ export class PayrollPeriodService {
     );
     if (Number(rows[0]?.n ?? 0) > 0) return false;
 
-    const bounds = firstPeriodBoundsFor(frequency, open.startsAt);
+    // Se recalcula el fin manteniendo el MISMO día de inicio elegido.
+    const bounds = anchoredBoundsFromStart(
+      businessDateOf(open.startsAt),
+      frequency,
+    );
     open.frequency = frequency;
     open.startsAt = bounds.startsAt;
     open.endsAt = bounds.endsAt;
@@ -150,6 +154,21 @@ export class PayrollPeriodService {
   /** El (único) periodo abierto de la empresa, o null. */
   findOpenPeriodFor(companyId: number): Promise<PayrollPeriod | null> {
     return this.periodRepo.findOne({ where: { companyId, status: 'open' } });
+  }
+
+  /**
+   * Día desde el que la nómina empieza a contar = inicio del primer periodo (lo
+   * que el admin eligió al activarla). Los cobros anteriores no entran. null si
+   * la empresa aún no tiene ningún periodo.
+   */
+  async resolveActivationDate(companyId: number): Promise<Date | null> {
+    const rows: Array<{ s: string | Date | null }> =
+      await this.periodRepo.query(
+        'SELECT MIN(starts_at) AS s FROM payroll_period WHERE company_id = ?',
+        [companyId],
+      );
+    const s = rows[0]?.s;
+    return s ? new Date(s) : null;
   }
 
   private createOpenPeriod(
@@ -185,26 +204,38 @@ export class PayrollPeriodService {
 
   /**
    * Apertura diferida (se llama al PAGAR una cita): garantiza que la fecha del
-   * cobro caiga en un periodo abierto que la cubra. Si el abierto ya venció
-   * respecto a `date`, lo rota a `review` y abre el ciclo de calendario de
-   * `date` (rotación perezosa: PAY-2). El único de BD (open_marker) hace la
-   * creación segura ante carreras: si dos pagos entran a la vez, uno gana y el
-   * otro reusa el que quedó.
+   * cobro caiga en un periodo abierto que la cubra. Los periodos van ANCLADOS al
+   * día que el admin eligió al arrancar: cada uno empieza donde terminó el
+   * anterior. Si el abierto ya venció respecto a `date`, lo rota a `review` y
+   * abre la ventana anclada que contiene `date` (saltando huecos vacíos). El
+   * único de BD (open_marker) hace la creación segura ante carreras.
    */
   async ensureOpenPeriod(
     companyId: number,
     date: Date,
   ): Promise<PayrollPeriod> {
+    const frequency = await this.resolveFrequency(companyId);
     const existing = await this.findOpenPeriodFor(companyId);
+
+    let chainStart: string;
     if (existing) {
       // Lo cubre (o es un pago retroactivo) → se usa tal cual.
       if (date <= existing.endsAt) return existing;
-      // Ya venció respecto a esta fecha → rotar y abrir el que toca.
+      // Ya venció → rotar y encadenar el siguiente desde donde este terminó.
       await this.rotateToReview(existing);
+      chainStart = nextChainStart(existing.startsAt, existing.frequency);
+    } else {
+      // Sin abierto: encadenar desde el último periodo, o anclar en `date`.
+      const latest = await this.periodRepo.findOne({
+        where: { companyId },
+        order: { startsAt: 'DESC', id: 'DESC' },
+      });
+      chainStart = latest
+        ? nextChainStart(latest.startsAt, latest.frequency)
+        : businessDateOf(date);
     }
 
-    const frequency = await this.resolveFrequency(companyId);
-    const bounds = calendarBoundsFor(frequency, date);
+    const bounds = anchoredWindowContaining(frequency, chainStart, date);
     try {
       const created = await this.createOpenPeriod(companyId, bounds, frequency);
       this.logger.log(
@@ -222,8 +253,9 @@ export class PayrollPeriodService {
 
   /**
    * Primer periodo (bootstrap del onboarding). Idempotente: si la empresa ya
-   * tiene CUALQUIER periodo, no crea otro. El primer periodo puede ser parcial
-   * si el alta cae a mitad de ciclo (día 9 quincenal → 9–15).
+   * tiene CUALQUIER periodo, no crea otro. Arranca EXACTO en `signupDate` (el día
+   * que el admin eligió) y corre lo que dure la frecuencia. La nómina no cuenta
+   * nada antes de ese día.
    */
   async bootstrapFirstPeriod(
     companyId: number,
@@ -244,7 +276,10 @@ export class PayrollPeriodService {
       );
     }
 
-    const bounds = firstPeriodBoundsFor(frequency, signupDate);
+    const bounds = anchoredBoundsFromStart(
+      businessDateOf(signupDate),
+      frequency,
+    );
     try {
       return await this.createOpenPeriod(companyId, bounds, frequency);
     } catch (e) {

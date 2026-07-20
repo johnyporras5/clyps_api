@@ -32,6 +32,85 @@ const MONTHS_ES = [
   'diciembre',
 ];
 
+// Suma n días a una fecha YYYY-MM-DD (aritmética en UTC, sin corrimiento).
+const addDaysStr = (str: string, n: number): string => {
+  const [y, m, d] = ymd(str);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+};
+
+// Suma n meses, recortando el día si el mes destino es más corto (31 ene → 28 feb).
+const addMonthsStr = (str: string, n: number): string => {
+  const [y, m, d] = ymd(str);
+  const first = new Date(Date.UTC(y, m - 1 + n, 1));
+  const ty = first.getUTCFullYear();
+  const tm = first.getUTCMonth();
+  const last = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  return `${ty}-${pad(tm + 1)}-${pad(Math.min(d, last))}`;
+};
+
+// Último día (inclusive) de un periodo que arranca en startStr, según frecuencia.
+const periodEndDayStr = (
+  startStr: string,
+  frequency: PayrollFrequency,
+): string =>
+  frequency === 'semanal'
+    ? addDaysStr(startStr, 6)
+    : frequency === 'quincenal'
+      ? addDaysStr(startStr, 14)
+      : addDaysStr(addMonthsStr(startStr, 1), -1); // mensual: un mes calendario
+
+/**
+ * Periodo ANCLADO: arranca EXACTO en `startStr` (sin alinear al calendario) y
+ * dura lo que marque la frecuencia (semanal 7d, quincenal 15d, mensual 1 mes).
+ * Es lo que se usa desde que el admin elige la fecha de inicio de la nómina.
+ */
+export function anchoredBoundsFromStart(
+  startStr: string,
+  frequency: PayrollFrequency,
+  tz: string = BUSINESS_TIMEZONE,
+): { startsAt: Date; endsAt: Date } {
+  const endStr = periodEndDayStr(startStr, frequency);
+  return {
+    startsAt: businessDayStart(startStr, tz),
+    endsAt: businessDayBounds(endStr, tz).endOfDay,
+  };
+}
+
+/**
+ * Inicio (YYYY-MM-DD) del periodo que sigue a uno que arrancó en `startsAt` con
+ * la frecuencia dada. Se calcula desde `startsAt` (se guarda limpio, a
+ * medianoche) para no arrastrar el redondeo del `endsAt` (23:59:59.999).
+ */
+export function nextChainStart(
+  startsAt: Date,
+  frequency: PayrollFrequency,
+  tz: string = BUSINESS_TIMEZONE,
+): string {
+  const startStr = businessDateOf(startsAt, tz);
+  return addDaysStr(periodEndDayStr(startStr, frequency), 1);
+}
+
+/**
+ * Ventana anclada que CONTIENE `date`, encadenando desde `chainStartStr` y
+ * avanzando de periodo en periodo. No crea los intermedios: salta al que toca
+ * (p. ej. si no hubo cobros por 3 semanas, va directo a la semana del cobro).
+ */
+export function anchoredWindowContaining(
+  frequency: PayrollFrequency,
+  chainStartStr: string,
+  date: Date,
+  tz: string = BUSINESS_TIMEZONE,
+): { startsAt: Date; endsAt: Date } {
+  let start = chainStartStr;
+  let bounds = anchoredBoundsFromStart(start, frequency, tz);
+  let guard = 0;
+  while (date.getTime() > bounds.endsAt.getTime() && guard++ < 1000) {
+    start = addDaysStr(businessDateOf(bounds.endsAt, tz), 1);
+    bounds = anchoredBoundsFromStart(start, frequency, tz);
+  }
+  return bounds;
+}
+
 /**
  * Ciclo de calendario completo que contiene `date`, según la frecuencia.
  * Quincenal: 1–15 o 16–fin. Semanal: lunes–domingo. Mensual: 1–fin.
