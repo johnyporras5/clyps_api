@@ -9,9 +9,11 @@ import { Company } from '../company/entities/company.entity';
 import { PayrollPeriodService } from './payroll-period.service';
 import { PayrollEarningsService } from './payroll-earnings.service';
 import { PayrollController } from './payroll.controller';
+import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
+    CommonModule,
     TypeOrmModule.forFeature([
       PayrollConfig,
       PayrollPeriod,

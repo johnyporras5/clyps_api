@@ -145,6 +145,7 @@ GET /payroll/periods/:id/summary
       "periodDetailId": 41,        // ← ESTE es el id para conceptos y pagos
       "companyWorkerId": 1,
       "workerName": "Carlos Rodríguez",
+      "pictureURL": "https://.../worker_photo/worker-2-fc6a....jpg",   // null si no tiene
       "servicesCount": 1,
       "earnedMinor": 855706,
       "deductedMinor": 0,
@@ -245,6 +246,8 @@ Los periodos del proveedor, del más reciente al más viejo. **Incluye el period
       "periodId": 35,              // ← con este id se abre el detalle (9b)
       "periodDetailId": 64,
       "companyId": 1,
+      "companyName": "Urban Style",                 // para el caso multi-empresa
+      "companyLogoURL": "https://.../company_logo/company-1-....jpg",
       "label": "20–26 julio 2026",
       "status": "open",
       "startsAt": "2026-07-20T04:00:00.000Z",
@@ -265,7 +268,7 @@ Los periodos del proveedor, del más reciente al más viejo. **Incluye el period
 
 **El periodo en curso siempre aparece**, aunque el proveedor todavía no haya generado nada (sale en `0,00 Bs`). No hace falta manejar el caso "no hay periodos" salvo que la empresa nunca haya configurado nómina.
 
-Si el proveedor trabaja en **varias empresas**, la lista trae los periodos de todas — por eso viene `companyId` en cada fila.
+Si el proveedor trabaja en **varias empresas**, la lista trae los periodos de todas — por eso viene `companyName` (y `companyLogoURL`) en cada fila, para poder mostrar de qué negocio es cada periodo.
 
 ---
 
@@ -283,7 +286,10 @@ En la ruta del proveedor se manda el **id del periodo** (no del detail) — el b
 ```jsonc
 {
   "period": { "id": 28, "label": "1–15 julio 2026", "status": "approved", "totalsFrozen": true },
-  "employee": { "periodDetailId": 41, "companyWorkerId": 1, "workerName": "Carlos Rodríguez" },
+  "employee": {
+    "periodDetailId": 41, "companyWorkerId": 1, "workerName": "Carlos Rodríguez",
+    "pictureURL": "https://.../worker_photo/worker-2-fc6a....jpg"   // null si no tiene
+  },
   "totals": {
     "earnedMinor": 855706,
     "deductedMinor": 100000,

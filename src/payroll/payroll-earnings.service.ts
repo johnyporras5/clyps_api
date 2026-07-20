@@ -14,6 +14,7 @@ import { PayrollPeriod } from './entities/payroll-period.entity';
 import { Payout } from './entities/payout.entity';
 import { Company } from '../company/entities/company.entity';
 import { PayrollPeriodService } from './payroll-period.service';
+import { FileUploadService } from '../common/services/file_upload.service';
 import { toMinor, fromMinor } from './payroll-money.util';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
 import { CreatePayoutDto } from './dto/create-payout.dto';
@@ -60,7 +61,15 @@ export class PayrollEarningsService {
     @InjectRepository(Payout)
     private readonly payoutRepo: Repository<Payout>,
     private readonly periodService: PayrollPeriodService,
+    private readonly fileUploadService: FileUploadService,
   ) {}
+
+  /** URL de la foto del trabajador, igual que la arma el roster. */
+  private workerPictureUrl(picture?: string | null): string | null {
+    return picture
+      ? this.fileUploadService.getFileUrl('worker_photo', picture)
+      : null;
+  }
 
   /** Fila del empleado en el periodo (get-or-create, seguro ante carreras). */
   async ensurePeriodDetail(
@@ -250,6 +259,7 @@ export class PayrollEarningsService {
       periodDetailId: number;
       companyWorkerId: number;
       workerName: string | null;
+      picture: string | null;
       earnedMinor: string;
       deductedMinor: string;
       netMinor: string;
@@ -261,6 +271,7 @@ export class PayrollEarningsService {
       `SELECT d.id AS periodDetailId,
               d.company_worker_id AS companyWorkerId,
               w.name AS workerName,
+              w.picture AS picture,
               d.earned_minor AS earnedMinor,
               d.deducted_minor AS deductedMinor,
               d.net_minor AS netMinor,
@@ -273,7 +284,7 @@ export class PayrollEarningsService {
          LEFT JOIN worker w ON w.id = cw.worker_id
          LEFT JOIN payroll_concept c ON c.period_detail_id = d.id
         WHERE d.period_id = ?
-        GROUP BY d.id, d.company_worker_id, w.name,
+        GROUP BY d.id, d.company_worker_id, w.name, w.picture,
                  d.earned_minor, d.deducted_minor, d.net_minor, d.paid_minor
         ORDER BY w.name`,
       [periodId],
@@ -290,6 +301,7 @@ export class PayrollEarningsService {
         periodDetailId: r.periodDetailId,
         companyWorkerId: r.companyWorkerId,
         workerName: (r.workerName || '').trim(),
+        pictureURL: this.workerPictureUrl(r.picture),
         servicesCount: Number(r.servicesCount),
         earnedMinor: earned,
         deductedMinor: deducted,
@@ -495,9 +507,9 @@ export class PayrollEarningsService {
       }),
     ]);
 
-    const nameRows: Array<{ name: string | null }> =
+    const nameRows: Array<{ name: string | null; picture: string | null }> =
       await this.detailRepo.query(
-        `SELECT w.name FROM company_worker cw
+        `SELECT w.name, w.picture FROM company_worker cw
          LEFT JOIN worker w ON w.id = cw.worker_id
         WHERE cw.id = ?`,
         [detail.companyWorkerId],
@@ -545,6 +557,7 @@ export class PayrollEarningsService {
         periodDetailId: detail.id,
         companyWorkerId: detail.companyWorkerId,
         workerName: (nameRows[0]?.name || '').trim(),
+        pictureURL: this.workerPictureUrl(nameRows[0]?.picture),
       },
       totals: {
         earnedMinor,
@@ -631,6 +644,7 @@ export class PayrollEarningsService {
     const rows: Array<Record<string, string | number | Date | null>> =
       await this.detailRepo.query(
         `SELECT p.id AS periodId, d.id AS periodDetailId, p.company_id AS companyId,
+                co.name AS companyName, co.logo AS companyLogo,
                 p.label, p.status, p.starts_at AS startsAt, p.ends_at AS endsAt,
                 d.earned_minor AS snapEarned, d.deducted_minor AS snapDeducted,
                 d.net_minor AS snapNet, d.paid_minor AS paidMinor,
@@ -639,9 +653,11 @@ export class PayrollEarningsService {
                 COALESCE(SUM(CASE WHEN c.type = 'commission' THEN 1 ELSE 0 END), 0) AS servicesCount
            FROM period_detail d
            JOIN payroll_period p ON p.id = d.period_id
+           LEFT JOIN company co ON co.id = p.company_id
            LEFT JOIN payroll_concept c ON c.period_detail_id = d.id
           WHERE d.company_worker_id IN (?)
-          GROUP BY d.id, p.id, p.company_id, p.label, p.status, p.starts_at, p.ends_at,
+          GROUP BY d.id, p.id, p.company_id, co.name, co.logo,
+                   p.label, p.status, p.starts_at, p.ends_at,
                    d.earned_minor, d.deducted_minor, d.net_minor, d.paid_minor
           ORDER BY p.starts_at DESC
           LIMIT ? OFFSET ?`,
@@ -658,6 +674,13 @@ export class PayrollEarningsService {
         periodId: Number(r.periodId),
         periodDetailId: Number(r.periodDetailId),
         companyId: Number(r.companyId),
+        companyName: (String(r.companyName ?? '') || '').trim() || null,
+        companyLogoURL: r.companyLogo
+          ? this.fileUploadService.getFileUrl(
+              'company_logo',
+              String(r.companyLogo),
+            )
+          : null,
         label: r.label,
         status: r.status,
         startsAt: r.startsAt,
