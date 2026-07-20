@@ -262,6 +262,18 @@ export class PayrollPeriodService {
       );
     }
 
+    // Reabrir (review → open) solo si no hay ya otro periodo abierto: si el
+    // siguiente ciclo ya arrancó, el tiempo avanzó y no se puede devolver.
+    if (period.status === 'review' && newStatus === 'open') {
+      const open = await this.findOpenPeriodFor(period.companyId);
+      if (open && open.id !== period.id) {
+        throw new ConflictException(
+          'No puedes reabrir este periodo: el siguiente ciclo ya comenzó ' +
+            `(${open.label}). Las correcciones van por ajuste en el periodo abierto.`,
+        );
+      }
+    }
+
     period.status = newStatus;
     if (newStatus === 'approved') {
       period.approvedByUserId = adminId;

@@ -315,6 +315,13 @@ export class PayrollEarningsService {
     const sum = (k: keyof (typeof employees)[0]) =>
       employees.reduce((acc, e) => acc + Number(e[k] ?? 0), 0);
 
+    // Se puede reabrir (review → open) solo si no hay ya otro periodo abierto:
+    // si el siguiente ciclo ya arrancó, no hay vuelta atrás.
+    const canReopen =
+      period.status === 'review'
+        ? !(await this.periodService.findOpenPeriodFor(period.companyId))
+        : false;
+
     return {
       period: {
         id: period.id,
@@ -326,6 +333,7 @@ export class PayrollEarningsService {
         approvedAt: period.approvedAt,
         approvedByUserId: period.approvedByUserId,
         totalsFrozen: frozen,
+        canReopen,
       },
       totals: {
         earnedMinor: sum('earnedMinor'),

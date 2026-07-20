@@ -180,7 +180,9 @@ PATCH /payroll/periods/:id/status
 
 Solo se admite el paso siguiente. Saltarse uno (`open → approved`) responde **409**.
 
-**Única marcha atrás: `review → open`.** Sirve para deshacer un "enviar a revisión" hecho por error, y es seguro porque en `review` todavía no se congela nada. Conviene ofrecer un botón *"Volver a abrir"* mientras el periodo esté en revisión. Desde `approved` en adelante ya no hay vuelta atrás.
+**Única marcha atrás: `review → open`.** Sirve para deshacer un "enviar a revisión" hecho por error. Pero **solo se puede si no hay ya otro periodo abierto**: si el periodo pasó a `review` por rotación automática (porque el siguiente ciclo ya arrancó), el tiempo avanzó y no hay vuelta atrás.
+
+Para saber si mostrar el botón *"Volver a abrir"*, usa el campo **`period.canReopen`** del summary (endpoint 3 / 0): `true` solo cuando el periodo está en `review` y no hay otro abierto. Si el front igual manda `review → open` con otro periodo abierto, el backend responde **409** con el motivo (no un 500). Desde `approved` en adelante nunca hay vuelta atrás.
 
 > 🔑 **`review → approved` es el paso importante:** congela los totales de todos los empleados en una sola transacción. Después de esto, una cita que se pague tarde y caiga en ese periodo **ya no mueve el neto aprobado**. Conviene un modal de confirmación explicando que es irreversible.
 
