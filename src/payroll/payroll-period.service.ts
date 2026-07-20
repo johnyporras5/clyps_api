@@ -72,7 +72,7 @@ export class PayrollPeriodService {
   async setFrequency(
     adminId: number,
     frequency: PayrollFrequency,
-  ): Promise<{ frequency: PayrollFrequency }> {
+  ): Promise<{ frequency: PayrollFrequency; realigned: boolean }> {
     const companyId = await this.resolveAdminCompanyId(adminId);
 
     const cfg = await this.configRepo.findOne({ where: { companyId } });
@@ -88,7 +88,41 @@ export class PayrollPeriodService {
     // Idempotente: crea el primer periodo solo si aún no hay ninguno.
     await this.bootstrapFirstPeriod(companyId, frequency, new Date());
 
-    return { frequency };
+    const realigned = await this.realignOpenPeriodIfEmpty(companyId, frequency);
+    return { frequency, realigned };
+  }
+
+  /**
+   * Si el periodo abierto todavía no tiene conceptos, se reajusta a la nueva
+   * frecuencia (cubre el "me equivoqué al configurar"). En cuanto tiene dinero
+   * adentro ya no se toca: el cambio aplica al próximo.
+   */
+  private async realignOpenPeriodIfEmpty(
+    companyId: number,
+    frequency: PayrollFrequency,
+  ): Promise<boolean> {
+    const open = await this.findOpenPeriodFor(companyId);
+    if (!open || open.frequency === frequency) return false;
+
+    const rows: Array<{ n: number }> = await this.periodRepo.query(
+      `SELECT COUNT(*) AS n FROM payroll_concept c
+         JOIN period_detail d ON d.id = c.period_detail_id
+        WHERE d.period_id = ?`,
+      [open.id],
+    );
+    if (Number(rows[0]?.n ?? 0) > 0) return false;
+
+    const bounds = firstPeriodBoundsFor(frequency, open.startsAt);
+    open.frequency = frequency;
+    open.startsAt = bounds.startsAt;
+    open.endsAt = bounds.endsAt;
+    open.label = periodLabel(bounds.startsAt, bounds.endsAt);
+    await this.periodRepo.save(open);
+
+    this.logger.log(
+      `Periodo ${open.id} (vacío) reajustado a ${frequency}: ${open.label}`,
+    );
+    return true;
   }
 
   /** El (único) periodo abierto de la empresa, o null. */

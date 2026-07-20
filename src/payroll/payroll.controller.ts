@@ -70,6 +70,13 @@ export class PayrollController {
     return this.earningsService.getEmployeeStatement(+id, req.user.sub);
   }
 
+  // Periodo en curso
+  @Get('periods/current')
+  @Roles('adm')
+  async getCurrentPeriod(@Request() req: AuthenticatedRequest) {
+    return this.earningsService.getCurrentPeriodSummary(req.user.sub);
+  }
+
   // PAY-11: histórico de periodos ya cerrados/aprobados, filtrable por año.
   @Get('periods')
   @Roles('adm')

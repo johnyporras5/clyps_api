@@ -328,6 +328,25 @@ export class PayrollEarningsService {
   }
 
   /**
+   * Resumen del periodo ABIERTO de la empresa
+   */
+  async getCurrentPeriodSummary(adminId: number) {
+    const company = await this.companyRepo.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+    const period = await this.periodService.ensureOpenPeriod(
+      company.id,
+      new Date(),
+    );
+    return this.getPeriodSummary(period.id, adminId);
+  }
+
+  /**
    * PAY-11: histórico de periodos ya no abiertos (approved/paid/closed) de la
    * empresa del admin, filtrable por año y paginado. Los totales salen del
    * snapshot congelado, así el reporte es estable para siempre.
