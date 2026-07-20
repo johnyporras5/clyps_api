@@ -55,6 +55,7 @@ import {
 } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
 import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
+import { ChangeDetailServiceDto } from './dto/change-detail-service.dto';
 import { IAPromptsService } from '../IAprompts/ia_prompts.service';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { Offer } from 'src/Offer/entities/offer.entity';
@@ -8875,6 +8876,381 @@ export class SessionService {
 
     return {
       message: `Servicio extra eliminado exitosamente de la sesión ${sessionId}`,
+    };
+  }
+
+  /**
+   * Cambia el servicio de un detalle YA AGENDADO de una cita.
+   *
+   * Reemplaza el `serviceId` del session_detail por otro servicio, MANTENIENDO
+   * el mismo trabajador y horario de inicio, y recalculando precio, duración,
+   * reparto worker/compañía y los totales de la cita.
+   *
+   * Reglas:
+   * - Solo admin (dueño de la compañía) o el trabajador asignado a ese detalle.
+   * - Solo mientras el detalle siga "Agendado" (status 1) y la cita no esté en
+   *   estado terminal (Pagada 4 / Cancelada 5 / Calificada 6). Para el rol
+   *   worker, además, no se permite si el admin tomó el control (statusLocked).
+   * - No aplica a servicios extra (usar los endpoints de extra-services).
+   * - El trabajador asignado debe estar habilitado para el nuevo servicio
+   *   (service.workers[]), si el servicio restringe trabajadores.
+   */
+  async changeDetailService(
+    sessionId: number,
+    detailId: number,
+    dto: ChangeDetailServiceDto,
+    userId: number,
+    userRole?: string,
+  ): Promise<{
+    message: string;
+    detail: SessionDetail;
+    previousServiceId: number;
+    newServiceId: number;
+    newTotals: { totalCost: number; totalTime: number };
+    calculation: {
+      serviceName: string;
+      cost: number;
+      totalTime: number;
+      totalWorker: number;
+      totalCompany: number;
+      workerPercentage: number;
+      companyPercentage: number;
+      isOffer: boolean;
+      appliedOfferId: number | null;
+      offerName: string | null;
+    };
+  }> {
+    // 1. Sesión y detalle
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
+    }
+
+    const detail = await this.sessionDetailRepository.findOne({
+      where: { id: detailId, sessionId },
+    });
+    if (!detail) {
+      throw new NotFoundException(
+        `Detalle ${detailId} no encontrado en la sesión ${sessionId}`,
+      );
+    }
+
+    if (detail.isExtra) {
+      throw new BadRequestException(
+        'No se puede cambiar el servicio de un servicio extra. Elimínalo y vuelve a agregarlo con los endpoints de servicios extra.',
+      );
+    }
+
+    if (detail.companyWorkerId == null) {
+      throw new BadRequestException(
+        'El detalle no tiene trabajador asignado. Asigna un trabajador antes de cambiar el servicio.',
+      );
+    }
+
+    // 2. Estados: la cita no puede estar en un estado terminal y el detalle
+    //    debe seguir "Agendado". Para el worker, respetar statusLocked.
+    if (
+      session.sessionStatus === 4 ||
+      session.sessionStatus === 5 ||
+      session.sessionStatus === 6
+    ) {
+      throw new BadRequestException(
+        `La cita está en estado "${this.getSessionStatusText(session.sessionStatus)}" y no admite cambios en sus servicios`,
+      );
+    }
+    if (detail.status !== 1) {
+      throw new BadRequestException(
+        `Solo se puede cambiar el servicio mientras el detalle esté "Agendado"; el actual está "${this.getDetailStatusText(detail.status)}"`,
+      );
+    }
+    if (userRole === 'wrk' && session.statusLocked) {
+      throw new BadRequestException(
+        'La cita está bajo control del administrador; no puedes cambiar el servicio.',
+      );
+    }
+
+    // 3. Permisos + compañía a la que pertenece el detalle
+    let companyId: number;
+    if (userRole === 'adm') {
+      const adminCompany = await this.companyRepository.findOne({
+        where: { userId },
+      });
+      if (!adminCompany) {
+        throw new NotFoundException(
+          'El administrador no tiene una compañía asignada',
+        );
+      }
+      const cw = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId },
+        relations: ['company'],
+      });
+      if (!cw || cw.company?.id !== adminCompany.id) {
+        throw new ForbiddenException(
+          'No tienes permiso para modificar este detalle',
+        );
+      }
+      companyId = adminCompany.id;
+    } else if (userRole === 'wrk') {
+      const worker = await this.workerRepository.findOne({
+        where: { userId },
+      });
+      if (!worker) {
+        throw new NotFoundException('Trabajador no encontrado');
+      }
+      const cw = await this.companyWorkerRepository.findOne({
+        where: { id: detail.companyWorkerId, workerId: worker.id },
+        relations: ['company'],
+      });
+      if (!cw) {
+        throw new ForbiddenException(
+          'No tienes permiso para modificar este detalle',
+        );
+      }
+      if (cw.isActive !== 1) {
+        throw new BadRequestException('No estás activo en esta compañía');
+      }
+      companyId = cw.company?.id;
+      if (!companyId) {
+        throw new NotFoundException(
+          'El trabajador no tiene una compañía asignada',
+        );
+      }
+    } else {
+      throw new ForbiddenException(
+        'No tienes permisos para realizar esta acción',
+      );
+    }
+
+    // 4. No tiene sentido "cambiar" al mismo servicio
+    if (dto.serviceId === detail.serviceId) {
+      throw new BadRequestException(
+        'El detalle ya usa ese servicio. Elige un servicio distinto.',
+      );
+    }
+
+    // 5. Nuevo servicio: debe existir y pertenecer a la misma compañía
+    const service = await this.serviceRepository.findOne({
+      where: { id: dto.serviceId, companyId },
+    });
+    if (!service) {
+      throw new NotFoundException(
+        `Servicio con ID ${dto.serviceId} no encontrado o no pertenece a tu compañía`,
+      );
+    }
+    this.validateServicePercentagesAndTime(service);
+
+    // Nombre del trabajador asignado (para mensajes de error).
+    const detailWorker = await this.companyWorkerRepository.findOne({
+      where: { id: detail.companyWorkerId },
+      relations: ['worker'],
+    });
+    const detailWorkerName =
+      detailWorker?.worker && (detailWorker.worker.name || '').trim()
+        ? (detailWorker.worker.name || '').trim()
+        : `Trabajador #${detail.companyWorkerId}`;
+
+    // 6. El trabajador asignado debe estar habilitado para el nuevo servicio,
+    //    si el servicio restringe la lista de trabajadores (service.workers[]).
+    if (Array.isArray(service.workers) && service.workers.length > 0) {
+      const isAllowed = service.workers.some(
+        (w: any) => w.id === detail.companyWorkerId,
+      );
+      if (!isAllowed) {
+        const allowedIds = service.workers.map((w: any) => w.id);
+        const allowedWorkers = await this.companyWorkerRepository.find({
+          where: { id: In(allowedIds) },
+          relations: ['worker'],
+        });
+        const allowedNames = allowedWorkers
+          .map((cw) =>
+            cw.worker
+              ? (cw.worker.name || '').trim() || `Trabajador #${cw.id}`
+              : `Trabajador #${cw.id}`,
+          )
+          .filter((n) => n.length > 0);
+        const allowedText =
+          allowedNames.length > 0
+            ? allowedNames.join(', ')
+            : 'ninguno configurado';
+        throw new BadRequestException(
+          `${detailWorkerName} no puede realizar el servicio ${service.name}. Trabajadores habilitados: ${allowedText}.`,
+        );
+      }
+    }
+
+    // 7. Evitar que el mismo trabajador quede con el mismo servicio dos veces
+    //    en la misma cita.
+    const duplicate = await this.sessionDetailRepository.findOne({
+      where: {
+        sessionId,
+        serviceId: dto.serviceId,
+        companyWorkerId: detail.companyWorkerId,
+      },
+    });
+    if (duplicate && duplicate.id !== detail.id) {
+      throw new BadRequestException(
+        `${detailWorkerName} ya tiene el servicio "${service.name}" en esta cita`,
+      );
+    }
+
+    // 8. Recalcular precio (oferta o worker.cost ?? service.cost), reparto y
+    //    duración a partir del nuevo servicio.
+    const priceResolution = await this.resolveServicePrice(
+      dto.serviceId,
+      companyId,
+      dto.offerId,
+      detail.startDatetime,
+    );
+    const finalPrice = priceResolution.isOffer
+      ? priceResolution.finalPrice
+      : this.resolveWorkerServiceCost(service, detail.companyWorkerId);
+    if (finalPrice <= 0) {
+      throw new BadRequestException(
+        `El costo del servicio "${service.name}" debe ser mayor a 0`,
+      );
+    }
+
+    const {
+      workerPercentage,
+      companyPercentage,
+      time: newTime,
+    } = this.calculatePercentagesAndTime(service, detail.companyWorkerId);
+    const amounts = this.calculateAmounts(
+      finalPrice,
+      workerPercentage,
+      companyPercentage,
+    );
+
+    // 9. Recalcular fin del bloque según la nueva duración.
+    const start = detail.startDatetime ? new Date(detail.startDatetime) : null;
+    const newEnd =
+      start && newTime > 0 ? new Date(start.getTime() + newTime * 60000) : null;
+
+    // 10. Validar solapes con la nueva duración: contra otros servicios del
+    //     mismo trabajador en esta cita y contra otras citas.
+    if (start && newTime > 0) {
+      const newStartMs = start.getTime();
+      const newEndMs = newStartMs + newTime * 60000;
+
+      const siblings = await this.sessionDetailRepository.find({
+        where: { sessionId },
+      });
+      for (const sib of siblings) {
+        if (sib.id === detail.id) continue;
+        if (sib.status === 5) continue; // ignorar cancelados
+        if (sib.companyWorkerId !== detail.companyWorkerId) continue;
+        if (!sib.startDatetime || !sib.totalTime) continue;
+        const sibStart = new Date(sib.startDatetime).getTime();
+        const sibEnd = sibStart + (sib.totalTime || 0) * 60000;
+        if (newStartMs < sibEnd && newEndMs > sibStart) {
+          throw new BadRequestException(
+            `El servicio "${service.name}" (${newTime} min) se solaparía con otro servicio de ${detailWorkerName} en esta cita. Ajusta el horario o la duración.`,
+          );
+        }
+      }
+
+      const externalConflict = await this.checkIfWorkerHasAppointmentAtSameTime(
+        detail.companyWorkerId,
+        start,
+        newTime,
+        sessionId,
+      );
+      if (externalConflict) {
+        const conflictStart = new Date(externalConflict.startDatetime);
+        throw new BadRequestException(
+          `${detailWorkerName} ya tiene una cita que se solapa con el horario (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIMEZONE })}) al aplicar la nueva duración (${newTime} min).`,
+        );
+      }
+    }
+
+    const previousServiceId = detail.serviceId;
+
+    // 11. Persistir el cambio y recalcular los totales de la cita en una
+    //     transacción. `service_id` es parte de la PK compuesta, así que se
+    //     actualiza con un UPDATE directo por `id + session_id` (se conserva el
+    //     mismo id del detalle, del que dependen el front y las notificaciones).
+    await this.sessionRepository.manager.transaction(async (manager) => {
+      const sdRepo = manager.getRepository(SessionDetail);
+      const sRepo = manager.getRepository(Session);
+
+      const setFields: Partial<SessionDetail> = {
+        serviceId: dto.serviceId,
+        cost: amounts.cost,
+        totalWorker: amounts.totalWorker,
+        totalCompany: amounts.totalCompany,
+        totalTime: newTime,
+        // La columna admite NULL en BD aunque el tipo TS sea number; limpiar la
+        // oferta previa cuando el nuevo precio no proviene de una oferta.
+        offerId: (priceResolution.appliedOfferId ?? null) as unknown as number,
+      };
+      if (newEnd) {
+        setFields.endDatetime = newEnd;
+        setFields.originalEndDatetime = newEnd;
+      }
+
+      await sdRepo
+        .createQueryBuilder()
+        .update(SessionDetail)
+        .set(setFields)
+        .where('id = :id AND session_id = :sessionId', {
+          id: detailId,
+          sessionId,
+        })
+        .execute();
+
+      // Recalcular totales de la cita a partir de los detalles resultantes
+      // (excluyendo cancelados), coherente con el resto de mutaciones.
+      const allDetails = await sdRepo.find({ where: { sessionId } });
+      const active = allDetails.filter((d) => d.status !== 5);
+      const newTotalCost = active.reduce(
+        (sum, d) => sum + Number(d.cost || 0),
+        0,
+      );
+      const newTotalTime = this.calculateRealTotalTime(
+        active
+          .filter((d) => d.startDatetime && d.totalTime)
+          .map((d) => ({
+            startDatetime: d.startDatetime,
+            totalTime: d.totalTime || 0,
+          })),
+      );
+      await sRepo.update(
+        { id: sessionId },
+        { totalCost: newTotalCost, totalTime: newTotalTime },
+      );
+    });
+
+    // 12. Releer el detalle y la cita ya actualizados
+    const updatedDetail = await this.sessionDetailRepository.findOne({
+      where: { id: detailId, sessionId },
+    });
+    const updatedSession = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+
+    return {
+      message: `Servicio del detalle ${detailId} cambiado a "${service.name}" exitosamente`,
+      detail: updatedDetail as SessionDetail,
+      previousServiceId,
+      newServiceId: dto.serviceId,
+      newTotals: {
+        totalCost: Number(updatedSession?.totalCost ?? 0),
+        totalTime: Number(updatedSession?.totalTime ?? 0),
+      },
+      calculation: {
+        serviceName: service.name || '',
+        cost: amounts.cost,
+        totalTime: newTime,
+        totalWorker: amounts.totalWorker,
+        totalCompany: amounts.totalCompany,
+        workerPercentage,
+        companyPercentage,
+        isOffer: priceResolution.isOffer,
+        appliedOfferId: priceResolution.appliedOfferId,
+        offerName: priceResolution.offerName,
+      },
     };
   }
 
