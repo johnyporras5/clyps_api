@@ -69,7 +69,8 @@ Todos cuelgan de `/payroll` y todos requieren `Authorization: Bearer <token>`.
 | 6 | `POST` | `/payroll/concepts/:id/reverse` | `adm` |
 | 7 | `POST` | `/payroll/period-details/:id/payouts` | `adm` |
 | 8 | `GET` | `/payroll/period-details/:id/statement` | `adm` |
-| 9 | `GET` | `/payroll/me/periods/:id` | **`wrk`** |
+| 9a | `GET` | **`/payroll/me/periods`** ← *"Mi nómina" empieza aquí* | **`wrk`** |
+| 9b | `GET` | `/payroll/me/periods/:id` | **`wrk`** |
 | 10 | `GET` | `/payroll/periods` | `adm` |
 | 11 | `GET` | `/payroll/periods/:id/export.csv` | `adm` |
 
@@ -229,7 +230,46 @@ Sugerencia de UX: precargar el campo con el `balanceMinor` del empleado, pero de
 
 ---
 
-### 8–9 · Estado de cuenta del empleado
+### 9a · Lista de periodos del proveedor — *la puerta de "Mi nómina"*
+
+```http
+GET /payroll/me/periods?page=1&limit=12        (rol: wrk)
+```
+
+Los periodos del proveedor, del más reciente al más viejo. **Incluye el periodo abierto** — a diferencia del histórico del admin (endpoint 10), porque el punto de esta pantalla es que el trabajador vea **lo que va ganando ahora**.
+
+```jsonc
+{
+  "data": [
+    {
+      "periodId": 35,              // ← con este id se abre el detalle (9b)
+      "periodDetailId": 64,
+      "companyId": 1,
+      "label": "20–26 julio 2026",
+      "status": "open",
+      "startsAt": "2026-07-20T04:00:00.000Z",
+      "endsAt": "2026-07-27T04:00:00.000Z",
+      "totalsFrozen": false,
+      "servicesCount": 1,
+      "earnedMinor": 736930,
+      "deductedMinor": 0,
+      "netMinor": 736930,          // 7.369,30 Bs
+      "paidMinor": 0,
+      "balanceMinor": 736930,
+      "settled": false             // ← badge "Pagado" cuando sea true
+    }
+  ],
+  "meta": { "page": 1, "limit": 12, "total": 1, "totalPages": 1, "hasNext": false, "hasPrev": false }
+}
+```
+
+**El periodo en curso siempre aparece**, aunque el proveedor todavía no haya generado nada (sale en `0,00 Bs`). No hace falta manejar el caso "no hay periodos" salvo que la empresa nunca haya configurado nómina.
+
+Si el proveedor trabaja en **varias empresas**, la lista trae los periodos de todas — por eso viene `companyId` en cada fila.
+
+---
+
+### 8–9b · Estado de cuenta del empleado
 
 Misma forma de respuesta, dos puertas distintas:
 
@@ -380,7 +420,7 @@ Los mensajes de 409 y 422 están redactados en español y pensados para el usuar
 3. **Aprobar** → endpoint 4, con modal de "esto es irreversible".
 4. **Registrar pagos** → endpoint 7 desde cada fila de empleado.
 5. **Conceptos manuales** → endpoint 5.
-6. **Vista del proveedor** → endpoint 9. Ojo: rol `wrk`, ningún botón de edición.
+6. **Vista del proveedor** → endpoint 9a (lista) y 9b (detalle). Ojo: rol `wrk`, ningún botón de edición.
 7. **Histórico** → endpoint 10, con selector de año.
 8. **Exportar** → endpoint 11 como descarga.
 9. **Config de frecuencia** → endpoints 1–2.

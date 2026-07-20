@@ -49,6 +49,17 @@ export class PayrollController {
     return this.periodService.setFrequency(req.user.sub, dto.frequency);
   }
 
+  // Periodos del proveedor ("Mi nómina"). Incluye el abierto: ve lo que va
+  // ganando. Se declara antes que me/periods/:id.
+  @Get('me/periods')
+  @Roles('wrk')
+  async listMyPeriods(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: ListPeriodsDto,
+  ) {
+    return this.earningsService.listMyPeriods(req.user.sub, query);
+  }
+
   // PAY-10: el proveedor ve SU propio estado de cuenta del periodo (solo lectura).
   // Los permisos salen del token: nunca puede pedir el de otro empleado/empresa.
   @Get('me/periods/:id')

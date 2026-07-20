@@ -581,17 +581,113 @@ export class PayrollEarningsService {
    * resuelven desde el token: se buscan sus membresías ACTIVAS y solo se sirve
    * el detalle que le pertenece. Nunca el de otro empleado ni el de otra empresa.
    */
-  async getMyPeriodStatement(periodId: number, userId: number) {
-    const memberships: Array<{ id: number; company_id: number }> =
+  /** Membresías ACTIVAS del proveedor. Base de todos sus permisos de nómina. */
+  private async resolveMemberships(
+    userId: number,
+  ): Promise<Array<{ id: number; company_id: number }>> {
+    const rows: Array<{ id: number; company_id: number }> =
       await this.detailRepo.query(
         'SELECT id, company_id FROM company_worker WHERE user_id = ? AND is_active = 1',
         [userId],
       );
-    if (memberships.length === 0) {
+    if (rows.length === 0) {
       throw new ForbiddenException(
         'No tienes asignaciones activas en ninguna compañía',
       );
     }
+    return rows;
+  }
+
+  /**
+   * Periodos del proveedor (pantalla "Mi nómina"), del más reciente al más
+   * viejo. Incluye el periodo ABIERTO: el punto es que vea lo que va ganando.
+   * Totales en vivo mientras no esté aprobado; del snapshot después.
+   */
+  async listMyPeriods(
+    userId: number,
+    opts: { page?: number; limit?: number } = {},
+  ) {
+    const memberships = await this.resolveMemberships(userId);
+    const myIds = memberships.map((m) => m.id);
+
+    // Materializar su fila en el periodo abierto de cada empresa, para que el
+    // periodo en curso aparezca aunque todavía no haya generado nada.
+    for (const m of memberships) {
+      const open = await this.periodService.findOpenPeriodFor(m.company_id);
+      if (open) {
+        await this.ensurePeriodDetail(m.company_id, open.id, m.id);
+      }
+    }
+
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(100, Math.max(1, opts.limit ?? 12));
+
+    const countRows: Array<{ total: number }> = await this.detailRepo.query(
+      'SELECT COUNT(*) AS total FROM period_detail WHERE company_worker_id IN (?)',
+      [myIds],
+    );
+    const total = Number(countRows[0]?.total ?? 0);
+
+    const rows: Array<Record<string, string | number | Date | null>> =
+      await this.detailRepo.query(
+        `SELECT p.id AS periodId, d.id AS periodDetailId, p.company_id AS companyId,
+                p.label, p.status, p.starts_at AS startsAt, p.ends_at AS endsAt,
+                d.earned_minor AS snapEarned, d.deducted_minor AS snapDeducted,
+                d.net_minor AS snapNet, d.paid_minor AS paidMinor,
+                COALESCE(SUM(CASE WHEN c.sign = 1  THEN c.amount_minor ELSE 0 END), 0) AS liveEarned,
+                COALESCE(SUM(CASE WHEN c.sign = -1 THEN c.amount_minor ELSE 0 END), 0) AS liveDeducted,
+                COALESCE(SUM(CASE WHEN c.type = 'commission' THEN 1 ELSE 0 END), 0) AS servicesCount
+           FROM period_detail d
+           JOIN payroll_period p ON p.id = d.period_id
+           LEFT JOIN payroll_concept c ON c.period_detail_id = d.id
+          WHERE d.company_worker_id IN (?)
+          GROUP BY d.id, p.id, p.company_id, p.label, p.status, p.starts_at, p.ends_at,
+                   d.earned_minor, d.deducted_minor, d.net_minor, d.paid_minor
+          ORDER BY p.starts_at DESC
+          LIMIT ? OFFSET ?`,
+        [myIds, limit, (page - 1) * limit],
+      );
+
+    const data = rows.map((r) => {
+      const frozen = ['approved', 'paid', 'closed'].includes(String(r.status));
+      const earnedMinor = Number(frozen ? r.snapEarned : r.liveEarned);
+      const deductedMinor = Number(frozen ? r.snapDeducted : r.liveDeducted);
+      const netMinor = frozen ? Number(r.snapNet) : earnedMinor - deductedMinor;
+      const paidMinor = Number(r.paidMinor);
+      return {
+        periodId: Number(r.periodId),
+        periodDetailId: Number(r.periodDetailId),
+        companyId: Number(r.companyId),
+        label: r.label,
+        status: r.status,
+        startsAt: r.startsAt,
+        endsAt: r.endsAt,
+        totalsFrozen: frozen,
+        servicesCount: Number(r.servicesCount),
+        earnedMinor,
+        deductedMinor,
+        netMinor,
+        paidMinor,
+        balanceMinor: netMinor - paidMinor,
+        settled: netMinor - paidMinor === 0 && netMinor > 0,
+      };
+    });
+
+    return {
+      data,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 0,
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  async getMyPeriodStatement(periodId: number, userId: number) {
+    const memberships = await this.resolveMemberships(userId);
     const myIds = memberships.map((m) => m.id);
 
     const detail = await this.detailRepo.findOne({
