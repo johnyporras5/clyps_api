@@ -371,6 +371,13 @@ Devuelve los periodos **`review`, `approved`, `paid` y `closed`** — el abierto
 
 Ordenado del más reciente al más antiguo. `year` es opcional (sin él trae todos los años). `limit` máximo 100, por defecto 12.
 
+**Filtro por estado (`?status=`)** — separados por coma. Sirve para armar la pantalla en dos secciones:
+
+- **Arriba, los que siguen vivos:** `GET /payroll/periods?status=review,approved,paid` → periodos pendientes de aprobar/pagar/cerrar, cada uno con su neto (en vivo si aún no está congelado). El periodo `open` en curso lo trae aparte `/periods/current`.
+- **Abajo, el historial:** `GET /payroll/periods?status=closed` → solo los cerrados.
+
+Sin `?status`, devuelve `review+approved+paid+closed` (como antes). Un estado inválido responde **400**.
+
 Para desplegar el detalle de una fila del histórico, se usa el endpoint 3 (`summary`) con ese `id` — al estar congelado, devuelve el snapshot inmutable.
 
 ---

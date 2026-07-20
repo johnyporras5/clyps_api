@@ -14,6 +14,7 @@ import { PayrollPeriod } from './entities/payroll-period.entity';
 import { Payout } from './entities/payout.entity';
 import { Company } from '../company/entities/company.entity';
 import { PayrollPeriodService } from './payroll-period.service';
+import type { PeriodStatus } from './payroll.enums';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { toMinor, fromMinor } from './payroll-money.util';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
@@ -382,7 +383,12 @@ export class PayrollEarningsService {
    */
   async listHistoricPeriods(
     adminId: number,
-    opts: { year?: number; page?: number; limit?: number } = {},
+    opts: {
+      year?: number;
+      page?: number;
+      limit?: number;
+      status?: PeriodStatus[];
+    } = {},
   ) {
     const company = await this.companyRepo.findOne({
       where: { userId: adminId },
@@ -395,7 +401,15 @@ export class PayrollEarningsService {
 
     const page = Math.max(1, opts.page ?? 1);
     const limit = Math.min(100, Math.max(1, opts.limit ?? 12));
-    const params: unknown[] = [company.id];
+
+    // Por defecto: todo lo que ya no está abierto. Si el front pide estados
+    // concretos (?status=review, o paid,closed), se respetan.
+    const statuses = opts.status?.length
+      ? opts.status
+      : ['review', 'approved', 'paid', 'closed'];
+    const statusPlaceholders = statuses.map(() => '?').join(',');
+
+    const params: unknown[] = [company.id, ...statuses];
     let yearFilter = '';
     if (opts.year) {
       yearFilter = 'AND YEAR(p.starts_at) = ?';
@@ -404,7 +418,7 @@ export class PayrollEarningsService {
 
     const countRows: Array<{ total: number }> = await this.periodRepo.query(
       `SELECT COUNT(*) AS total FROM payroll_period p
-        WHERE p.company_id = ? AND p.status IN ('review','approved','paid','closed') ${yearFilter}`,
+        WHERE p.company_id = ? AND p.status IN (${statusPlaceholders}) ${yearFilter}`,
       params,
     );
     const total = Number(countRows[0]?.total ?? 0);
@@ -426,7 +440,7 @@ export class PayrollEarningsService {
                   WHERE d2.period_id = p.id AND c2.type = 'commission') AS servicesCount
            FROM payroll_period p
            LEFT JOIN period_detail d ON d.period_id = p.id
-          WHERE p.company_id = ? AND p.status IN ('review','approved','paid','closed') ${yearFilter}
+          WHERE p.company_id = ? AND p.status IN (${statusPlaceholders}) ${yearFilter}
           GROUP BY p.id
           ORDER BY p.starts_at DESC
           LIMIT ? OFFSET ?`,
