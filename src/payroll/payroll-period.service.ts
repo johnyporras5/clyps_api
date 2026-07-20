@@ -148,17 +148,38 @@ export class PayrollPeriodService {
   }
 
   /**
-   * Apertura diferida (red de seguridad, se llama al PAGAR una cita): si no hay
-   * periodo abierto, crea el del ciclo de calendario de `date`. El único de BD
-   * (open_marker) hace la creación segura ante carreras: si dos pagos entran a
-   * la vez, uno gana y el otro reusa el que quedó.
+   * Cierra el periodo abierto que ya venció: lo pasa a `review` para poder abrir
+   * el siguiente (solo puede haber un `open` a la vez). No congela nada —eso es
+   * al aprobar—, solo marca "esta ventana terminó, falta que la revises".
+   */
+  private async rotateToReview(period: PayrollPeriod): Promise<void> {
+    if (period.status !== 'open') return;
+    period.status = 'review';
+    await this.periodRepo.save(period);
+    this.logger.log(
+      `Periodo ${period.id} (${period.label}) venció; pasa a review para abrir el siguiente`,
+    );
+  }
+
+  /**
+   * Apertura diferida (se llama al PAGAR una cita): garantiza que la fecha del
+   * cobro caiga en un periodo abierto que la cubra. Si el abierto ya venció
+   * respecto a `date`, lo rota a `review` y abre el ciclo de calendario de
+   * `date` (rotación perezosa: PAY-2). El único de BD (open_marker) hace la
+   * creación segura ante carreras: si dos pagos entran a la vez, uno gana y el
+   * otro reusa el que quedó.
    */
   async ensureOpenPeriod(
     companyId: number,
     date: Date,
   ): Promise<PayrollPeriod> {
     const existing = await this.findOpenPeriodFor(companyId);
-    if (existing) return existing;
+    if (existing) {
+      // Lo cubre (o es un pago retroactivo) → se usa tal cual.
+      if (date <= existing.endsAt) return existing;
+      // Ya venció respecto a esta fecha → rotar y abrir el que toca.
+      await this.rotateToReview(existing);
+    }
 
     const frequency = await this.resolveFrequency(companyId);
     const bounds = calendarBoundsFor(frequency, date);

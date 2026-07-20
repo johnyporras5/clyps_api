@@ -48,6 +48,8 @@ El campo **`totalsFrozen`** (booleano) viene en casi todas las respuestas y es l
 | `false` (open/review) | Los totales se calculan **en vivo** y crecen con cada cita pagada | Permitir agregar conceptos, aprobar |
 | `true` (approved/paid/closed) | Los totales son una **foto inmutable** | Bloquear edición; solo permitir registrar pagos |
 
+> **Rotación automática:** un periodo puede pasar solo a `review` sin que el dueño toque nada. Cuando se cobra una cita cuya fecha ya cayó fuera del periodo abierto, el backend cierra ese periodo a `review` y abre el del ciclo nuevo. Consecuencia para la UI: un periodo puede aparecer en `review` "de la nada" — es normal, queda esperando aprobación como cualquier otro.
+
 ### Regla 3 — Lo aprobado **jamás se edita**
 
 Si hay un error en un periodo ya aprobado, no se corrige ahí. Se crea una **reversión**: un concepto de ajuste que nace en el periodo **abierto actual**. El histórico nunca miente.
