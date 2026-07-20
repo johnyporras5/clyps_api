@@ -340,7 +340,10 @@ export class PayrollEarningsService {
   }
 
   /**
-   * Resumen del periodo ABIERTO de la empresa
+   * Periodo en el que el dueño está trabajando (pantalla principal de nómina).
+   * Prioridad: el abierto; si no hay, el más reciente que siga PENDIENTE
+   * (review/approved/paid). Solo abre uno nuevo si no queda nada pendiente:
+   * mandar un periodo a revisión no debe cambiar la pantalla por uno vacío.
    */
   async getCurrentPeriodSummary(adminId: number) {
     const company = await this.companyRepo.findOne({
@@ -351,17 +354,31 @@ export class PayrollEarningsService {
         'El administrador no tiene una compañía asignada',
       );
     }
-    const period = await this.periodService.ensureOpenPeriod(
-      company.id,
-      new Date(),
-    );
+
+    let period = await this.periodService.findOpenPeriodFor(company.id);
+    if (!period) {
+      period = await this.periodRepo.findOne({
+        where: {
+          companyId: company.id,
+          status: In(['review', 'approved', 'paid']),
+        },
+        order: { startsAt: 'DESC', id: 'DESC' },
+      });
+    }
+    if (!period) {
+      period = await this.periodService.ensureOpenPeriod(
+        company.id,
+        new Date(),
+      );
+    }
     return this.getPeriodSummary(period.id, adminId);
   }
 
   /**
-   * PAY-11: histórico de periodos ya no abiertos (approved/paid/closed) de la
-   * empresa del admin, filtrable por año y paginado. Los totales salen del
-   * snapshot congelado, así el reporte es estable para siempre.
+   * PAY-11: histórico de periodos ya no abiertos de la empresa del admin,
+   * filtrable por año y paginado. Incluye los que están en `review`: si no,
+   * un periodo enviado a revisión no aparecería en ninguna pantalla. Los
+   * totales salen del snapshot congelado (en review todavía son 0).
    */
   async listHistoricPeriods(
     adminId: number,
@@ -387,7 +404,7 @@ export class PayrollEarningsService {
 
     const countRows: Array<{ total: number }> = await this.periodRepo.query(
       `SELECT COUNT(*) AS total FROM payroll_period p
-        WHERE p.company_id = ? AND p.status IN ('approved','paid','closed') ${yearFilter}`,
+        WHERE p.company_id = ? AND p.status IN ('review','approved','paid','closed') ${yearFilter}`,
       params,
     );
     const total = Number(countRows[0]?.total ?? 0);
@@ -404,7 +421,7 @@ export class PayrollEarningsService {
                   WHERE d2.period_id = p.id AND c2.type = 'commission') AS servicesCount
            FROM payroll_period p
            LEFT JOIN period_detail d ON d.period_id = p.id
-          WHERE p.company_id = ? AND p.status IN ('approved','paid','closed') ${yearFilter}
+          WHERE p.company_id = ? AND p.status IN ('review','approved','paid','closed') ${yearFilter}
           GROUP BY p.id
           ORDER BY p.starts_at DESC
           LIMIT ? OFFSET ?`,

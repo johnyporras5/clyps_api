@@ -86,7 +86,13 @@ GET /payroll/periods/current
 
 Devuelve **exactamente el mismo formato que el endpoint 3** (`summary`), pero del periodo abierto — sin necesidad de conocer su `id`. Es con lo que se pinta la pantalla principal de Nómina.
 
-Si no había periodo abierto (por ejemplo, justo después de aprobar el anterior), **lo abre solo** y lo devuelve. O sea: siempre responde con un periodo, nunca con vacío. La pantalla no necesita un estado "no hay periodo".
+Devuelve el periodo **en el que el dueño está trabajando**, por esta prioridad:
+
+1. El periodo **abierto**, si hay uno.
+2. Si no, el más reciente que siga **pendiente** (`review`, `approved` o `paid`).
+3. Solo si no queda nada pendiente, **abre uno nuevo** y lo devuelve.
+
+Por eso **mandar un periodo a revisión no cambia la pantalla**: se sigue viendo el mismo periodo, ahora con `status: "review"`. Siempre responde con un periodo, nunca vacío — la pantalla no necesita un estado "no hay periodo".
 
 De aquí sale el `period.id` para aprobar, y los `periodDetailId` de cada empleado para conceptos y pagos.
 
@@ -171,6 +177,8 @@ PATCH /payroll/periods/:id/status
 ```
 
 Solo se admite el paso siguiente. Saltarse uno (`open → approved`) responde **409**.
+
+**Única marcha atrás: `review → open`.** Sirve para deshacer un "enviar a revisión" hecho por error, y es seguro porque en `review` todavía no se congela nada. Conviene ofrecer un botón *"Volver a abrir"* mientras el periodo esté en revisión. Desde `approved` en adelante ya no hay vuelta atrás.
 
 > 🔑 **`review → approved` es el paso importante:** congela los totales de todos los empleados en una sola transacción. Después de esto, una cita que se pague tarde y caiga en ese periodo **ya no mueve el neto aprobado**. Conviene un modal de confirmación explicando que es irreversible.
 
@@ -336,7 +344,7 @@ En la ruta del proveedor se manda el **id del periodo** (no del detail) — el b
 GET /payroll/periods?year=2026&page=1&limit=12
 ```
 
-Devuelve solo periodos **`approved`, `paid` y `closed`** — el periodo abierto no aparece (todavía no es historia).
+Devuelve los periodos **`review`, `approved`, `paid` y `closed`** — el abierto no aparece (todavía no es historia). Los de `review` se incluyen para que un periodo enviado a revisión nunca quede fuera de todas las pantallas; conviene distinguirlos con un badge *"Pendiente de aprobar"*, porque sus totales aún no están congelados.
 
 ```jsonc
 {
