@@ -414,8 +414,13 @@ export class PayrollEarningsService {
         `SELECT p.id, p.label, p.status, p.frequency, p.starts_at AS startsAt,
                 p.ends_at AS endsAt, p.approved_at AS approvedAt,
                 COUNT(DISTINCT d.id) AS employees,
-                COALESCE(SUM(d.net_minor), 0)  AS netMinor,
+                COALESCE(SUM(d.net_minor), 0)  AS snapNet,
                 COALESCE(SUM(d.paid_minor), 0) AS paidMinor,
+                COALESCE((SELECT SUM(CASE WHEN c.sign = 1 THEN c.amount_minor
+                                          ELSE -c.amount_minor END)
+                            FROM payroll_concept c
+                            JOIN period_detail d2 ON d2.id = c.period_detail_id
+                           WHERE d2.period_id = p.id), 0) AS liveNet,
                 (SELECT COUNT(*) FROM payroll_concept c2
                    JOIN period_detail d2 ON d2.id = c2.period_detail_id
                   WHERE d2.period_id = p.id AND c2.type = 'commission') AS servicesCount
@@ -429,19 +434,27 @@ export class PayrollEarningsService {
       );
 
     return {
-      data: rows.map((r) => ({
-        id: Number(r.id),
-        label: r.label,
-        status: r.status,
-        frequency: r.frequency,
-        startsAt: r.startsAt,
-        endsAt: r.endsAt,
-        approvedAt: r.approvedAt,
-        employees: Number(r.employees),
-        servicesCount: Number(r.servicesCount),
-        netMinor: Number(r.netMinor),
-        paidMinor: Number(r.paidMinor),
-      })),
+      data: rows.map((r) => {
+        // review todavía no está congelado → total en vivo; el resto, del snapshot.
+        const frozen = ['approved', 'paid', 'closed'].includes(
+          String(r.status),
+        );
+        const netMinor = frozen ? Number(r.snapNet) : Number(r.liveNet);
+        return {
+          id: Number(r.id),
+          label: r.label,
+          status: r.status,
+          frequency: r.frequency,
+          startsAt: r.startsAt,
+          endsAt: r.endsAt,
+          approvedAt: r.approvedAt,
+          totalsFrozen: frozen,
+          employees: Number(r.employees),
+          servicesCount: Number(r.servicesCount),
+          netMinor,
+          paidMinor: Number(r.paidMinor),
+        };
+      }),
       meta: {
         page,
         limit,
