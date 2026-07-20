@@ -104,7 +104,7 @@ De aquí sale el `period.id` para aprobar, y los `periodDetailId` de cada emplea
 
 ```http
 GET /payroll/config
-→ { "frequency": "quincenal" }
+→ { "frequency": "quincenal", "configured": false }
 
 PATCH /payroll/config
 {
@@ -128,7 +128,12 @@ En el **onboarding** (primera vez) el admin abre un **calendario, elige un día 
 - Formato `YYYY-MM-DD`. **Solo hoy o a futuro** — una fecha pasada responde **409** (*"no puede ser anterior a hoy"*); formato inválido → **400**.
 - **Se usa una sola vez.** Una vez que existe el primer periodo, `startDate` se ignora; de ahí en más el admin **solo cambia la frecuencia** (la estructura ya quedó guardada).
 
-**UI:** en el onboarding, un **date-picker (desde hoy en adelante)** junto al selector de frecuencia. En la tarjeta de configuración normal (posterior), **solo el selector de frecuencia** — sin date-picker.
+**¿Cómo sabe el front si es el onboarding?** Con el flag **`configured`** de `GET /payroll/config`:
+
+- `configured: false` → **la nómina aún no arrancó** (no hay periodo). Mostrar el **onboarding**: date-picker (desde hoy) + selector de frecuencia. El `frequency` que viene es solo un default para pre-seleccionar el dropdown.
+- `configured: true` → ya arrancó. Mostrar **solo el selector de frecuencia** (sin date-picker). Cualquier `startDate` que se mande aquí se ignora.
+
+Así el front no tiene que adivinar mirando periodos: el backend le dice explícitamente en qué modo está.
 
 **Excepción — el campo `realigned`:** si el periodo abierto todavía **no tiene ni una cita cobrada**, se reajusta a la nueva frecuencia en el momento (cubre el caso "me equivoqué al elegir"). En cuanto tiene dinero adentro ya no se toca.
 

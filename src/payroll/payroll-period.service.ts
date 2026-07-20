@@ -58,12 +58,24 @@ export class PayrollPeriodService {
     return company.id;
   }
 
-  /** PAY-9: frecuencia actual de la empresa del admin (para la tarjeta de config). */
+  /**
+   * PAY-9: frecuencia actual de la empresa del admin (para la tarjeta de config).
+   * `configured` = ya existe un periodo (la nómina ya arrancó). El front lo usa
+   * para decidir: `false` → onboarding (muestra el date-picker de inicio);
+   * `true` → solo el selector de frecuencia.
+   */
   async getFrequencyConfig(
     adminId: number,
-  ): Promise<{ frequency: PayrollFrequency }> {
+  ): Promise<{ frequency: PayrollFrequency; configured: boolean }> {
     const companyId = await this.resolveAdminCompanyId(adminId);
-    return { frequency: await this.resolveFrequency(companyId) };
+    const hasPeriod = await this.periodRepo.findOne({
+      where: { companyId },
+      order: { id: 'ASC' },
+    });
+    return {
+      frequency: await this.resolveFrequency(companyId),
+      configured: !!hasPeriod,
+    };
   }
 
   /**
