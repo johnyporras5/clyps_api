@@ -46,7 +46,11 @@ export class PayrollController {
     @Request() req: AuthenticatedRequest,
     @Body() dto: SetFrequencyDto,
   ) {
-    return this.periodService.setFrequency(req.user.sub, dto.frequency);
+    return this.periodService.setFrequency(
+      req.user.sub,
+      dto.frequency,
+      dto.startDate,
+    );
   }
 
   // Periodos del proveedor ("Mi nómina"). Incluye el abierto: ve lo que va

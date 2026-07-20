@@ -67,11 +67,14 @@ export class PayrollPeriodService {
   /**
    * PAY-9: fija la frecuencia de pago. El cambio aplica al PRÓXIMO periodo: el
    * abierto actual no se toca (su frecuencia quedó congelada). La primera vez
-   * (sin periodo aún) dispara el bootstrap del primer periodo (decisión C).
+   * (sin periodo aún) dispara el bootstrap del primer periodo, anclado a
+   * `startDate` si el admin lo eligió (p. ej. la nómina ya venía corriendo) o a
+   * hoy si no. `startDate` solo aplica en ese primer arranque.
    */
   async setFrequency(
     adminId: number,
     frequency: PayrollFrequency,
+    startDate?: string,
   ): Promise<{ frequency: PayrollFrequency; realigned: boolean }> {
     const companyId = await this.resolveAdminCompanyId(adminId);
 
@@ -85,8 +88,27 @@ export class PayrollPeriodService {
       );
     }
 
+    // ¿Es el primer arranque? Solo entonces vale la fecha elegida.
+    const hasPeriod = await this.periodRepo.findOne({
+      where: { companyId },
+      order: { id: 'ASC' },
+    });
+    let anchor = new Date();
+    if (!hasPeriod && startDate) {
+      // Mediodía UTC: evita el corrimiento de día por zona horaria.
+      anchor = new Date(`${startDate}T12:00:00.000Z`);
+      const bounds = firstPeriodBoundsFor(frequency, anchor);
+      if (bounds.endsAt.getTime() < Date.now()) {
+        throw new ConflictException(
+          `La fecha ${startDate} cae en un periodo que ya terminó ` +
+            `(${periodLabel(bounds.startsAt, bounds.endsAt)}). ` +
+            'Elige una fecha del ciclo en curso.',
+        );
+      }
+    }
+
     // Idempotente: crea el primer periodo solo si aún no hay ninguno.
-    await this.bootstrapFirstPeriod(companyId, frequency, new Date());
+    await this.bootstrapFirstPeriod(companyId, frequency, anchor);
 
     const realigned = await this.realignOpenPeriodIfEmpty(companyId, frequency);
     return { frequency, realigned };

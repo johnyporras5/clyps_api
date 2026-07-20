@@ -107,11 +107,23 @@ GET /payroll/config
 → { "frequency": "quincenal" }
 
 PATCH /payroll/config
-{ "frequency": "quincenal" | "semanal" | "mensual" }
+{
+  "frequency": "quincenal" | "semanal" | "mensual",
+  "startDate": "2026-07-16"    // opcional, solo en el PRIMER arranque
+}
 → { "frequency": "quincenal", "realigned": true }
 ```
 
-El cambio aplica al **próximo** periodo — el abierto actual conserva su frecuencia. La primera vez que se guarda, se crea automáticamente el primer periodo (puede ser parcial si el alta cae a mitad de ciclo: si se registran un día 9 en quincenal, el primer periodo es 9–15).
+El cambio de frecuencia aplica al **próximo** periodo — el abierto actual conserva la suya. La primera vez que se guarda, se crea automáticamente el primer periodo.
+
+**`startDate` (solo en la primera configuración):** como el salón puede llevar tiempo operando cuando activa la nómina, el admin elige **desde qué día empieza a contar**. Va en formato `YYYY-MM-DD`.
+
+- Si se **omite**, el primer periodo arranca **hoy** (parcial si hoy cae a mitad de ciclo: activar un día 20 en quincenal → periodo 20–31).
+- Si se **envía**, arranca ese día (activar con `startDate: "2026-07-16"` en quincenal → periodo completo 16–31).
+- **Solo cuenta en el primer arranque.** Una vez existe un periodo, `startDate` se ignora (el cambio de frecuencia aplica al próximo).
+- **Guard:** si la fecha cae en un ciclo que **ya terminó** (p. ej. una semana pasada), responde **409** con el motivo — ese periodo nacería vencido. Elegir una fecha del ciclo en curso. Formato inválido → **400**.
+
+Sugerencia de UI: en el onboarding, un date-picker junto al selector de frecuencia, con default hoy. En configuraciones posteriores, ocultar el date-picker (ya no aplica).
 
 **Excepción — el campo `realigned`:** si el periodo abierto todavía **no tiene ni una cita cobrada**, se reajusta a la nueva frecuencia en el momento (cubre el caso "me equivoqué al elegir"). En cuanto tiene dinero adentro ya no se toca.
 
