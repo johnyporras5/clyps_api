@@ -86,17 +86,20 @@ Todos cuelgan de `/payroll` y todos requieren `Authorization: Bearer <token>`.
 GET /payroll/periods/current
 ```
 
-Devuelve **exactamente el mismo formato que el endpoint 3** (`summary`), pero del periodo abierto — sin necesidad de conocer su `id`. Es con lo que se pinta la pantalla principal de Nómina.
+Es con lo que se pinta la pantalla principal de Nómina. **No crea nada** — solo lee.
 
-Devuelve el periodo **en el que el dueño está trabajando**, por esta prioridad:
+```jsonc
+// Nómina SIN activar (el admin nunca hizo el onboarding):
+{ "configured": false, "period": null, "totals": null, "employees": [] }
 
-1. El periodo **abierto**, si hay uno.
-2. Si no, el más reciente que siga **pendiente** (`review`, `approved` o `paid`).
-3. Solo si no queda nada pendiente, **abre uno nuevo** y lo devuelve.
+// Nómina activada: el mismo formato del endpoint 3 (summary), envuelto en configured:
+{ "configured": true, "period": {...}, "totals": {...}, "employees": [...] }
+```
 
-Por eso **mandar un periodo a revisión no cambia la pantalla**: se sigue viendo el mismo periodo, ahora con `status: "review"`. Siempre responde con un periodo, nunca vacío — la pantalla no necesita un estado "no hay periodo".
+- **`configured: false`** → la nómina no ha arrancado. **Mostrar el onboarding** (date-picker + frecuencia). ⚠️ Antes este endpoint creaba un periodo solo al consultarlo, y eso hacía que la nómina "apareciera configurada" sin que el dueño tocara nada. **Ya no**: consultar la pantalla nunca activa la nómina.
+- **`configured: true`** → devuelve el periodo en el que el dueño está trabajando: el **abierto**, o si no hay, el **más reciente**. De aquí sale el `period.id` para aprobar y los `periodDetailId` para conceptos y pagos.
 
-De aquí sale el `period.id` para aprobar, y los `periodDetailId` de cada empleado para conceptos y pagos.
+Como no crea nada, **mandar un periodo a revisión no cambia la pantalla**: se sigue viendo el mismo, ahora con `status: "review"`.
 
 ---
 

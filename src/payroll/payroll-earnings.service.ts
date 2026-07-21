@@ -73,8 +73,10 @@ export class PayrollEarningsService {
   }
 
   /**
-   * ¿El cobro es anterior al día en que arrancó la nómina? Esos no cuentan: la
-   * nómina empieza en limpio desde la fecha que el admin eligió.
+   * ¿Debe omitirse el cobro para nómina? Sí cuando la empresa NO activó la
+   * nómina (no hay ningún periodo → no se crea uno solo) o cuando el cobro es
+   * ANTERIOR al día en que arrancó (la nómina empieza en limpio desde la fecha
+   * que el admin eligió).
    */
   private async isBeforeActivation(
     companyId: number,
@@ -82,7 +84,13 @@ export class PayrollEarningsService {
   ): Promise<boolean> {
     const activation =
       await this.periodService.resolveActivationDate(companyId);
-    if (activation && whenPaid.getTime() < activation.getTime()) {
+    if (!activation) {
+      this.logger.log(
+        `Nómina no activada para company ${companyId}; el cobro no genera conceptos`,
+      );
+      return true;
+    }
+    if (whenPaid.getTime() < activation.getTime()) {
       this.logger.log(
         `Cobro (${whenPaid.toISOString()}) anterior a la activación de nómina ` +
           `(${activation.toISOString()}); se omite (company ${companyId})`,
@@ -372,9 +380,10 @@ export class PayrollEarningsService {
 
   /**
    * Periodo en el que el dueño está trabajando (pantalla principal de nómina).
-   * Prioridad: el abierto; si no hay, el más reciente que siga PENDIENTE
-   * (review/approved/paid). Solo abre uno nuevo si no queda nada pendiente:
-   * mandar un periodo a revisión no debe cambiar la pantalla por uno vacío.
+   * NO crea nada: si la empresa nunca activó la nómina (no hay ningún periodo),
+   * devuelve `{ configured: false, period: null }` para que el front muestre el
+   * onboarding. Si ya hay periodos, devuelve el abierto o, si no hay, el más
+   * reciente.
    */
   async getCurrentPeriodSummary(adminId: number) {
     const company = await this.companyRepo.findOne({
@@ -389,20 +398,18 @@ export class PayrollEarningsService {
     let period = await this.periodService.findOpenPeriodFor(company.id);
     if (!period) {
       period = await this.periodRepo.findOne({
-        where: {
-          companyId: company.id,
-          status: In(['review', 'approved', 'paid']),
-        },
+        where: { companyId: company.id },
         order: { startsAt: 'DESC', id: 'DESC' },
       });
     }
     if (!period) {
-      period = await this.periodService.ensureOpenPeriod(
-        company.id,
-        new Date(),
-      );
+      // Nómina sin activar: no se inventa un periodo.
+      return { configured: false, period: null, totals: null, employees: [] };
     }
-    return this.getPeriodSummary(period.id, adminId);
+    return {
+      configured: true,
+      ...(await this.getPeriodSummary(period.id, adminId)),
+    };
   }
 
   /**
