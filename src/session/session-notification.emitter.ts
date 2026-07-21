@@ -194,6 +194,52 @@ export class SessionNotificationEmitter {
   }
 
   /**
+   * El arrastre (ripple) por un cambio de servicio corrió las citas AGENDADAS
+   * siguientes de un trabajador. Avisa al TRABAJADOR de esa columna y al ADMIN
+   * de la compañía (− actor) que su agenda del día se movió. Los CLIENTES de
+   * las citas movidas se avisan aparte con `notifyRescheduled`. Best-effort.
+   */
+  async notifyRippleToStaff(
+    companyWorkerId: number | null | undefined,
+    movedSessionIds: number[],
+    actorUserId?: number,
+  ): Promise<void> {
+    await this.safe('appointment.ripple_staff', async () => {
+      const movedCount = new Set(movedSessionIds ?? []).size;
+      if (!companyWorkerId || movedCount === 0) return;
+
+      const companyWorker = await this.companyWorkerRepo.findOne({
+        where: { id: companyWorkerId },
+      });
+      if (!companyWorker) return;
+
+      const [workerUserIds, adminUserId] = await Promise.all([
+        this.workerUserIds([companyWorkerId]),
+        this.adminUserId(companyWorker.companyId),
+      ]);
+
+      const cita =
+        movedCount === 1
+          ? 'la siguiente cita'
+          : `las siguientes ${movedCount} citas`;
+
+      await this.notifications.createNotificationForUsers(
+        this.exclude([adminUserId, ...workerUserIds], actorUserId),
+        {
+          type: 'appointment',
+          title: 'La agenda cambió de hora',
+          body: `Un cambio de servicio corrió ${cita} de la agenda`,
+          data: buildNavigationData(
+            'appointment',
+            movedSessionIds[0],
+            companyWorker.companyId,
+          ),
+        },
+      );
+    });
+  }
+
+  /**
    * Te asignaron a una cita → SOLO el/los worker(s) recién asignados (− actor).
    * `updates` trae companyWorkerId (nuevo) y previousCompanyWorkerId.
    */
