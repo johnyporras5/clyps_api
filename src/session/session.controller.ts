@@ -28,6 +28,7 @@ import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
 import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { AssignWorkersToSessionDto } from './dto/assign-workers-to-session.dto';
+import { ChangeDetailServiceDto } from './dto/change-detail-service.dto';
 import { GetAvailabilityDto } from './dto/get-availability.dto';
 import { ConfirmAttendanceDto } from './dto/confirm-attendance.dto';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
@@ -261,6 +262,47 @@ export class SessionController {
     }
     // Citas AGENDADAS que el arrastre empujó (no la que se está atendiendo).
     await this.notifyRippleMoved(result?.movedByRipple, userId);
+    return result;
+  }
+
+  /**
+   * Cambia el servicio de un detalle YA AGENDADO de una cita, manteniendo el
+   * mismo trabajador y horario de inicio. Recalcula precio, duración, reparto
+   * worker/compañía y los totales de la cita. Solo admin (dueño de la compañía)
+   * o el trabajador asignado a ese detalle, y solo si el servicio sigue
+   * "Agendado". El trabajador debe estar habilitado para el nuevo servicio.
+   */
+  @Patch(':id/details/:detailId/service')
+  @Roles('adm', 'wrk')
+  async changeDetailService(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('detailId') detailId: string,
+    @Body() dto: ChangeDetailServiceDto,
+  ) {
+    const userId = req.user.sub;
+    const userRole = req.user?.userType;
+    const result = await this.sessionService.changeDetailService(
+      +id,
+      +detailId,
+      dto,
+      userId,
+      userRole,
+    );
+    // Los servicios/totales de la cita cambiaron: refrescar calendario en vivo.
+    await this.realtimeEmitter.emitExtraServicesChanged(+id, result?.newTotals);
+    // Si la nueva duración corrió las citas siguientes (ripple): avisar a los
+    // clientes de esas citas (push + correo) y refrescar su calendario...
+    await this.notifyRippleMoved(result?.movedByRipple, userId);
+    // ...y avisar al trabajador de esa agenda y al admin de la compañía.
+    const movedSessionIds = [
+      ...new Set((result?.movedByRipple ?? []).map((m) => m.sessionId)),
+    ];
+    await this.notificationEmitter.notifyRippleToStaff(
+      result?.companyWorkerId,
+      movedSessionIds,
+      userId,
+    );
     return result;
   }
 
