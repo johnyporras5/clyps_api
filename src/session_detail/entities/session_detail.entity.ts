@@ -61,6 +61,11 @@ export class SessionDetail {
   @Column({ name: 'is_extra', default: false })
   isExtra: boolean;
 
+  // Cortesía: el servicio se presta pero no se cobra. Precio 0, sin comisión,
+  // no cuenta como ingreso ni servicio pagado (se lleva un contador aparte).
+  @Column({ name: 'is_courtesy', default: false })
+  isCourtesy: boolean;
+
   @Column({ name: 'end_datetime', type: 'datetime', nullable: true })
   endDatetime: Date | null;
 
