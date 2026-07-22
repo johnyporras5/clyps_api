@@ -1572,7 +1572,12 @@ export class SessionService {
         startOfDay,
         endOfDay,
       })
-      .andWhere('detail.status != :cancelledStatus', { cancelledStatus: 5 })
+      // Solo se reportan como "Ocupado" las citas agendadas (1) o en proceso
+      // (2). Las completadas (3) y pagadas (4) ya terminaron: no deben bloquear
+      // el horario del cliente aunque sigan visibles en la agenda.
+      .andWhere('detail.status NOT IN (:...blockingStatuses)', {
+        blockingStatuses: [3, 4, 5],
+      })
       .andWhere('detail.start_datetime IS NOT NULL');
 
     if (companyWorkerId) {
@@ -1654,7 +1659,12 @@ export class SessionService {
         startOfDay,
         endOfDay,
       })
-      .andWhere('sd.status != :cancelledStatus', { cancelledStatus: 5 })
+      // Solo bloquean citas agendadas (1) o en proceso (2). Las completadas (3)
+      // y pagadas (4) ya terminaron: el worker está libre y su tramo queda
+      // disponible para agendar (aunque se solape visualmente con la ya cerrada).
+      .andWhere('sd.status NOT IN (:...blockingStatuses)', {
+        blockingStatuses: [3, 4, 5],
+      })
       .getMany();
 
     for (const detail of workerDetails) {
