@@ -138,6 +138,8 @@ export class ReportsService {
         endDate: `${endDate} 23:59:59`,
       })
       .andWhere('sd.status = :paid', { paid: 4 })
+      // Las cortesías no cuentan como ingreso ni servicio pagado.
+      .andWhere('sd.is_courtesy = 0')
       .groupBy('sd.service_id')
       .orderBy('totalIncome', 'DESC')
       .getRawMany<ServiceIncomeRawRow>();
@@ -258,6 +260,8 @@ export class ReportsService {
         endDate: `${endDate} 23:59:59`,
       })
       .andWhere('sd.status = :paid', { paid: 4 })
+      // Las cortesías no cuentan como ingreso ni servicio pagado.
+      .andWhere('sd.is_courtesy = 0')
       .groupBy('sd.company_worker_id')
       .orderBy('totalIncome', 'DESC')
       .getRawMany<WorkerIncomeRawRow>();

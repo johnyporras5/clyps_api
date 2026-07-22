@@ -5,6 +5,7 @@ import {
   IsArray,
   ValidateNested,
   IsString,
+  IsBoolean,
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -58,6 +59,13 @@ export class SessionDetailItemDto {
     },
   )
   offerId?: number;
+
+  // Cortesía: marca el detalle como no cobrado (precio 0, sin comisión, no
+  // cuenta como ingreso). Lo puede poner admin y worker. No se combina con
+  // offerId (el servicio no compone oferta gratis + cortesía).
+  @IsOptional()
+  @IsBoolean()
+  isCourtesy?: boolean;
 }
 
 export class CreateSessionWithDetailDto {

@@ -1050,6 +1050,14 @@ export class SessionService {
         }
       }
 
+      // Cortesía: el detalle se presta sin cobrar. No se combina con oferta.
+      const isCourtesy = detail.isCourtesy === true;
+      if (isCourtesy && detail.offerId != null) {
+        throw new BadRequestException(
+          `El servicio "${service.name}" no puede ser cortesía y oferta a la vez`,
+        );
+      }
+
       // Resolver precio: oferta o normal
       const priceResolution = await this.resolveServicePrice(
         detail.serviceId,
@@ -1060,7 +1068,11 @@ export class SessionService {
 
       let serviceCostNumber: number;
 
-      if (priceResolution.isOffer) {
+      if (isCourtesy) {
+        // Cortesía: precio 0, se ignora el costo configurado del servicio/worker.
+        serviceCostNumber = 0;
+        console.log(`🎁 Servicio "${service.name}" → CORTESÍA (precio 0)`);
+      } else if (priceResolution.isOffer) {
         // Precio de la oferta (service_offer.price)
         serviceCostNumber = priceResolution.finalPrice;
         console.log(
@@ -1078,7 +1090,8 @@ export class SessionService {
         );
       }
 
-      if (serviceCostNumber <= 0) {
+      // Una cortesía sí puede quedar en 0; el resto debe ser > 0.
+      if (!isCourtesy && serviceCostNumber <= 0) {
         throw new BadRequestException(
           `El costo del servicio "${service.name}" debe ser mayor a 0`,
         );
@@ -1274,6 +1287,7 @@ export class SessionService {
         totalCompany: calculatedAmounts.totalCompany,
         status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
         offerId: detail.offerId ?? undefined,
+        isCourtesy: detail.isCourtesy === true,
         description: detail.description ?? undefined,
         descriptionIA: detail.descriptionIA ?? undefined,
       };
@@ -2066,6 +2080,8 @@ export class SessionService {
         detailStatus: detail.status || 1,
         detailStatusText: this.getDetailStatusText(detail.status || 1),
         isExtra: detail.isExtra === true || (detail.isExtra as any) === 1,
+        isCourtesy:
+          detail.isCourtesy === true || (detail.isCourtesy as any) === 1,
         description: detail.description ?? null,
         descriptionIA: detail.descriptionIA ?? null,
         descriptionWorker: detail.descriptionWorker ?? null,
@@ -2950,6 +2966,9 @@ export class SessionService {
                 detailStatusText: this.getDetailStatusText(detail.status || 1),
                 isExtra:
                   detail.isExtra === true || (detail.isExtra as any) === 1,
+                isCourtesy:
+                  detail.isCourtesy === true ||
+                  (detail.isCourtesy as any) === 1,
                 description: detail.description ?? null,
                 descriptionIA: detail.descriptionIA ?? null,
                 descriptionWorker: detail.descriptionWorker ?? null,
@@ -3223,6 +3242,8 @@ export class SessionService {
             detailStatus: detail.status || 1,
             detailStatusText: this.getDetailStatusText(detail.status || 1),
             isExtra: detail.isExtra === true || (detail.isExtra as any) === 1,
+            isCourtesy:
+              detail.isCourtesy === true || (detail.isCourtesy as any) === 1,
             description: detail.description ?? null,
             descriptionIA: detail.descriptionIA ?? null,
             descriptionWorker: detail.descriptionWorker ?? null,
@@ -3864,7 +3885,8 @@ export class SessionService {
       const svcById = new Map(services.map((s) => [s.id, s]));
 
       const commissionItems = sessionDetails
-        .filter((d) => d.status !== 5 && d.companyWorkerId)
+        // Las cortesías no generan comisión de nómina (precio 0, no cuentan).
+        .filter((d) => d.status !== 5 && d.companyWorkerId && !d.isCourtesy)
         .map((d) => {
           const svc = svcById.get(d.serviceId);
           const currency = (svc?.currency || 'USD').toUpperCase();
@@ -5662,6 +5684,7 @@ export class SessionService {
         'detail.original_start_datetime AS detailOriginalStartDatetime',
         'detail.original_end_datetime AS detailOriginalEndDatetime',
         'detail.is_extra AS isExtra',
+        'detail.is_courtesy AS isCourtesy',
         'detail.offer_id AS detailOfferId',
         'detail.description AS detailDescription',
         'detail.description_ia AS detailDescriptionIA',
@@ -6027,6 +6050,7 @@ export class SessionService {
         originalStartDatetime: detail.detailOriginalStartDatetime,
         originalEndDatetime: detail.detailOriginalEndDatetime,
         isExtra: detail.isExtra === true || detail.isExtra === 1,
+        isCourtesy: detail.isCourtesy === true || detail.isCourtesy === 1,
         companyId: detail.companyId,
         companyName: detail.companyName || 'Compañía no encontrada',
         workerPercentage,
@@ -8161,6 +8185,7 @@ export class SessionService {
         'detail.original_start_datetime AS detailOriginalStartDatetime',
         'detail.original_end_datetime AS detailOriginalEndDatetime',
         'detail.is_extra AS isExtra',
+        'detail.is_courtesy AS isCourtesy',
         'detail.offer_id AS detailOfferId',
         'detail.description AS detailDescription',
         'detail.description_ia AS detailDescriptionIA',
@@ -8608,6 +8633,7 @@ export class SessionService {
         originalStartDatetime: detail.detailOriginalStartDatetime,
         originalEndDatetime: detail.detailOriginalEndDatetime,
         isExtra: detail.isExtra === true || detail.isExtra === 1,
+        isCourtesy: detail.isCourtesy === true || detail.isCourtesy === 1,
         workerPercentage,
         companyPercentage,
         company: companyObj,
@@ -9321,6 +9347,9 @@ export class SessionService {
       totalCancelled: number;
       totalEarned: number;
       totalTime: number;
+      // Cortesías completadas de este servicio (no suman a los contadores de
+      // arriba ni al dinero; se muestran como "Cortesías: N").
+      courtesyCount: number;
     }>
   > {
     const { companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
@@ -9378,18 +9407,28 @@ export class SessionService {
     const aggregates = await this.sessionDetailRepository
       .createQueryBuilder('detail')
       .select('detail.service_id', 'serviceId')
-      .addSelect('COUNT(detail.id)', 'totalAppointments')
+      // Los contadores de "servicios que suman dinero" excluyen cortesías;
+      // estas se llevan aparte en courtesyCount.
       .addSelect(
-        'SUM(CASE WHEN detail.status IN (3, 4) THEN 1 ELSE 0 END)',
+        'SUM(CASE WHEN detail.is_courtesy = 0 THEN 1 ELSE 0 END)',
+        'totalAppointments',
+      )
+      .addSelect(
+        'SUM(CASE WHEN detail.status IN (3, 4) AND detail.is_courtesy = 0 THEN 1 ELSE 0 END)',
         'totalCompleted',
       )
       .addSelect(
-        'SUM(CASE WHEN detail.status = 5 THEN 1 ELSE 0 END)',
+        'SUM(CASE WHEN detail.status = 5 AND detail.is_courtesy = 0 THEN 1 ELSE 0 END)',
         'totalCancelled',
       )
       .addSelect(
-        'SUM(CASE WHEN detail.status IN (3, 4) THEN detail.total_worker ELSE 0 END)',
+        'SUM(CASE WHEN detail.status IN (3, 4) AND detail.is_courtesy = 0 THEN detail.total_worker ELSE 0 END)',
         'totalEarned',
+      )
+      // Cortesías completadas (status 3/4) de este servicio.
+      .addSelect(
+        'SUM(CASE WHEN detail.status IN (3, 4) AND detail.is_courtesy = 1 THEN 1 ELSE 0 END)',
+        'courtesyCount',
       )
       //  Calcular tiempo REAL trabajado (minutos, con decimales) a partir de
       //  start_datetime y end_datetime. Se usa SECOND/60 para conservar la
@@ -9399,6 +9438,7 @@ export class SessionService {
     SUM(
       CASE
         WHEN detail.status IN (3, 4)
+             AND detail.is_courtesy = 0
              AND detail.start_datetime IS NOT NULL
              AND detail.end_datetime IS NOT NULL
         THEN TIMESTAMPDIFF(SECOND, detail.start_datetime, detail.end_datetime) / 60
@@ -9442,6 +9482,7 @@ export class SessionService {
         totalEarned:
           parseFloat(parseFloat(a?.totalEarned || '0').toFixed(2)) || 0,
         totalTime: parseFloat(parseFloat(a?.totalTime || '0').toFixed(2)) || 0,
+        courtesyCount: parseInt(a?.courtesyCount, 10) || 0,
       };
     });
 
@@ -9720,7 +9761,9 @@ export class SessionService {
       })
       .andWhere('detail.status IN (:...completedStatus)', {
         completedStatus: [3, 4],
-      });
+      })
+      // Las cortesías no cuentan como ingreso ni servicio del worker.
+      .andWhere('detail.is_courtesy = 0');
 
     // Normalizar el rango al inicio/fin del día EN LA ZONA DEL NEGOCIO, para que
     // sea inclusivo del día completo y no pierda las citas de noche.

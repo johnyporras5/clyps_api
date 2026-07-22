@@ -85,6 +85,9 @@ export interface SessionDetailResponse {
   detailStatus: number;
   detailStatusText: string;
   isExtra: boolean;
+  // Cortesía: servicio prestado sin cobrar (cost 0, sin comisión, no cuenta
+  // como ingreso ni servicio pagado). Se sigue mostrando en la cita.
+  isCourtesy: boolean;
   description?: string | null;
   descriptionIA?: string | null;
   descriptionWorker?: string | null;
