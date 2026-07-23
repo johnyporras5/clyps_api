@@ -3911,9 +3911,6 @@ export class SessionService {
         commissionItems,
       );
 
-      // PAY-4: propinas cobradas por la empresa → concepto tip en Bs por worker.
-      // La propina es del worker por TODA la cita; si hizo un único servicio en
-      // ella, se adjunta su nombre para trazarla (si no, queda ambiguo → null).
       const serviceNameForWorker = (cwId: number): string | null => {
         const svcIds = [
           ...new Set(
@@ -9738,6 +9735,11 @@ export class SessionService {
       totalSessions: number;
       totalServices: number;
       totalTime: number;
+      // Cortesías del rango (status 3/4), separadas de lo pagado: no suman a
+      // totalEarned. El front las suma a los pagados solo para mostrar.
+      courtesySessions: number;
+      courtesyServices: number;
+      courtesyTime: number;
     };
     byService: Array<{
       serviceId: number;
@@ -9788,23 +9790,27 @@ export class SessionService {
     const toStartOfDay = (d: string): Date => businessDayBounds(d).startOfDay;
     const toEndOfDay = (d: string): Date => businessDayBounds(d).endOfDay;
 
-    if (startDate && endDate) {
-      query.andWhere(
-        'session.session_datetime BETWEEN :startDate AND :endDate',
-        {
+    // Mismo filtro de rango para la query de ingresos y la de cortesías.
+    const applyRange = (qb: typeof query) => {
+      if (startDate && endDate) {
+        qb.andWhere(
+          'session.session_datetime BETWEEN :startDate AND :endDate',
+          {
+            startDate: toStartOfDay(startDate),
+            endDate: toEndOfDay(endDate),
+          },
+        );
+      } else if (startDate) {
+        qb.andWhere('session.session_datetime >= :startDate', {
           startDate: toStartOfDay(startDate),
+        });
+      } else if (endDate) {
+        qb.andWhere('session.session_datetime <= :endDate', {
           endDate: toEndOfDay(endDate),
-        },
-      );
-    } else if (startDate) {
-      query.andWhere('session.session_datetime >= :startDate', {
-        startDate: toStartOfDay(startDate),
-      });
-    } else if (endDate) {
-      query.andWhere('session.session_datetime <= :endDate', {
-        endDate: toEndOfDay(endDate),
-      });
-    }
+        });
+      }
+    };
+    applyRange(query);
 
     const rows = await query
       .groupBy('detail.service_id')
@@ -9829,6 +9835,38 @@ export class SessionService {
       };
     });
 
+    const courtesyQuery = this.sessionDetailRepository
+      .createQueryBuilder('detail')
+      .innerJoin('session', 'session', 'session.id = detail.session_id')
+      .select('COUNT(detail.id)', 'courtesySessions')
+      .addSelect('COUNT(DISTINCT detail.service_id)', 'courtesyServices')
+      .addSelect(
+        `
+    SUM(
+      CASE
+        WHEN detail.start_datetime IS NOT NULL
+             AND detail.end_datetime IS NOT NULL
+        THEN TIMESTAMPDIFF(SECOND, detail.start_datetime, detail.end_datetime) / 60
+        ELSE 0
+      END
+    )`,
+        'courtesyTime',
+      )
+      .where('detail.company_worker_id IN (:...companyWorkerIds)', {
+        companyWorkerIds,
+      })
+      .andWhere('detail.status IN (:...completedStatus)', {
+        completedStatus: [3, 4],
+      })
+      .andWhere('detail.is_courtesy = 1');
+    applyRange(courtesyQuery);
+    const courtesyRow = await courtesyQuery.getRawOne();
+
+    const courtesySessions = parseInt(courtesyRow?.courtesySessions, 10) || 0;
+    const courtesyServices = parseInt(courtesyRow?.courtesyServices, 10) || 0;
+    const courtesyTime =
+      parseFloat(parseFloat(courtesyRow?.courtesyTime || '0').toFixed(2)) || 0;
+
     const totals = byService.reduce(
       (acc, s) => {
         acc.totalEarned += s.totalEarned;
@@ -9841,6 +9879,9 @@ export class SessionService {
         totalSessions: 0,
         totalServices: byService.length,
         totalTime: 0,
+        courtesySessions,
+        courtesyServices,
+        courtesyTime,
       },
     );
 
