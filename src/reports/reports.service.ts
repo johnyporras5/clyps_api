@@ -144,7 +144,29 @@ export class ReportsService {
       .orderBy('totalIncome', 'DESC')
       .getRawMany<ServiceIncomeRawRow>();
 
-    // 4. Calcular totales generales
+    const courtesyRows = await this.sessionDetailRepository
+      .createQueryBuilder('sd')
+      .select('sd.service_id', 'serviceId')
+      .addSelect('COUNT(*)', 'courtesyServices')
+      .where('sd.service_id IN (:...serviceIds)', { serviceIds })
+      .andWhere('sd.start_datetime BETWEEN :startDate AND :endDate', {
+        startDate: `${startDate} 00:00:00`,
+        endDate: `${endDate} 23:59:59`,
+      })
+      .andWhere('sd.status IN (:...completed)', { completed: [3, 4] })
+      .andWhere('sd.is_courtesy = 1')
+      .groupBy('sd.service_id')
+      .getRawMany<{ serviceId: string; courtesyServices: string }>();
+
+    const courtesyByService = new Map<number, number>();
+    let courtesyServices = 0;
+    for (const r of courtesyRows) {
+      const n = parseInt(r.courtesyServices || '0', 10) || 0;
+      courtesyByService.set(parseInt(r.serviceId), n);
+      courtesyServices += n;
+    }
+
+    // 4. Calcular totales generales (solo ingreso pagado)
     const totalIncome = allResults.reduce(
       (sum, r) => sum + parseFloat(r.totalIncome || '0'),
       0,
@@ -154,23 +176,52 @@ export class ReportsService {
       0,
     );
 
-    // 5. Paginar resultados
-    const total = allResults.length;
+    const incomeByService = new Map<
+      number,
+      { totalIncome: number; servicesCount: number }
+    >();
+    for (const r of allResults) {
+      incomeByService.set(parseInt(r.serviceId), {
+        totalIncome: parseFloat(r.totalIncome || '0'),
+        servicesCount: parseInt(r.servicesCount || '0', 10) || 0,
+      });
+    }
+
+    const combined = [
+      ...new Set([...incomeByService.keys(), ...courtesyByService.keys()]),
+    ]
+      .map((serviceId) => ({
+        serviceId,
+        totalIncome: incomeByService.get(serviceId)?.totalIncome ?? 0,
+        servicesCount: incomeByService.get(serviceId)?.servicesCount ?? 0,
+        courtesyServices: courtesyByService.get(serviceId) ?? 0,
+      }))
+      .sort(
+        (a, b) =>
+          b.totalIncome - a.totalIncome ||
+          b.courtesyServices - a.courtesyServices ||
+          a.serviceId - b.serviceId,
+      );
+
+    // 6. Paginar resultados
+    const total = combined.length;
     const totalPages = Math.ceil(total / limit);
     const skip = (page - 1) * limit;
-    const paginatedResults = allResults.slice(skip, skip + limit);
+    const paginatedResults = combined.slice(skip, skip + limit);
 
-    // 6. Mapear servicios con nombre y porcentaje
+    // 7. Mapear servicios con nombre y porcentaje
     const serviceMap = new Map(services.map((s) => [s.id, s]));
 
     const servicesResponse = paginatedResults.map((r) => {
-      const service = serviceMap.get(parseInt(r.serviceId));
-      const income = parseFloat(r.totalIncome || '0');
+      const service = serviceMap.get(r.serviceId);
+      const income = r.totalIncome;
       return {
-        serviceId: parseInt(r.serviceId),
+        serviceId: r.serviceId,
         serviceName: service?.name || 'Servicio eliminado',
         totalIncome: parseFloat(income.toFixed(2)),
-        servicesCount: parseInt(r.servicesCount),
+        servicesCount: r.servicesCount,
+        // Veces dado como cortesía en el rango (aparte de servicesCount).
+        courtesyServices: r.courtesyServices,
         percentage:
           totalIncome > 0
             ? parseFloat(((income / totalIncome) * 100).toFixed(2))
@@ -184,6 +235,8 @@ export class ReportsService {
         totalIncome: parseFloat(totalIncome.toFixed(2)),
         totalServices,
         currency: services[0]?.currency || 'USD',
+        // Cortesías del rango, aparte del ingreso (front las nota, no las suma).
+        courtesyServices,
       },
       services: servicesResponse,
       meta: {
@@ -266,7 +319,29 @@ export class ReportsService {
       .orderBy('totalIncome', 'DESC')
       .getRawMany<WorkerIncomeRawRow>();
 
-    // 5. Calcular totales generales
+    const courtesyRows = await this.sessionDetailRepository
+      .createQueryBuilder('sd')
+      .select('sd.company_worker_id', 'companyWorkerId')
+      .addSelect('COUNT(*)', 'courtesyServices')
+      .where('sd.company_worker_id IN (:...workerIds)', { workerIds })
+      .andWhere('sd.start_datetime BETWEEN :startDate AND :endDate', {
+        startDate: `${startDate} 00:00:00`,
+        endDate: `${endDate} 23:59:59`,
+      })
+      .andWhere('sd.status IN (:...completed)', { completed: [3, 4] })
+      .andWhere('sd.is_courtesy = 1')
+      .groupBy('sd.company_worker_id')
+      .getRawMany<{ companyWorkerId: string; courtesyServices: string }>();
+
+    const courtesyByWorker = new Map<number, number>();
+    let courtesyServices = 0;
+    for (const r of courtesyRows) {
+      const n = parseInt(r.courtesyServices || '0', 10) || 0;
+      courtesyByWorker.set(parseInt(r.companyWorkerId), n);
+      courtesyServices += n;
+    }
+
+    // 5. Calcular totales generales (solo ingreso pagado)
     const totalIncome = allResults.reduce(
       (sum, r) => sum + parseFloat(r.totalIncome || '0'),
       0,
@@ -276,23 +351,50 @@ export class ReportsService {
       0,
     );
 
-    // 6. Paginar resultados
-    const total = allResults.length;
+    const incomeByWorker = new Map<
+      number,
+      { totalIncome: number; servicesCount: number }
+    >();
+    for (const r of allResults) {
+      incomeByWorker.set(parseInt(r.companyWorkerId), {
+        totalIncome: parseFloat(r.totalIncome || '0'),
+        servicesCount: parseInt(r.servicesCount || '0', 10) || 0,
+      });
+    }
+
+    const combined = [
+      ...new Set([...incomeByWorker.keys(), ...courtesyByWorker.keys()]),
+    ]
+      .map((cwId) => ({
+        companyWorkerId: cwId,
+        totalIncome: incomeByWorker.get(cwId)?.totalIncome ?? 0,
+        servicesCount: incomeByWorker.get(cwId)?.servicesCount ?? 0,
+        courtesyServices: courtesyByWorker.get(cwId) ?? 0,
+      }))
+      .sort(
+        (a, b) =>
+          b.totalIncome - a.totalIncome ||
+          b.courtesyServices - a.courtesyServices ||
+          a.companyWorkerId - b.companyWorkerId,
+      );
+
+    // 7. Paginar resultados
+    const total = combined.length;
     const totalPages = Math.ceil(total / limit);
     const skip = (page - 1) * limit;
-    const paginatedResults = allResults.slice(skip, skip + limit);
+    const paginatedResults = combined.slice(skip, skip + limit);
 
-    // 7. Mapear empleados con nombre, imagen y porcentaje
+    // 8. Mapear empleados con nombre, imagen y porcentaje
     const workerMap = new Map(companyWorkers.map((cw) => [cw.id, cw]));
 
     const employeesResponse = paginatedResults.map((r) => {
-      const cw = workerMap.get(parseInt(r.companyWorkerId));
-      const income = parseFloat(r.totalIncome || '0');
+      const cw = workerMap.get(r.companyWorkerId);
+      const income = r.totalIncome;
       const workerName = cw?.worker
         ? (cw.worker.name || '').trim()
         : 'Empleado eliminado';
       return {
-        companyWorkerId: parseInt(r.companyWorkerId),
+        companyWorkerId: r.companyWorkerId,
         name: workerName,
         image: cw?.worker?.picture
           ? this.fileUploadService.getFileUrl(
@@ -301,7 +403,9 @@ export class ReportsService {
             )
           : null,
         totalIncome: parseFloat(income.toFixed(2)),
-        servicesCount: parseInt(r.servicesCount),
+        servicesCount: r.servicesCount,
+        // Cortesías de este empleado en el rango (aparte de servicesCount).
+        courtesyServices: r.courtesyServices,
         percentage:
           totalIncome > 0
             ? parseFloat(((income / totalIncome) * 100).toFixed(2))
@@ -315,6 +419,8 @@ export class ReportsService {
         totalIncome: parseFloat(totalIncome.toFixed(2)),
         totalServices,
         currency,
+        // Cortesías del rango, aparte del ingreso (front las nota, no las suma).
+        courtesyServices,
       },
       employees: employeesResponse,
       meta: {

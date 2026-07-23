@@ -1350,12 +1350,11 @@ export class AuthService {
       );
     }
 
-    // Verificar si el email está verificado (opcional, dependiendo de tus requisitos)
-    if (user.emailVerified === 0) {
-      throw new BadRequestException(
-        'Por favor verifica tu email antes de solicitar un reseteo de contraseña',
-      );
-    }
+    // No se exige el email verificado: el código va a ese mismo correo, así que
+    // usarlo prueba que el buzón es suyo (lo mismo que prueba la verificación).
+    // Si no, un cliente registrado por el salón que nunca verificó quedaría sin
+    // poder entrar ni recuperar la cuenta. Al completar el reseteo se marca
+    // como verificado.
 
     // Generar código de reseteo
     const code = await this.verificationService.generatePasswordResetCode(
@@ -1396,7 +1395,8 @@ export class AuthService {
       throw new NotFoundException('Usuario no encontrado');
     }
 
-    const isValid = await this.verificationService.verifyCodeByUserId(
+    // Solo comprobar: el código se consume en reset-password (el paso final).
+    const isValid = await this.verificationService.checkCodeByUserId(
       user.id,
       verifyResetCodeDto.code,
       'password_reset',
@@ -1446,9 +1446,19 @@ export class AuthService {
       10,
     );
 
-    // Actualizar contraseña
+    // Actualizar contraseña. Completar el reseteo prueba que el correo es suyo,
+    // así que de paso queda verificado (si no, no podría iniciar sesión).
     user.password = hashedNewPassword;
+    const wasUnverified = user.emailVerified === 0;
+    if (wasUnverified) {
+      user.emailVerified = 1;
+    }
     await this.userRepository.save(user);
+    if (wasUnverified) {
+      console.log(
+        `Email de ${user.email} verificado al completar el reseteo de contraseña`,
+      );
+    }
 
     // Enviar email de confirmación
     try {

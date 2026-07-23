@@ -35,6 +35,7 @@ export interface CommissionItem {
   currency: string; // 'USD' | 'EUR' | 'VES'
   exchangeRate: number | null; // Bs por 1 unidad (null si falta; VES = 1)
   label: string;
+  appointmentId?: number;
 }
 
 // Datos de una propina a registrar (una fila de session_payment_tips).
@@ -44,6 +45,8 @@ export interface TipItem {
   amount: number; // propina del worker, en tipCurrency
   currency: string; // moneda de la propina
   exchangeRate: number | null; // Bs por 1 unidad (VES = 1)
+  appointmentId?: number;
+  serviceName?: string | null;
 }
 
 @Injectable()
@@ -175,6 +178,9 @@ export class PayrollEarningsService {
               servicePriceMinorBs: toMinor(it.serviceCost * rate),
               currency: it.currency,
               exchangeRate: rate,
+              ...(it.appointmentId != null
+                ? { appointmentId: it.appointmentId }
+                : {}),
             },
           }),
         );
@@ -234,7 +240,14 @@ export class PayrollEarningsService {
             amountMinor,
             sourceType: 'tip',
             sourceId: it.tipId,
-            metadata: { currency: it.currency, exchangeRate: rate },
+            metadata: {
+              currency: it.currency,
+              exchangeRate: rate,
+              ...(it.appointmentId != null
+                ? { appointmentId: it.appointmentId }
+                : {}),
+              ...(it.serviceName ? { serviceName: it.serviceName } : {}),
+            },
           }),
         );
         created++;
@@ -298,6 +311,7 @@ export class PayrollEarningsService {
       liveEarned: string;
       liveDeducted: string;
       servicesCount: string;
+      courtesyCount: string;
     }> = await this.detailRepo.query(
       `SELECT d.id AS periodDetailId,
               d.company_worker_id AS companyWorkerId,
@@ -309,7 +323,12 @@ export class PayrollEarningsService {
               d.paid_minor AS paidMinor,
               COALESCE(SUM(CASE WHEN c.sign = 1  THEN c.amount_minor ELSE 0 END), 0) AS liveEarned,
               COALESCE(SUM(CASE WHEN c.sign = -1 THEN c.amount_minor ELSE 0 END), 0) AS liveDeducted,
-              COALESCE(SUM(CASE WHEN c.type = 'commission' THEN 1 ELSE 0 END), 0) AS servicesCount
+              COALESCE(SUM(CASE WHEN c.type = 'commission' THEN 1 ELSE 0 END), 0) AS servicesCount,
+              (SELECT COUNT(*) FROM session_detail scd
+                WHERE scd.company_worker_id = d.company_worker_id
+                  AND scd.is_courtesy = 1
+                  AND scd.status IN (3, 4)
+                  AND scd.start_datetime BETWEEN ? AND ?) AS courtesyCount
          FROM period_detail d
          LEFT JOIN company_worker cw ON cw.id = d.company_worker_id
          LEFT JOIN worker w ON w.id = cw.worker_id
@@ -318,7 +337,7 @@ export class PayrollEarningsService {
         GROUP BY d.id, d.company_worker_id, w.name, w.picture,
                  d.earned_minor, d.deducted_minor, d.net_minor, d.paid_minor
         ORDER BY w.name`,
-      [periodId],
+      [period.startsAt, period.endsAt, periodId],
     );
 
     const employees = rows.map((r) => {
@@ -334,6 +353,7 @@ export class PayrollEarningsService {
         workerName: (r.workerName || '').trim(),
         pictureURL: this.workerPictureUrl(r.picture),
         servicesCount: Number(r.servicesCount),
+        courtesyCount: Number(r.courtesyCount),
         earnedMinor: earned,
         deductedMinor: deducted,
         netMinor: net,
@@ -373,6 +393,7 @@ export class PayrollEarningsService {
         balanceMinor: sum('balanceMinor'),
         employees: employees.length,
         servicesCount: sum('servicesCount'),
+        courtesyCount: sum('courtesyCount'),
       },
       employees,
     };
@@ -596,6 +617,33 @@ export class PayrollEarningsService {
         [detail.companyWorkerId],
       );
 
+    const courtesyRows: Array<{
+      detailId: number;
+      sessionId: number;
+      serviceName: string | null;
+      occurredAt: Date;
+      detailStatus: number;
+    }> = await this.detailRepo.query(
+      `SELECT sd.id AS detailId, sd.session_id AS sessionId,
+              s.name AS serviceName, sd.start_datetime AS occurredAt,
+              sd.status AS detailStatus
+         FROM session_detail sd
+         LEFT JOIN service s ON s.id = sd.service_id
+        WHERE sd.company_worker_id = ?
+          AND sd.is_courtesy = 1
+          AND sd.status IN (3, 4)
+          AND sd.start_datetime BETWEEN ? AND ?
+        ORDER BY sd.start_datetime ASC`,
+      [detail.companyWorkerId, period.startsAt, period.endsAt],
+    );
+    const courtesies = courtesyRows.map((r) => ({
+      detailId: Number(r.detailId),
+      sessionId: Number(r.sessionId),
+      serviceName: (r.serviceName || 'Servicio').trim(),
+      occurredAt: r.occurredAt,
+      detailStatus: Number(r.detailStatus),
+    }));
+
     const liveEarned = concepts
       .filter((c) => c.sign === 1)
       .reduce((a, c) => a + c.amountMinor, 0);
@@ -647,8 +695,10 @@ export class PayrollEarningsService {
         paidMinor,
         balanceMinor: netMinor - paidMinor,
         settled: netMinor - paidMinor === 0 && netMinor > 0,
+        courtesyCount: courtesies.length,
       },
       breakdown: [...byType.values()],
+      courtesies,
       concepts: concepts.map((c) => ({
         id: c.id,
         type: c.type,
