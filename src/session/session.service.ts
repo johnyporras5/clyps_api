@@ -3901,6 +3901,7 @@ export class SessionService {
             currency,
             exchangeRate: rate,
             label: `Comisión — ${svc?.name || 'Servicio'}`,
+            appointmentId: sessionId,
           };
         });
 
@@ -3911,12 +3912,29 @@ export class SessionService {
       );
 
       // PAY-4: propinas cobradas por la empresa → concepto tip en Bs por worker.
+      // La propina es del worker por TODA la cita; si hizo un único servicio en
+      // ella, se adjunta su nombre para trazarla (si no, queda ambiguo → null).
+      const serviceNameForWorker = (cwId: number): string | null => {
+        const svcIds = [
+          ...new Set(
+            sessionDetails
+              .filter((d) => d.companyWorkerId === cwId && d.status !== 5)
+              .map((d) => d.serviceId),
+          ),
+        ];
+        return svcIds.length === 1
+          ? (svcById.get(svcIds[0])?.name ?? null)
+          : null;
+      };
+
       const tipItems = savedTips.map((t) => ({
         tipId: t.id,
         companyWorkerId: t.companyWorkerId,
         amount: Number(t.amount || 0),
         currency: (dto.tipCurrency || 'USD').toUpperCase(),
         exchangeRate: dto.tipExchangeRate ?? null,
+        appointmentId: sessionId,
+        serviceName: serviceNameForWorker(t.companyWorkerId),
       }));
       await this.payrollEarningsService.recordTips(
         adminCompany.id,

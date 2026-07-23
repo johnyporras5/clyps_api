@@ -35,6 +35,7 @@ export interface CommissionItem {
   currency: string; // 'USD' | 'EUR' | 'VES'
   exchangeRate: number | null; // Bs por 1 unidad (null si falta; VES = 1)
   label: string;
+  appointmentId?: number;
 }
 
 // Datos de una propina a registrar (una fila de session_payment_tips).
@@ -44,6 +45,8 @@ export interface TipItem {
   amount: number; // propina del worker, en tipCurrency
   currency: string; // moneda de la propina
   exchangeRate: number | null; // Bs por 1 unidad (VES = 1)
+  appointmentId?: number;
+  serviceName?: string | null;
 }
 
 @Injectable()
@@ -175,6 +178,9 @@ export class PayrollEarningsService {
               servicePriceMinorBs: toMinor(it.serviceCost * rate),
               currency: it.currency,
               exchangeRate: rate,
+              ...(it.appointmentId != null
+                ? { appointmentId: it.appointmentId }
+                : {}),
             },
           }),
         );
@@ -234,7 +240,14 @@ export class PayrollEarningsService {
             amountMinor,
             sourceType: 'tip',
             sourceId: it.tipId,
-            metadata: { currency: it.currency, exchangeRate: rate },
+            metadata: {
+              currency: it.currency,
+              exchangeRate: rate,
+              ...(it.appointmentId != null
+                ? { appointmentId: it.appointmentId }
+                : {}),
+              ...(it.serviceName ? { serviceName: it.serviceName } : {}),
+            },
           }),
         );
         created++;
@@ -682,11 +695,9 @@ export class PayrollEarningsService {
         paidMinor,
         balanceMinor: netMinor - paidMinor,
         settled: netMinor - paidMinor === 0 && netMinor > 0,
-        // Cortesías del periodo (informativo, no suma dinero).
         courtesyCount: courtesies.length,
       },
       breakdown: [...byType.values()],
-      // Servicios de cortesía del periodo (0 Bs; no cuentan como ingreso).
       courtesies,
       concepts: concepts.map((c) => ({
         id: c.id,
