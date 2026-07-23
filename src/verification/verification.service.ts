@@ -275,6 +275,43 @@ export class VerificationService {
     return true;
   }
 
+  /**
+   * Comprueba el código SIN consumirlo, para pantallas que solo validan antes de
+   * seguir (p. ej. "ingresa el código" y luego "escribe la nueva contraseña").
+   * El que lo consume es el paso final. Igual cuenta los intentos fallidos, para
+   * no abrir una vía de fuerza bruta gratis.
+   */
+  async checkCodeByUserId(
+    userId: number,
+    code: string,
+    codeType: string,
+  ): Promise<boolean> {
+    const submittedCode = String(code ?? '').trim();
+
+    const verificationCode = await this.verificationCodeRepository.findOne({
+      where: { userId, codeType, used: 0 },
+      order: { id: 'DESC' },
+    });
+    if (!verificationCode) return false;
+
+    if (new Date() > verificationCode.expiresAt) {
+      await this.verificationCodeRepository.delete(verificationCode.id);
+      return false;
+    }
+
+    if (String(verificationCode.code ?? '').trim() !== submittedCode) {
+      verificationCode.attempts += 1;
+      if (verificationCode.attempts >= this.MAX_VERIFICATION_ATTEMPTS) {
+        await this.verificationCodeRepository.delete(verificationCode.id);
+      } else {
+        await this.verificationCodeRepository.save(verificationCode);
+      }
+      return false;
+    }
+
+    return true; // válido y SIGUE disponible para el paso final
+  }
+
   async resendVerificationCode(email: string): Promise<string> {
     // Aceptar email o username, igual que el login y la verificación.
     const user = await this.userRepository.findOne({
