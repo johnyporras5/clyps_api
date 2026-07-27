@@ -140,8 +140,14 @@ export class WorkerFeedbackService {
       const stars = feedback.stars;
 
       // Admin(s) de las companies donde el worker está asignado.
+      // Excluye vínculos borrados (soft-delete) para no notificar a companies
+      // de las que el worker ya fue removido.
       const cwRows = await this.companyWorkerRepository.find({
-        where: { workerId: worker.id },
+        where: {
+          workerId: worker.id,
+          permanentlyDeleted: false,
+          temporarilyDeleted: false,
+        },
       });
       const companyIds = [
         ...new Set(cwRows.map((r) => r.companyId).filter(Boolean)),
@@ -197,8 +203,14 @@ export class WorkerFeedbackService {
       );
 
       // workerId es Worker.id → resolver companyWorkerId + companyId.
+      // Excluye vínculos borrados (soft-delete) para no emitir a rooms de
+      // companies de las que el worker ya fue removido.
       const companyWorkers = await this.companyWorkerRepository.find({
-        where: { workerId: feedback.workerId },
+        where: {
+          workerId: feedback.workerId,
+          permanentlyDeleted: false,
+          temporarilyDeleted: false,
+        },
       });
 
       const rooms: string[] = [];
