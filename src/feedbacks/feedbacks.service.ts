@@ -5,7 +5,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, Repository } from 'typeorm';
+import { In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import { Session } from '../session/entities/session.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 import { CompanyFeedback } from '../company_feedback/entities/company_feedback.entity';
@@ -19,6 +19,10 @@ import { FileUploadService } from '../common/services/file_upload.service';
 // Las reseñas se filtran por userId; las sesiones por el client.id.
 
 export type FeedbackStatus = 'pending' | 'partial' | 'completed' | 'skipped';
+
+// Solo se pide calificar citas recientes: nadie quiere calificar un servicio de
+// hace meses, y evita volcar el backlog histórico al estrenar la función.
+const PENDING_WINDOW_DAYS = 7;
 
 // Objeto `feedback` aditivo de B1.
 export interface SessionFeedback {
@@ -159,12 +163,17 @@ export class FeedbacksService {
     const clientEntityId = await this.resolveClientEntityId(userId);
     if (clientEntityId == null) return { data: [], meta: { total: 0 } };
 
+    const cutoff = new Date(
+      Date.now() - PENDING_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    );
     const candidates = await this.sessionRepo.find({
       // 4 = Pagada, 6 = marcada tras la 1ª reseña (puede seguir parcial).
+      // Solo citas de los últimos días (no se arrastran las viejas).
       where: {
         clientId: clientEntityId,
         sessionStatus: In([4, 6]),
         feedbackSkippedAt: IsNull(),
+        sessionDatetime: MoreThanOrEqual(cutoff),
       },
       order: { sessionDatetime: 'ASC' },
       select: ['id', 'sessionDatetime'],
