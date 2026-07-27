@@ -174,10 +174,12 @@ export class FeedbacksService {
       userId,
       candidates.map((s) => s.id),
     );
-    const pending = candidates.filter((s) => {
-      const st = fbMap.get(s.id)?.status;
-      return st === 'pending' || st === 'partial';
-    });
+    // Solo citas SIN ninguna reseña. Calificar una cosa (negocio o un worker)
+    // ya cierra la cita y la saca de pending; partial/completed/skipped quedan
+    // fuera. Así el skip nunca cae sobre una cita que ya tiene reseñas.
+    const pending = candidates.filter(
+      (s) => fbMap.get(s.id)?.status === 'pending',
+    );
 
     const total = pending.length;
     const page = pending.slice(0, limit);
