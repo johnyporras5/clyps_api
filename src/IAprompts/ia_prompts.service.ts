@@ -15,6 +15,7 @@ import { ChatGPTService } from '../chatgpt/chatgpt.service';
 import { ProcessPromptDto } from './dto/process-prompt.dto';
 import { SuggestionsDto } from './dto/suggestions.dto';
 import { SUGGESTIONS_SYSTEM_PROMPT } from './prompts/suggestions-system.prompt';
+import { SUGGESTIONS_GENERAL_SYSTEM_PROMPT } from './prompts/suggestions-general-system.prompt';
 import { Observable } from 'rxjs';
 
 export interface SuggestionsResponse {
@@ -294,13 +295,32 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
       }
     }
 
-    const userText = [
-      `Servicio reservado: ${dto.serviceName}`,
-      `Descripción del servicio: ${dto.serviceDescription?.trim() || 'No especificada'}`,
-      `Categoría del servicio: ${dto.serviceCategory?.trim() || 'No especificada'}`,
-      image ? 'El cliente adjuntó una foto.' : 'El cliente no adjuntó foto.',
-      'Devuelve el JSON con 2 a 4 sugerencias dentro del alcance de este servicio.',
-    ].join('\n');
+    const isGeneral = !dto.serviceName?.trim();
+    if (isGeneral && !image) {
+      throw new BadRequestException(
+        'Debes enviar una foto para la consulta general.',
+      );
+    }
+
+    const systemPrompt = isGeneral
+      ? SUGGESTIONS_GENERAL_SYSTEM_PROMPT
+      : SUGGESTIONS_SYSTEM_PROMPT;
+
+    const userText = isGeneral
+      ? [
+          'Consulta general: el cliente no eligió un servicio, solo subió una foto.',
+          'Analiza lo que se vea y sugiere ideas que pueda ir a hacerse en un negocio de la app.',
+          'Devuelve el JSON con 3 a 5 sugerencias.',
+        ].join('\n')
+      : [
+          `Servicio reservado: ${dto.serviceName}`,
+          `Descripción del servicio: ${dto.serviceDescription?.trim() || 'No especificada'}`,
+          `Categoría del servicio: ${dto.serviceCategory?.trim() || 'No especificada'}`,
+          image
+            ? 'El cliente adjuntó una foto.'
+            : 'El cliente no adjuntó foto.',
+          'Devuelve el JSON con 2 a 4 sugerencias dentro del alcance de este servicio.',
+        ].join('\n');
 
     const imageDataUrl = image
       ? `data:${image.mimetype};base64,${image.buffer.toString('base64')}`
@@ -309,7 +329,7 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
     let raw: string;
     try {
       raw = await this.chatGPTService.sendVisionJson(
-        SUGGESTIONS_SYSTEM_PROMPT,
+        systemPrompt,
         userText,
         imageDataUrl,
       );
@@ -359,7 +379,7 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
           typeof (s as { reason?: unknown }).reason === 'string',
       )
       .map((s) => ({ title: s.title.trim(), reason: s.reason.trim() }))
-      .slice(0, 4);
+      .slice(0, 5);
 
     if (suggestions.length < 2) {
       throw new InternalServerErrorException(
