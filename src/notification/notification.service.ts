@@ -192,12 +192,35 @@ export class NotificationService {
         webpush: { fcmOptions: { link: '/' } },
       });
 
+      this.logFcmResult(userId, tokens.length, response);
+
       await this.handleInvalidTokens(tokens, response);
     } catch (error) {
       this.logger.warn(
         `Envío FCM falló para user ${userId}: ${this.reason(error)}`,
       );
     }
+  }
+
+  private logFcmResult(
+    userId: number,
+    sent: number,
+    response: import('firebase-admin/messaging').BatchResponse,
+  ): void {
+    if (response.failureCount === 0) {
+      this.logger.log(
+        `FCM user ${userId}: ${response.successCount}/${sent} enviados OK`,
+      );
+      return;
+    }
+    const codes: Record<string, number> = {};
+    for (const res of response.responses) {
+      const code = res.error?.code;
+      if (code) codes[code] = (codes[code] ?? 0) + 1;
+    }
+    this.logger.warn(
+      `FCM user ${userId}: ${response.successCount} OK, ${response.failureCount} fallidos de ${sent}. Códigos: ${JSON.stringify(codes)}`,
+    );
   }
 
   /**

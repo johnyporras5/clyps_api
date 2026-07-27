@@ -42,6 +42,13 @@ export class IAPromptsController {
     return this.iaPromptsService.findAllPaginatedWithQueryBuilder(queryDto);
   }
 
+  @Get('suggestion-options')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('cli')
+  getSuggestionOptions() {
+    return this.iaPromptsService.getSuggestionOptions();
+  }
+
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number): Promise<IAPrompts> {
     return this.iaPromptsService.findOne(id);

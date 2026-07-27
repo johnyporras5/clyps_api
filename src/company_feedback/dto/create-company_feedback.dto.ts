@@ -18,10 +18,10 @@ export class CreateCompanyFeedbackDto {
   @IsString()
   description?: string;
 
-  // Sesión a la que pertenece la calificación. Si se envía, el backend marca
-  // la sesión como RATED (sessionStatus = 6) para que no vuelva a aparecer
-  // en el listado de "sesiones pendientes de calificar".
-  @IsOptional()
+  // Cita a la que pertenece la calificación. OBLIGATORIO: es la clave de dedup
+  // (un voto por negocio por cita). Sin ella, dos votos con session_id NULL no
+  // chocarían en el índice único y se colarían duplicados.
+  @IsNotEmpty()
   @IsNumber()
-  sessionId?: number;
+  sessionId: number;
 }

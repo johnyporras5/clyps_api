@@ -15,6 +15,12 @@ import { ChatGPTService } from '../chatgpt/chatgpt.service';
 import { ProcessPromptDto } from './dto/process-prompt.dto';
 import { SuggestionsDto } from './dto/suggestions.dto';
 import { SUGGESTIONS_SYSTEM_PROMPT } from './prompts/suggestions-system.prompt';
+import { buildGeneralSystemPrompt } from './prompts/suggestions-general-system.prompt';
+import {
+  SUGGESTION_OPTIONS,
+  findCategoryLabel,
+  findStyleLabel,
+} from './suggestion-options';
 import { Observable } from 'rxjs';
 
 export interface SuggestionsResponse {
@@ -277,6 +283,10 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
     return this.chatGPTService.sendPromptStream(promptText, systemPrompt);
   }
 
+  getSuggestionOptions() {
+    return SUGGESTION_OPTIONS;
+  }
+
   async getSuggestions(
     dto: SuggestionsDto,
     image?: Express.Multer.File,
@@ -294,13 +304,59 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
       }
     }
 
-    const userText = [
-      `Servicio reservado: ${dto.serviceName}`,
-      `Descripción del servicio: ${dto.serviceDescription?.trim() || 'No especificada'}`,
-      `Categoría del servicio: ${dto.serviceCategory?.trim() || 'No especificada'}`,
-      image ? 'El cliente adjuntó una foto.' : 'El cliente no adjuntó foto.',
-      'Devuelve el JSON con 2 a 4 sugerencias dentro del alcance de este servicio.',
-    ].join('\n');
+    const categorySlug = dto.category?.trim();
+    const styleSlug = dto.style?.trim();
+    const categoryLabel = categorySlug
+      ? findCategoryLabel(categorySlug)
+      : undefined;
+    const styleLabel = styleSlug ? findStyleLabel(styleSlug) : undefined;
+    if (categorySlug && !categoryLabel) {
+      throw new BadRequestException(
+        `Categoría no válida: "${categorySlug}". Usa una del catálogo.`,
+      );
+    }
+    if (styleSlug && !styleLabel) {
+      throw new BadRequestException(
+        `Estilo no válido: "${styleSlug}". Usa uno del catálogo.`,
+      );
+    }
+
+    const isGeneral = !dto.serviceName?.trim();
+    if (isGeneral && !image) {
+      throw new BadRequestException(
+        'Debes enviar una foto para la consulta general.',
+      );
+    }
+
+    const systemPrompt = isGeneral
+      ? buildGeneralSystemPrompt({ categoryLabel, styleLabel })
+      : SUGGESTIONS_SYSTEM_PROMPT;
+
+    const focusLine = [
+      categoryLabel ? `Categoría elegida: ${categoryLabel}.` : '',
+      styleLabel ? `Estilo elegido: ${styleLabel}.` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    const userText = isGeneral
+      ? [
+          'Consulta general: el cliente no eligió un servicio, solo subió una foto.',
+          focusLine ||
+            'Analiza lo que se vea y sugiere ideas que pueda ir a hacerse en un negocio de la app.',
+          focusLine
+            ? 'Devuelve 3 a 5 sugerencias SOLO de esa categoría y ese estilo.'
+            : 'Devuelve el JSON con 3 a 5 sugerencias.',
+        ].join('\n')
+      : [
+          `Servicio reservado: ${dto.serviceName}`,
+          `Descripción del servicio: ${dto.serviceDescription?.trim() || 'No especificada'}`,
+          `Categoría del servicio: ${dto.serviceCategory?.trim() || 'No especificada'}`,
+          image
+            ? 'El cliente adjuntó una foto.'
+            : 'El cliente no adjuntó foto.',
+          'Devuelve el JSON con 2 a 4 sugerencias dentro del alcance de este servicio.',
+        ].join('\n');
 
     const imageDataUrl = image
       ? `data:${image.mimetype};base64,${image.buffer.toString('base64')}`
@@ -309,7 +365,7 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
     let raw: string;
     try {
       raw = await this.chatGPTService.sendVisionJson(
-        SUGGESTIONS_SYSTEM_PROMPT,
+        systemPrompt,
         userText,
         imageDataUrl,
       );
@@ -359,7 +415,7 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
           typeof (s as { reason?: unknown }).reason === 'string',
       )
       .map((s) => ({ title: s.title.trim(), reason: s.reason.trim() }))
-      .slice(0, 4);
+      .slice(0, 5);
 
     if (suggestions.length < 2) {
       throw new InternalServerErrorException(

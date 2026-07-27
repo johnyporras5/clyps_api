@@ -24,4 +24,11 @@ export class CreateWorkerFeedbackDto {
   @IsOptional()
   @IsNumber()
   sessionId?: number;
+
+  // Vía segura (POST /workerfeedbacks): el trabajador tal como viene en las
+  // respuestas de sesión. El backend resuelve el worker.id real y verifica que
+  // atendió la cita (sessionId). Es el dato que el front sí tiene garantizado.
+  @IsOptional()
+  @IsNumber()
+  companyWorkerId?: number;
 }

@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  UnprocessableEntityException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DeepPartial, SelectQueryBuilder } from 'typeorm';
@@ -23,6 +25,12 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom, workerRoom } from '../realtime/rooms';
 import { NotificationService } from '../notification/notification.service';
 import { buildNavigationData } from '../notification/entities/notification.entity';
+
+const isDupEntry = (e: unknown): boolean =>
+  (e as { code?: string; driverError?: { code?: string } })?.code ===
+    'ER_DUP_ENTRY' ||
+  (e as { driverError?: { code?: string } })?.driverError?.code ===
+    'ER_DUP_ENTRY';
 
 // Cada feedback trae sus stats individuales en `feedback.worker.stats`. El
 // resultado paginado también incluye `stats` a nivel root: estadísticas
@@ -85,6 +93,62 @@ export class WorkerFeedbackService {
    * Crea un feedback para el workerId dado.
    * clientId debe venir del token en el controlador.
    */
+  /**
+   * Calificación ATADA A LA CITA (vía segura). El front manda `companyWorkerId`
+   * + `sessionId` —los datos que sí tiene garantizados en las respuestas de
+   * sesión— y el backend resuelve el `worker.id` real internamente. Verifica que
+   * ese trabajador REALMENTE atendió esa cita: si no, responde 422. Así nunca se
+   * atribuye la reseña a otra persona por un id cruzado.
+   */
+  /** La cita que el cliente marcó "no calificar" no admite reseñas: 409. */
+  private async assertSessionNotSkipped(sessionId: number): Promise<void> {
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+      select: ['id', 'feedbackSkippedAt'],
+    });
+    if (session?.feedbackSkippedAt) {
+      throw new ConflictException({ error: 'FEEDBACK_SKIPPED' });
+    }
+  }
+
+  async createFromSession(
+    createDto: CreateWorkerFeedbackDto,
+    clientId?: number,
+  ): Promise<WorkerFeedback> {
+    if (!createDto.companyWorkerId) {
+      throw new BadRequestException('companyWorkerId es requerido');
+    }
+    if (!createDto.sessionId) {
+      throw new BadRequestException('sessionId es requerido');
+    }
+
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: { id: createDto.companyWorkerId },
+    });
+    if (!companyWorker) {
+      throw new NotFoundException(
+        `Trabajador de compañía ${createDto.companyWorkerId} no encontrado`,
+      );
+    }
+
+    // El trabajador tiene que haber atendido ESA cita (hay un detalle suyo en
+    // esa sesión). Es lo que ata la reseña a una cita real y a la persona real.
+    const served = await this.sessionDetailRepository.count({
+      where: {
+        sessionId: createDto.sessionId,
+        companyWorkerId: createDto.companyWorkerId,
+      },
+    });
+    if (served === 0) {
+      throw new UnprocessableEntityException(
+        'Ese trabajador no atendió esta cita; no se puede calificar.',
+      );
+    }
+
+    // Resuelto el worker.id real, se reutiliza el flujo normal de creación.
+    return this.create(createDto, companyWorker.workerId, clientId);
+  }
+
   async create(
     createDto: CreateWorkerFeedbackDto,
     workerId: number,
@@ -103,19 +167,35 @@ export class WorkerFeedbackService {
       throw new BadRequestException('stars must be between 1 and 5');
     }
 
+    // No se puede calificar una cita que el cliente marcó "no calificar".
+    if (createDto.sessionId) {
+      await this.assertSessionNotSkipped(createDto.sessionId);
+    }
+
     const feedbackData: DeepPartial<WorkerFeedback> = {
       stars: createDto.stars,
       description: createDto.description,
       workerId,
+      companyWorkerId: createDto.companyWorkerId ?? null,
       clientId: clientId ?? null,
       sessionId: createDto.sessionId ?? null,
     };
 
     const feedback = this.workerFeedbackRepository.create(feedbackData);
-    const saved = await this.workerFeedbackRepository.save(feedback);
+    let saved: WorkerFeedback;
+    try {
+      saved = await this.workerFeedbackRepository.save(feedback);
+    } catch (e) {
+      // Índice único (client, session, companyWorker): ya calificó a este
+      // trabajador en esta cita. El front lo trata como enviado, no como fallo.
+      if (isDupEntry(e)) {
+        throw new ConflictException({ error: 'ALREADY_RATED' });
+      }
+      throw e;
+    }
 
-    // Si el cliente vinculó la calificación a una sesión, marcarla como RATED
-    // (sessionStatus = 6) para que no vuelva a aparecer como "pendiente de calificar".
+    // Marca la sesión (sessionStatus=6) como antes. El estado fino
+    // (pending/partial/completed) lo deriva /feedbacks/pending desde las filas.
     if (createDto.sessionId && clientId) {
       await this.markSessionAsRatedIfOwned(createDto.sessionId, clientId);
     }
@@ -140,8 +220,14 @@ export class WorkerFeedbackService {
       const stars = feedback.stars;
 
       // Admin(s) de las companies donde el worker está asignado.
+      // Excluye vínculos borrados (soft-delete) para no notificar a companies
+      // de las que el worker ya fue removido.
       const cwRows = await this.companyWorkerRepository.find({
-        where: { workerId: worker.id },
+        where: {
+          workerId: worker.id,
+          permanentlyDeleted: false,
+          temporarilyDeleted: false,
+        },
       });
       const companyIds = [
         ...new Set(cwRows.map((r) => r.companyId).filter(Boolean)),
@@ -197,8 +283,14 @@ export class WorkerFeedbackService {
       );
 
       // workerId es Worker.id → resolver companyWorkerId + companyId.
+      // Excluye vínculos borrados (soft-delete) para no emitir a rooms de
+      // companies de las que el worker ya fue removido.
       const companyWorkers = await this.companyWorkerRepository.find({
-        where: { workerId: feedback.workerId },
+        where: {
+          workerId: feedback.workerId,
+          permanentlyDeleted: false,
+          temporarilyDeleted: false,
+        },
       });
 
       const rooms: string[] = [];
