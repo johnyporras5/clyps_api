@@ -15,7 +15,12 @@ import { ChatGPTService } from '../chatgpt/chatgpt.service';
 import { ProcessPromptDto } from './dto/process-prompt.dto';
 import { SuggestionsDto } from './dto/suggestions.dto';
 import { SUGGESTIONS_SYSTEM_PROMPT } from './prompts/suggestions-system.prompt';
-import { SUGGESTIONS_GENERAL_SYSTEM_PROMPT } from './prompts/suggestions-general-system.prompt';
+import { buildGeneralSystemPrompt } from './prompts/suggestions-general-system.prompt';
+import {
+  SUGGESTION_OPTIONS,
+  findCategoryLabel,
+  findStyleLabel,
+} from './suggestion-options';
 import { Observable } from 'rxjs';
 
 export interface SuggestionsResponse {
@@ -278,6 +283,10 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
     return this.chatGPTService.sendPromptStream(promptText, systemPrompt);
   }
 
+  getSuggestionOptions() {
+    return SUGGESTION_OPTIONS;
+  }
+
   async getSuggestions(
     dto: SuggestionsDto,
     image?: Express.Multer.File,
@@ -295,6 +304,23 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
       }
     }
 
+    const categorySlug = dto.category?.trim();
+    const styleSlug = dto.style?.trim();
+    const categoryLabel = categorySlug
+      ? findCategoryLabel(categorySlug)
+      : undefined;
+    const styleLabel = styleSlug ? findStyleLabel(styleSlug) : undefined;
+    if (categorySlug && !categoryLabel) {
+      throw new BadRequestException(
+        `Categoría no válida: "${categorySlug}". Usa una del catálogo.`,
+      );
+    }
+    if (styleSlug && !styleLabel) {
+      throw new BadRequestException(
+        `Estilo no válido: "${styleSlug}". Usa uno del catálogo.`,
+      );
+    }
+
     const isGeneral = !dto.serviceName?.trim();
     if (isGeneral && !image) {
       throw new BadRequestException(
@@ -303,14 +329,24 @@ Mantén un tono motivador y práctico, como un mentor de negocio que conoce el s
     }
 
     const systemPrompt = isGeneral
-      ? SUGGESTIONS_GENERAL_SYSTEM_PROMPT
+      ? buildGeneralSystemPrompt({ categoryLabel, styleLabel })
       : SUGGESTIONS_SYSTEM_PROMPT;
+
+    const focusLine = [
+      categoryLabel ? `Categoría elegida: ${categoryLabel}.` : '',
+      styleLabel ? `Estilo elegido: ${styleLabel}.` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
 
     const userText = isGeneral
       ? [
           'Consulta general: el cliente no eligió un servicio, solo subió una foto.',
-          'Analiza lo que se vea y sugiere ideas que pueda ir a hacerse en un negocio de la app.',
-          'Devuelve el JSON con 3 a 5 sugerencias.',
+          focusLine ||
+            'Analiza lo que se vea y sugiere ideas que pueda ir a hacerse en un negocio de la app.',
+          focusLine
+            ? 'Devuelve 3 a 5 sugerencias SOLO de esa categoría y ese estilo.'
+            : 'Devuelve el JSON con 3 a 5 sugerencias.',
         ].join('\n')
       : [
           `Servicio reservado: ${dto.serviceName}`,

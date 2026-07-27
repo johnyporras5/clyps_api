@@ -27,3 +27,21 @@ SALIDA: responde ÚNICAMENTE con un objeto JSON válido, sin markdown ni texto f
 - Escribe en español latino, neutral y amigable.
 - Incluye entre 3 y 5 sugerencias. Cada "title" es un texto corto y cada "reason" tiene 1 o 2 frases explicando por qué le queda bien.
 - Si needsBetterPhoto es true, "suggestions" debe ser un arreglo vacío [].`;
+
+export function buildGeneralSystemPrompt(focus?: {
+  categoryLabel?: string;
+  styleLabel?: string;
+}): string {
+  const category = focus?.categoryLabel;
+  const style = focus?.styleLabel;
+  if (!category && !style) return SUGGESTIONS_GENERAL_SYSTEM_PROMPT;
+
+  const target = category
+    ? `la categoría "${category}"`
+    : 'la categoría elegida';
+  const styleClause = style ? ` y en un estilo "${style}"` : '';
+
+  return `${SUGGESTIONS_GENERAL_SYSTEM_PROMPT}
+
+ENFOQUE OBLIGATORIO: el cliente eligió ${target}${styleClause}. TODAS las sugerencias deben ser de esa área${style ? ' y respetar ese estilo' : ''}. No mezcles otras áreas (nada de proponer cabello, maquillaje, uñas y facial a la vez): céntrate SOLO en lo elegido. Si la foto no muestra la zona relevante para esa categoría, responde needsBetterPhoto=true.`;
+}

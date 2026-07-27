@@ -12,4 +12,12 @@ export class SuggestionsDto {
   @IsOptional()
   @IsString()
   serviceCategory?: string;
+
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  style?: string;
 }
