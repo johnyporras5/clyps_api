@@ -18,6 +18,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SessionModule } from './session/session.module';
 import { IAPromptsModule } from './IAprompts/ia_prompts.module';
+import { FeedbacksModule } from './feedbacks/feedbacks.module';
 //import { TemplatesModule } from './templates/templates.module';
 import { ServiceCategoryModule } from './service_category/service_category.module';
 import { CompanyCategoryModule } from './company_category/company_category.module';
@@ -113,6 +114,7 @@ import { PayrollModule } from './payroll/payroll.module';
     //TemplatesModule,
 
     IAPromptsModule,
+    FeedbacksModule,
     ServiceCategoryModule,
     CompanyCategoryModule,
     OfferModule,

@@ -32,7 +32,23 @@ export class WorkerFeedbackController {
   constructor(private readonly workerFeedbackService: WorkerFeedbackService) {}
 
   // =============================================
-  //  Crear feedback para un trabajador (cliente)
+  //  Crear feedback ATADO A LA CITA (vía segura, recomendada)
+  // POST /workerfeedbacks   body: { stars, description?, companyWorkerId, sessionId }
+  // El backend resuelve el worker.id real desde companyWorkerId y verifica que
+  // atendió la sesión. Evita el cruce de ids que atribuía la reseña a otra persona.
+  // =============================================
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  async createFromSession(
+    @Body() createDto: CreateWorkerFeedbackDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<WorkerFeedback> {
+    const clientId = req.user?.sub;
+    return this.workerFeedbackService.createFromSession(createDto, clientId);
+  }
+
+  // =============================================
+  //  Crear feedback para un trabajador (por worker.id real) — vía legacy
   // POST /workerfeedbacks/worker/:workerId
   // =============================================
   @Post('worker/:workerId')

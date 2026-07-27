@@ -3,10 +3,17 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DeepPartial, SelectQueryBuilder } from 'typeorm';
 import { CompanyFeedback } from './entities/company_feedback.entity';
+
+const isDupEntry = (e: unknown): boolean =>
+  (e as { code?: string; driverError?: { code?: string } })?.code ===
+    'ER_DUP_ENTRY' ||
+  (e as { driverError?: { code?: string } })?.driverError?.code ===
+    'ER_DUP_ENTRY';
 import { CreateCompanyFeedbackDto } from './dto/create-company_feedback.dto';
 import { UpdateCompanyFeedbackDto } from './dto/update-company_feedback.dto';
 import { Company } from '../company/entities/company.entity';
@@ -91,6 +98,15 @@ export class CompanyFeedbackService {
     if (createDto.stars < 1 || createDto.stars > 5)
       throw new BadRequestException('stars must be between 1 and 5');
 
+    // No se puede calificar una cita que el cliente marcó "no calificar".
+    const session = await this.sessionRepository.findOne({
+      where: { id: createDto.sessionId },
+      select: ['id', 'feedbackSkippedAt'],
+    });
+    if (session?.feedbackSkippedAt) {
+      throw new ConflictException({ error: 'FEEDBACK_SKIPPED' });
+    }
+
     const data: DeepPartial<CompanyFeedback> = {
       stars: createDto.stars,
       description: createDto.description,
@@ -100,7 +116,17 @@ export class CompanyFeedbackService {
     };
 
     const feedback = this.companyFeedbackRepository.create(data);
-    const saved = await this.companyFeedbackRepository.save(feedback);
+    let saved: CompanyFeedback;
+    try {
+      saved = await this.companyFeedbackRepository.save(feedback);
+    } catch (e) {
+      // Índice único (client, session, company): ya calificó a este negocio en
+      // esta cita. El front lo trata como enviado, no como fallo.
+      if (isDupEntry(e)) {
+        throw new ConflictException({ error: 'ALREADY_RATED' });
+      }
+      throw e;
+    }
 
     // Si el cliente envió la calificación vinculada a una sesión, marcar la
     // sesión como RATED (sessionStatus = 6) para que el flujo de

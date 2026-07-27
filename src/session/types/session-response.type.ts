@@ -74,6 +74,7 @@ export interface SessionDetailResponse {
   originalStartDatetime?: Date | null;
   originalEndDatetime?: Date | null;
   companyWorkerId: number | null;
+  workerId: number | null;
   workerName: string;
   originalPrice: number;
   appliedPrice: number;
@@ -130,6 +131,14 @@ export interface SessionResponse {
   payment?: SessionPaymentResponse | null;
   createdAt?: Date;
   updatedAt?: Date;
+  // B1: estado de calificación del cliente para esta cita (aditivo).
+  feedback?: {
+    status: 'pending' | 'partial' | 'completed' | 'skipped';
+    companyRated: boolean;
+    ratedCompanyWorkerIds: number[];
+    pendingCompanyWorkerIds: number[];
+    skippedAt: Date | null;
+  } | null;
   // Datos de cancelación de la cita (sólo cuando sessionStatus = 5 = Cancelada)
   cancellationReason?: string | null;
   cancelledBy?: string | null;

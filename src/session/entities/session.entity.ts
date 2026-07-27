@@ -78,6 +78,10 @@ export class Session {
   @Column({ name: 'attendance_responded_at', type: 'datetime', nullable: true })
   attendanceRespondedAt: Date | null;
 
+  // El cliente declaró que no calificará esta cita (skip). Estado terminal.
+  @Column({ name: 'feedback_skipped_at', type: 'datetime', nullable: true })
+  feedbackSkippedAt: Date | null;
+
   @Column({ name: 'description', type: 'text', nullable: true })
   description: string;
 

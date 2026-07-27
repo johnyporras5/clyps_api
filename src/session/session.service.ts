@@ -16,6 +16,7 @@ import { SessionPaymentTip } from './entities/session-payment-tip.entity';
 import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
 import { PayrollPeriodService } from '../payroll/payroll-period.service';
 import { PayrollEarningsService } from '../payroll/payroll-earnings.service';
+import { FeedbacksService } from '../feedbacks/feedbacks.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import {
   CreateSessionWithDetailDto,
@@ -110,6 +111,7 @@ export class SessionService {
     private fileUploadService: FileUploadService,
     private payrollPeriodService: PayrollPeriodService,
     private payrollEarningsService: PayrollEarningsService,
+    private feedbacksService: FeedbacksService,
   ) {}
 
   async create(
@@ -2067,6 +2069,8 @@ export class SessionService {
         originalStartDatetime: detail.originalStartDatetime,
         originalEndDatetime: detail.originalEndDatetime,
         companyWorkerId: detail.companyWorkerId,
+        // worker.id REAL (para calificar). Distinto del companyWorkerId.
+        workerId: companyWorker?.worker?.id ?? null,
         workerName: companyWorker?.worker
           ? (companyWorker.worker.name || '').trim()
           : '',
@@ -2149,9 +2153,29 @@ export class SessionService {
       cancelledByText: this.getCancelledByText(session.cancelledBy),
       createdAt: (session as any).createdAt || null,
       updatedAt: (session as any).updatedAt || null,
+      // B1: estado de calificación del cliente para esta cita (aditivo). La
+      // reseña se guarda por userId; session.clientId es el client.id, así que
+      // se resuelve el userId del dueño de la cita.
+      feedback: await this.getSessionFeedbackForClient(
+        session.clientId,
+        session.id,
+      ),
     };
 
     return response;
+  }
+
+  /** Resuelve el userId del cliente (client.id) y arma el objeto feedback (B1). */
+  private async getSessionFeedbackForClient(
+    clientEntityId: number,
+    sessionId: number,
+  ) {
+    const client = await this.clientRepository.findOne({
+      where: { id: clientEntityId },
+      select: ['id', 'userId'],
+    });
+    if (!client?.userId) return null;
+    return this.feedbacksService.getSessionFeedback(client.userId, sessionId);
   }
 
   async updateSessionDates(
@@ -3234,6 +3258,8 @@ export class SessionService {
             totalTime: realTime,
             startDatetime: detail.startDatetime,
             companyWorkerId: detail.companyWorkerId,
+            // worker.id REAL (para calificar). Distinto del companyWorkerId.
+            workerId: companyWorker?.worker?.id ?? null,
             workerName: companyWorker?.worker
               ? (companyWorker.worker.name || '').trim()
               : '',
@@ -8653,6 +8679,10 @@ export class SessionService {
         companyPercentage,
         company: companyObj,
         worker: workerObj,
+        // Ids planos del trabajador para calificar por la vía segura
+        // (POST /workerfeedbacks con companyWorkerId + sessionId).
+        companyWorkerId: detail.companyWorkerId ?? null,
+        workerId: detail.workerId ?? null,
         description: detail.detailDescription ?? null,
         descriptionIA: detail.detailDescriptionIA ?? null,
         cancelReason: detail.detailCancelReason ?? null,
@@ -8689,6 +8719,17 @@ export class SessionService {
       );
     }
 
+    // B1: estado de calificación por cita (batch, aditivo). El cliente
+    // autenticado es el dueño → su userId es el de las reseñas.
+    const feedbackMap = await this.feedbacksService.getFeedbackForSessions(
+      clientUserId,
+      sessions.map((s) => s.id),
+    );
+    const sessionsWithFeedback = sessions.map((s) => ({
+      ...s,
+      feedback: feedbackMap.get(s.id) ?? null,
+    }));
+
     // Datos del cliente autenticado (una sola vez, top-level)
     const clientInfo = {
       id: client.id,
@@ -8705,7 +8746,7 @@ export class SessionService {
     };
 
     return {
-      data: sessions,
+      data: sessionsWithFeedback,
       client: clientInfo,
       meta: {
         page: getSessionsDto.page,

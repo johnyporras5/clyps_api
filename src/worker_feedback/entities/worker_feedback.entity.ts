@@ -40,6 +40,11 @@ export class WorkerFeedback {
   @Column({ name: 'session_id', type: 'int', nullable: true })
   sessionId?: number | null;
 
+  // Trabajador reseñado tal como lo maneja el front. Clave de dedup por cita y
+  // de ratedCompanyWorkerIds. Lo llena la vía segura (companyWorkerId+sessionId).
+  @Column({ name: 'company_worker_id', type: 'int', nullable: true })
+  companyWorkerId?: number | null;
+
   // Hidratado en runtime con los servicios prestados por este worker en la
   // sesión asociada (sólo se llena cuando hay sessionId).
   services?: Array<{
