@@ -151,9 +151,9 @@ export class SessionNotificationEmitter {
 
   /**
    * La hora de una cita cambió por el arrastre (ripple): avisa SOLO al cliente
-   * afectado, por push (feed + socket + FCM) y por correo. No se afirma una hora
-   * local concreta (el backend guarda UTC y la app localiza); el cliente ve el
-   * nuevo horario en la app. Best-effort: nunca rompe la mutación.
+   * afectado, por push (feed + socket + FCM) y por correo. El correo usa la
+   * misma plantilla que la confirmación, con el nuevo horario ya localizado a
+   * la zona del negocio. Best-effort: nunca rompe la mutación.
    */
   async notifyRescheduled(
     sessionId: number,
@@ -179,15 +179,44 @@ export class SessionNotificationEmitter {
         },
       );
 
-      // Correo al cliente (best-effort, no bloquea).
+      // Correo al cliente (best-effort, no bloquea): mismo formato que la
+      // confirmación de cita, con el nuevo horario y todos los detalles.
       const client = session.clientId
         ? await this.clientRepo.findOne({ where: { id: session.clientId } })
         : null;
       if (client?.email) {
+        const [company, workerInfo] = await Promise.all([
+          this.companyRepo.findOne({ where: { id: session.companyId } }),
+          this.workerInfoOf(session),
+        ]);
+        const { date, time } = this.email.formatSessionDate(
+          session.startDatetime ?? session.sessionDatetime,
+        );
+        const services = session.services ?? [];
+        const first = services[0];
+
         await this.email.sendSessionRescheduleToClient(
           client.email,
           this.clientName(session),
-          session.companyName,
+          {
+            date,
+            time,
+            serviceName: this.servicesLabel(session),
+            serviceCost: Number(session.totalCost) || 0,
+            serviceCurrency: first?.currency ?? undefined,
+            serviceDuration:
+              Number(session.workerEstimateTime) ||
+              services.reduce(
+                (sum, s) => sum + (Number(s.durationWorker) || 0),
+                0,
+              ),
+          },
+          workerInfo,
+          {
+            name: session.companyName,
+            address: session.address || company?.location || '',
+            email: company?.email || '',
+          },
         );
       }
     });
@@ -446,6 +475,43 @@ export class SessionNotificationEmitter {
       if (s.companyWorkerId) ids.add(s.companyWorkerId);
     }
     return [...ids];
+  }
+
+  /**
+   * Servicio a mostrar en el correo. Una cita puede tener varios: se nombra el
+   * primero y se indica cuántos más ("Corte + 2 más").
+   */
+  private servicesLabel(session: SessionResponse): string {
+    const services = session.services ?? [];
+    const first = services[0]?.serviceName || 'Servicio';
+    const rest = services.length - 1;
+    return rest > 0 ? `${first} + ${rest} más` : first;
+  }
+
+  /**
+   * Profesional a mostrar en el correo: si la cita tiene varios, se listan los
+   * nombres y no se muestra teléfono (no hay uno solo al que llamar).
+   */
+  private async workerInfoOf(
+    session: SessionResponse,
+  ): Promise<{ name: string; phone?: string }> {
+    const names = [
+      ...new Set(
+        (session.services ?? [])
+          .map((s) => (s.workerName || '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    const name = names.join(', ') || 'Profesional';
+
+    const companyWorkerIds = this.companyWorkerIdsOf(session);
+    if (companyWorkerIds.length !== 1) return { name };
+
+    const companyWorker = await this.companyWorkerRepo.findOne({
+      where: { id: companyWorkerIds[0] },
+      relations: ['worker'],
+    });
+    return { name, phone: companyWorker?.worker?.phone || undefined };
   }
 
   private clientName(session: SessionResponse): string {
