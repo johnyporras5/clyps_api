@@ -1300,26 +1300,6 @@ export class SessionService {
         const savedSessionDetail =
           await this.sessionDetailRepository.save(sessionDetail);
         createdDetails.push(savedSessionDetail);
-
-        // Enviar correos de confirmación en segundo plano (no bloquear la respuesta).
-        // Si el detalle no tiene trabajador asignado, solo se notifica al cliente.
-        if (
-          detail.companyWorkerId !== null &&
-          detail.companyWorkerId !== undefined
-        ) {
-          this.sendConfirmationEmails(
-            session,
-            savedSessionDetail,
-            createSessionWithDetailDto.clientId,
-            detail.companyWorkerId,
-            detail.serviceId,
-            companyId,
-          ).catch((error) => {
-            this.logger.error(
-              `Error enviando correos de confirmación: ${(error as Error).message}`,
-            );
-          });
-        }
       } catch (error) {
         // Si falla algún detalle, eliminar todo lo creado
         if (createdDetails.length > 0) {
@@ -1336,6 +1316,18 @@ export class SessionService {
         );
       }
     }
+
+    // Correos de la cita (uno solo, con todos los servicios) en segundo plano.
+    this.sendConfirmationEmails(
+      session,
+      createdDetails,
+      createSessionWithDetailDto.clientId,
+      companyId,
+    ).catch((error) => {
+      this.logger.error(
+        `Error enviando correos de confirmación: ${(error as Error).message}`,
+      );
+    });
 
     // Actualizar automáticamente el estado de la sesión basado en los detalles
     try {
@@ -2514,37 +2506,105 @@ export class SessionService {
     }
   }
 
+  /**
+   * Correos de una cita: UNO al cliente con todos sus servicios, UNO por
+   * trabajador (sólo con los servicios que le tocan) y UNO al administrador.
+   * Antes se enviaba un correo por servicio, así que una cita de 2+ servicios
+   * llenaba la bandeja de correos casi idénticos.
+   *
+   * Best-effort: nunca rompe la creación de la cita.
+   */
   private async sendConfirmationEmails(
     session: Session,
-    sessionDetail: SessionDetail,
+    details: SessionDetail[],
     clientId: number,
-    companyWorkerId: number,
-    serviceId: number,
     companyId: number,
   ): Promise<void> {
     try {
-      const clientInfo = await this.getClientInfo(clientId);
-      const workerInfo = await this.getWorkerInfo(companyWorkerId);
-      const service = await this.serviceRepository.findOne({
-        where: { id: serviceId },
-      });
+      if (!details || details.length === 0) return;
+      // Como antes: si NINGÚN servicio tiene trabajador, la cita está pendiente
+      // de asignación y todavía no se notifica a nadie.
+      if (!details.some((d) => !!d.companyWorkerId)) return;
 
+      const clientInfo = await this.getClientInfo(clientId);
       const company = await this.companyRepository.findOne({
         where: { id: companyId },
       });
+      const companyInfo = {
+        name: company?.name || '',
+        address: company?.location || '',
+        email: company?.email || '',
+      };
 
-      // Usar datos del detalle individual, no los totales de la sesión
-      const detailStartDatetime =
-        sessionDetail.startDatetime || session.sessionDatetime;
-      const formattedDate =
-        this.emailService.formatSessionDate(detailStartDatetime);
+      // Servicios y trabajadores de todos los detalles, en una sola consulta.
+      const services = await this.serviceRepository.find({
+        where: [...new Set(details.map((d) => d.serviceId))].map((id) => ({
+          id,
+        })),
+      });
+      const serviceById = new Map(services.map((s) => [s.id, s]));
 
-      const detailCost =
-        parseFloat(String(sessionDetail.cost)) ||
-        parseFloat(String(service?.cost)) ||
-        0;
-      const detailDuration =
-        Number(sessionDetail.totalTime) || Number(service?.standardTime) || 0;
+      const workerIds = [
+        ...new Set(
+          details
+            .map((d) => d.companyWorkerId)
+            .filter((id): id is number => !!id),
+        ),
+      ];
+      const workerById = new Map<
+        number,
+        { email: string; name: string; phone: string }
+      >();
+      for (const workerId of workerIds) {
+        try {
+          workerById.set(workerId, await this.getWorkerInfo(workerId));
+        } catch (error) {
+          this.logger.warn(
+            `⚠️ No se pudo resolver el trabajador ${workerId} para los correos: ${(error as Error).message}`,
+          );
+        }
+      }
+
+      // Un item por servicio, ordenados por hora de inicio.
+      const sorted = [...details].sort(
+        (a, b) =>
+          new Date(a.startDatetime || session.sessionDatetime).getTime() -
+          new Date(b.startDatetime || session.sessionDatetime).getTime(),
+      );
+      const items = sorted.map((detail) => {
+        const service = serviceById.get(detail.serviceId);
+        const start = detail.startDatetime || session.sessionDatetime;
+        return {
+          detail,
+          service: {
+            name: service?.name || 'Servicio',
+            time: this.emailService.formatSessionDate(start).time,
+            duration:
+              Number(detail.totalTime) || Number(service?.standardTime) || 0,
+            cost:
+              parseFloat(String(detail.cost)) ||
+              parseFloat(String(service?.cost)) ||
+              0,
+            currency: service?.currency,
+            workerName: detail.companyWorkerId
+              ? workerById.get(detail.companyWorkerId)?.name
+              : 'Por asignar',
+          },
+        };
+      });
+
+      const firstStart = sorted[0].startDatetime || session.sessionDatetime;
+      const formattedDate = this.emailService.formatSessionDate(firstStart);
+      const allServices = items.map((i) => i.service);
+      const totalCost = allServices.reduce((sum, s) => sum + s.cost, 0);
+      const totalDuration =
+        Number(session.totalTime) ||
+        allServices.reduce((sum, s) => sum + s.duration, 0);
+      const currency = allServices[0]?.currency;
+      // Profesionales de la cita (sin repetir) para la tarjeta del cliente.
+      const workerNames = [
+        ...new Set(allServices.map((s) => s.workerName).filter(Boolean)),
+      ] as string[];
 
       if (clientInfo.email) {
         await this.emailService.sendSessionConfirmationToClient(
@@ -2553,56 +2613,63 @@ export class SessionService {
           {
             date: formattedDate.date,
             time: formattedDate.time,
-            serviceName: service?.name || 'Servicio',
-            serviceCost: detailCost,
-            serviceCurrency: service?.currency,
-            serviceDuration: detailDuration,
+            services: allServices,
+            totalCost,
+            totalDuration,
+            currency,
           },
           {
-            name: workerInfo.name,
-            phone: workerInfo.phone,
+            name: workerNames.join(', ') || 'Por asignar',
+            phone:
+              workerIds.length === 1
+                ? workerById.get(workerIds[0])?.phone
+                : undefined,
           },
-          {
-            name: company?.name || '',
-            address: company?.location || '',
-            email: company?.email || '',
-          },
+          companyInfo,
         );
         this.logger.log(
-          `✅ Correo de confirmación enviado al cliente: ${clientInfo.email}`,
+          `✅ Correo de confirmación enviado al cliente: ${clientInfo.email} (${allServices.length} servicio(s))`,
         );
       }
 
-      if (workerInfo.email) {
+      // Un correo por trabajador, sólo con SUS servicios.
+      for (const workerId of workerIds) {
+        const workerInfo = workerById.get(workerId);
+        if (!workerInfo?.email) continue;
+
+        const workerServices = items
+          .filter((i) => i.detail.companyWorkerId === workerId)
+          .map((i) => ({ ...i.service, workerName: undefined }));
+        if (workerServices.length === 0) continue;
+
         await this.emailService.sendSessionNotificationToWorker(
           workerInfo.email,
           workerInfo.name,
           {
             date: formattedDate.date,
-            time: formattedDate.time,
-            serviceName: service?.name || 'Servicio',
+            time: workerServices[0].time,
+            services: workerServices,
+            totalCost: workerServices.reduce((sum, s) => sum + s.cost, 0),
+            totalDuration: workerServices.reduce(
+              (sum, s) => sum + s.duration,
+              0,
+            ),
+            currency: workerServices[0].currency,
             clientName: clientInfo.name,
             clientPhone: clientInfo.phone,
-            serviceCost: detailCost,
-            serviceCurrency: service?.currency,
-            serviceDuration: detailDuration,
           },
           {
             name: clientInfo.name,
             phone: clientInfo.phone,
           },
-          {
-            name: company?.name || '',
-            address: company?.location || '',
-            email: company?.email || '',
-          },
+          companyInfo,
         );
         this.logger.log(
-          `✅ Correo de notificación enviado al trabajador: ${workerInfo.email}`,
+          `✅ Correo de notificación enviado al trabajador: ${workerInfo.email} (${workerServices.length} servicio(s))`,
         );
       }
 
-      // Notificación al administrador de la empresa
+      // Notificación al administrador de la empresa (una por cita).
       if (company?.userId) {
         const adminUser = await this.userRepository.findOne({
           where: { id: company.userId },
@@ -2615,26 +2682,26 @@ export class SessionService {
             {
               date: formattedDate.date,
               time: formattedDate.time,
-              serviceName: service?.name || 'Servicio',
-              serviceCost: detailCost,
-              serviceCurrency: service?.currency,
-              serviceDuration: detailDuration,
+              services: allServices,
+              totalCost,
+              totalDuration,
+              currency,
             },
             {
               name: clientInfo.name,
               email: clientInfo.email,
               phone: clientInfo.phone,
             },
-            {
-              name: workerInfo.name,
-              email: workerInfo.email,
-              phone: workerInfo.phone,
-            },
-            {
-              name: company?.name || '',
-              address: company?.location || '',
-              email: company?.email || '',
-            },
+            // Una ficha por trabajador de la cita (nombre + teléfono + email).
+            workerIds
+              .map((id) => workerById.get(id))
+              .filter((worker) => !!worker)
+              .map((worker) => ({
+                name: worker.name,
+                email: worker.email || undefined,
+                phone: worker.phone || undefined,
+              })),
+            companyInfo,
           );
           this.logger.log(
             `✅ Correo de notificación enviado al administrador: ${adminUser.email}`,
@@ -6816,26 +6883,6 @@ export class SessionService {
         const savedSessionDetail =
           await this.sessionDetailRepository.save(sessionDetail);
         createdDetails.push(savedSessionDetail);
-
-        // Enviar correos de confirmación en segundo plano. Si el detalle no
-        // tiene trabajador asignado, se omite la notificación.
-        if (
-          detail.companyWorkerId !== null &&
-          detail.companyWorkerId !== undefined
-        ) {
-          this.sendConfirmationEmails(
-            session,
-            savedSessionDetail,
-            clientId,
-            detail.companyWorkerId,
-            detail.serviceId,
-            companyId,
-          ).catch((error) => {
-            this.logger.error(
-              `Error enviando correos de confirmación: ${(error as Error).message}`,
-            );
-          });
-        }
       } catch (error) {
         // Si falla algún detalle, eliminar todo lo creado
         if (createdDetails.length > 0) {
@@ -6852,6 +6899,18 @@ export class SessionService {
         );
       }
     }
+
+    // Correos de la cita (uno solo, con todos los servicios) en segundo plano.
+    this.sendConfirmationEmails(
+      session,
+      createdDetails,
+      clientId,
+      companyId,
+    ).catch((error) => {
+      this.logger.error(
+        `Error enviando correos de confirmación: ${(error as Error).message}`,
+      );
+    });
 
     // 11. Verificar y actualizar las compañías del cliente
     let wasAlreadyAssociated = false;
@@ -7750,24 +7809,18 @@ export class SessionService {
       );
     }
 
-    // 14. Enviar correos de confirmación en segundo plano (no bloquear la respuesta)
-    for (let i = 0; i < validations.length; i++) {
-      const validation = validations[i];
-      const addedDetail = addedDetails[i];
-
-      this.sendConfirmationEmails(
-        updatedSession,
-        addedDetail,
-        session.clientId,
-        validation.extraService.providerId,
-        validation.extraService.serviceId,
-        adminCompany.id,
-      ).catch((error) => {
-        this.logger.warn(
-          `⚠️ Error enviando correos para servicio extra: ${(error as Error).message}`,
-        );
-      });
-    }
+    // 14. Enviar UN correo con todos los servicios extras agregados (segundo
+    //     plano, no bloquea la respuesta).
+    this.sendConfirmationEmails(
+      updatedSession,
+      addedDetails,
+      session.clientId,
+      adminCompany.id,
+    ).catch((error) => {
+      this.logger.warn(
+        `⚠️ Error enviando correos para servicios extras: ${(error as Error).message}`,
+      );
+    });
 
     // 15. Actualizar automáticamente el estado de la sesión
     try {

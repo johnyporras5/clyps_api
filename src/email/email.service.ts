@@ -3,6 +3,36 @@ import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import { BUSINESS_TIMEZONE } from '../common/utils/business-time.util';
 
+/**
+ * Un servicio dentro del correo de una cita. Una cita puede tener varios, y va
+ * UN SOLO correo por cita (no uno por servicio).
+ */
+export interface SessionEmailService {
+  name: string;
+  /** Hora de inicio del servicio, ya localizada (ej. "9:25 AM"). */
+  time: string;
+  /** Duración en minutos. */
+  duration: number;
+  cost: number;
+  currency?: string;
+  /** Sólo se muestra cuando el correo cubre varios trabajadores. */
+  workerName?: string;
+}
+
+/** Datos de la cita comunes a los correos de cliente, trabajador y admin. */
+export interface SessionEmailData {
+  /** Fecha de la cita, ya localizada (ej. "Martes, 28 de julio de 2026"). */
+  date: string;
+  /** Hora de inicio de la cita, ya localizada. */
+  time: string;
+  services: SessionEmailService[];
+  /** Suma de los servicios incluidos en el correo. */
+  totalCost: number;
+  /** Duración total de la cita en minutos. */
+  totalDuration: number;
+  currency?: string;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -168,14 +198,7 @@ export class EmailService {
   async sendSessionRescheduleToClient(
     clientEmail: string,
     clientName: string,
-    sessionData: {
-      date: string;
-      time: string;
-      serviceName: string;
-      serviceCost: number;
-      serviceCurrency?: string;
-      serviceDuration: number;
-    },
+    sessionData: SessionEmailData,
     workerInfo: {
       name: string;
       phone?: string;
@@ -204,14 +227,7 @@ export class EmailService {
   async sendSessionConfirmationToClient(
     clientEmail: string,
     clientName: string,
-    sessionData: {
-      date: string;
-      time: string;
-      serviceName: string;
-      serviceCost: number;
-      serviceCurrency?: string;
-      serviceDuration: number;
-    },
+    sessionData: SessionEmailData,
     workerInfo: {
       name: string;
       phone?: string;
@@ -239,15 +255,9 @@ export class EmailService {
   async sendSessionNotificationToWorker(
     workerEmail: string,
     workerName: string,
-    sessionData: {
-      date: string;
-      time: string;
-      serviceName: string;
+    sessionData: SessionEmailData & {
       clientName: string;
       clientPhone?: string;
-      serviceCost: number;
-      serviceCurrency?: string;
-      serviceDuration: number;
     },
     clientInfo: {
       name: string;
@@ -276,24 +286,17 @@ export class EmailService {
   async sendSessionNotificationToAdmin(
     adminEmail: string,
     adminName: string,
-    sessionData: {
-      date: string;
-      time: string;
-      serviceName: string;
-      serviceCost: number;
-      serviceCurrency?: string;
-      serviceDuration: number;
-    },
+    sessionData: SessionEmailData,
     clientInfo: {
       name: string;
       email?: string;
       phone?: string;
     },
-    workerInfo: {
+    workers: Array<{
       name: string;
       email?: string;
       phone?: string;
-    },
+    }>,
     companyInfo: {
       name: string;
       address?: string;
@@ -304,7 +307,7 @@ export class EmailService {
       adminName,
       sessionData,
       clientInfo,
-      workerInfo,
+      workers,
       companyInfo,
     );
 
@@ -313,6 +316,49 @@ export class EmailService {
       `📋 Nueva cita agendada - ${sessionData.date}`,
       html,
     );
+  }
+
+  /** Texto de la tarjeta "Servicio": el nombre, o cuántos son si hay varios. */
+  private servicesSummary(services: SessionEmailService[]): string {
+    if (services.length === 0) return 'Servicio';
+    if (services.length === 1) return services[0].name;
+    return `${services.length} servicios`;
+  }
+
+  /**
+   * Detalle de los servicios de la cita (hora · nombre · profesional · duración
+   * · precio). Se omite cuando hay uno solo: ya sale en las tarjetas.
+   */
+  private renderServicesList(
+    services: SessionEmailService[],
+    accentColor: string,
+  ): string {
+    if (services.length < 2) return '';
+
+    const rows = services
+      .map((service, index) => {
+        const isLast = index === services.length - 1;
+        const border = isLast ? '' : 'border-bottom: 1px solid #f1f5f9;';
+        const meta = [`${service.duration} minutos`, service.workerName]
+          .filter(Boolean)
+          .join(' · ');
+        return `
+                        <tr>
+                            <td style="padding: 14px 18px; ${border}">
+                                <div style="font-size: 15px; font-weight: 600; color: #1e293b;">${service.time} · ${service.name}</div>
+                                <div style="font-size: 13px; color: #64748b; margin-top: 4px;">${meta}</div>
+                            </td>
+                            <td align="right" style="padding: 14px 18px; ${border} font-size: 15px; font-weight: 600; color: ${accentColor}; white-space: nowrap;">${this.formatMoney(service.cost, service.currency)}</td>
+                        </tr>`;
+      })
+      .join('');
+
+    return `
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse; background-color: #ffffff; border-radius: 8px; border: 1px solid #e2e8f0; margin: 0 0 25px 0;">
+                        <tr>
+                            <td colspan="2" style="padding: 14px 18px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Servicios de la cita</td>
+                        </tr>${rows}
+                    </table>`;
   }
 
   /** Símbolo de la moneda del servicio. Fallback: el propio código. */
@@ -2829,14 +2875,7 @@ export class EmailService {
    */
   private getSessionConfirmationTemplate(
     clientName: string,
-    sessionData: {
-      date: string;
-      time: string;
-      serviceName: string;
-      serviceCost: number;
-      serviceCurrency?: string;
-      serviceDuration: number;
-    },
+    sessionData: SessionEmailData,
     workerInfo: {
       name: string;
       phone?: string;
@@ -2849,6 +2888,9 @@ export class EmailService {
     variant: 'confirmation' | 'reschedule' = 'confirmation',
   ): string {
     const isReschedule = variant === 'reschedule';
+    const services = sessionData.services ?? [];
+    const servicesSummary = this.servicesSummary(services);
+    const servicesList = this.renderServicesList(services, '#4f46e5');
     const documentTitle = isReschedule
       ? 'Cita reprogramada - CLYPS'
       : 'Confirmación de Cita - CLYPS';
@@ -3287,19 +3329,19 @@ export class EmailService {
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">💼</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Servicio</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.serviceName}</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${servicesSummary}</div>
                         </div>
-                        
+
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">⏱️</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Duración</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.serviceDuration} minutos</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.totalDuration} minutos</div>
                         </div>
-                        
+
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">💰</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Costo</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.formatMoney(sessionData.serviceCost, sessionData.serviceCurrency)}</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.formatMoney(sessionData.totalCost, sessionData.currency)}</div>
                         </div>
                         
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
@@ -3308,7 +3350,7 @@ export class EmailService {
                             <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${workerInfo.name}</div>
                         </div>
                     </div>
-                    
+                    ${servicesList}
                     <div style="text-align: center; margin-top: 15px;">
                         <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">
                             📍 Ubicación: <strong>${companyInfo.address}</strong>
@@ -3400,12 +3442,6 @@ export class EmailService {
                 </div>
                 <!-- FIN SECCIÓN DE DESCARGA DE APP -->
                 
-                <div class="divider" style="height: 1px; background: linear-gradient(to right, transparent, #e2e8f0, transparent); margin: 30px 0;"></div>
-                
-                <p style="text-align: center; color: #64748b; font-size: 14px; line-height: 1.6;">
-                    Si tienes alguna pregunta sobre tu cita, no dudes en contactar directamente con 
-                    <strong>${companyInfo.name}</strong>.
-                </p>
             </div>
             
             <div class="footer" style="background-color: #f8fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 13px;">
@@ -3429,15 +3465,9 @@ export class EmailService {
 
   private getSessionNotificationTemplate(
     workerName: string,
-    sessionData: {
-      date: string;
-      time: string;
-      serviceName: string;
+    sessionData: SessionEmailData & {
       clientName: string;
       clientPhone?: string;
-      serviceCost: number;
-      serviceCurrency?: string;
-      serviceDuration: number;
     },
     clientInfo: {
       name: string;
@@ -3449,6 +3479,10 @@ export class EmailService {
       email?: string;
     },
   ): string {
+    const services = sessionData.services ?? [];
+    const servicesSummary = this.servicesSummary(services);
+    const servicesList = this.renderServicesList(services, '#059669');
+
     return `
     <!DOCTYPE html>
     <html>
@@ -3872,19 +3906,19 @@ export class EmailService {
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">💼</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Servicio</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.serviceName}</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${servicesSummary}</div>
                         </div>
-                        
+
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">⏱️</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Duración</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.serviceDuration} minutos</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.totalDuration} minutos</div>
                         </div>
-                        
+
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">💰</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Costo</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.formatMoney(sessionData.serviceCost, sessionData.serviceCurrency)}</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.formatMoney(sessionData.totalCost, sessionData.currency)}</div>
                         </div>
                         
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
@@ -3893,7 +3927,7 @@ export class EmailService {
                             <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${sessionData.clientName}</div>
                         </div>
                     </div>
-                    
+                    ${servicesList}
                     <div style="text-align: center; margin-top: 15px;">
                         <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">
                             📍 Ubicación: <strong>${companyInfo.name}</strong>
@@ -4175,35 +4209,84 @@ export class EmailService {
 
   private getSessionAdminNotificationTemplate(
     adminName: string,
-    sessionData: {
-      date: string;
-      time: string;
-      serviceName: string;
-      serviceCost: number;
-      serviceCurrency?: string;
-      serviceDuration: number;
-    },
+    sessionData: SessionEmailData,
     clientInfo: {
       name: string;
       email?: string;
       phone?: string;
     },
-    workerInfo: {
+    workers: Array<{
       name: string;
       email?: string;
       phone?: string;
-    },
+    }>,
     companyInfo: {
       name: string;
       address?: string;
       email?: string;
     },
   ): string {
-    const amount = new Intl.NumberFormat('es-ES', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(Number(sessionData.serviceCost) || 0);
-    const formattedCost = `${this.currencySymbol(sessionData.serviceCurrency)}${amount}`;
+    // Una ficha por trabajador: si la cita la atienden varios, el admin necesita
+    // el teléfono/email de cada uno, no un solo bloque con los nombres juntos.
+    const workersBlocks = (workers.length > 0 ? workers : [{ name: '' }])
+      .map(
+        (
+          worker: { name: string; email?: string; phone?: string },
+          index: number,
+        ) => `
+      <div class="info-grid"${index > 0 ? ' style="margin-top:14px;"' : ''}>
+        <div class="info-card">
+          <div class="info-label">🧑‍💼 Nombre</div>
+          <div class="info-value">${worker.name || '—'}</div>
+        </div>
+        <div class="info-card">
+          <div class="info-label">📞 Teléfono</div>
+          <div class="info-value">${worker.phone || '—'}</div>
+        </div>
+      </div>
+      ${
+        worker.email
+          ? `
+      <div class="full-card">
+        <div class="info-label">✉️ Email</div>
+        <div class="info-value">${worker.email}</div>
+      </div>`
+          : ''
+      }`,
+      )
+      .join('');
+
+    const services = sessionData.services ?? [];
+    const money = (cost: number, currency?: string): string => {
+      const amount = new Intl.NumberFormat('es-ES', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(Number(cost) || 0);
+      return `${this.currencySymbol(currency)}${amount}`;
+    };
+    // Una caja por servicio: la cita puede tener varios y va un solo correo.
+    const servicesBoxes = services
+      .map(
+        (service) => `
+      <div class="service-box">
+        <div class="service-name">💼 ${service.name}</div>
+        <div class="service-meta">
+          <span>💰 <strong>${money(service.cost, service.currency)}</strong></span>
+          <span>⏱️ <strong>${service.duration} min</strong></span>
+          <span>🕐 <strong>${service.time}</strong></span>
+          ${service.workerName ? `<span>🧑‍💼 <strong>${service.workerName}</strong></span>` : ''}
+        </div>
+      </div>`,
+      )
+      .join('');
+    const totalBox =
+      services.length > 1
+        ? `
+      <div class="full-card">
+        <div class="info-label">🧾 Total de la cita</div>
+        <div class="info-value">${money(sessionData.totalCost, sessionData.currency)} · ${sessionData.totalDuration} min</div>
+      </div>`
+        : '';
 
     return `
 <!DOCTYPE html>
@@ -4265,14 +4348,9 @@ export class EmailService {
         <p class="summary-time">🕐 ${sessionData.time}</p>
       </div>
 
-      <div class="section-title">Servicio</div>
-      <div class="service-box">
-        <div class="service-name">💼 ${sessionData.serviceName}</div>
-        <div class="service-meta">
-          <span>💰 <strong>${formattedCost}</strong></span>
-          <span>⏱️ <strong>${sessionData.serviceDuration} min</strong></span>
-        </div>
-      </div>
+      <div class="section-title">${services.length > 1 ? 'Servicios' : 'Servicio'}</div>
+      ${servicesBoxes}
+      ${totalBox}
 
       <div class="section-title">Cliente</div>
       <div class="info-grid">
@@ -4295,26 +4373,8 @@ export class EmailService {
           : ''
       }
 
-      <div class="section-title">Trabajador asignado</div>
-      <div class="info-grid">
-        <div class="info-card">
-          <div class="info-label">🧑‍💼 Nombre</div>
-          <div class="info-value">${workerInfo.name || '—'}</div>
-        </div>
-        <div class="info-card">
-          <div class="info-label">📞 Teléfono</div>
-          <div class="info-value">${workerInfo.phone || '—'}</div>
-        </div>
-      </div>
-      ${
-        workerInfo.email
-          ? `
-      <div class="full-card">
-        <div class="info-label">✉️ Email</div>
-        <div class="info-value">${workerInfo.email}</div>
-      </div>`
-          : ''
-      }
+      <div class="section-title">${workers.length > 1 ? 'Trabajadores asignados' : 'Trabajador asignado'}</div>
+      ${workersBlocks}
 
       <div class="section-title">Empresa</div>
       <div class="full-card">
