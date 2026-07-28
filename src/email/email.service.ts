@@ -161,29 +161,42 @@ export class EmailService {
 
   /**
    * Aviso al cliente de que la HORA de su cita se modificó (arrastre / ripple).
-   * No incluye una hora local concreta a propósito: el backend guarda UTC y el
-   * front localiza; el cliente ve el nuevo horario exacto en la app.
+   * Usa la MISMA plantilla que la confirmación (variante "reschedule"), con el
+   * nuevo horario ya localizado a la zona del negocio, para que el cliente vea
+   * todos los detalles en el correo sin tener que abrir la app.
    */
   async sendSessionRescheduleToClient(
     clientEmail: string,
     clientName: string,
-    companyName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      serviceCost: number;
+      serviceCurrency?: string;
+      serviceDuration: number;
+    },
+    workerInfo: {
+      name: string;
+      phone?: string;
+    },
+    companyInfo: {
+      name: string;
+      address?: string;
+      email?: string;
+    },
   ): Promise<boolean> {
-    const nombre = (clientName || '').trim() || 'Hola';
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; color: #222;">
-        <h2 style="color: #6b4eff;">Tu cita cambió de hora</h2>
-        <p>${nombre},</p>
-        <p>El horario de tu cita en <strong>${companyName}</strong> fue modificado.</p>
-        <p>Abre la app para ver el nuevo horario de tu cita.</p>
-        <p style="color: #888; font-size: 12px; margin-top: 24px;">
-          Este es un aviso automático, no respondas a este correo.
-        </p>
-      </div>
-    `;
+    const html = this.getSessionConfirmationTemplate(
+      clientName,
+      sessionData,
+      workerInfo,
+      companyInfo,
+      'reschedule',
+    );
+
     return this.sendEmail(
       clientEmail,
-      `Tu cita en ${companyName} cambió de hora`,
+      `Cita reprogramada - ${sessionData.date}`,
       html,
     );
   }
@@ -2809,6 +2822,11 @@ export class EmailService {
     `;
   }
 
+  /**
+   * Plantilla de detalles de una cita para el cliente. `variant` sólo cambia los
+   * textos de cabecera/intro: "confirmation" (cita nueva) o "reschedule" (a la
+   * cita le cambiaron la hora); el resto del correo es idéntico.
+   */
   private getSessionConfirmationTemplate(
     clientName: string,
     sessionData: {
@@ -2828,7 +2846,25 @@ export class EmailService {
       address?: string;
       email?: string;
     },
+    variant: 'confirmation' | 'reschedule' = 'confirmation',
   ): string {
+    const isReschedule = variant === 'reschedule';
+    const documentTitle = isReschedule
+      ? 'Cita reprogramada - CLYPS'
+      : 'Confirmación de Cita - CLYPS';
+    const tagline = isReschedule ? 'Cita reprogramada' : 'Confirmación de Cita';
+    const introMessage = isReschedule
+      ? `El horario de tu cita en <strong>${companyInfo.name}</strong> fue modificado.
+                    A continuación encontrarás los nuevos detalles de tu cita.`
+      : `Tu cita ha sido programada exitosamente. A continuación encontrarás todos los detalles
+                    importantes para que estés completamente preparado/a.`;
+    const cardTitle = isReschedule
+      ? '📅 Nuevos detalles de tu cita'
+      : '📅 Detalles de tu cita';
+    const footerNote = isReschedule
+      ? 'Este es un mensaje automático, por favor no responder a este correo.'
+      : 'Este es un mensaje automático de confirmación, por favor no responder a este correo.';
+
     return `
     <!DOCTYPE html>
     <html>
@@ -2836,7 +2872,7 @@ export class EmailService {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <title>Confirmación de Cita - CLYPS</title>
+        <title>${documentTitle}</title>
         <style type="text/css">
             /* RESET */
             body, table, td, div, p, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
@@ -3222,19 +3258,18 @@ export class EmailService {
         <div class="container" style="max-width: 580px; margin: 30px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0;">
             <div class="header" style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #ffffff; padding: 35px 40px; text-align: center; position: relative;">
                 <h1 class="logo" style="font-size: 36px; font-weight: 700; letter-spacing: 0.5px; margin: 0 0 8px 0; font-family: 'Arial Black', 'Segoe UI', sans-serif;">CLYPS</h1>
-                <p class="tagline" style="font-size: 15px; font-weight: 300; opacity: 0.9; margin: 0;">Confirmación de Cita</p>
+                <p class="tagline" style="font-size: 15px; font-weight: 300; opacity: 0.9; margin: 0;">${tagline}</p>
             </div>
             
             <div class="content" style="padding: 40px;">
                 <h2 class="greeting" style="font-size: 22px; font-weight: 600; color: #1e293b; margin: 0 0 20px 0; border-bottom: 2px solid #f1f5f9; padding-bottom: 15px;">Estimado/a ${clientName},</h2>
                 
                 <p class="message" style="color: #475569; margin: 0 0 30px 0; font-size: 15.5px; line-height: 1.7;">
-                    Tu cita ha sido programada exitosamente. A continuación encontrarás todos los detalles 
-                    importantes para que estés completamente preparado/a.
+                    ${introMessage}
                 </p>
                 
                 <div class="appointment-card" style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 10px; padding: 35px; margin: 35px 0; border: 1px solid #e2e8f0;">
-                    <h3 class="appointment-title" style="font-size: 22px; font-weight: 600; color: #4f46e5; text-align: center; margin: 0 0 25px 0;">📅 Detalles de tu cita</h3>
+                    <h3 class="appointment-title" style="font-size: 22px; font-weight: 600; color: #4f46e5; text-align: center; margin: 0 0 25px 0;">${cardTitle}</h3>
                     
                     <div class="appointment-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 0 0 25px 0;">
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
@@ -3377,7 +3412,7 @@ export class EmailService {
                 <p style="margin: 5px 0;">© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
                 <p style="margin: 5px 0;">Sistema de Gestión de Citas Profesional</p>
                 <p style="font-size: 12px; margin-top: 8px; opacity: 0.8;">
-                    Este es un mensaje automático de confirmación, por favor no responder a este correo.
+                    ${footerNote}
                 </p>
             </div>
         </div>
