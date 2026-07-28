@@ -174,7 +174,7 @@ export class SessionNotificationEmitter {
         {
           type: 'appointment',
           title: 'Tu cita cambió de hora',
-          body: `La hora de tu cita en ${session.companyName} fue modificada. Abre la app para ver el nuevo horario`,
+          body: `La hora de tu cita en ${session.companyName} fue modificada`,
           data,
         },
       );
@@ -192,8 +192,22 @@ export class SessionNotificationEmitter {
         const { date, time } = this.email.formatSessionDate(
           session.startDatetime ?? session.sessionDatetime,
         );
-        const services = session.services ?? [];
-        const first = services[0];
+        // Todos los servicios de la cita en un solo correo, ordenados por hora.
+        const services = [...(session.services ?? [])].sort(
+          (a, b) =>
+            new Date(a.startDatetime).getTime() -
+            new Date(b.startDatetime).getTime(),
+        );
+        const emailServices = services.map((service) => ({
+          name: service.serviceName,
+          time: this.email.formatSessionDate(service.startDatetime).time,
+          duration:
+            Number(service.durationWorker) || Number(service.standardTime) || 0,
+          cost:
+            Number(service.appliedPrice) || Number(service.serviceCost) || 0,
+          currency: service.currency ?? undefined,
+          workerName: service.workerName || undefined,
+        }));
 
         await this.email.sendSessionRescheduleToClient(
           client.email,
@@ -201,15 +215,12 @@ export class SessionNotificationEmitter {
           {
             date,
             time,
-            serviceName: this.servicesLabel(session),
-            serviceCost: Number(session.totalCost) || 0,
-            serviceCurrency: first?.currency ?? undefined,
-            serviceDuration:
+            services: emailServices,
+            totalCost: Number(session.totalCost) || 0,
+            currency: emailServices[0]?.currency,
+            totalDuration:
               Number(session.workerEstimateTime) ||
-              services.reduce(
-                (sum, s) => sum + (Number(s.durationWorker) || 0),
-                0,
-              ),
+              emailServices.reduce((sum, s) => sum + s.duration, 0),
           },
           workerInfo,
           {
@@ -475,17 +486,6 @@ export class SessionNotificationEmitter {
       if (s.companyWorkerId) ids.add(s.companyWorkerId);
     }
     return [...ids];
-  }
-
-  /**
-   * Servicio a mostrar en el correo. Una cita puede tener varios: se nombra el
-   * primero y se indica cuántos más ("Corte + 2 más").
-   */
-  private servicesLabel(session: SessionResponse): string {
-    const services = session.services ?? [];
-    const first = services[0]?.serviceName || 'Servicio';
-    const rest = services.length - 1;
-    return rest > 0 ? `${first} + ${rest} más` : first;
   }
 
   /**
