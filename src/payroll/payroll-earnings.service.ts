@@ -1513,6 +1513,10 @@ export class PayrollEarningsService {
       throw new UnprocessableEntityException('El monto es demasiado pequeño');
     }
 
+    // Moneda del concepto (VES por defecto). En divisa no hay tasa asociada, así
+    // que no se guarda equivalente en Bs.
+    const currency = (dto.currency || 'VES').toUpperCase();
+
     return this.conceptRepo.save(
       this.conceptRepo.create({
         companyId: detail.companyId,
@@ -1521,9 +1525,8 @@ export class PayrollEarningsService {
         sign,
         label: dto.label,
         amountMinor,
-        // Los conceptos manuales (bono/deducción/ajuste) siempre en Bs.
-        currency: 'VES',
-        amountBsMinor: amountMinor,
+        currency,
+        amountBsMinor: currency === 'VES' ? amountMinor : null,
         occurredAt: new Date(),
         sourceType: 'manual',
         sourceId: null,
