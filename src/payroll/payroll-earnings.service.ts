@@ -136,6 +136,7 @@ export class PayrollEarningsService {
     companyId: number,
     whenPaid: Date,
     items: CommissionItem[],
+    method?: string | null,
   ): Promise<number> {
     if (items.length === 0) return 0;
     if (await this.isBeforeActivation(companyId, whenPaid)) return 0;
@@ -144,13 +145,21 @@ export class PayrollEarningsService {
       companyId,
       whenPaid,
     );
+    // Efectivo: la comisión queda en la moneda del servicio (USD/EUR). Otros
+    // métodos → Bs, como siempre.
+    const isCash = method === 'cash' || method === 'efectivo';
     let created = 0;
 
     for (const it of items) {
       const rate = it.exchangeRate ?? (it.currency === 'VES' ? 1 : null);
       if (rate == null || !(it.workerAmount > 0)) continue; // sin tasa/comisión → nada
-      const amountMinor = toMinor(it.workerAmount * rate);
+      const keepForeign = isCash && it.currency !== 'VES';
+      const currency = keepForeign ? it.currency : 'VES';
+      const amountMinor = keepForeign
+        ? toMinor(it.workerAmount)
+        : toMinor(it.workerAmount * rate);
       if (amountMinor <= 0) continue;
+      const amountBsMinor = toMinor(it.workerAmount * rate);
 
       const detail = await this.ensurePeriodDetail(
         companyId,
@@ -171,6 +180,9 @@ export class PayrollEarningsService {
             sign: 1,
             label: it.label,
             amountMinor,
+            currency,
+            amountBsMinor,
+            occurredAt: whenPaid,
             sourceType: 'appointment',
             sourceId: it.sessionDetailId,
             metadata: {
@@ -178,6 +190,7 @@ export class PayrollEarningsService {
               servicePriceMinorBs: toMinor(it.serviceCost * rate),
               currency: it.currency,
               exchangeRate: rate,
+              method: method ?? null,
               ...(it.appointmentId != null
                 ? { appointmentId: it.appointmentId }
                 : {}),
@@ -207,6 +220,7 @@ export class PayrollEarningsService {
     companyId: number,
     whenPaid: Date,
     items: TipItem[],
+    method?: string | null,
   ): Promise<number> {
     if (items.length === 0) return 0;
     if (await this.isBeforeActivation(companyId, whenPaid)) return 0;
@@ -215,13 +229,19 @@ export class PayrollEarningsService {
       companyId,
       whenPaid,
     );
+    const isCash = method === 'cash' || method === 'efectivo';
     let created = 0;
 
     for (const it of items) {
       const rate = it.exchangeRate ?? (it.currency === 'VES' ? 1 : null);
       if (rate == null || !(it.amount > 0)) continue;
-      const amountMinor = toMinor(it.amount * rate);
+      const keepForeign = isCash && it.currency !== 'VES';
+      const currency = keepForeign ? it.currency : 'VES';
+      const amountMinor = keepForeign
+        ? toMinor(it.amount)
+        : toMinor(it.amount * rate);
       if (amountMinor <= 0) continue;
+      const amountBsMinor = toMinor(it.amount * rate);
 
       const detail = await this.ensurePeriodDetail(
         companyId,
@@ -238,11 +258,15 @@ export class PayrollEarningsService {
             sign: 1,
             label: 'Propina',
             amountMinor,
+            currency,
+            amountBsMinor,
+            occurredAt: whenPaid,
             sourceType: 'tip',
             sourceId: it.tipId,
             metadata: {
               currency: it.currency,
               exchangeRate: rate,
+              method: method ?? null,
               ...(it.appointmentId != null
                 ? { appointmentId: it.appointmentId }
                 : {}),
@@ -262,6 +286,237 @@ export class PayrollEarningsService {
       );
     }
     return created;
+  }
+
+  /**
+   * BACKFILL: al activar la nómina con una fecha pasada, recorre los cobros ya
+   * hechos desde esa fecha y genera sus conceptos (comisiones + propinas), como
+   * si el hook del pago hubiera corrido en su momento. Reconstruye los items
+   * desde los datos persistidos (session_detail.total_worker, líneas, propinas).
+   * Idempotente por origen: re-correrlo no duplica. Procesa del MÁS ANTIGUO al
+   * más nuevo para que la cadena de periodos anclados se arme bien.
+   *
+   * Los cobros SIN `method` guardado caen en Bs (eran de antes de multi-moneda).
+   */
+  async backfillFromPayments(
+    adminId: number,
+  ): Promise<{ payments: number; commissions: number; tips: number }> {
+    const company = await this.companyRepo.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+    const activation = await this.periodService.resolveActivationDate(
+      company.id,
+    );
+    if (!activation) return { payments: 0, commissions: 0, tips: 0 };
+
+    const payments: Array<{
+      id: number;
+      sessionId: number;
+      method: string | null;
+      paidAt: string | Date;
+      tipCurrency: string | null;
+      tipRate: string | null;
+    }> = await this.detailRepo.query(
+      `SELECT DISTINCT sp.id AS id, sp.session_id AS sessionId, sp.method AS method,
+              sp.paid_at AS paidAt, sp.tip_currency AS tipCurrency,
+              sp.tip_exchange_rate AS tipRate
+         FROM session_payments sp
+         JOIN session_detail sd ON sd.session_id = sp.session_id
+         JOIN company_worker cw ON cw.id = sd.company_worker_id
+        WHERE cw.company_id = ? AND sp.paid_at >= ?
+        ORDER BY sp.paid_at ASC, sp.id ASC`,
+      [company.id, activation],
+    );
+
+    let commissions = 0;
+    let tips = 0;
+
+    for (const p of payments) {
+      const paidAt = new Date(p.paidAt);
+
+      const lines: Array<{ currency: string; rate: string | null }> =
+        await this.detailRepo.query(
+          `SELECT UPPER(currency) AS currency, exchange_rate AS rate
+             FROM session_payment_lines WHERE payment_id = ?`,
+          [p.id],
+        );
+      const rateByCurrency = new Map(
+        lines.map((l) => [l.currency, l.rate != null ? Number(l.rate) : null]),
+      );
+
+      const details: Array<{
+        id: number;
+        cwId: number;
+        totalWorker: string | null;
+        cost: string | null;
+        currency: string | null;
+        name: string | null;
+      }> = await this.detailRepo.query(
+        `SELECT sd.id AS id, sd.company_worker_id AS cwId,
+                sd.total_worker AS totalWorker, sd.cost AS cost,
+                UPPER(s.currency) AS currency, s.name AS name
+           FROM session_detail sd LEFT JOIN service s ON s.id = sd.service_id
+          WHERE sd.session_id = ? AND sd.status <> 5
+            AND sd.company_worker_id IS NOT NULL AND sd.is_courtesy = 0`,
+        [p.sessionId],
+      );
+      const commissionItems = details.map((d) => {
+        const currency = (d.currency || 'USD').toUpperCase();
+        const raw = rateByCurrency.get(currency);
+        const rate = raw !== undefined ? raw : currency === 'VES' ? 1 : null;
+        return {
+          sessionDetailId: Number(d.id),
+          companyWorkerId: Number(d.cwId),
+          workerAmount: Number(d.totalWorker || 0),
+          serviceCost: Number(d.cost || 0),
+          currency,
+          exchangeRate: rate,
+          label: `Comisión — ${d.name || 'Servicio'}`,
+          appointmentId: Number(p.sessionId),
+        };
+      });
+      commissions += await this.recordCommissions(
+        company.id,
+        paidAt,
+        commissionItems,
+        p.method,
+      );
+
+      const tipRows: Array<{ id: number; cwId: number; amount: string }> =
+        await this.detailRepo.query(
+          `SELECT id, company_worker_id AS cwId, amount
+             FROM session_payment_tips WHERE payment_id = ?`,
+          [p.id],
+        );
+      const tipItems = tipRows.map((t) => ({
+        tipId: Number(t.id),
+        companyWorkerId: Number(t.cwId),
+        amount: Number(t.amount || 0),
+        currency: (p.tipCurrency || 'USD').toUpperCase(),
+        exchangeRate: p.tipRate != null ? Number(p.tipRate) : null,
+        appointmentId: Number(p.sessionId),
+      }));
+      tips += await this.recordTips(company.id, paidAt, tipItems, p.method);
+    }
+
+    this.logger.log(
+      `Backfill nómina company ${company.id}: ${payments.length} cobros → ${commissions} comisiones, ${tips} propinas`,
+    );
+    return { payments: payments.length, commissions, tips };
+  }
+
+  /**
+   * Totales POR MONEDA de cada detalle. En vivo (open/review) se suman los
+   * conceptos por moneda; congelado (approved+) salen del snapshot
+   * period_detail_currency. Lo pagado siempre se suma de los payouts por moneda.
+   * Devuelve un mapa periodDetailId → [{currency, earned, deducted, net, paid, balance}].
+   */
+  private async getCurrencyBreakdown(
+    periodDetailIds: number[],
+    frozen: boolean,
+  ): Promise<
+    Map<
+      number,
+      Array<{
+        currency: string;
+        earnedMinor: number;
+        deductedMinor: number;
+        netMinor: number;
+        paidMinor: number;
+        balanceMinor: number;
+      }>
+    >
+  > {
+    const map = new Map<
+      number,
+      Array<{
+        currency: string;
+        earnedMinor: number;
+        deductedMinor: number;
+        netMinor: number;
+        paidMinor: number;
+        balanceMinor: number;
+      }>
+    >();
+    if (periodDetailIds.length === 0) return map;
+
+    const paidRows: Array<{ did: number; currency: string; paid: string }> =
+      await this.detailRepo.query(
+        `SELECT period_detail_id AS did, currency, COALESCE(SUM(amount_minor),0) AS paid
+           FROM payout WHERE period_detail_id IN (?)
+          GROUP BY period_detail_id, currency`,
+        [periodDetailIds],
+      );
+
+    const earnRows: Array<{
+      did: number;
+      currency: string;
+      earned: string;
+      deducted: string;
+      net?: string;
+    }> = frozen
+      ? await this.detailRepo.query(
+          `SELECT period_detail_id AS did, currency,
+                  earned_minor AS earned, deducted_minor AS deducted, net_minor AS net
+             FROM period_detail_currency WHERE period_detail_id IN (?)`,
+          [periodDetailIds],
+        )
+      : await this.detailRepo.query(
+          `SELECT period_detail_id AS did, currency,
+                  COALESCE(SUM(CASE WHEN sign = 1  THEN amount_minor ELSE 0 END),0) AS earned,
+                  COALESCE(SUM(CASE WHEN sign = -1 THEN amount_minor ELSE 0 END),0) AS deducted
+             FROM payroll_concept WHERE period_detail_id IN (?)
+            GROUP BY period_detail_id, currency`,
+          [periodDetailIds],
+        );
+
+    // did → currency → parcial
+    const acc = new Map<
+      number,
+      Map<
+        string,
+        { earned: number; deducted: number; net: number; paid: number }
+      >
+    >();
+    const cur = (did: number, currency: string) => {
+      if (!acc.has(did)) acc.set(did, new Map());
+      const m = acc.get(did)!;
+      if (!m.has(currency))
+        m.set(currency, { earned: 0, deducted: 0, net: 0, paid: 0 });
+      return m.get(currency)!;
+    };
+
+    for (const r of earnRows) {
+      const e = cur(Number(r.did), r.currency);
+      e.earned = Number(r.earned);
+      e.deducted = Number(r.deducted);
+      e.net =
+        r.net != null ? Number(r.net) : Number(r.earned) - Number(r.deducted);
+    }
+    for (const r of paidRows) {
+      cur(Number(r.did), r.currency).paid = Number(r.paid);
+    }
+
+    for (const did of periodDetailIds) {
+      const m = acc.get(did);
+      const list = m
+        ? [...m.entries()].map(([currency, v]) => ({
+            currency,
+            earnedMinor: v.earned,
+            deductedMinor: v.deducted,
+            netMinor: v.net,
+            paidMinor: v.paid,
+            balanceMinor: v.net - v.paid,
+          }))
+        : [];
+      map.set(did, list);
+    }
+    return map;
   }
 
   /**
@@ -340,30 +595,21 @@ export class PayrollEarningsService {
       [period.startsAt, period.endsAt, periodId],
     );
 
-    const employees = rows.map((r) => {
-      const earned = frozen ? Number(r.earnedMinor) : Number(r.liveEarned);
-      const deducted = frozen
-        ? Number(r.deductedMinor)
-        : Number(r.liveDeducted);
-      const net = frozen ? Number(r.netMinor) : earned - deducted;
-      const paid = Number(r.paidMinor);
-      return {
-        periodDetailId: r.periodDetailId,
-        companyWorkerId: r.companyWorkerId,
-        workerName: (r.workerName || '').trim(),
-        pictureURL: this.workerPictureUrl(r.picture),
-        servicesCount: Number(r.servicesCount),
-        courtesyCount: Number(r.courtesyCount),
-        earnedMinor: earned,
-        deductedMinor: deducted,
-        netMinor: net,
-        paidMinor: paid,
-        balanceMinor: net - paid,
-      };
-    });
+    const breakdown = await this.getCurrencyBreakdown(
+      rows.map((r) => r.periodDetailId),
+      frozen,
+    );
 
-    const sum = (k: keyof (typeof employees)[0]) =>
-      employees.reduce((acc, e) => acc + Number(e[k] ?? 0), 0);
+    const employees = rows.map((r) => ({
+      periodDetailId: r.periodDetailId,
+      companyWorkerId: r.companyWorkerId,
+      workerName: (r.workerName || '').trim(),
+      pictureURL: this.workerPictureUrl(r.picture),
+      servicesCount: Number(r.servicesCount),
+      courtesyCount: Number(r.courtesyCount),
+      // Montos DESGLOSADOS POR MONEDA (VES + USD/EUR de los pagos en efectivo).
+      currencies: breakdown.get(r.periodDetailId) ?? [],
+    }));
 
     // Se puede reabrir (review → open) solo si no hay ya otro periodo abierto:
     // si el siguiente ciclo ya arrancó, no hay vuelta atrás.
@@ -386,17 +632,55 @@ export class PayrollEarningsService {
         canReopen,
       },
       totals: {
-        earnedMinor: sum('earnedMinor'),
-        deductedMinor: sum('deductedMinor'),
-        netMinor: sum('netMinor'),
-        paidMinor: sum('paidMinor'),
-        balanceMinor: sum('balanceMinor'),
         employees: employees.length,
-        servicesCount: sum('servicesCount'),
-        courtesyCount: sum('courtesyCount'),
+        servicesCount: employees.reduce((a, e) => a + e.servicesCount, 0),
+        courtesyCount: employees.reduce((a, e) => a + e.courtesyCount, 0),
+        // Un total POR MONEDA (sin gran total en Bs).
+        currencies: this.aggregateCurrencies(
+          employees.flatMap((e) => e.currencies),
+        ),
       },
       employees,
     };
+  }
+
+  /** Suma una lista de líneas por-moneda en un total por cada moneda. */
+  private aggregateCurrencies(
+    lines: Array<{
+      currency: string;
+      earnedMinor: number;
+      deductedMinor: number;
+      netMinor: number;
+      paidMinor: number;
+      balanceMinor: number;
+    }>,
+  ) {
+    const m = new Map<
+      string,
+      {
+        earnedMinor: number;
+        deductedMinor: number;
+        netMinor: number;
+        paidMinor: number;
+        balanceMinor: number;
+      }
+    >();
+    for (const l of lines) {
+      const t = m.get(l.currency) ?? {
+        earnedMinor: 0,
+        deductedMinor: 0,
+        netMinor: 0,
+        paidMinor: 0,
+        balanceMinor: 0,
+      };
+      t.earnedMinor += l.earnedMinor;
+      t.deductedMinor += l.deductedMinor;
+      t.netMinor += l.netMinor;
+      t.paidMinor += l.paidMinor;
+      t.balanceMinor += l.balanceMinor;
+      m.set(l.currency, t);
+    }
+    return [...m.entries()].map(([currency, t]) => ({ currency, ...t }));
   }
 
   /**
@@ -505,26 +789,88 @@ export class PayrollEarningsService {
         [...params, limit, (page - 1) * limit],
       );
 
+    // Neto y pagado POR MONEDA de cada periodo de la página.
+    const isFrozen = (s: unknown) =>
+      ['approved', 'paid', 'closed'].includes(String(s));
+    const periodIds = rows.map((r) => Number(r.id));
+    const frozenIds = rows
+      .filter((r) => isFrozen(r.status))
+      .map((r) => Number(r.id));
+    const reviewIds = rows
+      .filter((r) => !isFrozen(r.status))
+      .map((r) => Number(r.id));
+
+    const netByPeriod = new Map<number, Map<string, number>>();
+    const addNet = (pid: number, currency: string, net: number) => {
+      if (!netByPeriod.has(pid)) netByPeriod.set(pid, new Map());
+      netByPeriod.get(pid)!.set(currency, net);
+    };
+    if (frozenIds.length) {
+      const q: Array<{ pid: number; currency: string; net: string }> =
+        await this.periodRepo.query(
+          `SELECT d.period_id AS pid, pdc.currency, COALESCE(SUM(pdc.net_minor),0) AS net
+             FROM period_detail_currency pdc JOIN period_detail d ON d.id = pdc.period_detail_id
+            WHERE d.period_id IN (?) GROUP BY d.period_id, pdc.currency`,
+          [frozenIds],
+        );
+      q.forEach((r) => addNet(Number(r.pid), r.currency, Number(r.net)));
+    }
+    if (reviewIds.length) {
+      const q: Array<{ pid: number; currency: string; net: string }> =
+        await this.periodRepo.query(
+          `SELECT d.period_id AS pid, c.currency,
+                  COALESCE(SUM(CASE WHEN c.sign = 1 THEN c.amount_minor ELSE -c.amount_minor END),0) AS net
+             FROM payroll_concept c JOIN period_detail d ON d.id = c.period_detail_id
+            WHERE d.period_id IN (?) GROUP BY d.period_id, c.currency`,
+          [reviewIds],
+        );
+      q.forEach((r) => addNet(Number(r.pid), r.currency, Number(r.net)));
+    }
+    const paidByPeriod = new Map<number, Map<string, number>>();
+    if (periodIds.length) {
+      const q: Array<{ pid: number; currency: string; paid: string }> =
+        await this.periodRepo.query(
+          `SELECT d.period_id AS pid, po.currency, COALESCE(SUM(po.amount_minor),0) AS paid
+             FROM payout po JOIN period_detail d ON d.id = po.period_detail_id
+            WHERE d.period_id IN (?) GROUP BY d.period_id, po.currency`,
+          [periodIds],
+        );
+      q.forEach((r) => {
+        const pid = Number(r.pid);
+        if (!paidByPeriod.has(pid)) paidByPeriod.set(pid, new Map());
+        paidByPeriod.get(pid)!.set(r.currency, Number(r.paid));
+      });
+    }
+
     return {
       data: rows.map((r) => {
-        // review todavía no está congelado → total en vivo; el resto, del snapshot.
-        const frozen = ['approved', 'paid', 'closed'].includes(
-          String(r.status),
-        );
-        const netMinor = frozen ? Number(r.snapNet) : Number(r.liveNet);
+        const pid = Number(r.id);
+        const nets = netByPeriod.get(pid) ?? new Map<string, number>();
+        const paids = paidByPeriod.get(pid) ?? new Map<string, number>();
+        const codes = new Set<string>([...nets.keys(), ...paids.keys()]);
+        const currencies = [...codes].map((currency) => {
+          const netMinor = nets.get(currency) ?? 0;
+          const paidMinor = paids.get(currency) ?? 0;
+          return {
+            currency,
+            netMinor,
+            paidMinor,
+            balanceMinor: netMinor - paidMinor,
+          };
+        });
         return {
-          id: Number(r.id),
+          id: pid,
           label: r.label,
           status: r.status,
           frequency: r.frequency,
           startsAt: r.startsAt,
           endsAt: r.endsAt,
           approvedAt: r.approvedAt,
-          totalsFrozen: frozen,
+          totalsFrozen: isFrozen(r.status),
           employees: Number(r.employees),
           servicesCount: Number(r.servicesCount),
-          netMinor,
-          paidMinor: Number(r.paidMinor),
+          // Neto/pagado/saldo por moneda del periodo.
+          currencies,
         };
       }),
       meta: {
@@ -557,27 +903,46 @@ export class PayrollEarningsService {
       `Periodo;${esc(summary.period.label)}`,
       `Estado;${esc(summary.period.status)}`,
       '',
-      'Empleado;Servicios;Devengado (Bs);Deducciones (Bs);Neto (Bs);Pagado (Bs);Saldo (Bs)',
-      ...summary.employees.map((e) =>
+      'Empleado;Moneda;Devengado;Deducciones;Neto;Pagado;Saldo',
+      // Una fila por empleado y moneda (VES + USD/EUR de efectivo).
+      ...summary.employees.flatMap((e) =>
+        e.currencies.length
+          ? e.currencies.map((c) =>
+              [
+                esc(e.workerName),
+                c.currency,
+                money(c.earnedMinor),
+                money(c.deductedMinor),
+                money(c.netMinor),
+                money(c.paidMinor),
+                money(c.balanceMinor),
+              ].join(';'),
+            )
+          : [
+              [
+                esc(e.workerName),
+                '—',
+                '0.00',
+                '0.00',
+                '0.00',
+                '0.00',
+                '0.00',
+              ].join(';'),
+            ],
+      ),
+      '',
+      // Un total por moneda.
+      ...summary.totals.currencies.map((c) =>
         [
-          esc(e.workerName),
-          e.servicesCount,
-          money(e.earnedMinor),
-          money(e.deductedMinor),
-          money(e.netMinor),
-          money(e.paidMinor),
-          money(e.balanceMinor),
+          'TOTAL',
+          c.currency,
+          money(c.earnedMinor),
+          money(c.deductedMinor),
+          money(c.netMinor),
+          money(c.paidMinor),
+          money(c.balanceMinor),
         ].join(';'),
       ),
-      [
-        'TOTAL',
-        summary.totals.servicesCount,
-        money(summary.totals.earnedMinor),
-        money(summary.totals.deductedMinor),
-        money(summary.totals.netMinor),
-        money(summary.totals.paidMinor),
-        money(summary.totals.balanceMinor),
-      ].join(';'),
     ];
     const slug = String(summary.period.label ?? `periodo-${periodId}`)
       .normalize('NFD')
@@ -644,33 +1009,32 @@ export class PayrollEarningsService {
       detailStatus: Number(r.detailStatus),
     }));
 
-    const liveEarned = concepts
-      .filter((c) => c.sign === 1)
-      .reduce((a, c) => a + c.amountMinor, 0);
-    const liveDeducted = concepts
-      .filter((c) => c.sign === -1)
-      .reduce((a, c) => a + c.amountMinor, 0);
+    // Totales POR MONEDA (en vivo o del snapshot congelado) + saldo pagado.
+    const currencyLines =
+      (await this.getCurrencyBreakdown([detail.id], frozen)).get(detail.id) ??
+      [];
 
-    const earnedMinor = frozen ? detail.earnedMinor : liveEarned;
-    const deductedMinor = frozen ? detail.deductedMinor : liveDeducted;
-    const netMinor = frozen ? detail.netMinor : earnedMinor - deductedMinor;
-    const paidMinor = detail.paidMinor;
-
-    // Desglose por tipo (monto con signo, como se muestra en la app).
-    const byType = new Map<
+    // Desglose por tipo DENTRO de cada moneda (monto con signo).
+    const byCurType = new Map<
       string,
-      { type: string; count: number; amountMinor: number }
+      Map<string, { count: number; amountMinor: number }>
     >();
     for (const c of concepts) {
-      const acc = byType.get(c.type) ?? {
-        type: c.type,
-        count: 0,
-        amountMinor: 0,
-      };
+      if (!byCurType.has(c.currency)) byCurType.set(c.currency, new Map());
+      const t = byCurType.get(c.currency)!;
+      const acc = t.get(c.type) ?? { count: 0, amountMinor: 0 };
       acc.count += 1;
       acc.amountMinor += c.amountMinor * c.sign;
-      byType.set(c.type, acc);
+      t.set(c.type, acc);
     }
+
+    const currencies = currencyLines.map((cl) => ({
+      ...cl,
+      settled: cl.balanceMinor === 0 && cl.netMinor > 0,
+      breakdown: [...(byCurType.get(cl.currency) ?? new Map()).entries()].map(
+        ([type, v]) => ({ type, count: v.count, amountMinor: v.amountMinor }),
+      ),
+    }));
 
     return {
       period: {
@@ -688,16 +1052,9 @@ export class PayrollEarningsService {
         workerName: (nameRows[0]?.name || '').trim(),
         pictureURL: this.workerPictureUrl(nameRows[0]?.picture),
       },
-      totals: {
-        earnedMinor,
-        deductedMinor,
-        netMinor,
-        paidMinor,
-        balanceMinor: netMinor - paidMinor,
-        settled: netMinor - paidMinor === 0 && netMinor > 0,
-        courtesyCount: courtesies.length,
-      },
-      breakdown: [...byType.values()],
+      // Un bloque por moneda: neto, pagado, saldo y su desglose por tipo.
+      currencies,
+      courtesyCount: courtesies.length,
       courtesies,
       concepts: concepts.map((c) => ({
         id: c.id,
@@ -705,14 +1062,19 @@ export class PayrollEarningsService {
         label: c.label,
         sign: c.sign,
         amountMinor: c.amountMinor,
+        currency: c.currency,
+        amountBsMinor: c.amountBsMinor,
         sourceType: c.sourceType,
         sourceId: c.sourceId,
         metadata: c.metadata,
+        // Fecha/hora real del cobro (usar esta para mostrar, no createdAt).
+        occurredAt: c.occurredAt ?? c.createdAt,
         createdAt: c.createdAt,
       })),
       payouts: payouts.map((p) => ({
         id: p.id,
         amountMinor: p.amountMinor,
+        currency: p.currency,
         method: p.method,
         reference: p.reference,
         paidAt: p.paidAt,
@@ -795,15 +1157,29 @@ export class PayrollEarningsService {
         [myIds, limit, (page - 1) * limit],
       );
 
+    const isFrozen = (s: unknown) =>
+      ['approved', 'paid', 'closed'].includes(String(s));
+    const [fb, lb] = await Promise.all([
+      this.getCurrencyBreakdown(
+        rows
+          .filter((r) => isFrozen(r.status))
+          .map((r) => Number(r.periodDetailId)),
+        true,
+      ),
+      this.getCurrencyBreakdown(
+        rows
+          .filter((r) => !isFrozen(r.status))
+          .map((r) => Number(r.periodDetailId)),
+        false,
+      ),
+    ]);
+
     const data = rows.map((r) => {
-      const frozen = ['approved', 'paid', 'closed'].includes(String(r.status));
-      const earnedMinor = Number(frozen ? r.snapEarned : r.liveEarned);
-      const deductedMinor = Number(frozen ? r.snapDeducted : r.liveDeducted);
-      const netMinor = frozen ? Number(r.snapNet) : earnedMinor - deductedMinor;
-      const paidMinor = Number(r.paidMinor);
+      const frozen = isFrozen(r.status);
+      const did = Number(r.periodDetailId);
       return {
         periodId: Number(r.periodId),
-        periodDetailId: Number(r.periodDetailId),
+        periodDetailId: did,
         companyId: Number(r.companyId),
         companyName: (String(r.companyName ?? '') || '').trim() || null,
         companyLogoURL: r.companyLogo
@@ -818,12 +1194,8 @@ export class PayrollEarningsService {
         endsAt: r.endsAt,
         totalsFrozen: frozen,
         servicesCount: Number(r.servicesCount),
-        earnedMinor,
-        deductedMinor,
-        netMinor,
-        paidMinor,
-        balanceMinor: netMinor - paidMinor,
-        settled: netMinor - paidMinor === 0 && netMinor > 0,
+        // Neto/pagado/saldo DESGLOSADO POR MONEDA.
+        currencies: (frozen ? fb.get(did) : lb.get(did)) ?? [],
       };
     });
 
@@ -959,6 +1331,10 @@ export class PayrollEarningsService {
         sign: original.sign === 1 ? -1 : 1,
         label: `Reversión: ${original.label}`,
         amountMinor: original.amountMinor,
+        // La reversión hereda la moneda del concepto original.
+        currency: original.currency,
+        amountBsMinor: original.amountBsMinor,
+        occurredAt: new Date(),
         sourceType: 'manual',
         sourceId: null,
         createdByUserId: adminId,
@@ -1019,25 +1395,38 @@ export class PayrollEarningsService {
       );
     }
 
+    const currency = (dto.currency || 'VES').toUpperCase();
     const amountMinor = toMinor(dto.amount);
     if (amountMinor <= 0) {
       throw new UnprocessableEntityException('El monto debe ser mayor a 0');
     }
 
     return this.detailRepo.manager.transaction(async (m) => {
-      // Bloquear la fila: el saldo que leemos no puede cambiar bajo nuestros pies.
-      const locked: Array<{ net_minor: string; paid_minor: string }> =
-        await m.query(
-          'SELECT net_minor, paid_minor FROM period_detail WHERE id = ? FOR UPDATE',
-          [periodDetailId],
-        );
-      const net = Number(locked[0].net_minor);
-      const paid = Number(locked[0].paid_minor);
+      // Bloquear la fila del detalle: serializa los pagos de este empleado.
+      await m.query('SELECT id FROM period_detail WHERE id = ? FOR UPDATE', [
+        periodDetailId,
+      ]);
+      // Saldo de ESA moneda: neto del snapshot congelado − pagado en esa moneda.
+      const netRows: Array<{ net_minor: string }> = await m.query(
+        'SELECT net_minor FROM period_detail_currency WHERE period_detail_id = ? AND currency = ?',
+        [periodDetailId, currency],
+      );
+      const net = Number(netRows[0]?.net_minor ?? 0);
+      const paidRows: Array<{ paid: string }> = await m.query(
+        'SELECT COALESCE(SUM(amount_minor),0) AS paid FROM payout WHERE period_detail_id = ? AND currency = ?',
+        [periodDetailId, currency],
+      );
+      const paid = Number(paidRows[0].paid);
       const balance = net - paid;
 
+      if (net <= 0) {
+        throw new UnprocessableEntityException(
+          `Este empleado no tiene saldo en ${currency} en este periodo.`,
+        );
+      }
       if (amountMinor > balance) {
         throw new UnprocessableEntityException(
-          `El pago (${fromMinor(amountMinor)} Bs) excede el saldo pendiente (${fromMinor(balance)} Bs)`,
+          `El pago (${fromMinor(amountMinor)} ${currency}) excede el saldo pendiente (${fromMinor(balance)} ${currency}).`,
         );
       }
 
@@ -1045,6 +1434,7 @@ export class PayrollEarningsService {
         companyId: detail.companyId,
         periodDetailId,
         amountMinor,
+        currency,
         method: dto.method,
         reference: dto.reference ?? null,
         recordedByUserId: adminId,
@@ -1052,13 +1442,9 @@ export class PayrollEarningsService {
       });
 
       const newPaid = paid + amountMinor;
-      await m.query('UPDATE period_detail SET paid_minor = ? WHERE id = ?', [
-        newPaid,
-        periodDetailId,
-      ]);
-
       return {
         payout,
+        currency,
         netMinor: net,
         paidMinor: newPaid,
         balanceMinor: net - newPaid,
@@ -1135,6 +1521,10 @@ export class PayrollEarningsService {
         sign,
         label: dto.label,
         amountMinor,
+        // Los conceptos manuales (bono/deducción/ajuste) siempre en Bs.
+        currency: 'VES',
+        amountBsMinor: amountMinor,
+        occurredAt: new Date(),
         sourceType: 'manual',
         sourceId: null,
         createdByUserId: adminId,

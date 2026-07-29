@@ -4002,6 +4002,7 @@ export class SessionService {
         adminCompany.id,
         paidAt,
         commissionItems,
+        dto.method,
       );
 
       const serviceNameForWorker = (cwId: number): string | null => {
@@ -4030,6 +4031,7 @@ export class SessionService {
         adminCompany.id,
         paidAt,
         tipItems,
+        dto.method,
       );
     } catch (error) {
       this.logger.warn(

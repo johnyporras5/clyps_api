@@ -5,6 +5,7 @@ import { PayrollPeriod } from './entities/payroll-period.entity';
 import { PeriodDetail } from './entities/period-detail.entity';
 import { PayrollConcept } from './entities/payroll-concept.entity';
 import { Payout } from './entities/payout.entity';
+import { PeriodDetailCurrency } from './entities/period-detail-currency.entity';
 import { Company } from '../company/entities/company.entity';
 import { PayrollPeriodService } from './payroll-period.service';
 import { PayrollEarningsService } from './payroll-earnings.service';
@@ -20,6 +21,7 @@ import { CommonModule } from '../common/common.module';
       PeriodDetail,
       PayrollConcept,
       Payout,
+      PeriodDetailCurrency,
       Company,
     ]),
   ],
