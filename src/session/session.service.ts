@@ -2929,6 +2929,11 @@ export class SessionService {
         take: getSessionsDto.limit,
       });
 
+      // Estado de cobro (deuda) de las citas de esta página, en batch.
+      const paymentStatusMap = await this.getPaymentStatusMap(
+        sessions.map((s) => s.id),
+      );
+
       // 5. Enriquecer los datos (resto del código permanece igual)
       const enrichedSessions = await Promise.all(
         sessions.map(async (session) => {
@@ -3108,6 +3113,11 @@ export class SessionService {
             cancellationReason: session.cancellationReason ?? null,
             cancelledBy: session.cancelledBy ?? null,
             cancelledByText: this.getCancelledByText(session.cancelledBy),
+            // Estado de cobro para el badge "En deuda" en Kanban/historial/calendario.
+            isPaid: paymentStatusMap.get(session.id)?.isPaid ?? false,
+            pendingCollection:
+              paymentStatusMap.get(session.id)?.pendingCollection ?? false,
+            collectedAt: paymentStatusMap.get(session.id)?.collectedAt ?? null,
             createdAt: session['createdAt'] || null,
             updatedAt: session['updatedAt'] || null,
           };
@@ -3281,6 +3291,11 @@ export class SessionService {
       take: getSessionsDto.limit,
     });
 
+    // Estado de cobro (deuda) de las citas de esta página, en batch.
+    const paymentStatusMap = await this.getPaymentStatusMap(
+      sessions.map((s) => s.id),
+    );
+
     // 4. Enriquecimiento (mismo formato que findAllSessionsSimple)
     const enrichedSessions = await Promise.all(
       sessions.map(async (session) => {
@@ -3378,6 +3393,11 @@ export class SessionService {
           cancellationReason: session.cancellationReason ?? null,
           cancelledBy: session.cancelledBy ?? null,
           cancelledByText: this.getCancelledByText(session.cancelledBy),
+          // Estado de cobro para el badge "En deuda".
+          isPaid: paymentStatusMap.get(session.id)?.isPaid ?? false,
+          pendingCollection:
+            paymentStatusMap.get(session.id)?.pendingCollection ?? false,
+          collectedAt: paymentStatusMap.get(session.id)?.collectedAt ?? null,
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
         };
@@ -4122,6 +4142,41 @@ export class SessionService {
         amount: Number(t.amount),
       })),
     };
+  }
+
+  /**
+   * Estado de cobro por cita, en batch (evita N+1 en los listados). Devuelve un
+   * Map sessionId → { isPaid, pendingCollection, collectedAt }.
+   *   - isPaid: existe un cobro registrado.
+   *   - pendingCollection: hay cobro pero el cliente aún no pagó (en deuda).
+   */
+  private async getPaymentStatusMap(
+    sessionIds: number[],
+  ): Promise<
+    Map<
+      number,
+      { isPaid: boolean; pendingCollection: boolean; collectedAt: Date | null }
+    >
+  > {
+    const map = new Map<
+      number,
+      { isPaid: boolean; pendingCollection: boolean; collectedAt: Date | null }
+    >();
+    if (sessionIds.length === 0) return map;
+    const rows: Array<{ sessionId: number; collectedAt: Date | null }> =
+      await this.sessionPaymentRepository.query(
+        `SELECT session_id AS sessionId, collected_at AS collectedAt
+           FROM session_payments WHERE session_id IN (?)`,
+        [sessionIds],
+      );
+    for (const r of rows) {
+      map.set(r.sessionId, {
+        isPaid: true,
+        pendingCollection: r.collectedAt == null,
+        collectedAt: r.collectedAt,
+      });
+    }
+    return map;
   }
 
   /**
