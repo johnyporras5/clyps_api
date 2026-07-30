@@ -960,7 +960,13 @@ export class PayrollEarningsService {
    * PAY-10: arma el estado de cuenta de un empleado en un periodo (solo lectura).
    * Totales en vivo mientras el periodo está abierto; del snapshot si ya se aprobó.
    */
-  private async buildStatement(detail: PeriodDetail, period: PayrollPeriod) {
+  private async buildStatement(
+    detail: PeriodDetail,
+    period: PayrollPeriod,
+    // Solo el statement del admin: agrega `pendingCollection` por concepto según
+    // el estado ACTUAL del cobro (no una foto). No se expone al trabajador.
+    includePendingCollection = false,
+  ) {
     const frozen = ['approved', 'paid', 'closed'].includes(period.status);
 
     const [concepts, payouts] = await Promise.all([
@@ -1036,6 +1042,36 @@ export class PayrollEarningsService {
       ),
     }));
 
+    // Estado de cobro EN VIVO por cita origen (solo statement del admin). Se lee
+    // aquí (no del snapshot) para que el badge refleje el `collected_at` actual
+    // aunque el periodo esté congelado: si el cliente paga luego, desaparece.
+    const pendingByAppointment = new Map<number, boolean>();
+    if (includePendingCollection) {
+      const appointmentIds = [
+        ...new Set(
+          concepts
+            .map((c) => Number(c.metadata?.appointmentId))
+            .filter((n) => Number.isFinite(n) && n > 0),
+        ),
+      ];
+      if (appointmentIds.length > 0) {
+        const rows: Array<{ sessionId: number; collectedAt: Date | null }> =
+          await this.detailRepo.query(
+            `SELECT session_id AS sessionId, collected_at AS collectedAt
+               FROM session_payments WHERE session_id IN (?)`,
+            [appointmentIds],
+          );
+        for (const r of rows) {
+          pendingByAppointment.set(Number(r.sessionId), r.collectedAt == null);
+        }
+      }
+    }
+    const pendingForConcept = (c: (typeof concepts)[number]): boolean => {
+      const appt = Number(c.metadata?.appointmentId);
+      if (!Number.isFinite(appt) || appt <= 0) return false; // manual → false
+      return pendingByAppointment.get(appt) ?? false;
+    };
+
     return {
       period: {
         id: period.id,
@@ -1070,6 +1106,11 @@ export class PayrollEarningsService {
         // Fecha/hora real del cobro (usar esta para mostrar, no createdAt).
         occurredAt: c.occurredAt ?? c.createdAt,
         createdAt: c.createdAt,
+        // Solo en el statement del admin: true si la cita origen sigue en deuda
+        // (collected_at null). Refleja el estado actual del cobro.
+        ...(includePendingCollection
+          ? { pendingCollection: pendingForConcept(c) }
+          : {}),
       })),
       payouts: payouts.map((p) => ({
         id: p.id,
@@ -1256,7 +1297,8 @@ export class PayrollEarningsService {
     if (!period) {
       throw new NotFoundException(`Periodo ${detail.periodId} no encontrado`);
     }
-    return this.buildStatement(detail, period);
+    // Admin: incluir `pendingCollection` por concepto (badge "Cliente en deuda").
+    return this.buildStatement(detail, period, true);
   }
 
   /**
