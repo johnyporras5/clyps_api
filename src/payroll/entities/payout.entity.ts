@@ -41,6 +41,10 @@ export class Payout {
   })
   amountMinor: number;
 
+  // Moneda en la que se le pagó (baja el saldo de esa moneda). VES por defecto.
+  @Column({ name: 'currency', type: 'varchar', length: 3, default: 'VES' })
+  currency: string;
+
   @Column({ name: 'method', type: 'varchar', length: 20 })
   method: PayoutMethod;
 

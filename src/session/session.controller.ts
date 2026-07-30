@@ -98,6 +98,30 @@ export class SessionController {
     );
   }
 
+  // Feature B: clientes con cobros en deuda (se le pagó al worker, el cliente
+  // aún no pagó a la company). Para la pantalla "pendientes por pago".
+  //   ?status=pending (default) | collected (historial) | all
+  @Get('payments/pending-collection')
+  @Roles('adm')
+  async getPendingCollections(
+    @Request() req: AuthenticatedRequest,
+    @Query('status') status?: string,
+  ) {
+    const normalized =
+      status === 'collected' || status === 'all' ? status : 'pending';
+    return this.sessionService.getPendingCollections(req.user.sub, normalized);
+  }
+
+  // Feature B: marca un cobro en deuda como cobrado (el cliente ya pagó).
+  @Post('payments/:sessionId/collect')
+  @Roles('adm')
+  async markPaymentCollected(
+    @Request() req: AuthenticatedRequest,
+    @Param('sessionId') sessionId: string,
+  ) {
+    return this.sessionService.markPaymentCollected(req.user.sub, +sessionId);
+  }
+
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return this.sessionService.findOneWithDetails(+id);

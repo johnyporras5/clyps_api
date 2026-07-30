@@ -2929,6 +2929,11 @@ export class SessionService {
         take: getSessionsDto.limit,
       });
 
+      // Estado de cobro (deuda) de las citas de esta página, en batch.
+      const paymentStatusMap = await this.getPaymentStatusMap(
+        sessions.map((s) => s.id),
+      );
+
       // 5. Enriquecer los datos (resto del código permanece igual)
       const enrichedSessions = await Promise.all(
         sessions.map(async (session) => {
@@ -3108,6 +3113,11 @@ export class SessionService {
             cancellationReason: session.cancellationReason ?? null,
             cancelledBy: session.cancelledBy ?? null,
             cancelledByText: this.getCancelledByText(session.cancelledBy),
+            // Estado de cobro para el badge "En deuda" en Kanban/historial/calendario.
+            isPaid: paymentStatusMap.get(session.id)?.isPaid ?? false,
+            pendingCollection:
+              paymentStatusMap.get(session.id)?.pendingCollection ?? false,
+            collectedAt: paymentStatusMap.get(session.id)?.collectedAt ?? null,
             createdAt: session['createdAt'] || null,
             updatedAt: session['updatedAt'] || null,
           };
@@ -3281,6 +3291,11 @@ export class SessionService {
       take: getSessionsDto.limit,
     });
 
+    // Estado de cobro (deuda) de las citas de esta página, en batch.
+    const paymentStatusMap = await this.getPaymentStatusMap(
+      sessions.map((s) => s.id),
+    );
+
     // 4. Enriquecimiento (mismo formato que findAllSessionsSimple)
     const enrichedSessions = await Promise.all(
       sessions.map(async (session) => {
@@ -3378,6 +3393,11 @@ export class SessionService {
           cancellationReason: session.cancellationReason ?? null,
           cancelledBy: session.cancelledBy ?? null,
           cancelledByText: this.getCancelledByText(session.cancelledBy),
+          // Estado de cobro para el badge "En deuda".
+          isPaid: paymentStatusMap.get(session.id)?.isPaid ?? false,
+          pendingCollection:
+            paymentStatusMap.get(session.id)?.pendingCollection ?? false,
+          collectedAt: paymentStatusMap.get(session.id)?.collectedAt ?? null,
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
         };
@@ -3723,6 +3743,8 @@ export class SessionService {
       totalBs: number | null;
       paidBy: number;
       paidAt: Date;
+      collectedAt: Date | null;
+      pendingCollection: boolean;
       lines: Array<{
         currency: string;
         subtotal: number;
@@ -3888,6 +3910,11 @@ export class SessionService {
         totalBs: dto.totalBs ?? null,
         paidBy: adminId,
         paidAt,
+        // "En deuda": se le paga al worker pero el cliente aún no pagó a la
+        // company → collected_at = null. Cobro normal → cobrado ya (= paidAt).
+        collectedAt: dto.pendingCollection ? null : paidAt,
+        // Marca la cuenta por cobrar para toda su vida (aunque luego se salde).
+        wasPending: !!dto.pendingCollection,
       });
 
       if (dto.lines.length > 0) {
@@ -4002,6 +4029,7 @@ export class SessionService {
         adminCompany.id,
         paidAt,
         commissionItems,
+        dto.method,
       );
 
       const serviceNameForWorker = (cwId: number): string | null => {
@@ -4030,6 +4058,7 @@ export class SessionService {
         adminCompany.id,
         paidAt,
         tipItems,
+        dto.method,
       );
     } catch (error) {
       this.logger.warn(
@@ -4051,6 +4080,8 @@ export class SessionService {
         totalBs: dto.totalBs ?? null,
         paidBy: adminId,
         paidAt,
+        collectedAt: savedPayment.collectedAt,
+        pendingCollection: savedPayment.collectedAt == null,
         lines: dto.lines.map((l) => ({
           currency: l.currency.toUpperCase(),
           subtotal: l.subtotal,
@@ -4098,6 +4129,10 @@ export class SessionService {
       totalBs: payment.totalBs != null ? Number(payment.totalBs) : null,
       paidBy: payment.paidBy,
       paidAt: payment.paidAt,
+      // Estado del cobro al cliente: si collected_at es null, está EN DEUDA
+      // (se le pagó al worker pero el cliente aún no pagó a la company).
+      collectedAt: payment.collectedAt,
+      pendingCollection: payment.collectedAt == null,
       lines: lines.map((l) => ({
         currency: l.currency,
         subtotal: Number(l.subtotal),
@@ -4108,6 +4143,255 @@ export class SessionService {
         companyWorkerId: t.companyWorkerId,
         amount: Number(t.amount),
       })),
+    };
+  }
+
+  /**
+   * Estado de cobro por cita, en batch (evita N+1 en los listados). Devuelve un
+   * Map sessionId → { isPaid, pendingCollection, collectedAt }.
+   *   - isPaid: existe un cobro registrado.
+   *   - pendingCollection: hay cobro pero el cliente aún no pagó (en deuda).
+   */
+  private async getPaymentStatusMap(
+    sessionIds: number[],
+  ): Promise<
+    Map<
+      number,
+      { isPaid: boolean; pendingCollection: boolean; collectedAt: Date | null }
+    >
+  > {
+    const map = new Map<
+      number,
+      { isPaid: boolean; pendingCollection: boolean; collectedAt: Date | null }
+    >();
+    if (sessionIds.length === 0) return map;
+    const rows: Array<{ sessionId: number; collectedAt: Date | null }> =
+      await this.sessionPaymentRepository.query(
+        `SELECT session_id AS sessionId, collected_at AS collectedAt
+           FROM session_payments WHERE session_id IN (?)`,
+        [sessionIds],
+      );
+    for (const r of rows) {
+      map.set(r.sessionId, {
+        isPaid: true,
+        pendingCollection: r.collectedAt == null,
+        collectedAt: r.collectedAt,
+      });
+    }
+    return map;
+  }
+
+  /**
+   * Feature B: cobros EN DEUDA de la empresa del admin (collected_at null) — se
+   * le pagó al trabajador pero el cliente aún no pagó a la company. Agrupados por
+   * cliente, con el monto que deben por moneda. Para la pantalla "pendientes por
+   * pago".
+   *
+   * `status` filtra el listado:
+   *   - 'pending'   (default) → deudas activas (collected_at IS NULL).
+   *   - 'collected'           → historial de deudas ya saldadas (NOT NULL).
+   *   - 'all'                 → ambas.
+   */
+  async getPendingCollections(
+    adminId: number,
+    status: 'pending' | 'collected' | 'all' = 'pending',
+  ) {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+
+    // Solo cuentas por cobrar (was_pending = 1): un cobro normal nunca entra aquí.
+    // Filtro y orden según el estado pedido. Las deudas activas ordenan por la
+    // más antigua primero; el historial por la saldada más reciente.
+    const collectedFilter =
+      status === 'collected'
+        ? 'AND sp.collected_at IS NOT NULL'
+        : status === 'all'
+          ? ''
+          : 'AND sp.collected_at IS NULL';
+    const orderBy =
+      status === 'collected'
+        ? 'ORDER BY sp.collected_at DESC'
+        : 'ORDER BY sp.paid_at ASC';
+
+    const rows: Array<{
+      paymentId: number;
+      sessionId: number;
+      paidAt: Date;
+      collectedAt: Date | null;
+      clientId: number | null;
+      clientName: string | null;
+      clientLastName: string | null;
+      clientPicture: string | null;
+    }> = await this.sessionPaymentRepository.query(
+      `SELECT sp.id AS paymentId, sp.session_id AS sessionId, sp.paid_at AS paidAt,
+              sp.collected_at AS collectedAt,
+              s.client_id AS clientId, cl.name AS clientName,
+              cl.last_name AS clientLastName, cl.picture AS clientPicture
+         FROM session_payments sp
+         JOIN session s ON s.id = sp.session_id
+         LEFT JOIN client cl ON cl.id = s.client_id
+        WHERE sp.was_pending = 1
+          AND EXISTS (
+            SELECT 1 FROM session_detail sd
+              JOIN company_worker cw ON cw.id = sd.company_worker_id
+             WHERE sd.session_id = sp.session_id AND cw.company_id = ?
+          )
+          ${collectedFilter}
+        ${orderBy}`,
+      [company.id],
+    );
+    if (rows.length === 0) {
+      return { data: [], meta: { clients: 0, payments: 0, status } };
+    }
+
+    const paymentIds = rows.map((r) => r.paymentId);
+    const sessionIds = rows.map((r) => r.sessionId);
+
+    const lineRows: Array<{
+      paymentId: number;
+      currency: string;
+      amount: string;
+    }> = await this.sessionPaymentRepository.query(
+      `SELECT payment_id AS paymentId, UPPER(currency) AS currency,
+              COALESCE(SUM(subtotal),0) AS amount
+         FROM session_payment_lines WHERE payment_id IN (?)
+        GROUP BY payment_id, currency`,
+      [paymentIds],
+    );
+    const svcRows: Array<{ sessionId: number; serviceName: string | null }> =
+      await this.sessionPaymentRepository.query(
+        `SELECT sd.session_id AS sessionId, s.name AS serviceName
+           FROM session_detail sd LEFT JOIN service s ON s.id = sd.service_id
+          WHERE sd.session_id IN (?) AND sd.status <> 5`,
+        [sessionIds],
+      );
+
+    const amountsByPayment = new Map<number, Array<{ currency; amount }>>();
+    for (const l of lineRows) {
+      if (!amountsByPayment.has(l.paymentId))
+        amountsByPayment.set(l.paymentId, []);
+      amountsByPayment
+        .get(l.paymentId)!
+        .push({ currency: l.currency, amount: Number(l.amount) });
+    }
+    const servicesBySession = new Map<number, string[]>();
+    for (const s of svcRows) {
+      if (!s.serviceName) continue;
+      if (!servicesBySession.has(s.sessionId))
+        servicesBySession.set(s.sessionId, []);
+      servicesBySession.get(s.sessionId)!.push(s.serviceName);
+    }
+
+    // Agrupar por cliente.
+    const byClient = new Map<
+      number,
+      {
+        clientId: number | null;
+        clientName: string;
+        clientPictureUrl: string | null;
+        debts: Array<unknown>;
+        totals: Map<string, number>;
+      }
+    >();
+    for (const r of rows) {
+      const key = r.clientId ?? 0;
+      if (!byClient.has(key)) {
+        byClient.set(key, {
+          clientId: r.clientId,
+          clientName:
+            `${(r.clientName || '').trim()} ${(r.clientLastName || '').trim()}`.trim(),
+          clientPictureUrl: r.clientPicture
+            ? this.fileUploadService.getFileUrl('client_photo', r.clientPicture)
+            : null,
+          debts: [],
+          totals: new Map(),
+        });
+      }
+      const g = byClient.get(key)!;
+      const amounts = amountsByPayment.get(r.paymentId) ?? [];
+      for (const a of amounts) {
+        g.totals.set(a.currency, (g.totals.get(a.currency) ?? 0) + a.amount);
+      }
+      g.debts.push({
+        sessionId: r.sessionId,
+        paymentId: r.paymentId,
+        paidAt: r.paidAt,
+        // null = en deuda; fecha = ya saldada (útil para el historial).
+        collectedAt: r.collectedAt,
+        pendingCollection: r.collectedAt == null,
+        amounts,
+        serviceNames: servicesBySession.get(r.sessionId) ?? [],
+      });
+    }
+
+    const data = [...byClient.values()].map((g) => ({
+      clientId: g.clientId,
+      clientName: g.clientName || 'Cliente',
+      // `clientPicture` para alinear con GET /sessions; `clientPictureUrl` se
+      // mantiene por compatibilidad (mismo valor).
+      clientPicture: g.clientPictureUrl,
+      clientPictureUrl: g.clientPictureUrl,
+      debts: g.debts,
+      totalByCurrency: [...g.totals.entries()].map(([currency, amount]) => ({
+        currency,
+        amount,
+      })),
+    }));
+
+    return {
+      data,
+      meta: { clients: data.length, payments: rows.length, status },
+    };
+  }
+
+  /**
+   * Feature B: marca un cobro en deuda como COBRADO (el cliente ya pagó a la
+   * company). Setea collected_at. Idempotente. Solo el admin dueño de la cita.
+   */
+  async markPaymentCollected(adminId: number, sessionId: number) {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+    const payment = await this.sessionPaymentRepository.findOne({
+      where: { sessionId },
+    });
+    if (!payment) {
+      throw new NotFoundException('No hay un cobro registrado para esta cita');
+    }
+    const owns: Array<{ x: number }> =
+      await this.sessionPaymentRepository.query(
+        `SELECT 1 AS x FROM session_detail sd
+         JOIN company_worker cw ON cw.id = sd.company_worker_id
+        WHERE sd.session_id = ? AND cw.company_id = ? LIMIT 1`,
+        [sessionId, company.id],
+      );
+    if (owns.length === 0) {
+      throw new ForbiddenException('Esta cita no es de tu empresa');
+    }
+    if (payment.collectedAt) {
+      return {
+        sessionId,
+        collectedAt: payment.collectedAt,
+        alreadyCollected: true,
+      };
+    }
+    payment.collectedAt = new Date();
+    await this.sessionPaymentRepository.save(payment);
+    return {
+      sessionId,
+      collectedAt: payment.collectedAt,
+      alreadyCollected: false,
     };
   }
 

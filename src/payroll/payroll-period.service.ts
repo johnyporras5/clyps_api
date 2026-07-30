@@ -89,7 +89,11 @@ export class PayrollPeriodService {
     adminId: number,
     frequency: PayrollFrequency,
     startDate?: string,
-  ): Promise<{ frequency: PayrollFrequency; realigned: boolean }> {
+  ): Promise<{
+    frequency: PayrollFrequency;
+    realigned: boolean;
+    firstActivation: boolean;
+  }> {
     const companyId = await this.resolveAdminCompanyId(adminId);
 
     const cfg = await this.configRepo.findOne({ where: { companyId } });
@@ -107,12 +111,17 @@ export class PayrollPeriodService {
       where: { companyId },
       order: { id: 'ASC' },
     });
+    const firstActivation = !hasPeriod;
     let anchor = new Date();
-    if (!hasPeriod && startDate) {
-      // Solo hoy o a futuro: no se arranca la nómina en el pasado.
-      if (startDate < businessDateOf(new Date())) {
+    if (firstActivation && startDate) {
+      // Se permite arrancar hasta un mes atrás (para traer lo ya cobrado), pero
+      // no más allá.
+      const monthAgo = new Date();
+      monthAgo.setMonth(monthAgo.getMonth() - 1);
+      const minDate = businessDateOf(monthAgo);
+      if (startDate < minDate) {
         throw new ConflictException(
-          `La fecha de inicio (${startDate}) no puede ser anterior a hoy.`,
+          `La fecha de inicio (${startDate}) no puede ser de más de un mes atrás (mínimo ${minDate}).`,
         );
       }
       // Mediodía UTC: evita el corrimiento de día por zona horaria.
@@ -123,7 +132,7 @@ export class PayrollPeriodService {
     await this.bootstrapFirstPeriod(companyId, frequency, anchor);
 
     const realigned = await this.realignOpenPeriodIfEmpty(companyId, frequency);
-    return { frequency, realigned };
+    return { frequency, realigned, firstActivation };
   }
 
   /**
@@ -364,12 +373,37 @@ export class PayrollPeriodService {
    */
   async freezeTotals(periodId: number, manager?: EntityManager): Promise<void> {
     const m = manager ?? this.periodRepo.manager;
+
+    // Snapshot POR MONEDA (period_detail_currency): se rehace desde los conceptos.
+    await m.query(
+      `DELETE pdc FROM period_detail_currency pdc
+         JOIN period_detail d ON d.id = pdc.period_detail_id
+        WHERE d.period_id = ?`,
+      [periodId],
+    );
+    await m.query(
+      `INSERT INTO period_detail_currency
+          (period_detail_id, currency, earned_minor, deducted_minor, net_minor)
+       SELECT c.period_detail_id, c.currency,
+              SUM(CASE WHEN c.sign = 1  THEN c.amount_minor ELSE 0 END),
+              SUM(CASE WHEN c.sign = -1 THEN c.amount_minor ELSE 0 END),
+              SUM(CASE WHEN c.sign = 1  THEN c.amount_minor ELSE 0 END)
+                - SUM(CASE WHEN c.sign = -1 THEN c.amount_minor ELSE 0 END)
+         FROM payroll_concept c
+         JOIN period_detail d ON d.id = c.period_detail_id
+        WHERE d.period_id = ?
+        GROUP BY c.period_detail_id, c.currency`,
+      [periodId],
+    );
+
+    // Se mantienen las columnas escalares con el EQUIVALENTE EN Bs (referencia
+    // para caja/CSV; los totales al trabajador van por moneda).
     await m.query(
       `UPDATE period_detail d
          LEFT JOIN (
            SELECT period_detail_id,
-                  SUM(CASE WHEN sign = 1  THEN amount_minor ELSE 0 END) AS earned,
-                  SUM(CASE WHEN sign = -1 THEN amount_minor ELSE 0 END) AS deducted
+                  SUM(CASE WHEN sign = 1  THEN COALESCE(amount_bs_minor, amount_minor) ELSE 0 END) AS earned,
+                  SUM(CASE WHEN sign = -1 THEN COALESCE(amount_bs_minor, amount_minor) ELSE 0 END) AS deducted
              FROM payroll_concept
             GROUP BY period_detail_id
          ) c ON c.period_detail_id = d.id

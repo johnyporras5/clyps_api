@@ -25,10 +25,16 @@ export class CreateManualConceptDto {
   @Length(1, 145)
   label: string;
 
-  // Monto en Bs. Solo el ajuste admite negativo (para restar).
+  // Monto en la moneda del concepto. Solo el ajuste admite negativo (restar).
   @Type(() => Number)
   @IsNumber()
   amount: number;
+
+  // Moneda del bono/deducción (VES/USD/EUR). VES por defecto si se omite: así
+  // un bono en $ suma al saldo en dólares, no al de Bs.
+  @IsOptional()
+  @IsIn(['VES', 'USD', 'EUR'])
+  currency?: string;
 
   // Motivo / referencia interna (va en metadata).
   @IsOptional()

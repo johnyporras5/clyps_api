@@ -46,11 +46,28 @@ export class PayrollController {
     @Request() req: AuthenticatedRequest,
     @Body() dto: SetFrequencyDto,
   ) {
-    return this.periodService.setFrequency(
+    const result = await this.periodService.setFrequency(
       req.user.sub,
       dto.frequency,
       dto.startDate,
     );
+    // Primer arranque: trae los cobros ya hechos desde la fecha elegida.
+    // Best-effort (idempotente) para no romper la activación si algo falla.
+    let backfill: {
+      payments: number;
+      commissions: number;
+      tips: number;
+    } | null = null;
+    if (result.firstActivation) {
+      try {
+        backfill = await this.earningsService.backfillFromPayments(
+          req.user.sub,
+        );
+      } catch {
+        backfill = null;
+      }
+    }
+    return { ...result, backfill };
   }
 
   // Periodos del proveedor ("Mi nómina"). Incluye el abierto: ve lo que va

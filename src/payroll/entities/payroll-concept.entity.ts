@@ -46,13 +46,27 @@ export class PayrollConcept {
   @Column({ name: 'label', type: 'varchar', length: 145 })
   label: string;
 
-  // Monto en céntimos de Bs (ya convertido con la tasa histórica del cobro).
+  // Monto en céntimos de LA MONEDA del concepto (`currency`). En efectivo puede
+  // ser USD/EUR; en el resto, Bs (VES).
   @Column({
     name: 'amount_minor',
     type: 'bigint',
     transformer: moneyTransformer,
   })
   amountMinor: number;
+
+  // Moneda de amount_minor. VES por defecto; USD/EUR solo si se cobró en efectivo.
+  @Column({ name: 'currency', type: 'varchar', length: 3, default: 'VES' })
+  currency: string;
+
+  // Equivalente en Bs (referencia para caja/reportes). = amount_minor si es VES.
+  @Column({
+    name: 'amount_bs_minor',
+    type: 'bigint',
+    nullable: true,
+    transformer: moneyTransformer,
+  })
+  amountBsMinor: number | null;
 
   @Column({ name: 'source_type', type: 'varchar', length: 20, nullable: true })
   sourceType: ConceptSource | null;
@@ -68,6 +82,11 @@ export class PayrollConcept {
   // p. ej. { rateBps: 1500, servicePriceMinorBs: 125000 } o { reversalOf, reason }.
   @Column({ name: 'metadata', type: 'json', nullable: true })
   metadata: Record<string, any> | null;
+
+  // Fecha/hora REAL del concepto (cuándo se cobró la cita). En el flujo en vivo
+  // ≈ created_at; en el backfill es la fecha del cobro original, no la de hoy.
+  @Column({ name: 'occurred_at', type: 'datetime', nullable: true })
+  occurredAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
