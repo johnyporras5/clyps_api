@@ -4184,8 +4184,16 @@ export class SessionService {
    * le pagó al trabajador pero el cliente aún no pagó a la company. Agrupados por
    * cliente, con el monto que deben por moneda. Para la pantalla "pendientes por
    * pago".
+   *
+   * `status` filtra el listado:
+   *   - 'pending'   (default) → deudas activas (collected_at IS NULL).
+   *   - 'collected'           → historial de deudas ya saldadas (NOT NULL).
+   *   - 'all'                 → ambas.
    */
-  async getPendingCollections(adminId: number) {
+  async getPendingCollections(
+    adminId: number,
+    status: 'pending' | 'collected' | 'all' = 'pending',
+  ) {
     const company = await this.companyRepository.findOne({
       where: { userId: adminId },
     });
@@ -4195,32 +4203,47 @@ export class SessionService {
       );
     }
 
+    // Filtro y orden según el estado pedido. Las deudas activas ordenan por la
+    // más antigua primero; el historial por la cobrada más reciente.
+    const collectedFilter =
+      status === 'collected'
+        ? 'AND sp.collected_at IS NOT NULL'
+        : status === 'all'
+          ? ''
+          : 'AND sp.collected_at IS NULL';
+    const orderBy =
+      status === 'collected'
+        ? 'ORDER BY sp.collected_at DESC'
+        : 'ORDER BY sp.paid_at ASC';
+
     const rows: Array<{
       paymentId: number;
       sessionId: number;
       paidAt: Date;
+      collectedAt: Date | null;
       clientId: number | null;
       clientName: string | null;
       clientLastName: string | null;
       clientPicture: string | null;
     }> = await this.sessionPaymentRepository.query(
       `SELECT sp.id AS paymentId, sp.session_id AS sessionId, sp.paid_at AS paidAt,
+              sp.collected_at AS collectedAt,
               s.client_id AS clientId, cl.name AS clientName,
               cl.last_name AS clientLastName, cl.picture AS clientPicture
          FROM session_payments sp
          JOIN session s ON s.id = sp.session_id
          LEFT JOIN client cl ON cl.id = s.client_id
-        WHERE sp.collected_at IS NULL
-          AND EXISTS (
+        WHERE EXISTS (
             SELECT 1 FROM session_detail sd
               JOIN company_worker cw ON cw.id = sd.company_worker_id
              WHERE sd.session_id = sp.session_id AND cw.company_id = ?
           )
-        ORDER BY sp.paid_at ASC`,
+          ${collectedFilter}
+        ${orderBy}`,
       [company.id],
     );
     if (rows.length === 0) {
-      return { data: [], meta: { clients: 0, payments: 0 } };
+      return { data: [], meta: { clients: 0, payments: 0, status } };
     }
 
     const paymentIds = rows.map((r) => r.paymentId);
@@ -4295,6 +4318,9 @@ export class SessionService {
         sessionId: r.sessionId,
         paymentId: r.paymentId,
         paidAt: r.paidAt,
+        // null = en deuda; fecha = ya saldada (útil para el historial).
+        collectedAt: r.collectedAt,
+        pendingCollection: r.collectedAt == null,
         amounts,
         serviceNames: servicesBySession.get(r.sessionId) ?? [],
       });
@@ -4311,7 +4337,10 @@ export class SessionService {
       })),
     }));
 
-    return { data, meta: { clients: data.length, payments: rows.length } };
+    return {
+      data,
+      meta: { clients: data.length, payments: rows.length, status },
+    };
   }
 
   /**
