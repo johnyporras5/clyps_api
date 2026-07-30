@@ -4329,6 +4329,9 @@ export class SessionService {
     const data = [...byClient.values()].map((g) => ({
       clientId: g.clientId,
       clientName: g.clientName || 'Cliente',
+      // `clientPicture` para alinear con GET /sessions; `clientPictureUrl` se
+      // mantiene por compatibilidad (mismo valor).
+      clientPicture: g.clientPictureUrl,
       clientPictureUrl: g.clientPictureUrl,
       debts: g.debts,
       totalByCurrency: [...g.totals.entries()].map(([currency, amount]) => ({
