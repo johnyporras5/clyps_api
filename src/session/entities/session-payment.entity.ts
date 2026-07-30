@@ -91,6 +91,11 @@ export class SessionPayment {
   @Column({ name: 'paid_at', type: 'datetime' })
   paidAt: Date;
 
+  // Cuándo la company cobró de verdad al cliente. null = en deuda (se le pagó al
+  // worker pero el cliente aún no paga).
+  @Column({ name: 'collected_at', type: 'datetime', nullable: true })
+  collectedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

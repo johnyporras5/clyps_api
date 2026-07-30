@@ -8,7 +8,6 @@ import { AppService } from './app.service';
 import { GeneratedModules } from './generated-modules';
 import { AuthModule } from './auth/auth.module';
 import { CleanupTask } from './tasks/cleanup.task';
-import { AutoCancelSessionsTask } from './tasks/auto-cancel-sessions.task';
 import { OfferExpirationTask } from './tasks/offer-expiration.task';
 import { VerificationModule } from './verification/verification.module';
 //import { SeedsModule } from './database/seeds/seeds.module';
@@ -128,7 +127,6 @@ import { PayrollModule } from './payroll/payroll.module';
   providers: [
     AppService,
     CleanupTask,
-    AutoCancelSessionsTask,
     OfferExpirationTask,
     // Activa el rate limiting de forma global en toda la app.
     { provide: APP_GUARD, useClass: ThrottlerGuard },

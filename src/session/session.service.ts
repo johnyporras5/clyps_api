@@ -3723,6 +3723,8 @@ export class SessionService {
       totalBs: number | null;
       paidBy: number;
       paidAt: Date;
+      collectedAt: Date | null;
+      pendingCollection: boolean;
       lines: Array<{
         currency: string;
         subtotal: number;
@@ -3888,6 +3890,9 @@ export class SessionService {
         totalBs: dto.totalBs ?? null,
         paidBy: adminId,
         paidAt,
+        // "En deuda": se le paga al worker pero el cliente aún no pagó a la
+        // company → collected_at = null. Cobro normal → cobrado ya (= paidAt).
+        collectedAt: dto.pendingCollection ? null : paidAt,
       });
 
       if (dto.lines.length > 0) {
@@ -4053,6 +4058,8 @@ export class SessionService {
         totalBs: dto.totalBs ?? null,
         paidBy: adminId,
         paidAt,
+        collectedAt: savedPayment.collectedAt,
+        pendingCollection: savedPayment.collectedAt == null,
         lines: dto.lines.map((l) => ({
           currency: l.currency.toUpperCase(),
           subtotal: l.subtotal,
@@ -4100,6 +4107,10 @@ export class SessionService {
       totalBs: payment.totalBs != null ? Number(payment.totalBs) : null,
       paidBy: payment.paidBy,
       paidAt: payment.paidAt,
+      // Estado del cobro al cliente: si collected_at es null, está EN DEUDA
+      // (se le pagó al worker pero el cliente aún no pagó a la company).
+      collectedAt: payment.collectedAt,
+      pendingCollection: payment.collectedAt == null,
       lines: lines.map((l) => ({
         currency: l.currency,
         subtotal: Number(l.subtotal),

@@ -1,6 +1,7 @@
 import {
   IsArray,
   ArrayNotEmpty,
+  IsBoolean,
   IsIn,
   IsNumber,
   IsOptional,
@@ -102,4 +103,10 @@ export class RegisterSessionPaymentDto {
   @IsString()
   @MaxLength(64)
   reference?: string | null;
+
+  // "En deuda": se le paga al trabajador (comisiones/propinas normales) pero el
+  // cliente aún no pagó a la company. Marca el cobro con collected_at = null.
+  @IsOptional()
+  @IsBoolean()
+  pendingCollection?: boolean;
 }
