@@ -3913,6 +3913,8 @@ export class SessionService {
         // "En deuda": se le paga al worker pero el cliente aún no pagó a la
         // company → collected_at = null. Cobro normal → cobrado ya (= paidAt).
         collectedAt: dto.pendingCollection ? null : paidAt,
+        // Marca la cuenta por cobrar para toda su vida (aunque luego se salde).
+        wasPending: !!dto.pendingCollection,
       });
 
       if (dto.lines.length > 0) {
@@ -4203,8 +4205,9 @@ export class SessionService {
       );
     }
 
+    // Solo cuentas por cobrar (was_pending = 1): un cobro normal nunca entra aquí.
     // Filtro y orden según el estado pedido. Las deudas activas ordenan por la
-    // más antigua primero; el historial por la cobrada más reciente.
+    // más antigua primero; el historial por la saldada más reciente.
     const collectedFilter =
       status === 'collected'
         ? 'AND sp.collected_at IS NOT NULL'
@@ -4233,7 +4236,8 @@ export class SessionService {
          FROM session_payments sp
          JOIN session s ON s.id = sp.session_id
          LEFT JOIN client cl ON cl.id = s.client_id
-        WHERE EXISTS (
+        WHERE sp.was_pending = 1
+          AND EXISTS (
             SELECT 1 FROM session_detail sd
               JOIN company_worker cw ON cw.id = sd.company_worker_id
              WHERE sd.session_id = sp.session_id AND cw.company_id = ?

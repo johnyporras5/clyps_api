@@ -96,6 +96,12 @@ export class SessionPayment {
   @Column({ name: 'collected_at', type: 'datetime', nullable: true })
   collectedAt: Date | null;
 
+  // true si el cobro nació "en deuda" (pendingCollection). Distingue las cuentas
+  // por cobrar (pendientes o ya saldadas con el check) de un cobro normal. Un
+  // cobro normal NUNCA aparece en "Cuentas por cobrar".
+  @Column({ name: 'was_pending', type: 'tinyint', width: 1, default: 0 })
+  wasPending: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }
