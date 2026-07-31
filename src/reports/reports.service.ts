@@ -454,56 +454,93 @@ export class ReportsService {
       );
     }
 
-    const rows: Array<{
-      currency: string;
-      details: string;
-      companyAmount: string | null;
-      companyAmountBs: string | null;
-      missingRate: string;
-    }> = await this.sessionDetailRepository.query(
-      // La tasa se pre-agrega por (payment, moneda) para no multiplicar filas si
-      // un cobro tuviera más de un renglón en la misma moneda.
-      `SELECT UPPER(COALESCE(svc.currency, 'USD')) AS currency,
-              COUNT(*) AS details,
-              ROUND(SUM(sd.total_company), 2) AS companyAmount,
-              ROUND(
+    const bounds = [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`];
+
+    const [rows, serviceRows]: [
+      Array<{
+        currency: string;
+        details: string;
+        companyAmount: string | null;
+        companyAmountBs: string | null;
+        missingRate: string;
+      }>,
+      Array<{
+        serviceId: number;
+        serviceName: string | null;
+        currency: string;
+        companyAmount: string | null;
+        servicesCount: string;
+      }>,
+    ] = await Promise.all([
+      // Totales por moneda + Bs acumulado. La tasa se pre-agrega por (payment,
+      // moneda) para no multiplicar filas si un cobro tuviera más de un renglón
+      // en la misma moneda.
+      this.sessionDetailRepository.query(
+        `SELECT UPPER(COALESCE(svc.currency, 'USD')) AS currency,
+                COUNT(*) AS details,
+                ROUND(SUM(sd.total_company), 2) AS companyAmount,
+                ROUND(
+                  SUM(
+                    sd.total_company *
+                    COALESCE(
+                      rate.rate,
+                      IF(UPPER(COALESCE(svc.currency, 'USD')) = 'VES', 1, NULL)
+                    )
+                  ),
+                  2
+                ) AS companyAmountBs,
                 SUM(
-                  sd.total_company *
-                  COALESCE(
-                    rate.rate,
-                    IF(UPPER(COALESCE(svc.currency, 'USD')) = 'VES', 1, NULL)
-                  )
-                ),
-                2
-              ) AS companyAmountBs,
-              SUM(
-                CASE
-                  WHEN UPPER(COALESCE(svc.currency, 'USD')) <> 'VES'
-                       AND rate.rate IS NULL THEN 1
-                  ELSE 0
-                END
-              ) AS missingRate
-         FROM session_payments sp
-         JOIN session_detail sd
-           ON sd.session_id = sp.session_id
-          AND sd.status = 4
-          AND sd.is_courtesy = 0
-         JOIN company_worker cw
-           ON cw.id = sd.company_worker_id
-          AND cw.company_id = ?
-         LEFT JOIN service svc ON svc.id = sd.service_id
-         LEFT JOIN (
-           SELECT payment_id, UPPER(currency) AS cur, AVG(exchange_rate) AS rate
-             FROM session_payment_lines
-            GROUP BY payment_id, UPPER(currency)
-         ) rate
-           ON rate.payment_id = sp.id
-          AND rate.cur = UPPER(COALESCE(svc.currency, 'USD'))
-        WHERE sp.collected_at IS NOT NULL
-          AND sp.collected_at BETWEEN ? AND ?
-        GROUP BY UPPER(COALESCE(svc.currency, 'USD'))`,
-      [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
-    );
+                  CASE
+                    WHEN UPPER(COALESCE(svc.currency, 'USD')) <> 'VES'
+                         AND rate.rate IS NULL THEN 1
+                    ELSE 0
+                  END
+                ) AS missingRate
+           FROM session_payments sp
+           JOIN session_detail sd
+             ON sd.session_id = sp.session_id
+            AND sd.status = 4
+            AND sd.is_courtesy = 0
+           JOIN company_worker cw
+             ON cw.id = sd.company_worker_id
+            AND cw.company_id = ?
+           LEFT JOIN service svc ON svc.id = sd.service_id
+           LEFT JOIN (
+             SELECT payment_id, UPPER(currency) AS cur, AVG(exchange_rate) AS rate
+               FROM session_payment_lines
+              GROUP BY payment_id, UPPER(currency)
+           ) rate
+             ON rate.payment_id = sp.id
+            AND rate.cur = UPPER(COALESCE(svc.currency, 'USD'))
+          WHERE sp.collected_at IS NOT NULL
+            AND sp.collected_at BETWEEN ? AND ?
+          GROUP BY UPPER(COALESCE(svc.currency, 'USD'))`,
+        bounds,
+      ),
+      // Desglose por servicio Y moneda (un ítem por combinación). Mismo alcance;
+      // el monto va en la moneda del servicio (sin conversión a Bs).
+      this.sessionDetailRepository.query(
+        `SELECT sd.service_id AS serviceId,
+                svc.name AS serviceName,
+                UPPER(COALESCE(svc.currency, 'USD')) AS currency,
+                ROUND(SUM(sd.total_company), 2) AS companyAmount,
+                COUNT(*) AS servicesCount
+           FROM session_payments sp
+           JOIN session_detail sd
+             ON sd.session_id = sp.session_id
+            AND sd.status = 4
+            AND sd.is_courtesy = 0
+           JOIN company_worker cw
+             ON cw.id = sd.company_worker_id
+            AND cw.company_id = ?
+           LEFT JOIN service svc ON svc.id = sd.service_id
+          WHERE sp.collected_at IS NOT NULL
+            AND sp.collected_at BETWEEN ? AND ?
+          GROUP BY sd.service_id, svc.name, UPPER(COALESCE(svc.currency, 'USD'))
+          ORDER BY companyAmount DESC`,
+        bounds,
+      ),
+    ]);
 
     // Total por moneda (se omiten las monedas donde la company no ganó nada) y
     // total en Bs acumulado (suma de cada cobro a su tasa histórica).
@@ -525,11 +562,24 @@ export class ReportsService {
       0,
     );
 
+    // Un ítem por servicio y moneda; el front calcula el % por moneda si lo necesita.
+    const byService = serviceRows
+      .map((r) => ({
+        serviceId: Number(r.serviceId),
+        serviceName: (r.serviceName || 'Servicio').trim(),
+        currency: r.currency,
+        companyAmount: parseFloat(r.companyAmount || '0'),
+        servicesCount: parseInt(r.servicesCount || '0', 10) || 0,
+      }))
+      .filter((r) => r.companyAmount > 0)
+      .sort((a, b) => b.companyAmount - a.companyAmount);
+
     return {
       range: { startDate, endDate },
       // Caja real: solo lo efectivamente cobrado (collected_at), por fecha de cobro.
       basis: 'collected' as const,
       byCurrency,
+      byService,
       totalBsAccumulated,
       meta: {
         // Renglones con moneda extranjera sin tasa histórica → no sumaron a Bs.
