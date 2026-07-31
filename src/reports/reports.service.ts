@@ -20,9 +20,11 @@ import {
   ACTIVE_WINDOW_DAYS,
   CHURN_WINDOW_DAYS,
   Bucket,
+  TimelineBucket,
   Granularity,
   ReportPeriod,
   generateBucketPeriods,
+  generateTimelineBuckets,
   generateGranularityPeriods,
   formatISODate,
 } from './utils/clients-report.util';
@@ -635,6 +637,134 @@ export class ReportsService {
         // Detalles en moneda extranjera SIN tasa histórica → no sumaron a Bs.
         missingRateDetails,
       },
+    };
+  }
+
+  /**
+   * Serie temporal de "Ingresos por compañía". Mismo criterio que el reporte
+   * (solo parte del negocio, solo cobros con `collected_at`, sin cortesías,
+   * status = 4). Cada punto se ubica por la FECHA DE COBRO y trae las mismas tres
+   * magnitudes que `byService` (nominal / cash / bsAccumulated), para reusar el
+   * selector de vistas sin mezclar monedas. Los períodos vacíos van en cero.
+   */
+  async getCompanyIncomeTimeline(
+    adminId: number,
+    startDate: string,
+    endDate: string,
+    bucket: TimelineBucket,
+  ) {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+
+    const buckets = generateTimelineBuckets(startDate, endDate, bucket);
+    const bucketStarts = buckets.map((b) => b.start.getTime());
+    // Un acumulador por bucket (mismas 3 magnitudes que byService).
+    const acc = buckets.map(() => ({
+      nominal: new Map<string, number>(),
+      cash: new Map<string, number>(),
+      bsAccumulated: 0,
+    }));
+    let missingRateDetails = 0;
+
+    const rows: Array<{
+      svcCurrency: string;
+      method: string | null;
+      companyAmount: string | null;
+      rate: string | null;
+      collectedAt: Date | string;
+    }> = await this.sessionDetailRepository.query(
+      `SELECT UPPER(COALESCE(svc.currency, 'USD')) AS svcCurrency,
+              sp.method AS method,
+              sd.total_company AS companyAmount,
+              sp.collected_at AS collectedAt,
+              rate.rate AS rate
+         FROM session_payments sp
+         JOIN session_detail sd
+           ON sd.session_id = sp.session_id
+          AND sd.status = 4
+          AND sd.is_courtesy = 0
+         JOIN company_worker cw
+           ON cw.id = sd.company_worker_id
+          AND cw.company_id = ?
+         LEFT JOIN service svc ON svc.id = sd.service_id
+         LEFT JOIN (
+           SELECT payment_id, UPPER(currency) AS cur, AVG(exchange_rate) AS rate
+             FROM session_payment_lines
+            GROUP BY payment_id, UPPER(currency)
+         ) rate
+           ON rate.payment_id = sp.id
+          AND rate.cur = UPPER(COALESCE(svc.currency, 'USD'))
+        WHERE sp.collected_at IS NOT NULL
+          AND sp.collected_at BETWEEN ? AND ?`,
+      [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
+    );
+
+    // Índice del bucket que contiene la fecha (buckets contiguos y ordenados):
+    // el último cuyo `start` <= t (búsqueda binaria).
+    const bucketIndexOf = (t: number): number => {
+      let lo = 0;
+      let hi = bucketStarts.length - 1;
+      let idx = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (bucketStarts[mid] <= t) {
+          idx = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return idx;
+    };
+
+    for (const r of rows) {
+      const t = new Date(r.collectedAt).getTime();
+      const idx = bucketIndexOf(t);
+      if (idx < 0) continue; // fuera de rango (no debería pasar)
+      const a = acc[idx];
+
+      const amount = parseFloat(r.companyAmount || '0') || 0;
+      const cur = (r.svcCurrency || 'USD').toUpperCase();
+      const isForeign = cur !== 'VES';
+      const isCash = r.method === 'cash';
+      const rate = r.rate != null ? parseFloat(r.rate) : null;
+
+      a.nominal.set(cur, (a.nominal.get(cur) ?? 0) + amount);
+      if (isCash && isForeign) {
+        a.cash.set(cur, (a.cash.get(cur) ?? 0) + amount);
+      } else {
+        const bsAmt = isForeign ? (rate != null ? amount * rate : 0) : amount;
+        if (isForeign && rate == null) missingRateDetails += 1;
+        a.bsAccumulated += bsAmt;
+      }
+    }
+
+    const round2 = (n: number): number => parseFloat(n.toFixed(2));
+    const mapToSortedList = (m: Map<string, number>) =>
+      [...m.entries()]
+        .map(([currency, amt]) => ({ currency, companyAmount: round2(amt) }))
+        .filter((x) => x.companyAmount > 0)
+        .sort((x, z) => z.companyAmount - x.companyAmount);
+
+    const points = buckets.map((b, i) => ({
+      start: formatISODate(b.start),
+      end: formatISODate(b.end),
+      nominal: mapToSortedList(acc[i].nominal),
+      cash: mapToSortedList(acc[i].cash),
+      bsAccumulated: round2(acc[i].bsAccumulated),
+    }));
+
+    return {
+      range: { startDate, endDate },
+      bucket,
+      points,
+      meta: { missingRateDetails },
     };
   }
 
