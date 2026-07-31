@@ -8,7 +8,16 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Between, Not, DeepPartial, Brackets } from 'typeorm';
+import {
+  Repository,
+  In,
+  Between,
+  Not,
+  DeepPartial,
+  Brackets,
+  SelectQueryBuilder,
+  ObjectLiteral,
+} from 'typeorm';
 import { Session } from './entities/session.entity';
 import { SessionPayment } from './entities/session-payment.entity';
 import { SessionPaymentLine } from './entities/session-payment-line.entity';
@@ -10109,7 +10118,11 @@ export class SessionService {
   ): Promise<{
     range: { startDate: string | null; endDate: string | null };
     totals: {
+      // Total ingresos del worker = comisiones + propinas.
       totalEarned: number;
+      // Desglose: comisiones (SUM total_worker) y propinas (SUM tips).
+      totalCommissions: number;
+      totalTips: number;
       totalSessions: number;
       totalServices: number;
       totalTime: number;
@@ -10168,8 +10181,10 @@ export class SessionService {
     const toStartOfDay = (d: string): Date => businessDayBounds(d).startOfDay;
     const toEndOfDay = (d: string): Date => businessDayBounds(d).endOfDay;
 
-    // Mismo filtro de rango para la query de ingresos y la de cortesías.
-    const applyRange = (qb: typeof query) => {
+    // Mismo filtro de rango para todas las queries (ingresos, cortesías, propinas).
+    const applyRange = <T extends ObjectLiteral>(
+      qb: SelectQueryBuilder<T>,
+    ): void => {
       if (startDate && endDate) {
         qb.andWhere(
           'session.session_datetime BETWEEN :startDate AND :endDate',
@@ -10245,15 +10260,33 @@ export class SessionService {
     const courtesyTime =
       parseFloat(parseFloat(courtesyRow?.courtesyTime || '0').toFixed(2)) || 0;
 
+    // Propinas del worker en el rango: tip → payment → session, filtradas por la
+    // fecha de la cita (mismo criterio que las comisiones). Un solo total.
+    const tipsQuery = this.sessionDetailRepository.manager
+      .createQueryBuilder()
+      .select('COALESCE(SUM(tip.amount), 0)', 'totalTips')
+      .from('session_payment_tips', 'tip')
+      .innerJoin('session_payments', 'sp', 'sp.id = tip.payment_id')
+      .innerJoin('session', 'session', 'session.id = sp.session_id')
+      .where('tip.company_worker_id IN (:...companyWorkerIds)', {
+        companyWorkerIds,
+      });
+    applyRange(tipsQuery);
+    const tipsRow = await tipsQuery.getRawOne<{ totalTips: string | null }>();
+    const totalTips =
+      parseFloat(parseFloat(tipsRow?.totalTips || '0').toFixed(2)) || 0;
+
     const totals = byService.reduce(
       (acc, s) => {
-        acc.totalEarned += s.totalEarned;
+        acc.totalCommissions += s.totalEarned;
         acc.totalSessions += s.sessionsCount;
         acc.totalTime += s.totalTime;
         return acc;
       },
       {
         totalEarned: 0,
+        totalCommissions: 0,
+        totalTips,
         totalSessions: 0,
         totalServices: byService.length,
         totalTime: 0,
@@ -10263,8 +10296,12 @@ export class SessionService {
       },
     );
 
-    totals.totalEarned = parseFloat(totals.totalEarned.toFixed(2));
+    totals.totalCommissions = parseFloat(totals.totalCommissions.toFixed(2));
     totals.totalTime = parseFloat(totals.totalTime.toFixed(2));
+    // Total ingresos = comisiones + propinas.
+    totals.totalEarned = parseFloat(
+      (totals.totalCommissions + totals.totalTips).toFixed(2),
+    );
 
     return {
       range: { startDate: startDate ?? null, endDate: endDate ?? null },
