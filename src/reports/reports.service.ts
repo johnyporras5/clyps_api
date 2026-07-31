@@ -505,6 +505,7 @@ export class ReportsService {
     interface SvcAgg {
       serviceName: string;
       servicesCount: number;
+      nominal: Map<string, number>; // valor del servicio por moneda (nominal)
       cash: Map<string, number>;
       bsAccumulated: number;
       sortBs: number; // Bs-equivalente de todo (para ordenar entre monedas)
@@ -532,12 +533,15 @@ export class ReportsService {
       const svc = svcMap.get(Number(r.serviceId)) ?? {
         serviceName: (r.serviceName || 'Servicio').trim(),
         servicesCount: 0,
+        nominal: new Map<string, number>(),
         cash: new Map<string, number>(),
         bsAccumulated: 0,
         sortBs: 0,
       };
       svc.servicesCount += 1;
       svc.sortBs += bsEquiv ?? 0;
+      // Valor nominal por moneda del servicio (mismo criterio que byCurrency).
+      svc.nominal.set(cur, (svc.nominal.get(cur) ?? 0) + amount);
 
       if (isCash && isForeign) {
         // Efectivo en moneda extranjera → se queda en su moneda.
@@ -568,6 +572,8 @@ export class ReportsService {
         serviceId,
         serviceName: s.serviceName,
         servicesCount: s.servicesCount,
+        // Valor nominal por moneda (la suma de todos los servicios == byCurrency).
+        nominal: mapToSortedList(s.nominal),
         // Efectivo en moneda extranjera (una entrada por moneda).
         cash: mapToSortedList(s.cash),
         // Resto (digital + efectivo Bs) a tasa histórica.
