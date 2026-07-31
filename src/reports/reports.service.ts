@@ -439,10 +439,15 @@ export class ReportsService {
    * (`session_detail.total_company`), en caja real (cobros con `collected_at`).
    *
    * El rango se aplica sobre `collected_at` (cuándo entró el dinero, no la fecha
-   * de la cita). Devuelve el total por moneda (USD/EUR/VES) en su propia moneda,
-   * y un total en Bs ACUMULADO: cada cobro se convierte con la tasa histórica del
-   * momento del cobro (`session_payment_lines.exchange_rate`), nunca con la tasa
-   * de hoy. VES cuenta ×1.
+   * de la cita). Se separan TRES cosas, para no mezclar "moneda del servicio" con
+   * "cómo entró la plata" (mismo criterio que nómina):
+   *   - `byCurrency`   → VALOR nominal por moneda del servicio (lo que cuesta).
+   *   - `received.cash`→ RECIBIDO en efectivo, solo moneda extranjera ($/€):
+   *                      cobros con `method = cash` de servicios en $/€, en su moneda.
+   *   - `received.bsAccumulated` → todo lo demás (digital + efectivo en Bs)
+   *                      convertido a Bs con la tasa histórica de cada cobro.
+   * `totalBsAccumulated` = TODO llevado a Bs (incluye el efectivo extranjero),
+   * como referencia. El desglose por servicio viene partido igual (cash vs Bs).
    */
   async getCompanyIncome(adminId: number, startDate: string, endDate: string) {
     const company = await this.companyRepository.findOne({
@@ -454,135 +459,143 @@ export class ReportsService {
       );
     }
 
-    const bounds = [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`];
-
-    const [rows, serviceRows]: [
-      Array<{
-        currency: string;
-        details: string;
-        companyAmount: string | null;
-        companyAmountBs: string | null;
-        missingRate: string;
-      }>,
-      Array<{
-        serviceId: number;
-        serviceName: string | null;
-        currency: string;
-        companyAmount: string | null;
-        servicesCount: string;
-      }>,
-    ] = await Promise.all([
-      // Totales por moneda + Bs acumulado. La tasa se pre-agrega por (payment,
-      // moneda) para no multiplicar filas si un cobro tuviera más de un renglón
-      // en la misma moneda.
-      this.sessionDetailRepository.query(
-        `SELECT UPPER(COALESCE(svc.currency, 'USD')) AS currency,
-                COUNT(*) AS details,
-                ROUND(SUM(sd.total_company), 2) AS companyAmount,
-                ROUND(
-                  SUM(
-                    sd.total_company *
-                    COALESCE(
-                      rate.rate,
-                      IF(UPPER(COALESCE(svc.currency, 'USD')) = 'VES', 1, NULL)
-                    )
-                  ),
-                  2
-                ) AS companyAmountBs,
-                SUM(
-                  CASE
-                    WHEN UPPER(COALESCE(svc.currency, 'USD')) <> 'VES'
-                         AND rate.rate IS NULL THEN 1
-                    ELSE 0
-                  END
-                ) AS missingRate
-           FROM session_payments sp
-           JOIN session_detail sd
-             ON sd.session_id = sp.session_id
-            AND sd.status = 4
-            AND sd.is_courtesy = 0
-           JOIN company_worker cw
-             ON cw.id = sd.company_worker_id
-            AND cw.company_id = ?
-           LEFT JOIN service svc ON svc.id = sd.service_id
-           LEFT JOIN (
-             SELECT payment_id, UPPER(currency) AS cur, AVG(exchange_rate) AS rate
-               FROM session_payment_lines
-              GROUP BY payment_id, UPPER(currency)
-           ) rate
-             ON rate.payment_id = sp.id
-            AND rate.cur = UPPER(COALESCE(svc.currency, 'USD'))
-          WHERE sp.collected_at IS NOT NULL
-            AND sp.collected_at BETWEEN ? AND ?
-          GROUP BY UPPER(COALESCE(svc.currency, 'USD'))`,
-        bounds,
-      ),
-      // Desglose por servicio Y moneda (un ítem por combinación). Mismo alcance;
-      // el monto va en la moneda del servicio (sin conversión a Bs).
-      this.sessionDetailRepository.query(
-        `SELECT sd.service_id AS serviceId,
-                svc.name AS serviceName,
-                UPPER(COALESCE(svc.currency, 'USD')) AS currency,
-                ROUND(SUM(sd.total_company), 2) AS companyAmount,
-                COUNT(*) AS servicesCount
-           FROM session_payments sp
-           JOIN session_detail sd
-             ON sd.session_id = sp.session_id
-            AND sd.status = 4
-            AND sd.is_courtesy = 0
-           JOIN company_worker cw
-             ON cw.id = sd.company_worker_id
-            AND cw.company_id = ?
-           LEFT JOIN service svc ON svc.id = sd.service_id
-          WHERE sp.collected_at IS NOT NULL
-            AND sp.collected_at BETWEEN ? AND ?
-          GROUP BY sd.service_id, svc.name, UPPER(COALESCE(svc.currency, 'USD'))
-          ORDER BY companyAmount DESC`,
-        bounds,
-      ),
-    ]);
-
-    // Total por moneda (se omiten las monedas donde la company no ganó nada) y
-    // total en Bs acumulado (suma de cada cobro a su tasa histórica).
-    const byCurrency = rows
-      .map((r) => ({
-        currency: r.currency,
-        companyAmount: parseFloat(r.companyAmount || '0'),
-      }))
-      .filter((r) => r.companyAmount > 0)
-      .sort((a, b) => b.companyAmount - a.companyAmount);
-
-    const totalBsAccumulated = parseFloat(
-      rows
-        .reduce((sum, r) => sum + parseFloat(r.companyAmountBs || '0'), 0)
-        .toFixed(2),
-    );
-    const missingRateDetails = rows.reduce(
-      (sum, r) => sum + (parseInt(r.missingRate || '0', 10) || 0),
-      0,
+    // Una fila por detalle cobrado. La tasa se pre-agrega por (payment, moneda)
+    // para no multiplicar filas si un cobro tuviera >1 renglón en esa moneda.
+    const rows: Array<{
+      serviceId: number;
+      serviceName: string | null;
+      svcCurrency: string;
+      method: string | null;
+      companyAmount: string | null;
+      rate: string | null;
+    }> = await this.sessionDetailRepository.query(
+      `SELECT sd.service_id AS serviceId,
+              svc.name AS serviceName,
+              UPPER(COALESCE(svc.currency, 'USD')) AS svcCurrency,
+              sp.method AS method,
+              sd.total_company AS companyAmount,
+              rate.rate AS rate
+         FROM session_payments sp
+         JOIN session_detail sd
+           ON sd.session_id = sp.session_id
+          AND sd.status = 4
+          AND sd.is_courtesy = 0
+         JOIN company_worker cw
+           ON cw.id = sd.company_worker_id
+          AND cw.company_id = ?
+         LEFT JOIN service svc ON svc.id = sd.service_id
+         LEFT JOIN (
+           SELECT payment_id, UPPER(currency) AS cur, AVG(exchange_rate) AS rate
+             FROM session_payment_lines
+            GROUP BY payment_id, UPPER(currency)
+         ) rate
+           ON rate.payment_id = sp.id
+          AND rate.cur = UPPER(COALESCE(svc.currency, 'USD'))
+        WHERE sp.collected_at IS NOT NULL
+          AND sp.collected_at BETWEEN ? AND ?`,
+      [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
     );
 
-    // Un ítem por servicio y moneda; el front calcula el % por moneda si lo necesita.
-    const byService = serviceRows
-      .map((r) => ({
-        serviceId: Number(r.serviceId),
+    const nominal = new Map<string, number>(); // moneda del servicio → valor
+    const cashTotals = new Map<string, number>(); // moneda extranjera → efectivo
+    let bsAccumulated = 0; // digital + efectivo Bs, a tasa histórica
+    let totalBsAccumulated = 0; // TODO a Bs (incluye efectivo extranjero)
+    let missingRateDetails = 0;
+
+    interface SvcAgg {
+      serviceName: string;
+      servicesCount: number;
+      cash: Map<string, number>;
+      bsAccumulated: number;
+      sortBs: number; // Bs-equivalente de todo (para ordenar entre monedas)
+    }
+    const svcMap = new Map<number, SvcAgg>();
+
+    for (const r of rows) {
+      const amount = parseFloat(r.companyAmount || '0') || 0;
+      const cur = (r.svcCurrency || 'USD').toUpperCase();
+      const isForeign = cur !== 'VES';
+      const isCash = r.method === 'cash';
+      const rate = r.rate != null ? parseFloat(r.rate) : null;
+
+      // Valor nominal por moneda del servicio.
+      nominal.set(cur, (nominal.get(cur) ?? 0) + amount);
+
+      // Bs-equivalente de TODO (para el total de referencia y el orden).
+      const bsEquiv = isForeign
+        ? rate != null
+          ? amount * rate
+          : null
+        : amount;
+      if (bsEquiv != null) totalBsAccumulated += bsEquiv;
+
+      const svc = svcMap.get(Number(r.serviceId)) ?? {
         serviceName: (r.serviceName || 'Servicio').trim(),
-        currency: r.currency,
-        companyAmount: parseFloat(r.companyAmount || '0'),
-        servicesCount: parseInt(r.servicesCount || '0', 10) || 0,
+        servicesCount: 0,
+        cash: new Map<string, number>(),
+        bsAccumulated: 0,
+        sortBs: 0,
+      };
+      svc.servicesCount += 1;
+      svc.sortBs += bsEquiv ?? 0;
+
+      if (isCash && isForeign) {
+        // Efectivo en moneda extranjera → se queda en su moneda.
+        cashTotals.set(cur, (cashTotals.get(cur) ?? 0) + amount);
+        svc.cash.set(cur, (svc.cash.get(cur) ?? 0) + amount);
+      } else {
+        // Todo lo demás → Bs a tasa histórica (VES nativo ×1).
+        const bsAmt = isForeign ? (rate != null ? amount * rate : 0) : amount;
+        if (isForeign && rate == null) missingRateDetails += 1;
+        bsAccumulated += bsAmt;
+        svc.bsAccumulated += bsAmt;
+      }
+      svcMap.set(Number(r.serviceId), svc);
+    }
+
+    const round2 = (n: number): number => parseFloat(n.toFixed(2));
+    const mapToSortedList = (m: Map<string, number>) =>
+      [...m.entries()]
+        .map(([currency, amount]) => ({
+          currency,
+          companyAmount: round2(amount),
+        }))
+        .filter((x) => x.companyAmount > 0)
+        .sort((a, b) => b.companyAmount - a.companyAmount);
+
+    const byService = [...svcMap.entries()]
+      .map(([serviceId, s]) => ({
+        serviceId,
+        serviceName: s.serviceName,
+        servicesCount: s.servicesCount,
+        // Efectivo en moneda extranjera (una entrada por moneda).
+        cash: mapToSortedList(s.cash),
+        // Resto (digital + efectivo Bs) a tasa histórica.
+        bsAccumulated: round2(s.bsAccumulated),
       }))
-      .filter((r) => r.companyAmount > 0)
-      .sort((a, b) => b.companyAmount - a.companyAmount);
+      .filter((s) => s.cash.length > 0 || s.bsAccumulated > 0)
+      .sort(
+        (a, b) =>
+          (svcMap.get(b.serviceId)!.sortBs || 0) -
+          (svcMap.get(a.serviceId)!.sortBs || 0),
+      );
 
     return {
       range: { startDate, endDate },
       // Caja real: solo lo efectivamente cobrado (collected_at), por fecha de cobro.
       basis: 'collected' as const,
-      byCurrency,
+      // Valor nominal de los servicios, por moneda del servicio ("lo que cuesta").
+      byCurrency: mapToSortedList(nominal),
+      // Cómo entró realmente el dinero (criterio nómina).
+      received: {
+        cash: mapToSortedList(cashTotals),
+        bsAccumulated: round2(bsAccumulated),
+      },
       byService,
-      totalBsAccumulated,
+      // Referencia: TODO llevado a Bs (incluye el efectivo extranjero convertido).
+      totalBsAccumulated: round2(totalBsAccumulated),
       meta: {
-        // Renglones con moneda extranjera sin tasa histórica → no sumaron a Bs.
+        // Detalles en moneda extranjera SIN tasa histórica → no sumaron a Bs.
         missingRateDetails,
       },
     };
