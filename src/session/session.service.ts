@@ -9747,6 +9747,10 @@ export class SessionService {
       totalAppointments: number;
       totalCompleted: number;
       totalCancelled: number;
+      // Comisiones (SUM total_worker) y propinas prorrateadas de este servicio.
+      totalCommissions: number;
+      totalTips: number;
+      // Total real del worker = comisiones + propinas (la barra "Ganancias totales").
       totalEarned: number;
       totalTime: number;
       // Cortesías completadas de este servicio (no suman a los contadores de
@@ -9861,11 +9865,95 @@ export class SessionService {
       aggMap.set(Number(a.serviceId), a);
     }
 
+    // ---------------------------------------------------------------------
+    // Propinas prorrateadas por servicio.
+    // Una propina es por cita/trabajador, no por servicio. Se reparte entre los
+    // servicios que el worker atendió en esa cita, PROPORCIONAL a su comisión en
+    // cada uno (el que más aportó, más propina). Cita de un solo servicio → toda
+    // la propina a ese. Si la comisión de la cita es 0, reparto equitativo.
+    // La suma de todas las propinas por servicio == totalTips del income-report.
+    // ---------------------------------------------------------------------
+    const tipsByService = new Map<number, number>();
+    if (companyWorkerIds.length > 0) {
+      const tipBySession: Array<{ sessionId: number; sessionTip: string }> =
+        await this.sessionDetailRepository.manager.query(
+          `SELECT sp.session_id AS sessionId, COALESCE(SUM(tip.amount), 0) AS sessionTip
+             FROM session_payment_tips tip
+             JOIN session_payments sp ON sp.id = tip.payment_id
+            WHERE tip.company_worker_id IN (?)
+            GROUP BY sp.session_id`,
+          [companyWorkerIds],
+        );
+
+      const tippedSessionIds = tipBySession
+        .map((t) => Number(t.sessionId))
+        .filter((n) => Number.isFinite(n));
+
+      if (tippedSessionIds.length > 0) {
+        // Comisión del worker por (cita, servicio) en las citas con propina.
+        const commRows: Array<{
+          sessionId: number;
+          serviceId: number;
+          comm: string;
+        }> = await this.sessionDetailRepository.manager.query(
+          `SELECT session_id AS sessionId, service_id AS serviceId,
+                  COALESCE(SUM(total_worker), 0) AS comm
+             FROM session_detail
+            WHERE company_worker_id IN (?)
+              AND status IN (3, 4)
+              AND session_id IN (?)
+            GROUP BY session_id, service_id`,
+          [companyWorkerIds, tippedSessionIds],
+        );
+
+        const svcsBySession = new Map<
+          number,
+          Array<{ serviceId: number; comm: number }>
+        >();
+        const commTotalBySession = new Map<number, number>();
+        for (const r of commRows) {
+          const sid = Number(r.sessionId);
+          const comm = parseFloat(r.comm || '0') || 0;
+          if (!svcsBySession.has(sid)) svcsBySession.set(sid, []);
+          svcsBySession
+            .get(sid)!
+            .push({ serviceId: Number(r.serviceId), comm });
+          commTotalBySession.set(
+            sid,
+            (commTotalBySession.get(sid) ?? 0) + comm,
+          );
+        }
+
+        for (const t of tipBySession) {
+          const sid = Number(t.sessionId);
+          const sessionTip = parseFloat(t.sessionTip || '0') || 0;
+          if (sessionTip <= 0) continue;
+          const svcs = svcsBySession.get(sid) ?? [];
+          if (svcs.length === 0) continue; // sin detalle atribuible (raro)
+          const totalComm = commTotalBySession.get(sid) ?? 0;
+          for (const sv of svcs) {
+            const share =
+              totalComm > 0
+                ? sessionTip * (sv.comm / totalComm)
+                : sessionTip / svcs.length;
+            tipsByService.set(
+              sv.serviceId,
+              (tipsByService.get(sv.serviceId) ?? 0) + share,
+            );
+          }
+        }
+      }
+    }
+
     const data = services.map((s) => {
       const a = aggMap.get(s.id);
       const workerEntry = Array.isArray(s.workers)
         ? s.workers.find((w: any) => companyWorkerIds.includes(Number(w?.id)))
         : null;
+
+      const totalCommissions =
+        parseFloat(parseFloat(a?.totalEarned || '0').toFixed(2)) || 0;
+      const totalTips = parseFloat((tipsByService.get(s.id) ?? 0).toFixed(2));
 
       return {
         serviceId: s.id,
@@ -9881,8 +9969,10 @@ export class SessionService {
         totalAppointments: parseInt(a?.totalAppointments, 10) || 0,
         totalCompleted: parseInt(a?.totalCompleted, 10) || 0,
         totalCancelled: parseInt(a?.totalCancelled, 10) || 0,
-        totalEarned:
-          parseFloat(parseFloat(a?.totalEarned || '0').toFixed(2)) || 0,
+        totalCommissions,
+        totalTips,
+        // Total real = comisiones + propinas (la barra "Ganancias totales").
+        totalEarned: parseFloat((totalCommissions + totalTips).toFixed(2)),
         totalTime: parseFloat(parseFloat(a?.totalTime || '0').toFixed(2)) || 0,
         courtesyCount: parseInt(a?.courtesyCount, 10) || 0,
       };
