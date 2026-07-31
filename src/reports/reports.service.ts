@@ -467,6 +467,7 @@ export class ReportsService {
       svcCurrency: string;
       method: string | null;
       companyAmount: string | null;
+      billedAmount: string | null;
       rate: string | null;
     }> = await this.sessionDetailRepository.query(
       `SELECT sd.service_id AS serviceId,
@@ -474,6 +475,7 @@ export class ReportsService {
               UPPER(COALESCE(svc.currency, 'USD')) AS svcCurrency,
               sp.method AS method,
               sd.total_company AS companyAmount,
+              sd.cost AS billedAmount,
               rate.rate AS rate
          FROM session_payments sp
          JOIN session_detail sd
@@ -509,6 +511,8 @@ export class ReportsService {
       cash: Map<string, number>;
       bsAccumulated: number;
       sortBs: number; // Bs-equivalente de todo (para ordenar entre monedas)
+      companyTotal: number; // Σ parte del negocio (para el % ponderado)
+      billedTotal: number; // Σ total facturado (para el % ponderado)
     }
     const svcMap = new Map<number, SvcAgg>();
 
@@ -537,11 +541,16 @@ export class ReportsService {
         cash: new Map<string, number>(),
         bsAccumulated: 0,
         sortBs: 0,
+        companyTotal: 0,
+        billedTotal: 0,
       };
       svc.servicesCount += 1;
       svc.sortBs += bsEquiv ?? 0;
       // Valor nominal por moneda del servicio (mismo criterio que byCurrency).
       svc.nominal.set(cur, (svc.nominal.get(cur) ?? 0) + amount);
+      // Para el % ponderado del negocio en este servicio (parte ÷ facturado).
+      svc.companyTotal += amount;
+      svc.billedTotal += parseFloat(r.billedAmount || '0') || 0;
 
       if (isCash && isForeign) {
         // Efectivo en moneda extranjera → se queda en su moneda.
@@ -572,6 +581,13 @@ export class ReportsService {
         serviceId,
         serviceName: s.serviceName,
         servicesCount: s.servicesCount,
+        // % del negocio en este servicio, ponderado (parte ÷ facturado × 100).
+        // Cuadra con los montos: un mismo servicio con distintos % por trabajador
+        // queda con el efectivo ponderado.
+        companyPercentage:
+          s.billedTotal > 0
+            ? round2((s.companyTotal / s.billedTotal) * 100)
+            : 0,
         // Valor nominal por moneda (la suma de todos los servicios == byCurrency).
         nominal: mapToSortedList(s.nominal),
         // Efectivo en moneda extranjera (una entrada por moneda).
