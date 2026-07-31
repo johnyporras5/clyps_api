@@ -434,6 +434,110 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Ingresos POR COMPAÑÍA: solo la parte que le corresponde a la company
+   * (`session_detail.total_company`), en caja real (cobros con `collected_at`).
+   *
+   * El rango se aplica sobre `collected_at` (cuándo entró el dinero, no la fecha
+   * de la cita). Devuelve el total por moneda (USD/EUR/VES) en su propia moneda,
+   * y un total en Bs ACUMULADO: cada cobro se convierte con la tasa histórica del
+   * momento del cobro (`session_payment_lines.exchange_rate`), nunca con la tasa
+   * de hoy. VES cuenta ×1.
+   */
+  async getCompanyIncome(adminId: number, startDate: string, endDate: string) {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+
+    const rows: Array<{
+      currency: string;
+      details: string;
+      companyAmount: string | null;
+      companyAmountBs: string | null;
+      missingRate: string;
+    }> = await this.sessionDetailRepository.query(
+      // La tasa se pre-agrega por (payment, moneda) para no multiplicar filas si
+      // un cobro tuviera más de un renglón en la misma moneda.
+      `SELECT UPPER(COALESCE(svc.currency, 'USD')) AS currency,
+              COUNT(*) AS details,
+              ROUND(SUM(sd.total_company), 2) AS companyAmount,
+              ROUND(
+                SUM(
+                  sd.total_company *
+                  COALESCE(
+                    rate.rate,
+                    IF(UPPER(COALESCE(svc.currency, 'USD')) = 'VES', 1, NULL)
+                  )
+                ),
+                2
+              ) AS companyAmountBs,
+              SUM(
+                CASE
+                  WHEN UPPER(COALESCE(svc.currency, 'USD')) <> 'VES'
+                       AND rate.rate IS NULL THEN 1
+                  ELSE 0
+                END
+              ) AS missingRate
+         FROM session_payments sp
+         JOIN session_detail sd
+           ON sd.session_id = sp.session_id
+          AND sd.status = 4
+          AND sd.is_courtesy = 0
+         JOIN company_worker cw
+           ON cw.id = sd.company_worker_id
+          AND cw.company_id = ?
+         LEFT JOIN service svc ON svc.id = sd.service_id
+         LEFT JOIN (
+           SELECT payment_id, UPPER(currency) AS cur, AVG(exchange_rate) AS rate
+             FROM session_payment_lines
+            GROUP BY payment_id, UPPER(currency)
+         ) rate
+           ON rate.payment_id = sp.id
+          AND rate.cur = UPPER(COALESCE(svc.currency, 'USD'))
+        WHERE sp.collected_at IS NOT NULL
+          AND sp.collected_at BETWEEN ? AND ?
+        GROUP BY UPPER(COALESCE(svc.currency, 'USD'))`,
+      [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
+    );
+
+    // Total por moneda (se omiten las monedas donde la company no ganó nada) y
+    // total en Bs acumulado (suma de cada cobro a su tasa histórica).
+    const byCurrency = rows
+      .map((r) => ({
+        currency: r.currency,
+        companyAmount: parseFloat(r.companyAmount || '0'),
+      }))
+      .filter((r) => r.companyAmount > 0)
+      .sort((a, b) => b.companyAmount - a.companyAmount);
+
+    const totalBsAccumulated = parseFloat(
+      rows
+        .reduce((sum, r) => sum + parseFloat(r.companyAmountBs || '0'), 0)
+        .toFixed(2),
+    );
+    const missingRateDetails = rows.reduce(
+      (sum, r) => sum + (parseInt(r.missingRate || '0', 10) || 0),
+      0,
+    );
+
+    return {
+      range: { startDate, endDate },
+      // Caja real: solo lo efectivamente cobrado (collected_at), por fecha de cobro.
+      basis: 'collected' as const,
+      byCurrency,
+      totalBsAccumulated,
+      meta: {
+        // Renglones con moneda extranjera sin tasa histórica → no sumaron a Bs.
+        missingRateDetails,
+      },
+    };
+  }
+
   // ===========================================================================
   // Reporte de clientes (activos / nuevos / perdidos)
   // ---------------------------------------------------------------------------

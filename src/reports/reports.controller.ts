@@ -11,6 +11,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { IncomeServicesQueryDto } from './dto/income-services-query.dto';
+import { CompanyIncomeQueryDto } from './dto/company-income-query.dto';
 import { ClientsReportQueryDto } from './dto/clients-report-query.dto';
 import { ClientsListQueryDto } from './dto/clients-list-query.dto';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
@@ -49,6 +50,21 @@ export class ReportsController {
       query.endDate,
       query.page,
       query.limit,
+    );
+  }
+
+  // Ingresos por compañía: solo la parte de la company, en caja real (cobrado),
+  // por moneda y en Bs acumulado (tasa histórica de cada cobro).
+  @Get('company-income')
+  @Roles('adm')
+  async getCompanyIncome(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: CompanyIncomeQueryDto,
+  ) {
+    return this.reportsService.getCompanyIncome(
+      req.user.sub,
+      query.startDate,
+      query.endDate,
     );
   }
 
