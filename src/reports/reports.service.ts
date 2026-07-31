@@ -48,6 +48,8 @@ interface ServiceIncomeRawRow extends IncomeAggRawRow {
 }
 interface WorkerIncomeRawRow extends IncomeAggRawRow {
   companyWorkerId: string;
+  // Comisión del trabajador (SUM total_worker), para la vista "ganancia del empleado".
+  workerIncome?: string | null;
 }
 interface ClientApptRawRow {
   sessionId: string;
@@ -306,6 +308,8 @@ export class ReportsService {
       .createQueryBuilder('sd')
       .select('sd.company_worker_id', 'companyWorkerId')
       .addSelect('SUM(sd.cost)', 'totalIncome')
+      // Lo que se lleva el empleado (su comisión), para la vista alterna.
+      .addSelect('SUM(sd.total_worker)', 'workerIncome')
       .addSelect('COUNT(*)', 'servicesCount')
       .where('sd.company_worker_id IN (:...workerIds)', { workerIds })
       .andWhere('sd.start_datetime BETWEEN :startDate AND :endDate', {
@@ -346,6 +350,11 @@ export class ReportsService {
       (sum, r) => sum + parseFloat(r.totalIncome || '0'),
       0,
     );
+    // Total de comisiones de los empleados (vista "ganancia del empleado").
+    const totalWorkerIncome = allResults.reduce(
+      (sum, r) => sum + parseFloat(r.workerIncome || '0'),
+      0,
+    );
     const totalServices = allResults.reduce(
       (sum, r) => sum + parseInt(r.servicesCount || '0'),
       0,
@@ -353,11 +362,12 @@ export class ReportsService {
 
     const incomeByWorker = new Map<
       number,
-      { totalIncome: number; servicesCount: number }
+      { totalIncome: number; workerIncome: number; servicesCount: number }
     >();
     for (const r of allResults) {
       incomeByWorker.set(parseInt(r.companyWorkerId), {
         totalIncome: parseFloat(r.totalIncome || '0'),
+        workerIncome: parseFloat(r.workerIncome || '0'),
         servicesCount: parseInt(r.servicesCount || '0', 10) || 0,
       });
     }
@@ -368,6 +378,7 @@ export class ReportsService {
       .map((cwId) => ({
         companyWorkerId: cwId,
         totalIncome: incomeByWorker.get(cwId)?.totalIncome ?? 0,
+        workerIncome: incomeByWorker.get(cwId)?.workerIncome ?? 0,
         servicesCount: incomeByWorker.get(cwId)?.servicesCount ?? 0,
         courtesyServices: courtesyByWorker.get(cwId) ?? 0,
       }))
@@ -403,6 +414,8 @@ export class ReportsService {
             )
           : null,
         totalIncome: parseFloat(income.toFixed(2)),
+        // Lo que se lleva el empleado (su comisión) en el rango.
+        workerIncome: parseFloat(r.workerIncome.toFixed(2)),
         servicesCount: r.servicesCount,
         // Cortesías de este empleado en el rango (aparte de servicesCount).
         courtesyServices: r.courtesyServices,
@@ -417,6 +430,8 @@ export class ReportsService {
     return {
       summary: {
         totalIncome: parseFloat(totalIncome.toFixed(2)),
+        // Suma de comisiones de los empleados (para la vista alterna del front).
+        totalWorkerIncome: parseFloat(totalWorkerIncome.toFixed(2)),
         totalServices,
         currency,
         // Cortesías del rango, aparte del ingreso (front las nota, no las suma).
