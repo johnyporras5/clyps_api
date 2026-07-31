@@ -18,6 +18,15 @@ export type Granularity =
 
 export type Bucket = 'semanal' | 'quincenal' | 'mensual';
 
+/** Granularidades del timeline de ingresos (nombres en inglés, los del front). */
+export type TimelineBucket =
+  | 'day'
+  | 'week'
+  | 'month'
+  | 'quarter'
+  | 'semester'
+  | 'year';
+
 export interface ReportPeriod {
   label: string;
   /** Inicio del período (00:00:00.000 local). */
@@ -171,6 +180,66 @@ export function generateGranularityPeriods(
   }
 
   return periods.reverse();
+}
+
+/**
+ * Genera los buckets del timeline (orden cronológico ascendente) que cubren el
+ * rango [startDate, endDate] según la granularidad pedida. Cada bucket está
+ * alineado al calendario (día/semana/mes/trimestre/semestre/año); el primer y
+ * último bucket se recortan a los extremos del rango. Sin etiqueta: el front la
+ * formatea desde start/end.
+ */
+export function generateTimelineBuckets(
+  startDate: string,
+  endDate: string,
+  bucket: TimelineBucket,
+): Array<{ start: Date; end: Date }> {
+  const [sy, sm, sd] = startDate.split('-').map(Number);
+  const [ey, em, ed] = endDate.split('-').map(Number);
+  const rangeStart = startOfDay(sy, sm - 1, sd);
+  const rangeEnd = endOfDay(ey, em - 1, ed);
+  const out: Array<{ start: Date; end: Date }> = [];
+
+  let cur = rangeStart;
+  while (cur.getTime() <= rangeEnd.getTime()) {
+    const y = cur.getFullYear();
+    const m = cur.getMonth();
+    const d = cur.getDate();
+    let periodEnd: Date;
+    let next: Date;
+
+    if (bucket === 'day') {
+      periodEnd = endOfDay(y, m, d);
+      next = addDays(startOfDay(y, m, d), 1);
+    } else if (bucket === 'week') {
+      const e = addDays(startOfDay(y, m, d), 6);
+      periodEnd = endOfDay(e.getFullYear(), e.getMonth(), e.getDate());
+      next = addDays(startOfDay(y, m, d), 7);
+    } else if (bucket === 'month') {
+      periodEnd = endOfDay(y, m, lastDayOfMonth(y, m));
+      next = startOfDay(y, m + 1, 1);
+    } else if (bucket === 'quarter') {
+      const fm = Math.floor(m / 3) * 3; // primer mes del trimestre
+      periodEnd = endOfDay(y, fm + 2, lastDayOfMonth(y, fm + 2));
+      next = startOfDay(y, fm + 3, 1);
+    } else if (bucket === 'semester') {
+      const fm = m < 6 ? 0 : 6; // primer mes del semestre
+      periodEnd = endOfDay(y, fm + 5, lastDayOfMonth(y, fm + 5));
+      next = startOfDay(y, fm + 6, 1);
+    } else {
+      // year
+      periodEnd = endOfDay(y, 11, 31);
+      next = startOfDay(y + 1, 0, 1);
+    }
+
+    out.push({
+      start: cur,
+      end: periodEnd.getTime() > rangeEnd.getTime() ? rangeEnd : periodEnd,
+    });
+    cur = next;
+  }
+
+  return out;
 }
 
 /**
