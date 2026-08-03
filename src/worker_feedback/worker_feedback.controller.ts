@@ -21,6 +21,7 @@ import { WorkerFeedback } from './entities/worker_feedback.entity';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateWorkerFeedbackDto } from './dto/create-worker_feedback.dto';
 import { UpdateWorkerFeedbackDto } from './dto/update-worker_feedback.dto';
+import { ListWorkerFeedbackQueryDto } from './dto/list-worker-feedback-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -108,20 +109,15 @@ export class WorkerFeedbackController {
   @Roles('adm')
   @HttpCode(HttpStatus.OK)
   async findAllPaginated(
-    @Query() paginationDto: PaginationDto,
-    @Query('workerId') workerIdRaw: string | undefined,
+    @Query() query: ListWorkerFeedbackQueryDto,
     @Req() req: AuthenticatedRequest,
   ): Promise<WorkerFeedbackPaginatedResult> {
     const userId = req.user?.sub; // ID del usuario admin (desde el JWT)
-    const workerId =
-      workerIdRaw !== undefined && workerIdRaw !== ''
-        ? Number(workerIdRaw)
-        : undefined;
     return this.workerFeedbackService.findAllByAdminCompany(
       userId,
-      paginationDto.page,
-      paginationDto.limit,
-      workerId,
+      query.page,
+      query.limit,
+      query.workerId,
     );
   }
 
