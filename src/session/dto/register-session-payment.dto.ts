@@ -109,4 +109,10 @@ export class RegisterSessionPaymentDto {
   @IsOptional()
   @IsBoolean()
   pendingCollection?: boolean;
+
+  // Ajuste a favor/en contra de la company en Bs
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  companyAdjustmentBs?: number | null;
 }

@@ -96,6 +96,16 @@ export class SessionPayment {
   @Column({ name: 'collected_at', type: 'datetime', nullable: true })
   collectedAt: Date | null;
 
+  // Ajuste a favor (o en contra) de la company en Bs
+  @Column({
+    name: 'company_adjustment_bs',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
+  companyAdjustmentBs: number | null;
+
   // true si el cobro nació "en deuda" (pendingCollection). Distingue las cuentas
   // por cobrar (pendientes o ya saldadas con el check) de un cobro normal. Un
   // cobro normal NUNCA aparece en "Cuentas por cobrar".

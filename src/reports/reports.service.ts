@@ -515,6 +515,23 @@ export class ReportsService {
       [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
     );
 
+    // Ajustes a favor/en contra de la company (sobrepago/faltante), en Bs
+    const adjRow: Array<{ adjustmentsBs: string | null }> =
+      await this.sessionDetailRepository.query(
+        `SELECT COALESCE(SUM(sp.company_adjustment_bs), 0) AS adjustmentsBs
+           FROM session_payments sp
+          WHERE sp.collected_at IS NOT NULL
+            AND sp.collected_at BETWEEN ? AND ?
+            AND sp.company_adjustment_bs IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM session_detail sd
+                JOIN company_worker cw ON cw.id = sd.company_worker_id
+               WHERE sd.session_id = sp.session_id AND cw.company_id = ?
+            )`,
+        [`${startDate} 00:00:00`, `${endDate} 23:59:59`, company.id],
+      );
+    const adjustmentsBs = parseFloat(adjRow[0]?.adjustmentsBs || '0') || 0;
+
     const nominal = new Map<string, number>(); // moneda del servicio → valor
     const cashTotals = new Map<string, number>(); // moneda extranjera → efectivo
     let bsAccumulated = 0; // digital + efectivo Bs, a tasa histórica
@@ -625,17 +642,21 @@ export class ReportsService {
       basis: 'collected' as const,
       // Valor nominal de los servicios, por moneda del servicio ("lo que cuesta").
       byCurrency: mapToSortedList(nominal),
-      // Cómo entró realmente el dinero (criterio nómina).
+      // Cómo entró realmente el dinero (criterio nómina). El ajuste (sobrepago/
+      // faltante) va 100% a la company y suma al ingreso en Bs.
       received: {
         cash: mapToSortedList(cashTotals),
-        bsAccumulated: round2(bsAccumulated),
+        bsAccumulated: round2(bsAccumulated + adjustmentsBs),
       },
       byService,
       // Referencia: TODO llevado a Bs (incluye el efectivo extranjero convertido).
-      totalBsAccumulated: round2(totalBsAccumulated),
+      totalBsAccumulated: round2(totalBsAccumulated + adjustmentsBs),
       meta: {
         // Detalles en moneda extranjera SIN tasa histórica → no sumaron a Bs.
         missingRateDetails,
+        // Sobrepagos/faltantes a favor de la company incluidos en el Bs (auditoría).
+        // No se reparten por servicio (no son atribuibles a uno).
+        adjustmentsBs: round2(adjustmentsBs),
       },
     };
   }
@@ -743,6 +764,31 @@ export class ReportsService {
         if (isForeign && rate == null) missingRateDetails += 1;
         a.bsAccumulated += bsAmt;
       }
+    }
+
+    // Ajustes (sobrepago/faltante) a favor de la company, por fecha de cobro. Una
+    // fila por cobro; van 100% a la company y suman al Bs del bucket que toca.
+    const adjRows: Array<{
+      collectedAt: Date | string;
+      adjustmentBs: string | null;
+    }> = await this.sessionDetailRepository.query(
+      `SELECT sp.collected_at AS collectedAt,
+              sp.company_adjustment_bs AS adjustmentBs
+         FROM session_payments sp
+        WHERE sp.collected_at IS NOT NULL
+          AND sp.collected_at BETWEEN ? AND ?
+          AND sp.company_adjustment_bs IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM session_detail sd
+              JOIN company_worker cw ON cw.id = sd.company_worker_id
+             WHERE sd.session_id = sp.session_id AND cw.company_id = ?
+          )`,
+      [`${startDate} 00:00:00`, `${endDate} 23:59:59`, company.id],
+    );
+    for (const r of adjRows) {
+      const idx = bucketIndexOf(new Date(r.collectedAt).getTime());
+      if (idx < 0) continue;
+      acc[idx].bsAccumulated += parseFloat(r.adjustmentBs || '0') || 0;
     }
 
     const round2 = (n: number): number => parseFloat(n.toFixed(2));

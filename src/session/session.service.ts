@@ -3924,6 +3924,10 @@ export class SessionService {
         collectedAt: dto.pendingCollection ? null : paidAt,
         // Marca la cuenta por cobrar para toda su vida (aunque luego se salde).
         wasPending: !!dto.pendingCollection,
+        // Sobrepago/faltante que va 100% a la company (Bs). 0/omitido → sin ajuste.
+        companyAdjustmentBs: dto.companyAdjustmentBs
+          ? dto.companyAdjustmentBs
+          : null,
       });
 
       if (dto.lines.length > 0) {
