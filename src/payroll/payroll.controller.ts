@@ -70,6 +70,14 @@ export class PayrollController {
     return { ...result, backfill };
   }
 
+  // "Empezar de 0": revierte la nómina recién activada (borra config + periodos
+  // + conceptos + payouts). Solo si canRevert (primer periodo abierto, sin pagos).
+  @Post('revert')
+  @Roles('adm')
+  async revert(@Request() req: AuthenticatedRequest) {
+    return this.periodService.revertActivation(req.user.sub);
+  }
+
   // Periodos del proveedor ("Mi nómina"). Incluye el abierto: ve lo que va
   // ganando. Se declara antes que me/periods/:id.
   @Get('me/periods')
