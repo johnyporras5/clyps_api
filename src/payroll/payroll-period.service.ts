@@ -64,9 +64,11 @@ export class PayrollPeriodService {
    * para decidir: `false` → onboarding (muestra el date-picker de inicio);
    * `true` → solo el selector de frecuencia.
    */
-  async getFrequencyConfig(
-    adminId: number,
-  ): Promise<{ frequency: PayrollFrequency; configured: boolean }> {
+  async getFrequencyConfig(adminId: number): Promise<{
+    frequency: PayrollFrequency;
+    configured: boolean;
+    canRevert: boolean;
+  }> {
     const companyId = await this.resolveAdminCompanyId(adminId);
     const hasPeriod = await this.periodRepo.findOne({
       where: { companyId },
@@ -75,7 +77,66 @@ export class PayrollPeriodService {
     return {
       frequency: await this.resolveFrequency(companyId),
       configured: !!hasPeriod,
+      // Solo se puede revertir la nómina recién activada (ver canRevert).
+      canRevert: await this.canRevert(companyId),
     };
+  }
+
+  /**
+   * ¿Se puede "empezar de 0" (revertir la activación)? Solo la PRIMERA vez recién
+   * configurada: un único periodo, aún ABIERTO (sin rotar a un segundo), y sin
+   * ningún pago registrado. En cuanto la nómina se usa de verdad (rota, se aprueba
+   * o se paga) deja de ser reversible.
+   */
+  async canRevert(companyId: number): Promise<boolean> {
+    const periods = await this.periodRepo.find({ where: { companyId } });
+    if (periods.length !== 1 || periods[0].status !== 'open') return false;
+    const rows: Array<{ n: number }> = await this.periodRepo.query(
+      `SELECT COUNT(*) AS n FROM payout WHERE company_id = ?`,
+      [companyId],
+    );
+    return Number(rows[0]?.n ?? 0) === 0;
+  }
+
+  /**
+   * "Empezar de 0": borra TODA la nómina de la empresa (config + periodos +
+   * detalles + conceptos + payouts + snapshots) y la deja sin configurar, para
+   * reconfigurar frecuencia/fecha desde cero. Solo si `canRevert` (primera vez,
+   * un único periodo abierto, sin pagos). No toca citas ni cobros.
+   */
+  async revertActivation(adminId: number): Promise<{ reverted: true }> {
+    const companyId = await this.resolveAdminCompanyId(adminId);
+    if (!(await this.canRevert(companyId))) {
+      throw new ConflictException(
+        'Solo se puede revertir la nómina recién activada: un único periodo ' +
+          'abierto, sin pagos ni aprobaciones.',
+      );
+    }
+    // Borrado hijo → padre, en transacción, acotado a la company.
+    await this.periodRepo.manager.transaction(async (m) => {
+      await m.query('DELETE FROM payout WHERE company_id = ?', [companyId]);
+      await m.query('DELETE FROM payroll_concept WHERE company_id = ?', [
+        companyId,
+      ]);
+      await m.query(
+        `DELETE FROM period_detail_currency WHERE period_detail_id IN
+           (SELECT id FROM period_detail WHERE company_id = ?)`,
+        [companyId],
+      );
+      await m.query('DELETE FROM period_detail WHERE company_id = ?', [
+        companyId,
+      ]);
+      await m.query('DELETE FROM payroll_period WHERE company_id = ?', [
+        companyId,
+      ]);
+      await m.query('DELETE FROM payroll_config WHERE company_id = ?', [
+        companyId,
+      ]);
+    });
+    this.logger.log(
+      `Nómina de company ${companyId} revertida a "sin configurar" por admin ${adminId}`,
+    );
+    return { reverted: true };
   }
 
   /**
