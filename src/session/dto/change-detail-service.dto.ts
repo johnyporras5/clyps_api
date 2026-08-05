@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsPositive } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsPositive } from 'class-validator';
 
 /**
  * Cambia el servicio de un detalle YA AGENDADO de una cita.
@@ -17,4 +17,12 @@ export class ChangeDetailServiceDto {
   @IsInt()
   @IsPositive()
   offerId?: number;
+
+  // Caso "cita que ya pasó" (estaba agendada por estar sin internet): en vez de
+  // reprogramar las citas siguientes (ripple), RECORTA este servicio para que
+  // termine justo cuando empieza la siguiente cita del mismo trabajador. No mueve
+  // nada más. Lo decide el admin en el modal de confirmación.
+  @IsOptional()
+  @IsBoolean()
+  keepFollowingAppointments?: boolean;
 }

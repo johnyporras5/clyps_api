@@ -553,6 +553,43 @@ export class SessionService {
   }
 
   /**
+   * Inicio de la PRÓXIMA cita/servicio del mismo trabajador ese día, después de
+   * `afterStart` (excluye el detalle `excludeDetailId` y los cancelados). null si
+   * no hay ninguna después. Se usa para recortar un servicio a su hueco sin mover
+   * las demás (caso "la cita ya pasó").
+   */
+  private async nextDetailStartForWorker(
+    companyWorkerId: number | null | undefined,
+    afterStart: Date,
+    excludeDetailId: number,
+  ): Promise<Date | null> {
+    if (!companyWorkerId) return null;
+    const startOfDay = new Date(
+      Date.UTC(
+        afterStart.getUTCFullYear(),
+        afterStart.getUTCMonth(),
+        afterStart.getUTCDate(),
+        0,
+        0,
+        0,
+      ),
+    );
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+    const rows = await this.sessionDetailRepository.find({
+      where: {
+        companyWorkerId,
+        status: Not(5),
+        startDatetime: Between(afterStart, endOfDay),
+      },
+    });
+    const starts = rows
+      .filter((d) => d.id !== excludeDetailId && d.startDatetime)
+      .map((d) => new Date(d.startDatetime).getTime())
+      .filter((t) => t > afterStart.getTime());
+    return starts.length ? new Date(Math.min(...starts)) : null;
+  }
+
+  /**
    * CLYP-311: reprogramar / mover / redimensionar una cita.
    * - Gate por status: agendada (1/8) → inicio+fin; en proceso (2) → solo fin;
    *   completada(3)/pagada(4,6)/cancelada(5) → 409.
@@ -9572,8 +9609,28 @@ export class SessionService {
 
     // 9. Recalcular fin del bloque según la nueva duración.
     const start = detail.startDatetime ? new Date(detail.startDatetime) : null;
-    const newEnd =
+    let newEnd =
       start && newTime > 0 ? new Date(start.getTime() + newTime * 60000) : null;
+
+    // Caso "cita que ya pasó": el admin pidió NO mover las siguientes. Si el nuevo
+    // servicio (más largo) pisaría la próxima cita del trabajador, se RECORTA para
+    // que termine justo cuando esa empieza (como si esa hubiese sido la duración
+    // real). Si no hay próxima, se deja la duración completa.
+    let clampedMinutes: number | null = null;
+    if (dto.keepFollowingAppointments && start && newEnd) {
+      const nextStart = await this.nextDetailStartForWorker(
+        detail.companyWorkerId,
+        start,
+        detailId,
+      );
+      if (nextStart && nextStart.getTime() < newEnd.getTime()) {
+        newEnd = nextStart;
+        clampedMinutes = Math.max(
+          0,
+          Math.round((newEnd.getTime() - start.getTime()) / 60000),
+        );
+      }
+    }
 
     const previousServiceId = detail.serviceId;
 
@@ -9589,7 +9646,8 @@ export class SessionService {
         cost: amounts.cost,
         totalWorker: amounts.totalWorker,
         totalCompany: amounts.totalCompany,
-        totalTime: newTime,
+        // Si se recortó al hueco (cita pasada), el tiempo real es el del hueco.
+        totalTime: clampedMinutes ?? newTime,
         // La columna admite NULL en BD aunque el tipo TS sea number; limpiar la
         // oferta previa cuando el nuevo precio no proviene de una oferta.
         offerId: (priceResolution.appliedOfferId ?? null) as unknown as number,
@@ -9614,8 +9672,10 @@ export class SessionService {
     //     siguientes del mismo trabajador, se corren hacia abajo (no se
     //     rechaza), protegiendo el detalle recién cambiado. Best-effort: si el
     //     arrastre falla, el cambio de servicio ya quedó guardado.
+    //     Se OMITE cuando el admin pidió no mover las siguientes (cita pasada):
+    //     ahí ya recortamos este servicio al hueco, así que no hay solape.
     let movedByRipple: RippleMovedDetail[] = [];
-    if (start) {
+    if (start && !dto.keepFollowingAppointments) {
       movedByRipple = await this.rippleWorkerColumn(
         detail.companyWorkerId,
         start,
