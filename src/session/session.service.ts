@@ -553,10 +553,11 @@ export class SessionService {
   }
 
   /**
-   * Inicio de la PRÓXIMA cita/servicio del mismo trabajador ese día, después de
-   * `afterStart` (excluye el detalle `excludeDetailId` y los cancelados). null si
-   * no hay ninguna después. Se usa para recortar un servicio a su hueco sin mover
-   * las demás (caso "la cita ya pasó").
+   * Inicio de la próxima cita/servicio AGENDADO (status 1) del mismo trabajador
+   * ese día, después de `afterStart` (excluye el detalle `excludeDetailId`). null
+   * si no hay ninguna. Se usa para recortar un servicio a su hueco sin mover las
+   * demás. Solo cuentan las AGENDADAS: las completadas/pagadas/en proceso ya
+   * pasaron y no son barrera (no se pueden mover), así que se ignoran.
    */
   private async nextDetailStartForWorker(
     companyWorkerId: number | null | undefined,
@@ -578,7 +579,7 @@ export class SessionService {
     const rows = await this.sessionDetailRepository.find({
       where: {
         companyWorkerId,
-        status: Not(5),
+        status: 1, // solo Agendadas
         startDatetime: Between(afterStart, endOfDay),
       },
     });
