@@ -1540,10 +1540,10 @@ export class PayrollEarningsService {
     if (!Number.isFinite(raw) || raw === 0) {
       throw new UnprocessableEntityException('El monto no puede ser 0');
     }
-    // bonus/deduction: el tipo manda (se toma el valor absoluto).
+    // bonus/tip: siempre suman (+). deduction: siempre resta (−).
     // adjustment: el signo lo da el monto recibido.
     const sign: 1 | -1 =
-      dto.type === 'bonus'
+      dto.type === 'bonus' || dto.type === 'tip'
         ? 1
         : dto.type === 'deduction'
           ? -1
@@ -1569,6 +1569,8 @@ export class PayrollEarningsService {
         amountMinor,
         currency,
         amountBsMinor: currency === 'VES' ? amountMinor : null,
+        // Tasa del día para convertir a $/€ en el reporte del trabajador.
+        exchangeRate: dto.exchangeRate ?? null,
         occurredAt: new Date(),
         sourceType: 'manual',
         sourceId: null,

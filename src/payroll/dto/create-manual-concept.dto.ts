@@ -2,6 +2,7 @@ import {
   IsIn,
   IsNumber,
   IsOptional,
+  IsPositive,
   IsString,
   Length,
   MaxLength,
@@ -9,10 +10,12 @@ import {
 import { Type } from 'class-transformer';
 
 // Tipos que el admin puede agregar a mano (el resto se autogenera).
+// 'tip' = propina manual (suma a propinas del trabajador, no a bonos).
 export const MANUAL_CONCEPT_TYPES = [
   'bonus',
   'deduction',
   'adjustment',
+  'tip',
 ] as const;
 export type ManualConceptType = (typeof MANUAL_CONCEPT_TYPES)[number];
 
@@ -35,6 +38,15 @@ export class CreateManualConceptDto {
   @IsOptional()
   @IsIn(['VES', 'USD', 'EUR'])
   currency?: string;
+
+  // Tasa del día (Bs por 1 unidad de la moneda del negocio) al registrar el
+  // concepto. El front la manda cuando el concepto va en Bs pero los servicios
+  // son en $/€, para poder convertirlo en el reporte del trabajador. Opcional.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  exchangeRate?: number;
 
   // Motivo / referencia interna (va en metadata).
   @IsOptional()

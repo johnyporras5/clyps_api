@@ -10277,17 +10277,23 @@ export class SessionService {
     targetWorkerId?: number,
   ): Promise<{
     range: { startDate: string | null; endDate: string | null };
+    // Moneda del reporte = la de los servicios del worker ($/€, o VES). Todo lo
+    // que esté en Bs se convierte a esta moneda con la tasa histórica.
+    currency: string;
     totals: {
-      // Total ingresos del worker = comisiones + propinas.
+      // Total ingresos = comisiones + propinas (en `currency`).
       totalEarned: number;
-      // Desglose: comisiones (SUM total_worker) y propinas (SUM tips).
       totalCommissions: number;
+      // Propinas = de servicios + manuales de nómina.
       totalTips: number;
+      tipsFromServices: number;
+      manualTips: number;
+      // Conceptos manuales de nómina (aparte de los servicios).
+      additionalIncome: number; // bonos + ajustes (+)
+      deductions: number; // deducciones + ajustes (−), en positivo
       totalSessions: number;
       totalServices: number;
       totalTime: number;
-      // Cortesías del rango (status 3/4), separadas de lo pagado: no suman a
-      // totalEarned. El front las suma a los pagados solo para mostrar.
       courtesySessions: number;
       courtesyServices: number;
       courtesyTime: number;
@@ -10300,173 +10306,241 @@ export class SessionService {
       totalTime: number;
       averagePerSession: number;
     }>;
+    // Ítems en Bs que no se pudieron convertir (sin tasa histórica).
+    meta: { unconverted: number };
   }> {
     const { companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
       userId,
       targetWorkerId,
     );
 
-    const query = this.sessionDetailRepository
-      .createQueryBuilder('detail')
-      .innerJoin('session', 'session', 'session.id = detail.session_id')
-      .leftJoin('service', 'service', 'service.id = detail.service_id')
-      .select('detail.service_id', 'serviceId')
-      .addSelect('service.name', 'serviceName')
-      .addSelect('COUNT(detail.id)', 'sessionsCount')
-      .addSelect('SUM(detail.total_worker)', 'totalEarned')
-      // Tiempo REAL trabajado (minutos con decimales) desde start/end_datetime.
-      .addSelect(
-        `
-    SUM(
-      CASE
-        WHEN detail.start_datetime IS NOT NULL
-             AND detail.end_datetime IS NOT NULL
-        THEN TIMESTAMPDIFF(SECOND, detail.start_datetime, detail.end_datetime) / 60
-        ELSE 0
-      END
-    )`,
-        'totalTime',
-      )
-      .where('detail.company_worker_id IN (:...companyWorkerIds)', {
-        companyWorkerIds,
-      })
-      .andWhere('detail.status IN (:...completedStatus)', {
-        completedStatus: [3, 4],
-      })
-      // Las cortesías no cuentan como ingreso ni servicio del worker.
-      .andWhere('detail.is_courtesy = 0');
-
-    // Normalizar el rango al inicio/fin del día EN LA ZONA DEL NEGOCIO, para que
-    // sea inclusivo del día completo y no pierda las citas de noche.
-    const toStartOfDay = (d: string): Date => businessDayBounds(d).startOfDay;
-    const toEndOfDay = (d: string): Date => businessDayBounds(d).endOfDay;
-
-    // Mismo filtro de rango para todas las queries (ingresos, cortesías, propinas).
-    const applyRange = <T extends ObjectLiteral>(
-      qb: SelectQueryBuilder<T>,
-    ): void => {
+    // Predicado de rango (zona del negocio) reutilizable para cualquier columna.
+    const rangeSql = (col: string): { sql: string; params: Date[] } => {
       if (startDate && endDate) {
-        qb.andWhere(
-          'session.session_datetime BETWEEN :startDate AND :endDate',
-          {
-            startDate: toStartOfDay(startDate),
-            endDate: toEndOfDay(endDate),
-          },
-        );
-      } else if (startDate) {
-        qb.andWhere('session.session_datetime >= :startDate', {
-          startDate: toStartOfDay(startDate),
-        });
-      } else if (endDate) {
-        qb.andWhere('session.session_datetime <= :endDate', {
-          endDate: toEndOfDay(endDate),
-        });
+        return {
+          sql: ` AND ${col} BETWEEN ? AND ?`,
+          params: [
+            businessDayBounds(startDate).startOfDay,
+            businessDayBounds(endDate).endOfDay,
+          ],
+        };
       }
+      if (startDate) {
+        return {
+          sql: ` AND ${col} >= ?`,
+          params: [businessDayBounds(startDate).startOfDay],
+        };
+      }
+      if (endDate) {
+        return {
+          sql: ` AND ${col} <= ?`,
+          params: [businessDayBounds(endDate).endOfDay],
+        };
+      }
+      return { sql: '', params: [] };
     };
-    applyRange(query);
 
-    const rows = await query
-      .groupBy('detail.service_id')
-      .addGroupBy('service.name')
-      .orderBy('totalEarned', 'DESC')
-      .getRawMany();
+    const round2 = (n: number): number => parseFloat(n.toFixed(2));
 
-    const byService = rows.map((r) => {
-      const sessionsCount = parseInt(r.sessionsCount, 10) || 0;
-      const totalEarned =
-        parseFloat(parseFloat(r.totalEarned || '0').toFixed(2)) || 0;
-      return {
-        serviceId: Number(r.serviceId),
-        serviceName: r.serviceName ?? 'Servicio no encontrado',
-        sessionsCount,
-        totalEarned,
-        totalTime: parseFloat(parseFloat(r.totalTime || '0').toFixed(2)) || 0,
-        averagePerSession:
-          sessionsCount > 0
-            ? parseFloat((totalEarned / sessionsCount).toFixed(2))
-            : 0,
+    // 1) Comisiones a nivel de detalle (con moneda del servicio).
+    const sessRange = rangeSql('sess.session_datetime');
+    const commRows: Array<{
+      serviceId: number;
+      serviceName: string | null;
+      cur: string;
+      amount: string | null;
+      mins: string | null;
+    }> = await this.sessionDetailRepository.manager.query(
+      `SELECT sd.service_id AS serviceId, s.name AS serviceName,
+              UPPER(COALESCE(s.currency, 'USD')) AS cur,
+              COALESCE(sd.total_worker, 0) AS amount,
+              CASE WHEN sd.start_datetime IS NOT NULL AND sd.end_datetime IS NOT NULL
+                   THEN TIMESTAMPDIFF(SECOND, sd.start_datetime, sd.end_datetime) / 60
+                   ELSE 0 END AS mins
+         FROM session_detail sd
+         JOIN session sess ON sess.id = sd.session_id
+         LEFT JOIN service s ON s.id = sd.service_id
+        WHERE sd.company_worker_id IN (?) AND sd.status IN (3, 4)
+          AND sd.is_courtesy = 0${sessRange.sql}`,
+      [companyWorkerIds, ...sessRange.params],
+    );
+
+    // Moneda del reporte: la más frecuente entre las comisiones; VES/USD por
+    // defecto si no hay comisiones en el rango.
+    const curCount = new Map<string, number>();
+    for (const r of commRows)
+      curCount.set(r.cur, (curCount.get(r.cur) ?? 0) + 1);
+    const C =
+      [...curCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'USD';
+
+    let unconverted = 0;
+    // Convierte un monto a la moneda del reporte C. amount va en `fromCur`; para
+    // VES se usa `rate` (Bs por 1 C). Devuelve null si no se puede convertir.
+    const toC = (
+      amount: number,
+      fromCur: string,
+      rate: number | null,
+    ): number | null => {
+      if (fromCur === C) return amount;
+      if (fromCur === 'VES') return rate && rate > 0 ? amount / rate : null;
+      return null; // otra divisa ≠ C (raro): no se convierte directo
+    };
+
+    // Comisiones por servicio (en C). Las comisiones ya están en la moneda del
+    // servicio; si alguna estuviera en otra moneda, se cuenta como sin convertir.
+    const svcMap = new Map<
+      number,
+      { name: string; count: number; earned: number; time: number }
+    >();
+    for (const r of commRows) {
+      const amount = parseFloat(r.amount || '0') || 0;
+      const conv = toC(amount, r.cur, null);
+      const sid = Number(r.serviceId);
+      const g = svcMap.get(sid) ?? {
+        name: r.serviceName ?? 'Servicio no encontrado',
+        count: 0,
+        earned: 0,
+        time: 0,
       };
-    });
+      g.count += 1;
+      g.time += parseFloat(r.mins || '0') || 0;
+      if (conv == null) unconverted += 1;
+      else g.earned += conv;
+      svcMap.set(sid, g);
+    }
+    const byService = [...svcMap.entries()]
+      .map(([serviceId, g]) => ({
+        serviceId,
+        serviceName: g.name,
+        sessionsCount: g.count,
+        totalEarned: round2(g.earned),
+        totalTime: round2(g.time),
+        averagePerSession: g.count > 0 ? round2(g.earned / g.count) : 0,
+      }))
+      .sort((a, b) => b.totalEarned - a.totalEarned);
 
-    const courtesyQuery = this.sessionDetailRepository
-      .createQueryBuilder('detail')
-      .innerJoin('session', 'session', 'session.id = detail.session_id')
-      .select('COUNT(detail.id)', 'courtesySessions')
-      .addSelect('COUNT(DISTINCT detail.service_id)', 'courtesyServices')
-      .addSelect(
-        `
-    SUM(
-      CASE
-        WHEN detail.start_datetime IS NOT NULL
-             AND detail.end_datetime IS NOT NULL
-        THEN TIMESTAMPDIFF(SECOND, detail.start_datetime, detail.end_datetime) / 60
-        ELSE 0
-      END
-    )`,
-        'courtesyTime',
-      )
-      .where('detail.company_worker_id IN (:...companyWorkerIds)', {
-        companyWorkerIds,
-      })
-      .andWhere('detail.status IN (:...completedStatus)', {
-        completedStatus: [3, 4],
-      })
-      .andWhere('detail.is_courtesy = 1');
-    applyRange(courtesyQuery);
-    const courtesyRow = await courtesyQuery.getRawOne();
-
-    const courtesySessions = parseInt(courtesyRow?.courtesySessions, 10) || 0;
-    const courtesyServices = parseInt(courtesyRow?.courtesyServices, 10) || 0;
-    const courtesyTime =
-      parseFloat(parseFloat(courtesyRow?.courtesyTime || '0').toFixed(2)) || 0;
-
-    // Propinas del worker en el rango: tip → payment → session, filtradas por la
-    // fecha de la cita (mismo criterio que las comisiones). Un solo total.
-    const tipsQuery = this.sessionDetailRepository.manager
-      .createQueryBuilder()
-      .select('COALESCE(SUM(tip.amount), 0)', 'totalTips')
-      .from('session_payment_tips', 'tip')
-      .innerJoin('session_payments', 'sp', 'sp.id = tip.payment_id')
-      .innerJoin('session', 'session', 'session.id = sp.session_id')
-      .where('tip.company_worker_id IN (:...companyWorkerIds)', {
-        companyWorkerIds,
-      });
-    applyRange(tipsQuery);
-    const tipsRow = await tipsQuery.getRawOne<{ totalTips: string | null }>();
-    const totalTips =
-      parseFloat(parseFloat(tipsRow?.totalTips || '0').toFixed(2)) || 0;
-
-    const totals = byService.reduce(
-      (acc, s) => {
-        acc.totalCommissions += s.totalEarned;
-        acc.totalSessions += s.sessionsCount;
-        acc.totalTime += s.totalTime;
-        return acc;
-      },
-      {
-        totalEarned: 0,
-        totalCommissions: 0,
-        totalTips,
-        totalSessions: 0,
-        totalServices: byService.length,
-        totalTime: 0,
-        courtesySessions,
-        courtesyServices,
-        courtesyTime,
-      },
+    // 2) Propinas de servicio (tip → payment → session). Se convierten a C con la
+    //    tasa del renglón en C del mismo cobro.
+    const tipRows: Array<{
+      amount: string | null;
+      tipCur: string;
+      rateC: string | null;
+    }> = await this.sessionDetailRepository.manager.query(
+      `SELECT t.amount AS amount, UPPER(COALESCE(sp.tip_currency, 'VES')) AS tipCur,
+              rateC.rate AS rateC
+         FROM session_payment_tips t
+         JOIN session_payments sp ON sp.id = t.payment_id
+         JOIN session sess ON sess.id = sp.session_id
+         LEFT JOIN (
+           SELECT payment_id, AVG(exchange_rate) AS rate
+             FROM session_payment_lines WHERE UPPER(currency) = ?
+            GROUP BY payment_id
+         ) rateC ON rateC.payment_id = sp.id
+        WHERE t.company_worker_id IN (?)${rangeSql('sess.session_datetime').sql}`,
+      [C, companyWorkerIds, ...rangeSql('sess.session_datetime').params],
     );
+    let tipsFromServices = 0;
+    for (const r of tipRows) {
+      const amount = parseFloat(r.amount || '0') || 0;
+      const conv = toC(
+        amount,
+        r.tipCur,
+        r.rateC != null ? parseFloat(r.rateC) : null,
+      );
+      if (conv == null) unconverted += 1;
+      else tipsFromServices += conv;
+    }
 
-    totals.totalCommissions = parseFloat(totals.totalCommissions.toFixed(2));
-    totals.totalTime = parseFloat(totals.totalTime.toFixed(2));
-    // Total ingresos = comisiones + propinas.
-    totals.totalEarned = parseFloat(
-      (totals.totalCommissions + totals.totalTips).toFixed(2),
+    // 3) Conceptos manuales de nómina (por occurred_at). Se convierten a C con la
+    //    tasa guardada al crearlos (exchange_rate). tip → propinas; bonus/ajuste+
+    //    → ingresos adicionales; deducción/ajuste− → egresos.
+    const occRange = rangeSql('pc.occurred_at');
+    const manualRows: Array<{
+      type: string;
+      sign: number;
+      cur: string;
+      amountMinor: string | null;
+      bsMinor: string | null;
+      rate: string | null;
+    }> = await this.sessionDetailRepository.manager.query(
+      `SELECT pc.type AS type, pc.sign AS sign, UPPER(pc.currency) AS cur,
+              pc.amount_minor AS amountMinor, pc.amount_bs_minor AS bsMinor,
+              pc.exchange_rate AS rate
+         FROM payroll_concept pc
+         JOIN period_detail pd ON pd.id = pc.period_detail_id
+        WHERE pd.company_worker_id IN (?)
+          AND pc.source_type = 'manual'${occRange.sql}`,
+      [companyWorkerIds, ...occRange.params],
     );
+    let manualTips = 0;
+    let additionalIncome = 0;
+    let deductions = 0;
+    for (const r of manualRows) {
+      const rate = r.rate != null ? parseFloat(r.rate) : null;
+      // Monto en la moneda del concepto: para VES se usa el equivalente en Bs.
+      const foreignAmt = (parseFloat(r.amountMinor || '0') || 0) / 100;
+      const bsAmt = (parseFloat(r.bsMinor || '0') || 0) / 100;
+      const conv =
+        r.cur === C
+          ? foreignAmt
+          : r.cur === 'VES'
+            ? rate && rate > 0
+              ? bsAmt / rate
+              : null
+            : null;
+      if (conv == null) {
+        unconverted += 1;
+        continue;
+      }
+      if (r.type === 'tip') manualTips += conv;
+      else if (Number(r.sign) < 0) deductions += conv;
+      else additionalIncome += conv;
+    }
+
+    // 4) Cortesías (contadores, no dinero) — igual que antes.
+    const courtesyRange = rangeSql('sess.session_datetime');
+    const courtesyRows: Array<{
+      n: string;
+      services: string;
+      mins: string | null;
+    }> = await this.sessionDetailRepository.manager.query(
+      `SELECT COUNT(sd.id) AS n, COUNT(DISTINCT sd.service_id) AS services,
+              SUM(CASE WHEN sd.start_datetime IS NOT NULL AND sd.end_datetime IS NOT NULL
+                       THEN TIMESTAMPDIFF(SECOND, sd.start_datetime, sd.end_datetime) / 60
+                       ELSE 0 END) AS mins
+         FROM session_detail sd
+         JOIN session sess ON sess.id = sd.session_id
+        WHERE sd.company_worker_id IN (?) AND sd.status IN (3, 4)
+          AND sd.is_courtesy = 1${courtesyRange.sql}`,
+      [companyWorkerIds, ...courtesyRange.params],
+    );
+    const cRow = courtesyRows[0];
+
+    const totalCommissions = round2(
+      byService.reduce((s, x) => s + x.totalEarned, 0),
+    );
+    const totalTips = round2(tipsFromServices + manualTips);
 
     return {
       range: { startDate: startDate ?? null, endDate: endDate ?? null },
-      totals,
+      currency: C,
+      totals: {
+        totalEarned: round2(totalCommissions + totalTips),
+        totalCommissions,
+        totalTips,
+        tipsFromServices: round2(tipsFromServices),
+        manualTips: round2(manualTips),
+        additionalIncome: round2(additionalIncome),
+        deductions: round2(deductions),
+        totalSessions: byService.reduce((s, x) => s + x.sessionsCount, 0),
+        totalServices: byService.length,
+        totalTime: round2(byService.reduce((s, x) => s + x.totalTime, 0)),
+        courtesySessions: parseInt(cRow?.n || '0', 10) || 0,
+        courtesyServices: parseInt(cRow?.services || '0', 10) || 0,
+        courtesyTime: round2(parseFloat(cRow?.mins || '0') || 0),
+      },
       byService,
+      meta: { unconverted },
     };
   }
 }
