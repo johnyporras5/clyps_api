@@ -8,16 +8,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  Repository,
-  In,
-  Between,
-  Not,
-  DeepPartial,
-  Brackets,
-  SelectQueryBuilder,
-  ObjectLiteral,
-} from 'typeorm';
+import { Repository, In, Between, Not, DeepPartial, Brackets } from 'typeorm';
 import { Session } from './entities/session.entity';
 import { SessionPayment } from './entities/session-payment.entity';
 import { SessionPaymentLine } from './entities/session-payment-line.entity';
@@ -10281,7 +10272,8 @@ export class SessionService {
     // que esté en Bs se convierte a esta moneda con la tasa histórica.
     currency: string;
     totals: {
-      // Total ingresos = comisiones + propinas (en `currency`).
+      // Total ingresos = comisiones + propinas + ingresos adicionales (bonos).
+      // Los egresos (deducciones) NO se restan aquí: van en su propia tarjeta.
       totalEarned: number;
       totalCommissions: number;
       // Propinas = de servicios + manuales de nómina.
@@ -10520,18 +10512,25 @@ export class SessionService {
       byService.reduce((s, x) => s + x.totalEarned, 0),
     );
     const totalTips = round2(tipsFromServices + manualTips);
+    // Se redondean antes de sumar para que el total cuadre con lo que muestran
+    // las tarjetas (evita el descuadre de 1 céntimo por redondear al final).
+    const additionalIncomeR = round2(additionalIncome);
+    const deductionsR = round2(deductions);
 
     return {
       range: { startDate: startDate ?? null, endDate: endDate ?? null },
       currency: C,
       totals: {
-        totalEarned: round2(totalCommissions + totalTips),
+        // Total = comisiones + propinas + ingresos adicionales − egresos (neto).
+        totalEarned: round2(
+          totalCommissions + totalTips + additionalIncomeR - deductionsR,
+        ),
         totalCommissions,
         totalTips,
         tipsFromServices: round2(tipsFromServices),
         manualTips: round2(manualTips),
-        additionalIncome: round2(additionalIncome),
-        deductions: round2(deductions),
+        additionalIncome: additionalIncomeR,
+        deductions: deductionsR,
         totalSessions: byService.reduce((s, x) => s + x.sessionsCount, 0),
         totalServices: byService.length,
         totalTime: round2(byService.reduce((s, x) => s + x.totalTime, 0)),
