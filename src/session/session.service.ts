@@ -2621,6 +2621,8 @@ export class SessionService {
       const items = sorted.map((detail) => {
         const service = serviceById.get(detail.serviceId);
         const start = detail.startDatetime || session.sessionDatetime;
+        const isCourtesy =
+          detail.isCourtesy === true || (detail.isCourtesy as unknown) === 1;
         return {
           detail,
           service: {
@@ -2628,14 +2630,17 @@ export class SessionService {
             time: this.emailService.formatSessionDate(start).time,
             duration:
               Number(detail.totalTime) || Number(service?.standardTime) || 0,
-            cost:
-              parseFloat(String(detail.cost)) ||
-              parseFloat(String(service?.cost)) ||
-              0,
+            // Cortesía: gratis → en el correo sale "Cortesía", no el precio.
+            cost: isCourtesy
+              ? 0
+              : parseFloat(String(detail.cost)) ||
+                parseFloat(String(service?.cost)) ||
+                0,
             currency: service?.currency,
             workerName: detail.companyWorkerId
               ? workerById.get(detail.companyWorkerId)?.name
               : 'Por asignar',
+            isCourtesy,
           },
         };
       });
