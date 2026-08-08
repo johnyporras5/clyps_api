@@ -144,7 +144,7 @@ export class AuthService {
       }
       // Mismo rol (admin), pero no verificado → reenviar código
       if (existingUserByEmail.emailVerified === 0) {
-        await this.sendVerificationCode(registerDto.email);
+        await this.trySendVerificationCode(registerDto.email);
         throw new ConflictException({
           message:
             'El email ya está registrado pero no verificado. Se ha enviado un nuevo código de verificación.',
@@ -216,8 +216,9 @@ export class AuthService {
         );
       }
     }
-    // Enviar código de verificación
-    await this.sendVerificationCode(savedUser.email);
+    // Enviar código de verificación (no bloqueante: si el correo falla, la
+    // cuenta ya se creó y el usuario reenvía el código desde verificación).
+    await this.trySendVerificationCode(savedUser.email);
 
     // Eliminar password del objeto de respuesta
     const { password: _, ...userWithoutPassword } = savedUser;
@@ -324,11 +325,12 @@ export class AuthService {
       // El email pertenece a un trabajador que aún no verificó su correo:
       // reenviamos el código para que pueda completar la verificación.
       if (existingUserByEmail.emailVerified === 0) {
-        await this.sendVerificationCode(registerDto.email);
+        await this.trySendVerificationCode(registerDto.email);
         throw new ConflictException({
           statusCode: HttpStatus.CONFLICT,
           error: 'Conflict',
           code: 'WORKER_EXISTS_UNVERIFIED',
+          requiresVerification: true,
           message:
             'El trabajador ya estaba registrado pero su correo no estaba verificado. Se ha enviado un nuevo código de verificación a su correo para completar el proceso.',
         });
@@ -389,8 +391,8 @@ export class AuthService {
         );
       }
 
-      // Enviar código de verificación solo si es nuevo
-      await this.sendVerificationCode(user.email);
+      // Enviar código de verificación solo si es nuevo (no bloqueante).
+      await this.trySendVerificationCode(user.email);
     }
 
     // ==================== [NUEVO] PROCESAR ARCHIVO DE FOTO (SI SE ENVIÓ) ====================
@@ -548,11 +550,12 @@ export class AuthService {
 
       if (existingUserByEmail.emailVerified === 0) {
         // Reenviar código para que pueda completar la verificación pendiente.
-        await this.sendVerificationCode(registerDto.email);
+        await this.trySendVerificationCode(registerDto.email);
         throw new ConflictException({
           statusCode: HttpStatus.CONFLICT,
           error: 'Conflict',
           code: 'CLIENT_EXISTS_UNVERIFIED',
+          requiresVerification: true,
           message:
             'El cliente ya estaba registrado pero su correo no estaba verificado. Se ha enviado un nuevo código de verificación a su correo para completar el proceso.',
         });
@@ -609,7 +612,8 @@ export class AuthService {
         }
       }
 
-      await this.sendVerificationCode(user.email);
+      // No bloqueante: si el correo falla, la cuenta se creó igual.
+      await this.trySendVerificationCode(user.email);
     }
 
     // ==================== [NUEVO] PROCESAR ARCHIVO DE FOTO (SI SE ENVIÓ) ====================
@@ -1175,6 +1179,24 @@ export class AuthService {
    * Método separado para enviar código de verificación
    * Se puede usar en registro y de forma independiente
    */
+  /**
+   * Envía el código de verificación SIN lanzar. Si el correo falla (Resend caído,
+   * dominio no verificado, etc.) la creación de la cuenta NO se debe caer: el
+   * usuario ya quedó guardado y podrá reenviar el código desde la pantalla de
+   * verificación. Devuelve si el correo salió o no.
+   */
+  private async trySendVerificationCode(email: string): Promise<boolean> {
+    try {
+      await this.sendVerificationCode(email);
+      return true;
+    } catch (error) {
+      console.warn(
+        `No se pudo enviar el código de verificación a ${email} (la cuenta se creó igual): ${(error as Error).message}`,
+      );
+      return false;
+    }
+  }
+
   async sendVerificationCode(
     email: string,
   ): Promise<{ message: string; userId: number }> {

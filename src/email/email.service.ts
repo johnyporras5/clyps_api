@@ -17,6 +17,8 @@ export interface SessionEmailService {
   currency?: string;
   /** Sólo se muestra cuando el correo cubre varios trabajadores. */
   workerName?: string;
+  /** Servicio de cortesía (gratis): en el correo sale "Cortesía", no el precio. */
+  isCourtesy?: boolean;
 }
 
 /** Datos de la cita comunes a los correos de cliente, trabajador y admin. */
@@ -348,7 +350,7 @@ export class EmailService {
                                 <div style="font-size: 15px; font-weight: 600; color: #1e293b;">${service.time} · ${service.name}</div>
                                 <div style="font-size: 13px; color: #64748b; margin-top: 4px;">${meta}</div>
                             </td>
-                            <td align="right" style="padding: 14px 18px; ${border} font-size: 15px; font-weight: 600; color: ${accentColor}; white-space: nowrap;">${this.formatMoney(service.cost, service.currency)}</td>
+                            <td align="right" style="padding: 14px 18px; ${border} font-size: 15px; font-weight: 600; color: ${accentColor}; white-space: nowrap;">${this.priceOrCourtesy(service.isCourtesy, service.cost, service.currency)}</td>
                         </tr>`;
       })
       .join('');
@@ -375,6 +377,28 @@ export class EmailService {
   /** Precio con el símbolo de la moneda del servicio (ej.: "€100.00"). */
   private formatMoney(amount: number, currency?: string | null): string {
     return `${this.currencySymbol(currency)}${(amount ?? 0).toFixed(2)}`;
+  }
+
+  /** Precio del servicio, o "Cortesía" si es un servicio de cortesía (gratis). */
+  private priceOrCourtesy(
+    isCourtesy: boolean | undefined,
+    amount: number,
+    currency?: string | null,
+  ): string {
+    return isCourtesy ? 'Cortesía' : this.formatMoney(amount, currency);
+  }
+
+  /**
+   * Total de la cita para el correo. Si TODOS los servicios son de cortesía,
+   * muestra "Cortesía" en lugar de un monto (que sería 0).
+   */
+  private totalCostDisplay(sessionData: SessionEmailData): string {
+    const services = sessionData.services ?? [];
+    const allCourtesy =
+      services.length > 0 && services.every((s) => s.isCourtesy);
+    return allCourtesy
+      ? 'Cortesía'
+      : this.formatMoney(sessionData.totalCost, sessionData.currency);
   }
 
   formatSessionDate(date: Date): { date: string; time: string } {
@@ -3341,7 +3365,7 @@ export class EmailService {
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #4f46e5;">💰</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Costo</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.formatMoney(sessionData.totalCost, sessionData.currency)}</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.totalCostDisplay(sessionData)}</div>
                         </div>
                         
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
@@ -3918,7 +3942,7 @@ export class EmailService {
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <div class="detail-icon" style="font-size: 20px; margin-bottom: 12px; color: #059669;">💰</div>
                             <div class="detail-label" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Costo</div>
-                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.formatMoney(sessionData.totalCost, sessionData.currency)}</div>
+                            <div class="detail-value" style="font-size: 18px; font-weight: 600; color: #1e293b; margin: 0;">${this.totalCostDisplay(sessionData)}</div>
                         </div>
                         
                         <div class="detail-card" style="background-color: #ffffff; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
@@ -4271,7 +4295,7 @@ export class EmailService {
       <div class="service-box">
         <div class="service-name">💼 ${service.name}</div>
         <div class="service-meta">
-          <span>💰 <strong>${money(service.cost, service.currency)}</strong></span>
+          <span>💰 <strong>${service.isCourtesy ? 'Cortesía' : money(service.cost, service.currency)}</strong></span>
           <span>⏱️ <strong>${service.duration} min</strong></span>
           <span>🕐 <strong>${service.time}</strong></span>
           ${service.workerName ? `<span>🧑‍💼 <strong>${service.workerName}</strong></span>` : ''}
@@ -4284,7 +4308,7 @@ export class EmailService {
         ? `
       <div class="full-card">
         <div class="info-label">🧾 Total de la cita</div>
-        <div class="info-value">${money(sessionData.totalCost, sessionData.currency)} · ${sessionData.totalDuration} min</div>
+        <div class="info-value">${this.totalCostDisplay(sessionData)} · ${sessionData.totalDuration} min</div>
       </div>`
         : '';
 

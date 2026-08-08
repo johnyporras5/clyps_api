@@ -68,6 +68,18 @@ export class PayrollConcept {
   })
   amountBsMinor: number | null;
 
+  // Tasa histórica (Bs por 1 unidad de la moneda del negocio) al crear el
+  // concepto manual. Permite convertir un concepto en Bs a $/€ en el reporte del
+  // trabajador. null en conceptos autogenerados (esos ya traen su moneda/tasa).
+  @Column({
+    name: 'exchange_rate',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
+  exchangeRate: number | null;
+
   @Column({ name: 'source_type', type: 'varchar', length: 20, nullable: true })
   sourceType: ConceptSource | null;
 

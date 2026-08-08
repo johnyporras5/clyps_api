@@ -198,16 +198,28 @@ export class SessionNotificationEmitter {
             new Date(a.startDatetime).getTime() -
             new Date(b.startDatetime).getTime(),
         );
-        const emailServices = services.map((service) => ({
-          name: service.serviceName,
-          time: this.email.formatSessionDate(service.startDatetime).time,
-          duration:
-            Number(service.durationWorker) || Number(service.standardTime) || 0,
-          cost:
-            Number(service.appliedPrice) || Number(service.serviceCost) || 0,
-          currency: service.currency ?? undefined,
-          workerName: service.workerName || undefined,
-        }));
+        const emailServices = services.map((service) => {
+          const isCourtesy =
+            service.isCourtesy === true ||
+            (service.isCourtesy as unknown) === 1;
+          return {
+            name: service.serviceName,
+            time: this.email.formatSessionDate(service.startDatetime).time,
+            duration:
+              Number(service.durationWorker) ||
+              Number(service.standardTime) ||
+              0,
+            // Cortesía: gratis → en el correo sale "Cortesía", no el precio.
+            cost: isCourtesy
+              ? 0
+              : Number(service.appliedPrice) ||
+                Number(service.serviceCost) ||
+                0,
+            currency: service.currency ?? undefined,
+            workerName: service.workerName || undefined,
+            isCourtesy,
+          };
+        });
 
         await this.email.sendSessionRescheduleToClient(
           client.email,
