@@ -9443,14 +9443,11 @@ export class SessionService {
     }
     // Se puede cambiar el servicio en cualquier estado ANTES de Pagado, menos
     // Cancelado(5) y Calificado(6). Pagado(4) no: ya está cobrado y en nómina.
+    // El trabajador SÍ puede cambiar el servicio aunque el admin haya tomado
+    // control de la cita (statusLocked): el bloqueo del admin no aplica aquí.
     if ([4, 5, 6].includes(detail.status)) {
       throw new BadRequestException(
         `No se puede cambiar el servicio de un detalle "${this.getDetailStatusText(detail.status)}"`,
-      );
-    }
-    if (userRole === 'wrk' && session.statusLocked) {
-      throw new BadRequestException(
-        'La cita está bajo control del administrador; no puedes cambiar el servicio.',
       );
     }
 
