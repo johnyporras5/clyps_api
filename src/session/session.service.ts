@@ -9441,9 +9441,11 @@ export class SessionService {
         `La cita está en estado "${this.getSessionStatusText(session.sessionStatus)}" y no admite cambios en sus servicios`,
       );
     }
-    if (detail.status !== 1) {
+    // Se puede cambiar el servicio en cualquier estado ANTES de Pagado, menos
+    // Cancelado(5) y Calificado(6). Pagado(4) no: ya está cobrado y en nómina.
+    if ([4, 5, 6].includes(detail.status)) {
       throw new BadRequestException(
-        `Solo se puede cambiar el servicio mientras el detalle esté "Agendado"; el actual está "${this.getDetailStatusText(detail.status)}"`,
+        `No se puede cambiar el servicio de un detalle "${this.getDetailStatusText(detail.status)}"`,
       );
     }
     if (userRole === 'wrk' && session.statusLocked) {
@@ -9605,16 +9607,21 @@ export class SessionService {
     );
 
     // 9. Recalcular fin del bloque según la nueva duración.
+    // Completado (3): la cita ya ocurrió → NO se recalcula el horario (las horas
+    // son reales) ni se corren las siguientes; solo cambia servicio/precio/comisión.
+    const isCompleted = detail.status === 3;
     const start = detail.startDatetime ? new Date(detail.startDatetime) : null;
     let newEnd =
-      start && newTime > 0 ? new Date(start.getTime() + newTime * 60000) : null;
+      !isCompleted && start && newTime > 0
+        ? new Date(start.getTime() + newTime * 60000)
+        : null;
 
     // Caso "cita que ya pasó": el admin pidió NO mover las siguientes. Si el nuevo
     // servicio (más largo) pisaría la próxima cita del trabajador, se RECORTA para
     // que termine justo cuando esa empieza (como si esa hubiese sido la duración
     // real). Si no hay próxima, se deja la duración completa.
     let clampedMinutes: number | null = null;
-    if (dto.keepFollowingAppointments && start && newEnd) {
+    if (!isCompleted && dto.keepFollowingAppointments && start && newEnd) {
       const nextStart = await this.nextDetailStartForWorker(
         detail.companyWorkerId,
         start,
@@ -9643,12 +9650,15 @@ export class SessionService {
         cost: amounts.cost,
         totalWorker: amounts.totalWorker,
         totalCompany: amounts.totalCompany,
-        // Si se recortó al hueco (cita pasada), el tiempo real es el del hueco.
-        totalTime: clampedMinutes ?? newTime,
         // La columna admite NULL en BD aunque el tipo TS sea number; limpiar la
         // oferta previa cuando el nuevo precio no proviene de una oferta.
         offerId: (priceResolution.appliedOfferId ?? null) as unknown as number,
       };
+      // Completado: no se toca la duración ni las horas (ya son reales).
+      if (!isCompleted) {
+        // Si se recortó al hueco (cita pasada), el tiempo real es el del hueco.
+        setFields.totalTime = clampedMinutes ?? newTime;
+      }
       if (newEnd) {
         setFields.endDatetime = newEnd;
         setFields.originalEndDatetime = newEnd;
@@ -9671,8 +9681,9 @@ export class SessionService {
     //     arrastre falla, el cambio de servicio ya quedó guardado.
     //     Se OMITE cuando el admin pidió no mover las siguientes (cita pasada):
     //     ahí ya recortamos este servicio al hueco, así que no hay solape.
+    //     En Completado no se corre (no se recalculó el horario).
     let movedByRipple: RippleMovedDetail[] = [];
-    if (start && !dto.keepFollowingAppointments) {
+    if (start && !isCompleted && !dto.keepFollowingAppointments) {
       movedByRipple = await this.rippleWorkerColumn(
         detail.companyWorkerId,
         start,
