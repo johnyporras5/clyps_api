@@ -9272,6 +9272,15 @@ export class SessionService {
       );
     }
 
+    // 2.1 Se puede eliminar el extra en Agendado/En proceso/Completado (puede
+    //     que al final no se haya hecho, o un error). NO en Pagado(4)/Cancelado(5)
+    //     /Calificado(6): ya está cobrado/en nómina y tocarlo desincronizaría.
+    if ([4, 5, 6].includes(detail.status)) {
+      throw new BadRequestException(
+        `No se puede eliminar un servicio extra "${this.getDetailStatusText(detail.status)}"`,
+      );
+    }
+
     // 3. Verificar permisos según el rol
     if (userRole === 'adm') {
       const adminCompany = await this.companyRepository.findOne({
