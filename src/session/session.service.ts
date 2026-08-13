@@ -948,6 +948,29 @@ export class SessionService {
       throw new BadRequestException('Debe proporcionar al menos un servicio');
     }
 
+    // Inicio en el pasado: por defecto se bloquea. Si la company activó el flag
+    // allowPastAppointments, SOLO el admin puede registrar una cita cuyo inicio
+    // ya pasó (walk-in). El worker/cliente nunca. El ESTADO se decide más abajo
+    // según el FIN: si ya terminó → Completada; si sigue en curso → En proceso.
+    // Margen de 5 min: el flujo normal ya permitía agendar hasta 5 min antes.
+    const pastRef =
+      createSessionWithDetailDto.startDatetime ||
+      createSessionWithDetailDto.sessionDatetime;
+    let isPastStart = false;
+    if (pastRef && new Date(pastRef).getTime() < Date.now() - 5 * 60_000) {
+      if (isWorker) {
+        throw new BadRequestException(
+          'No se pueden agendar citas en fechas pasadas.',
+        );
+      }
+      if (!adminCompany.allowPastAppointments) {
+        throw new BadRequestException(
+          'No se pueden agendar citas en fechas pasadas. Actívalo en la configuración de la empresa.',
+        );
+      }
+      isPastStart = true;
+    }
+
     // 2. CLYP-311: en el flujo admin/worker NO se bloquea que el cliente tenga
     // otra cita a la misma hora. Un cliente puede recibir servicios simultáneos
     // de trabajadoras DISTINTAS (ej. manicura + cabello a la vez). El solape de
@@ -1203,6 +1226,16 @@ export class SessionService {
       })),
     );
 
+    // Estado forzado cuando la cita arranca en el pasado (allowPast lo permitió):
+    // si ya terminó (fin < ahora) → Completada (3); si todavía transcurre → En
+    // proceso (2). Si el inicio no es pasado, no se fuerza (null → flujo normal).
+    let forcedPastStatus: number | null = null;
+    if (isPastStart) {
+      const endMs =
+        new Date(defaultStartDatetime).getTime() + totalSessionTime * 60_000;
+      forcedPastStatus = endMs < Date.now() ? 3 : 2;
+    }
+
     // Si algún detalle quedó sin trabajador, la cita arranca en estado 8
     // (pendiente de asignación) salvo que el request especifique otro estado.
     const hasUnassignedDetail = serviceValidations.some(
@@ -1216,10 +1249,13 @@ export class SessionService {
     const sessionData: CreateSessionDto = {
       clientId: createSessionWithDetailDto.clientId,
       sessionDatetime: createSessionWithDetailDto.sessionDatetime,
+      // Cita con inicio pasado → estado forzado (Completada si ya terminó, En
+      // proceso si sigue en curso). El auto-sync desde los detalles lo confirma.
       sessionStatus:
-        createSessionWithDetailDto.sessionStatus !== undefined
+        forcedPastStatus ??
+        (createSessionWithDetailDto.sessionStatus !== undefined
           ? createSessionWithDetailDto.sessionStatus
-          : defaultSessionStatus,
+          : defaultSessionStatus),
       totalCost: totalSessionCost,
       totalTime: totalSessionTime,
       iaResponse: createSessionWithDetailDto.iaResponse,
@@ -1325,7 +1361,11 @@ export class SessionService {
         originalEndDatetime: detailEnd,
         totalWorker: calculatedAmounts.totalWorker,
         totalCompany: calculatedAmounts.totalCompany,
-        status: detail.detailStatus !== undefined ? detail.detailStatus : 1,
+        // Cita con inicio pasado → cada servicio nace en el estado forzado
+        // (Completada si ya terminó, En proceso si sigue en curso).
+        status:
+          forcedPastStatus ??
+          (detail.detailStatus !== undefined ? detail.detailStatus : 1),
         offerId: detail.offerId ?? undefined,
         isCourtesy: detail.isCourtesy === true,
         description: detail.description ?? undefined,
@@ -1356,16 +1396,19 @@ export class SessionService {
     }
 
     // Correos de la cita (uno solo, con todos los servicios) en segundo plano.
-    this.sendConfirmationEmails(
-      session,
-      createdDetails,
-      createSessionWithDetailDto.clientId,
-      companyId,
-    ).catch((error) => {
-      this.logger.error(
-        `Error enviando correos de confirmación: ${(error as Error).message}`,
-      );
-    });
+    // Cita con inicio pasado (ya arrancó) → no se envía correo de "confirmación".
+    if (!isPastStart) {
+      this.sendConfirmationEmails(
+        session,
+        createdDetails,
+        createSessionWithDetailDto.clientId,
+        companyId,
+      ).catch((error) => {
+        this.logger.error(
+          `Error enviando correos de confirmación: ${(error as Error).message}`,
+        );
+      });
+    }
 
     // Actualizar automáticamente el estado de la sesión basado en los detalles
     try {
@@ -6708,6 +6751,20 @@ export class SessionService {
       createSessionWithDetailDto.details.length === 0
     ) {
       throw new BadRequestException('Debe proporcionar al menos un servicio');
+    }
+
+    // Un cliente nunca puede crear citas en fecha pasada (el flag de pasado es
+    // solo para el admin). Margen de 5 min, igual que el flujo normal.
+    const clientPastRef =
+      createSessionWithDetailDto.startDatetime ||
+      createSessionWithDetailDto.sessionDatetime;
+    if (
+      clientPastRef &&
+      new Date(clientPastRef).getTime() < Date.now() - 5 * 60_000
+    ) {
+      throw new BadRequestException(
+        'No se pueden agendar citas en fechas pasadas.',
+      );
     }
 
     // 3. Determinar la compañía a partir de trabajadores y/u ofertas.

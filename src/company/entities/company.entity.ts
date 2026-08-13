@@ -48,6 +48,11 @@ export class Company {
   @Column({ name: 'birth_date', type: 'date', nullable: true })
   birthDate: Date;
 
+  // Permite al admin registrar citas con fecha pasada (se crean en Completada).
+  // false → el pasado se bloquea. Solo el admin lo controla.
+  @Column({ name: 'allow_past_appointments', type: 'tinyint', default: 0 })
+  allowPastAppointments: boolean;
+
   @OneToMany(() => CalendarCompany, (calendar) => calendar.company, {
     cascade: true,
   })
