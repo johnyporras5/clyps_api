@@ -4,6 +4,7 @@ import {
   IsString,
   IsNumber,
   IsDateString,
+  IsBoolean,
 } from 'class-validator';
 
 export class UpdateCompanyDto {
@@ -42,4 +43,9 @@ export class UpdateCompanyDto {
   @IsOptional()
   @IsDateString()
   birthDate?: string;
+
+  // Permite al admin registrar citas con fecha pasada (se crean en Completada).
+  @IsOptional()
+  @IsBoolean()
+  allowPastAppointments?: boolean;
 }
