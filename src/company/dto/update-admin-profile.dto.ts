@@ -58,6 +58,14 @@ export class UpdateAdminProfileDto {
   @IsDateString()
   birthDate?: string;
 
+  // Permite al admin registrar citas con fecha pasada (se crean en Completada).
+  // Llega como string por multipart ('true'/'false'). Se tipa string a propósito:
+  // con enableImplicitConversion, un campo boolean convertiría 'false' → true. La
+  // interpretación a boolean se hace en el service.
+  @IsOptional()
+  @IsString()
+  allowPastAppointments?: string;
+
   @IsOptional()
   @Transform(({ value }) => {
     if (value === undefined || value === null) return undefined;

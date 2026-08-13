@@ -491,6 +491,12 @@ export class CompanyService {
       updateData.facebookUrl = updateAdminProfileDto.facebookUrl;
     if (updateAdminProfileDto.birthDate !== undefined)
       updateData.birthDate = new Date(updateAdminProfileDto.birthDate);
+    if (updateAdminProfileDto.allowPastAppointments !== undefined)
+      updateData.allowPastAppointments = ['true', '1', 'on', 'yes'].includes(
+        String(updateAdminProfileDto.allowPastAppointments)
+          .trim()
+          .toLowerCase(),
+      );
 
     // Aplicar actualizaciones
     Object.assign(company, updateData);
