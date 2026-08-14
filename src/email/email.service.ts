@@ -65,8 +65,12 @@ export class EmailService {
    *
    * Se sirven como PNG desde `ASSETS_BASE_URL/email/` (los SVG originales viven
    * en `assets/email/` del repo): los clientes de correo no renderizan SVG ni
-   * data URIs, así que la imagen tiene que venir de una URL pública. El maquetado
-   * va con tabla porque `display: flex` lo ignoran Outlook y Gmail.
+   * data URIs, así que la imagen tiene que venir de una URL pública.
+   *
+   * Los badges van como `inline-block` y no en celdas de una tabla: en pantallas
+   * angostas una tabla de dos celdas no parte de línea y el segundo badge se sale
+   * del correo. Así, cuando no caben lado a lado, el segundo baja solo. El
+   * `font-size: 0` del contenedor elimina el espacio en blanco entre ambos.
    */
   private renderStoreBadges(): string {
     const base = (
@@ -74,34 +78,51 @@ export class EmailService {
       'http://localhost:4000/assets'
     ).replace(/\/+$/, '');
 
+    const badge = (
+      href: string,
+      file: string,
+      alt: string,
+    ): string => `<a href="${href}" target="_blank" style="display: inline-block; margin: 0 5px 10px; text-decoration: none;">
+                              <img src="${base}/email/${file}" alt="${alt}" width="135" height="40" style="display: block; width: 135px; max-width: 100%; height: auto; border: 0; outline: none;" />
+                          </a>`;
+
     return `
-                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 0 auto;">
-                          <tr>
-                              <td style="padding: 0 6px;">
-                                  <a href="https://play.google.com/store/apps/details?id=com.datamobility.clypsmobile" target="_blank" style="text-decoration: none;">
-                                      <img src="${base}/email/google-play.png" alt="Disponible en Google Play" width="135" height="40" style="display: block; width: 135px; height: 40px; border: 0; outline: none;" />
-                                  </a>
-                              </td>
-                              <td style="padding: 0 6px;">
-                                  <a href="https://apps.apple.com/us/app/clyps/id6782667705" target="_blank" style="text-decoration: none;">
-                                      <img src="${base}/email/app-store.png" alt="Descargar en el App Store" width="135" height="40" style="display: block; width: 135px; height: 40px; border: 0; outline: none;" />
-                                  </a>
-                              </td>
-                          </tr>
-                      </table>`;
+                      <div style="text-align: center; font-size: 0; line-height: 0;">
+                          ${badge(
+                            'https://play.google.com/store/apps/details?id=com.datamobility.clypsmobile',
+                            'google-play.png',
+                            'Disponible en Google Play',
+                          )}
+                          ${badge(
+                            'https://apps.apple.com/us/app/clyps/id6782667705',
+                            'app-store.png',
+                            'Descargar en el App Store',
+                          )}
+                      </div>`;
+  }
+
+  /**
+   * El acceso al sistema web es sólo para administradores: clientes y
+   * trabajadores usan la app. Estas plantillas (verificación, reseteo y cambio
+   * de contraseña) las recibe cualquier usuario, así que el enlace se decide por
+   * `userType`, no por plantilla. Si no se sabe el tipo, no se muestra.
+   */
+  private isAdmin(userType?: string): boolean {
+    return userType === 'adm';
   }
 
   async sendVerificationCode(
     email: string,
     code: string,
     username: string,
+    userType?: string,
   ): Promise<boolean> {
     return this.sendCodeEmail(
       email,
       code,
       username,
       'Verifica tu cuenta',
-      this.getVerificationEmailTemplate(username, code),
+      this.getVerificationEmailTemplate(username, code, userType),
     );
   }
 
@@ -109,13 +130,14 @@ export class EmailService {
     email: string,
     code: string,
     username: string,
+    userType?: string,
   ): Promise<boolean> {
     return this.sendCodeEmail(
       email,
       code,
       username,
       'Restablecer contraseña',
-      this.getPasswordResetEmailTemplate(username, code),
+      this.getPasswordResetEmailTemplate(username, code, userType),
     );
   }
 
@@ -159,6 +181,7 @@ export class EmailService {
   async sendPasswordChangedNotification(
     email: string,
     username: string,
+    userType?: string,
   ): Promise<boolean> {
     try {
       if (!this.resend) {
@@ -176,7 +199,7 @@ export class EmailService {
         from: this.fromEmail,
         to: email,
         subject: 'Contraseña cambiada',
-        html: this.getPasswordChangedEmailTemplate(username),
+        html: this.getPasswordChangedEmailTemplate(username, userType),
       });
 
       if (error) {
@@ -517,7 +540,11 @@ export class EmailService {
     );
   }
 
-  private getVerificationEmailTemplate(username: string, code: string): string {
+  private getVerificationEmailTemplate(
+    username: string,
+    code: string,
+    userType?: string,
+  ): string {
     return `
       <!DOCTYPE html>
       <html>
@@ -825,12 +852,16 @@ export class EmailService {
                       </p>
                       <div class="app-buttons" style="margin-bottom: 20px;">${this.renderStoreBadges()}
                       </div>
-                      <p style="color: #64748b; font-size: 13px; margin-top: 20px; line-height: 1.5;">
+                      ${
+                        this.isAdmin(userType)
+                          ? `<p style="color: #64748b; font-size: 13px; margin-top: 20px; line-height: 1.5;">
                           También puedes acceder desde:
                           <a href="https://sistemaclyps.com" class="web-link" style="color: #4f46e5; font-weight: 600; text-decoration: none;">
                               sistemaclyps.com
                           </a>
-                      </p>
+                      </p>`
+                          : ''
+                      }
                   </div>
                   <!-- FIN SECCIÓN DE DESCARGA DE APP -->
                   
@@ -863,6 +894,7 @@ export class EmailService {
   private getPasswordResetEmailTemplate(
     username: string,
     code: string,
+    userType?: string,
   ): string {
     return `
       <!DOCTYPE html>
@@ -1233,12 +1265,16 @@ export class EmailService {
                       </p>
                       <div class="app-buttons" style="margin-bottom: 20px;">${this.renderStoreBadges()}
                       </div>
-                      <p style="color: #64748b; font-size: 13px; margin-top: 20px; line-height: 1.5;">
+                      ${
+                        this.isAdmin(userType)
+                          ? `<p style="color: #64748b; font-size: 13px; margin-top: 20px; line-height: 1.5;">
                           También puedes acceder desde:
                           <a href="https://sistemaclyps.com" class="web-link" style="color: #0369a1; font-weight: 600; text-decoration: none;">
                               sistemaclyps.com
                           </a>
-                      </p>
+                      </p>`
+                          : ''
+                      }
                   </div>
                   <!-- FIN SECCIÓN DE DESCARGA DE APP -->
                   
@@ -1272,7 +1308,10 @@ export class EmailService {
     `;
   }
 
-  private getPasswordChangedEmailTemplate(username: string): string {
+  private getPasswordChangedEmailTemplate(
+    username: string,
+    userType?: string,
+  ): string {
     return `
       <!DOCTYPE html>
       <html>
@@ -1626,12 +1665,16 @@ export class EmailService {
                       </p>
                       <div class="app-buttons" style="margin-bottom: 20px;">${this.renderStoreBadges()}
                       </div>
-                      <p style="color: #64748b; font-size: 13px; margin-top: 20px; line-height: 1.5;">
+                      ${
+                        this.isAdmin(userType)
+                          ? `<p style="color: #64748b; font-size: 13px; margin-top: 20px; line-height: 1.5;">
                           Acceso web:
                           <a href="https://sistemaclyps.com" class="web-link" style="color: #0369a1; font-weight: 600; text-decoration: none;">
                               sistemaclyps.com
                           </a>
-                      </p>
+                      </p>`
+                          : ''
+                      }
                   </div>
                   <!-- FIN SECCIÓN DE DESCARGA DE APP -->
                   

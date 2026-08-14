@@ -1236,6 +1236,7 @@ export class AuthService {
       user.email,
       code,
       user.username,
+      user.userType,
     );
 
     if (!emailSent) {
@@ -1350,6 +1351,7 @@ export class AuthService {
       await this.emailService.sendPasswordChangedNotification(
         user.email,
         user.username,
+        user.userType,
       );
     } catch (error) {
       console.warn('No se pudo enviar email de notificación:', error.message);
@@ -1388,6 +1390,7 @@ export class AuthService {
       user.email,
       code,
       user.username,
+      user.userType,
     );
 
     if (!emailSent) {
@@ -1487,6 +1490,7 @@ export class AuthService {
       await this.emailService.sendPasswordChangedNotification(
         user.email,
         user.username,
+        user.userType,
       );
     } catch (error) {
       console.warn('No se pudo enviar email de notificación:', error.message);
@@ -1591,6 +1595,7 @@ export class AuthService {
       await this.emailService.sendPasswordChangedNotification(
         user.email,
         user.username,
+        user.userType,
       );
     } catch (error) {
       console.warn('No se pudo enviar email de notificación:', error.message);
