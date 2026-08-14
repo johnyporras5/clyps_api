@@ -2,7 +2,12 @@
 /dist
 /node_modules
 /build
-assets/
+# Las subidas de usuarios no se versionan, pero sí los badges oficiales de las
+# tiendas que usan las plantillas de correo (fuente SVG + PNG servido).
+# Tiene que ser `assets/*` y no `assets/`: git no re-incluye nada si el
+# directorio padre está excluido.
+assets/*
+!assets/email/
 
 # Logs
 logs

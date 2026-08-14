@@ -60,6 +60,37 @@ export class EmailService {
     this.logger.log(`Resend inicializado correctamente con dominio: ${domain}`);
   }
 
+  /**
+   * Badges oficiales de Google Play y App Store para las plantillas de correo.
+   *
+   * Se sirven como PNG desde `ASSETS_BASE_URL/email/` (los SVG originales viven
+   * en `assets/email/` del repo): los clientes de correo no renderizan SVG ni
+   * data URIs, así que la imagen tiene que venir de una URL pública. El maquetado
+   * va con tabla porque `display: flex` lo ignoran Outlook y Gmail.
+   */
+  private renderStoreBadges(): string {
+    const base = (
+      this.configService.get<string>('ASSETS_BASE_URL') ||
+      'http://localhost:4000/assets'
+    ).replace(/\/+$/, '');
+
+    return `
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 0 auto;">
+                          <tr>
+                              <td style="padding: 0 6px;">
+                                  <a href="https://play.google.com/store/apps/details?id=com.clyps.app" target="_blank" style="text-decoration: none;">
+                                      <img src="${base}/email/google-play.png" alt="Disponible en Google Play" width="135" height="40" style="display: block; width: 135px; height: 40px; border: 0; outline: none;" />
+                                  </a>
+                              </td>
+                              <td style="padding: 0 6px;">
+                                  <a href="https://apps.apple.com/app/id1645438827" target="_blank" style="text-decoration: none;">
+                                      <img src="${base}/email/app-store.png" alt="Descargar en el App Store" width="135" height="40" style="display: block; width: 135px; height: 40px; border: 0; outline: none;" />
+                                  </a>
+                              </td>
+                          </tr>
+                      </table>`;
+  }
+
   async sendVerificationCode(
     email: string,
     code: string,
@@ -557,14 +588,6 @@ export class EmailService {
                       padding: 20px !important;
                       margin: 20px 0 !important;
                   }
-                  .app-buttons {
-                      flex-direction: column !important;
-                      gap: 10px !important;
-                  }
-                  .app-btn {
-                      padding: 10px 15px !important;
-                      font-size: 13px !important;
-                  }
                   .footer {
                       padding: 20px !important;
                   }
@@ -711,33 +734,8 @@ export class EmailService {
                   margin: 0 0 15px 0 !important;
               }
               .app-buttons {
-                  display: flex !important;
-                  justify-content: center !important;
-                  gap: 15px !important;
-                  flex-wrap: wrap !important;
+                  text-align: center !important;
                   margin-bottom: 20px !important;
-              }
-              .app-btn {
-                  display: inline-block !important;
-                  padding: 12px 25px !important;
-                  text-decoration: none !important;
-                  border-radius: 8px !important;
-                  font-weight: 600 !important;
-                  font-size: 14px !important;
-                  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
-                  transition: transform 0.2s, box-shadow 0.2s !important;
-              }
-              .app-btn:hover {
-                  transform: translateY(-2px) !important;
-                  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15) !important;
-              }
-              .android-btn {
-                  background-color: #34d399 !important;
-                  color: white !important;
-              }
-              .ios-btn {
-                  background-color: #000000 !important;
-                  color: white !important;
               }
               .web-link {
                   color: #4f46e5 !important;
@@ -825,22 +823,12 @@ export class EmailService {
                           Para una mejor experiencia, gestiona tus citas desde tu dispositivo móvil. 
                           Descarga la app de CLYPS disponible en:
                       </p>
-                      <div class="app-buttons" style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; margin-bottom: 20px;">
-                          <a href="https://play.google.com/store/apps/details?id=com.clyps.app" 
-                             class="app-btn android-btn" 
-                             style="display: inline-block; background-color: #34d399; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(52, 211, 153, 0.3);">
-                              🟢 Google Play
-                          </a>
-                          <a href="https://apps.apple.com/app/id1645438827" 
-                             class="app-btn ios-btn" 
-                             style="display: inline-block; background-color: #000000; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);">
-                              ⚫ App Store
-                          </a>
+                      <div class="app-buttons" style="margin-bottom: 20px;">${this.renderStoreBadges()}
                       </div>
                       <p style="color: #64748b; font-size: 13px; margin-top: 20px; line-height: 1.5;">
-                          También puedes acceder desde: 
-                          <a href="https://app.clyps.com" class="web-link" style="color: #4f46e5; font-weight: 600; text-decoration: none;">
-                              app.clyps.com
+                          También puedes acceder desde:
+                          <a href="https://sistemaclyps.com" class="web-link" style="color: #4f46e5; font-weight: 600; text-decoration: none;">
+                              sistemaclyps.com
                           </a>
                       </p>
                   </div>
@@ -951,14 +939,6 @@ export class EmailService {
                   .app-download-section {
                       padding: 20px !important;
                       margin: 20px 0 !important;
-                  }
-                  .app-buttons {
-                      flex-direction: column !important;
-                      gap: 10px !important;
-                  }
-                  .app-btn {
-                      padding: 10px 15px !important;
-                      font-size: 13px !important;
                   }
                   .footer {
                       padding: 20px !important;
@@ -1165,33 +1145,8 @@ export class EmailService {
                   margin: 0 0 15px 0 !important;
               }
               .app-buttons {
-                  display: flex !important;
-                  justify-content: center !important;
-                  gap: 15px !important;
-                  flex-wrap: wrap !important;
+                  text-align: center !important;
                   margin-bottom: 20px !important;
-              }
-              .app-btn {
-                  display: inline-block !important;
-                  padding: 12px 25px !important;
-                  text-decoration: none !important;
-                  border-radius: 8px !important;
-                  font-weight: 600 !important;
-                  font-size: 14px !important;
-                  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
-                  transition: transform 0.2s, box-shadow 0.2s !important;
-              }
-              .app-btn:hover {
-                  transform: translateY(-2px) !important;
-                  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15) !important;
-              }
-              .android-btn {
-                  background-color: #34d399 !important;
-                  color: white !important;
-              }
-              .ios-btn {
-                  background-color: #000000 !important;
-                  color: white !important;
               }
               .web-link {
                   color: #0369a1 !important;
@@ -1276,22 +1231,12 @@ export class EmailService {
                           Restablece tu contraseña más fácilmente desde nuestra app. 
                           Descárgala y gestiona tu cuenta desde cualquier lugar:
                       </p>
-                      <div class="app-buttons" style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; margin-bottom: 20px;">
-                          <a href="https://play.google.com/store/apps/details?id=com.clyps.app" 
-                             class="app-btn android-btn" 
-                             style="display: inline-block; background-color: #34d399; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
-                              🟢 Google Play
-                          </a>
-                          <a href="https://apps.apple.com/app/id1645438827" 
-                             class="app-btn ios-btn" 
-                             style="display: inline-block; background-color: #000000; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
-                              ⚫ App Store
-                          </a>
+                      <div class="app-buttons" style="margin-bottom: 20px;">${this.renderStoreBadges()}
                       </div>
                       <p style="color: #64748b; font-size: 13px; margin-top: 20px; line-height: 1.5;">
-                          También puedes acceder desde: 
-                          <a href="https://app.clyps.com" class="web-link" style="color: #0369a1; font-weight: 600; text-decoration: none;">
-                              app.clyps.com
+                          También puedes acceder desde:
+                          <a href="https://sistemaclyps.com" class="web-link" style="color: #0369a1; font-weight: 600; text-decoration: none;">
+                              sistemaclyps.com
                           </a>
                       </p>
                   </div>
@@ -1393,14 +1338,6 @@ export class EmailService {
                   .app-download-section {
                       padding: 20px !important;
                       margin: 20px 0 !important;
-                  }
-                  .app-buttons {
-                      flex-direction: column !important;
-                      gap: 10px !important;
-                  }
-                  .app-btn {
-                      padding: 10px 15px !important;
-                      font-size: 13px !important;
                   }
                   .footer {
                       padding: 20px !important;
@@ -1589,33 +1526,8 @@ export class EmailService {
                   margin: 0 0 15px 0 !important;
               }
               .app-buttons {
-                  display: flex !important;
-                  justify-content: center !important;
-                  gap: 15px !important;
-                  flex-wrap: wrap !important;
+                  text-align: center !important;
                   margin-bottom: 20px !important;
-              }
-              .app-btn {
-                  display: inline-block !important;
-                  padding: 12px 25px !important;
-                  text-decoration: none !important;
-                  border-radius: 8px !important;
-                  font-weight: 600 !important;
-                  font-size: 14px !important;
-                  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
-                  transition: transform 0.2s, box-shadow 0.2s !important;
-              }
-              .app-btn:hover {
-                  transform: translateY(-2px) !important;
-                  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15) !important;
-              }
-              .android-btn {
-                  background-color: #34d399 !important;
-                  color: white !important;
-              }
-              .ios-btn {
-                  background-color: #000000 !important;
-                  color: white !important;
               }
               .web-link {
                   color: #0369a1 !important;
@@ -1712,22 +1624,12 @@ export class EmailService {
                           Con nuestra app móvil, puedes gestionar tu cuenta y citas desde tu teléfono. 
                           ¡Descárgala ahora!
                       </p>
-                      <div class="app-buttons" style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; margin-bottom: 20px;">
-                          <a href="https://play.google.com/store/apps/details?id=com.clyps.app" 
-                             class="app-btn android-btn" 
-                             style="display: inline-block; background-color: #34d399; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
-                              🟢 Google Play
-                          </a>
-                          <a href="https://apps.apple.com/app/id1645438827" 
-                             class="app-btn ios-btn" 
-                             style="display: inline-block; background-color: #000000; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
-                              ⚫ App Store
-                          </a>
+                      <div class="app-buttons" style="margin-bottom: 20px;">${this.renderStoreBadges()}
                       </div>
                       <p style="color: #64748b; font-size: 13px; margin-top: 20px; line-height: 1.5;">
-                          Acceso web: 
-                          <a href="https://app.clyps.com" class="web-link" style="color: #0369a1; font-weight: 600; text-decoration: none;">
-                              app.clyps.com
+                          Acceso web:
+                          <a href="https://sistemaclyps.com" class="web-link" style="color: #0369a1; font-weight: 600; text-decoration: none;">
+                              sistemaclyps.com
                           </a>
                       </p>
                   </div>
@@ -1927,14 +1829,6 @@ export class EmailService {
                   .app-download-section {
                       padding: 20px !important;
                       margin: 20px 0 !important;
-                  }
-                  .app-buttons {
-                      flex-direction: column !important;
-                      gap: 10px !important;
-                  }
-                  .app-btn {
-                      padding: 10px 15px !important;
-                      font-size: 13px !important;
                   }
                   .footer {
                       padding: 25px 20px !important;
@@ -2268,37 +2162,7 @@ export class EmailService {
                   margin-right: auto !important;
               }
               .app-buttons {
-                  display: flex !important;
-                  justify-content: center !important;
-                  gap: 20px !important;
-                  flex-wrap: wrap !important;
-                  margin-bottom: 20px !important;
-              }
-              .app-btn {
-                  display: inline-block !important;
-                  padding: 10px 20px !important;
-                  text-decoration: none !important;
-                  border-radius: 8px !important;
-                  font-weight: 600 !important;
-                  font-size: 13px !important;
-                  margin-top: 5px !important;
-                  transition: transform 0.2s !important;
-              }
-              .app-btn:hover {
-                  transform: translateY(-2px) !important;
-              }
-              .android-btn {
-                  background-color: #34d399 !important;
-                  color: white !important;
-              }
-              .ios-btn {
-                  background-color: #000000 !important;
-                  color: white !important;
-              }
-              .web-link {
-                  color: #dc2626 !important;
-                  text-decoration: underline !important;
-                  font-weight: 600 !important;
+                  text-align: center !important;
               }
               .support-section {
                   padding: 30px 40px !important;
@@ -2456,33 +2320,8 @@ export class EmailService {
                           directamente desde tu teléfono.
                       </p>
                       
-                      <div class="app-buttons" style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; margin-bottom: 20px;">
-                          <div style="text-align: center;">
-                              <div style="background-color: #34d399; color: white; width: 50px; height: 50px; line-height: 50px; border-radius: 12px; margin: 0 auto 10px; font-size: 24px;">
-                                  🤖
-                              </div>
-                              <a href="https://play.google.com/store/apps/details?id=com.clyps.app" 
-                                 class="app-btn android-btn" 
-                                 style="display: inline-block; background-color: #34d399; color: white; padding: 10px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 13px; margin-top: 5px;">
-                                  Google Play
-                              </a>
-                          </div>
-                          
-                          <div style="text-align: center;">
-                              <div style="background-color: #000000; color: white; width: 50px; height: 50px; line-height: 50px; border-radius: 12px; margin: 0 auto 10px; font-size: 24px;">
-                                  🍎
-                              </div>
-                              <a href="https://apps.apple.com/app/id1645438827" 
-                                 class="app-btn ios-btn" 
-                                 style="display: inline-block; background-color: #000000; color: white; padding: 10px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 13px; margin-top: 5px;">
-                                  App Store
-                              </a>
-                          </div>
+                      <div class="app-buttons">${this.renderStoreBadges()}
                       </div>
-                      
-                      <p style="color: #92400e; font-size: 14px; margin-top: 15px; font-weight: 600;">
-                          🔗 Enlace directo: <a href="https://app.clyps.com" class="web-link" style="color: #dc2626; text-decoration: underline;">app.clyps.com</a>
-                      </p>
                   </div>
                   <!-- FIN SECCIÓN DE DESCARGA DE APP -->
                   
@@ -2616,15 +2455,6 @@ export class EmailService {
                       line-height: 1.5 !important;
                       margin-bottom: 15px !important;
                   }
-                  .store-buttons {
-                      flex-direction: column !important;
-                      gap: 10px !important;
-                      margin-bottom: 15px !important;
-                  }
-                  .store-btn {
-                      padding: 10px 15px !important;
-                      font-size: 13px !important;
-                  }
                   .footer {
                       padding: 20px 15px !important;
                   }
@@ -2754,38 +2584,7 @@ export class EmailService {
                   line-height: 1.6 !important;
               }
               .store-buttons {
-                  display: flex !important;
-                  justify-content: center !important;
-                  gap: 15px !important;
-                  margin-bottom: 15px !important;
-                  flex-wrap: wrap !important;
-              }
-              .store-btn {
-                  padding: 12px 20px !important;
-                  border-radius: 8px !important;
-                  text-decoration: none !important;
-                  font-weight: bold !important;
-                  font-size: 14px !important;
-                  display: inline-flex !important;
-                  align-items: center !important;
-                  gap: 8px !important;
-                  transition: transform 0.2s !important;
-              }
-              .store-btn:hover {
-                  transform: translateY(-2px) !important;
-              }
-              .android-btn {
-                  background-color: #34d399 !important;
-                  color: white !important;
-              }
-              .ios-btn {
-                  background-color: #000000 !important;
-                  color: white !important;
-              }
-              .web-link {
-                  color: #4f46e5 !important;
-                  font-weight: 600 !important;
-                  text-decoration: none !important;
+                  text-align: center !important;
               }
               ol {
                   margin: 15px 0 !important;
@@ -2851,23 +2650,8 @@ export class EmailService {
                           Descarga nuestra app móvil y ten acceso instantáneo a todos tus servicios.
                       </div>
                       
-                      <div class="store-buttons" style="display: flex; justify-content: center; gap: 15px; margin-bottom: 15px; flex-wrap: wrap;">
-                          <a href="https://play.google.com/store/apps/details?id=com.clyps.app" 
-                             class="store-btn android-btn" 
-                             style="padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; background-color: #34d399; color: white;">
-                              🟢 Google Play
-                          </a>
-                          <a href="https://apps.apple.com/app/id1645438827" 
-                             class="store-btn ios-btn" 
-                             style="padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; background-color: #000000; color: white;">
-                              ⚫ App Store
-                          </a>
+                      <div class="store-buttons">${this.renderStoreBadges()}
                       </div>
-                      
-                      <p style="color: #64748b; font-size: 14px; margin-top: 15px;">
-                          O accede desde tu navegador: 
-                          <a href="https://app.clyps.com" class="web-link" style="color: #4f46e5; font-weight: 600; text-decoration: none;">app.clyps.com</a>
-                      </p>
                   </div>
                   <!-- FIN SECCIÓN DE APP MÓVIL -->
                   
@@ -3011,14 +2795,6 @@ export class EmailService {
                 .app-download-section {
                     padding: 20px !important;
                     margin: 20px 0 !important;
-                }
-                .app-buttons {
-                    flex-direction: column !important;
-                    gap: 10px !important;
-                }
-                .app-btn {
-                    padding: 10px 15px !important;
-                    font-size: 13px !important;
                 }
                 .footer {
                     padding: 20px !important;
@@ -3251,36 +3027,8 @@ export class EmailService {
                 line-height: 1.6 !important;
             }
             .app-buttons {
-                display: flex !important;
-                justify-content: center !important;
-                gap: 15px !important;
-                flex-wrap: wrap !important;
+                text-align: center !important;
                 margin-bottom: 20px !important;
-            }
-            .app-btn {
-                display: inline-block !important;
-                padding: 12px 25px !important;
-                text-decoration: none !important;
-                border-radius: 8px !important;
-                font-weight: 600 !important;
-                font-size: 14px !important;
-                transition: transform 0.2s !important;
-            }
-            .app-btn:hover {
-                transform: translateY(-2px) !important;
-            }
-            .android-btn {
-                background-color: #34d399 !important;
-                color: white !important;
-            }
-            .ios-btn {
-                background-color: #000000 !important;
-                color: white !important;
-            }
-            .web-link {
-                color: #92400e !important;
-                font-weight: 600 !important;
-                text-decoration: underline !important;
             }
             .footer {
                 background-color: #f8fafc !important;
@@ -3447,22 +3195,8 @@ export class EmailService {
                         Descarga la app de CLYPS para ver, modificar o cancelar tus citas desde cualquier lugar. 
                         ¡Es mucho más conveniente!
                     </p>
-                    <div class="app-buttons" style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; margin-bottom: 20px;">
-                        <a href="https://play.google.com/store/apps/details?id=com.clyps.app" 
-                           class="app-btn android-btn" 
-                           style="display: inline-block; background-color: #34d399; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
-                            🟢 Google Play
-                        </a>
-                        <a href="https://apps.apple.com/app/id1645438827" 
-                           class="app-btn ios-btn" 
-                           style="display: inline-block; background-color: #000000; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
-                            ⚫ App Store
-                        </a>
+                    <div class="app-buttons" style="margin-bottom: 20px;">${this.renderStoreBadges()}
                     </div>
-                    <p style="color: #78350f; font-size: 14px; margin-top: 15px; line-height: 1.5;">
-                        O accede desde tu navegador: 
-                        <a href="https://app.clyps.com" class="web-link" style="color: #92400e; font-weight: 600; text-decoration: underline;">app.clyps.com</a>
-                    </p>
                 </div>
                 <!-- FIN SECCIÓN DE DESCARGA DE APP -->
                 
@@ -3587,14 +3321,6 @@ export class EmailService {
                 .app-download-section {
                     padding: 20px !important;
                     margin: 20px 0 !important;
-                }
-                .app-buttons {
-                    flex-direction: column !important;
-                    gap: 10px !important;
-                }
-                .app-btn {
-                    padding: 10px 15px !important;
-                    font-size: 13px !important;
                 }
                 .footer {
                     padding: 20px !important;
@@ -3827,36 +3553,8 @@ export class EmailService {
                 line-height: 1.6 !important;
             }
             .app-buttons {
-                display: flex !important;
-                justify-content: center !important;
-                gap: 15px !important;
-                flex-wrap: wrap !important;
+                text-align: center !important;
                 margin-bottom: 20px !important;
-            }
-            .app-btn {
-                display: inline-block !important;
-                padding: 12px 25px !important;
-                text-decoration: none !important;
-                border-radius: 8px !important;
-                font-weight: 600 !important;
-                font-size: 14px !important;
-                transition: transform 0.2s !important;
-            }
-            .app-btn:hover {
-                transform: translateY(-2px) !important;
-            }
-            .android-btn {
-                background-color: #34d399 !important;
-                color: white !important;
-            }
-            .ios-btn {
-                background-color: #000000 !important;
-                color: white !important;
-            }
-            .web-link {
-                color: #92400e !important;
-                font-weight: 600 !important;
-                text-decoration: underline !important;
             }
             .footer {
                 background-color: #f8fafc !important;
@@ -4014,22 +3712,8 @@ export class EmailService {
                         Descarga la app de CLYPS para ver, modificar o gestionar tus citas desde cualquier lugar. 
                         ¡Es mucho más conveniente!
                     </p>
-                    <div class="app-buttons" style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; margin-bottom: 20px;">
-                        <a href="https://play.google.com/store/apps/details?id=com.clyps.app" 
-                           class="app-btn android-btn" 
-                           style="display: inline-block; background-color: #34d399; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
-                            🟢 Google Play
-                        </a>
-                        <a href="https://apps.apple.com/app/id1645438827" 
-                           class="app-btn ios-btn" 
-                           style="display: inline-block; background-color: #000000; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
-                            ⚫ App Store
-                        </a>
+                    <div class="app-buttons" style="margin-bottom: 20px;">${this.renderStoreBadges()}
                     </div>
-                    <p style="color: #78350f; font-size: 14px; margin-top: 15px; line-height: 1.5;">
-                        O accede desde tu navegador: 
-                        <a href="https://app.clyps.com" class="web-link" style="color: #92400e; font-weight: 600; text-decoration: underline;">app.clyps.com</a>
-                    </p>
                 </div>
                 <!-- FIN SECCIÓN DE DESCARGA DE APP -->
                 
