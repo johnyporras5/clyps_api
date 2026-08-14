@@ -78,12 +78,12 @@ export class EmailService {
                       <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 0 auto;">
                           <tr>
                               <td style="padding: 0 6px;">
-                                  <a href="https://play.google.com/store/apps/details?id=com.clyps.app" target="_blank" style="text-decoration: none;">
+                                  <a href="https://play.google.com/store/apps/details?id=com.datamobility.clypsmobile" target="_blank" style="text-decoration: none;">
                                       <img src="${base}/email/google-play.png" alt="Disponible en Google Play" width="135" height="40" style="display: block; width: 135px; height: 40px; border: 0; outline: none;" />
                                   </a>
                               </td>
                               <td style="padding: 0 6px;">
-                                  <a href="https://apps.apple.com/app/id1645438827" target="_blank" style="text-decoration: none;">
+                                  <a href="https://apps.apple.com/us/app/clyps/id6782667705" target="_blank" style="text-decoration: none;">
                                       <img src="${base}/email/app-store.png" alt="Descargar en el App Store" width="135" height="40" style="display: block; width: 135px; height: 40px; border: 0; outline: none;" />
                                   </a>
                               </td>
