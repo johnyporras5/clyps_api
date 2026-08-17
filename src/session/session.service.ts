@@ -4150,11 +4150,18 @@ export class SessionService {
               conceptSourceId = sp.id;
               itemLabel = 'Producto';
             }
-            const rawRate = rateByCurrency.get(itemCurrency);
+            // Moneda del concepto: para montos fijos la atribución puede traer su
+            // propia moneda (p. ej. propina en Bs sobre un servicio en $). El %
+            // siempre se calcula sobre el precio del ítem, en su moneda.
+            const attrCurrency =
+              a.basisMode === 'fixed' && a.currency
+                ? a.currency.toUpperCase()
+                : itemCurrency;
+            const rawRate = rateByCurrency.get(attrCurrency);
             const rate =
               rawRate !== undefined
                 ? rawRate
-                : itemCurrency === 'VES'
+                : attrCurrency === 'VES'
                   ? 1
                   : null;
             const amountItemMinor =
@@ -4165,7 +4172,7 @@ export class SessionService {
               kind: a.kind,
               companyWorkerId: a.employeeId,
               amountItemMinor,
-              currency: itemCurrency,
+              currency: attrCurrency,
               exchangeRate: rate,
               sourceType: conceptSource,
               sourceId: conceptSourceId,

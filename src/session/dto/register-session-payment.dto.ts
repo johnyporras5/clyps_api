@@ -112,6 +112,12 @@ export class PaymentAttributionDto {
   @IsOptional()
   @IsBoolean()
   isFixed?: boolean;
+
+  // Moneda de la atribución (p. ej. propina en Bs sobre un servicio en $). Si no
+  // viene, se usa la moneda del ítem. Aplica sobre todo a montos fijos.
+  @IsOptional()
+  @IsIn(['VES', 'USD', 'EUR'])
+  currency?: string;
 }
 
 export class RegisterSessionPaymentDto {
