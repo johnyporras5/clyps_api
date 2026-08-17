@@ -3,9 +3,11 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
+  OneToMany,
   JoinColumn,
 } from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
+import { Product } from '../../product/entities/product.entity';
 
 /**
  * CLYP-319: categoría de productos por tenant (company). Agrupa el catálogo y
@@ -32,6 +34,6 @@ export class ProductCategory {
   @JoinColumn({ name: 'company_id' })
   company: Company;
 
-  // CLYP-320: aquí irá `@OneToMany(() => Product, ...)` cuando exista la entidad
-  // Product; la usa la validación de borrado (no eliminar con productos).
+  @OneToMany(() => Product, (product) => product.category)
+  products: Product[];
 }

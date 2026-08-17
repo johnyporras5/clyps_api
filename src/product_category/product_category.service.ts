@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   UnauthorizedException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -70,9 +71,18 @@ export class ProductCategoryService {
   }
 
   async remove(id: number, adminId: number): Promise<void> {
-    const category = await this.findOne(id, adminId);
-    // CLYP-320: cuando exista la entidad Product, bloquear el borrado si la
-    // categoría tiene productos asignados (o exigir reasignarlos primero).
+    const company = await this.getCompanyOrFail(adminId);
+    const category = await this.categoryRepository.findOne({
+      where: { id, companyId: company.id },
+      relations: ['products'],
+    });
+    if (!category)
+      throw new NotFoundException(`Categoría con id ${id} no encontrada`);
+    if (category.products?.length > 0) {
+      throw new ConflictException(
+        `No se puede eliminar la categoría "${category.name}" porque tiene ${category.products.length} producto(s) asignado(s). Reasígnalos o elimínalos primero.`,
+      );
+    }
     await this.categoryRepository.delete(category.id);
   }
 }

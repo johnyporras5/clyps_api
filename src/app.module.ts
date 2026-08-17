@@ -22,6 +22,7 @@ import { FeedbacksModule } from './feedbacks/feedbacks.module';
 import { ServiceCategoryModule } from './service_category/service_category.module';
 import { CompanyCategoryModule } from './company_category/company_category.module';
 import { ProductCategoryModule } from './product_category/product_category.module';
+import { ProductModule } from './product/product.module';
 import { OfferModule } from './Offer/offer.module';
 import { ReportsModule } from './reports/reports.module';
 import { RealtimeModule } from './realtime/realtime.module';
@@ -118,6 +119,7 @@ import { PayrollModule } from './payroll/payroll.module';
     ServiceCategoryModule,
     CompanyCategoryModule,
     ProductCategoryModule,
+    ProductModule,
     OfferModule,
     ReportsModule,
     SessionModule,
