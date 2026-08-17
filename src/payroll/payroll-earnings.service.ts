@@ -14,7 +14,7 @@ import { PayrollPeriod } from './entities/payroll-period.entity';
 import { Payout } from './entities/payout.entity';
 import { Company } from '../company/entities/company.entity';
 import { PayrollPeriodService } from './payroll-period.service';
-import type { PeriodStatus } from './payroll.enums';
+import type { PeriodStatus, ConceptSource } from './payroll.enums';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { toMinor, fromMinor } from './payroll-money.util';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
@@ -47,6 +47,22 @@ export interface TipItem {
   exchangeRate: number | null; // Bs por 1 unidad (VES = 1)
   appointmentId?: number;
   serviceName?: string | null;
+}
+
+// Concepto que sale de una atribución del payload de cobro (CLYP-318). El monto
+// ya viene calculado en unidades mínimas de la moneda del ítem; el lado de
+// sesión lo resuelve (porcentaje sobre el precio del ítem, o monto fijo).
+export interface AttributionConceptItem {
+  kind: 'commission' | 'tip';
+  companyWorkerId: number; // employeeId de la atribución
+  amountItemMinor: number; // monto en minor de `currency`
+  currency: string; // moneda del ítem de origen
+  exchangeRate: number | null; // Bs por 1 unidad (VES = 1)
+  sourceType: ConceptSource; // 'appointment' (servicio) | 'product_sale'
+  sourceId: number; // session_detail.id | session_product.id
+  label: string;
+  rateBps?: number; // solo si vino por porcentaje (para metadata)
+  appointmentId?: number;
 }
 
 @Injectable()
@@ -206,6 +222,85 @@ export class PayrollEarningsService {
     if (created > 0) {
       this.logger.log(
         `${created} comisión(es) registrada(s) en el periodo ${period.id} (company ${companyId})`,
+      );
+    }
+    return created;
+  }
+
+  /**
+   * Genera conceptos desde las atribuciones del payload de cobro (CLYP-318):
+   * comisiones y propinas, sobre servicios o productos, a cualquier empleado.
+   * Un mismo ítem puede repartir a varias personas (idempotencia por
+   * source + type + period_detail_id). Idempotente. Devuelve cuántos creó.
+   */
+  async recordAttributionConcepts(
+    companyId: number,
+    whenPaid: Date,
+    items: AttributionConceptItem[],
+    method?: string | null,
+  ): Promise<number> {
+    if (items.length === 0) return 0;
+    if (await this.isBeforeActivation(companyId, whenPaid)) return 0;
+
+    const period = await this.periodService.ensureOpenPeriod(
+      companyId,
+      whenPaid,
+    );
+    const isCash = method === 'cash' || method === 'efectivo';
+    let created = 0;
+
+    for (const it of items) {
+      const rate = it.exchangeRate ?? (it.currency === 'VES' ? 1 : null);
+      if (rate == null || !(it.amountItemMinor > 0)) continue;
+      const keepForeign = isCash && it.currency !== 'VES';
+      const currency = keepForeign ? it.currency : 'VES';
+      // amountItemMinor está en minor de la moneda del ítem; a Bs = × tasa (las
+      // escalas /100 se cancelan porque la tasa es por unidad entera).
+      const amountBsMinor = Math.round(it.amountItemMinor * rate);
+      const amountMinor = keepForeign ? it.amountItemMinor : amountBsMinor;
+      if (amountMinor <= 0) continue;
+
+      const detail = await this.ensurePeriodDetail(
+        companyId,
+        period.id,
+        it.companyWorkerId,
+      );
+
+      try {
+        await this.conceptRepo.save(
+          this.conceptRepo.create({
+            companyId,
+            periodDetailId: detail.id,
+            type: it.kind,
+            sign: 1,
+            label: it.label,
+            amountMinor,
+            currency,
+            amountBsMinor,
+            occurredAt: whenPaid,
+            sourceType: it.sourceType,
+            sourceId: it.sourceId,
+            metadata: {
+              ...(it.rateBps != null ? { rateBps: it.rateBps } : {}),
+              currency: it.currency,
+              exchangeRate: rate,
+              method: method ?? null,
+              attribution: true,
+              ...(it.appointmentId != null
+                ? { appointmentId: it.appointmentId }
+                : {}),
+            },
+          }),
+        );
+        created++;
+      } catch (e) {
+        if (!isDupEntry(e)) throw e; // (source, type, trabajador) ya existe → idempotente
+      }
+    }
+
+    if (created > 0) {
+      this.logger.log(
+        `${created} concepto(s) de atribución en el periodo ${period.id} (company ${companyId})`,
       );
     }
     return created;

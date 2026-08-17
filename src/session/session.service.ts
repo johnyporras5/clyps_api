@@ -16,6 +16,9 @@ import { SessionPaymentTip } from './entities/session-payment-tip.entity';
 import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
 import { PayrollPeriodService } from '../payroll/payroll-period.service';
 import { PayrollEarningsService } from '../payroll/payroll-earnings.service';
+import { SessionProductService } from '../product/session_product.service';
+import { SessionProduct } from '../product/entities/session_product.entity';
+import { toMinor, pct } from '../payroll/payroll-money.util';
 import { FeedbacksService } from '../feedbacks/feedbacks.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import {
@@ -111,6 +114,7 @@ export class SessionService {
     private fileUploadService: FileUploadService,
     private payrollPeriodService: PayrollPeriodService,
     private payrollEarningsService: PayrollEarningsService,
+    private sessionProductService: SessionProductService,
     private feedbacksService: FeedbacksService,
   ) {}
 
@@ -3983,6 +3987,7 @@ export class SessionService {
     const paidAt = new Date();
     let savedPayment: SessionPayment;
     let savedTips: SessionPaymentTip[] = [];
+    let savedProducts: SessionProduct[] = [];
     let updatedSession: Session;
     try {
       savedPayment = await queryRunner.manager.save(SessionPayment, {
@@ -4027,6 +4032,22 @@ export class SessionService {
             companyWorkerId: t.companyWorkerId,
             amount: t.amount,
           })),
+        );
+      }
+
+      // CLYP-321: vender productos (crea session_product + descuenta stock)
+      // dentro de la misma transacción del cobro.
+      if (dto.products?.length) {
+        savedProducts = await this.sessionProductService.sellProducts(
+          sessionId,
+          adminCompany.id,
+          dto.products.map((p) => ({
+            productId: p.productId,
+            quantity: p.quantity,
+            unitPriceMinor: p.unitPriceMinor,
+            sellerEmployeeId: p.sellerEmployeeId ?? null,
+          })),
+          queryRunner.manager,
         );
       }
 
@@ -4094,62 +4115,133 @@ export class SessionService {
         : [];
       const svcById = new Map(services.map((s) => [s.id, s]));
 
-      const commissionItems = sessionDetails
-        // Las cortesías no generan comisión de nómina (precio 0, no cuentan).
-        .filter((d) => d.status !== 5 && d.companyWorkerId && !d.isCourtesy)
-        .map((d) => {
-          const svc = svcById.get(d.serviceId);
-          const currency = (svc?.currency || 'USD').toUpperCase();
-          const rawRate = rateByCurrency.get(currency);
-          const rate =
-            rawRate !== undefined ? rawRate : currency === 'VES' ? 1 : null;
-          return {
-            sessionDetailId: d.id,
-            companyWorkerId: d.companyWorkerId,
-            workerAmount: Number(d.totalWorker || 0),
-            serviceCost: Number(d.cost || 0),
-            currency,
-            exchangeRate: rate,
-            label: `Comisión — ${svc?.name || 'Servicio'}`,
-            appointmentId: sessionId,
-          };
-        });
+      if (dto.attributions?.length) {
+        // CLYP-318: los conceptos (comisiones y propinas) salen de las
+        // atribuciones del payload; el % se calcula sobre el precio del ítem de
+        // origen (session_detail de servicio, o session_product de producto).
+        const detailById = new Map(sessionDetails.map((d) => [d.id, d]));
 
-      await this.payrollEarningsService.recordCommissions(
-        adminCompany.id,
-        paidAt,
-        commissionItems,
-        dto.method,
-      );
+        const attrItems = dto.attributions
+          .map((a) => {
+            let itemPriceMinor: number;
+            let itemCurrency: string;
+            let conceptSource: 'appointment' | 'product_sale';
+            let conceptSourceId: number;
+            let itemLabel: string;
+            if (a.sourceType === 'service') {
+              // sourceId = session_detail.id (existe desde que se creó la cita).
+              const d = detailById.get(a.sourceId);
+              if (!d) return null; // servicio ajeno a la cita → se ignora
+              const svc = svcById.get(d.serviceId);
+              itemCurrency = (svc?.currency || 'USD').toUpperCase();
+              itemPriceMinor = toMinor(Number(d.cost || 0));
+              conceptSource = 'appointment';
+              conceptSourceId = d.id;
+              itemLabel = svc?.name || 'Servicio';
+            } else {
+              // sourceId = índice en products[] (el session_product se crea en
+              // este mismo cobro, así que el front aún no tiene su id). Se
+              // resuelve al id real de la fila creada.
+              const sp = savedProducts[a.sourceId];
+              if (!sp) return null; // índice fuera de rango → se ignora
+              itemCurrency = (sp.currency || 'USD').toUpperCase();
+              itemPriceMinor = Number(sp.unitPriceMinor) * sp.quantity;
+              conceptSource = 'product_sale';
+              conceptSourceId = sp.id;
+              itemLabel = 'Producto';
+            }
+            const rawRate = rateByCurrency.get(itemCurrency);
+            const rate =
+              rawRate !== undefined
+                ? rawRate
+                : itemCurrency === 'VES'
+                  ? 1
+                  : null;
+            const amountItemMinor =
+              a.basisMode === 'percentage'
+                ? pct(itemPriceMinor, a.value)
+                : Math.round(a.value);
+            return {
+              kind: a.kind,
+              companyWorkerId: a.employeeId,
+              amountItemMinor,
+              currency: itemCurrency,
+              exchangeRate: rate,
+              sourceType: conceptSource,
+              sourceId: conceptSourceId,
+              label: `${a.kind === 'tip' ? 'Propina' : 'Comisión'} — ${itemLabel}`,
+              rateBps: a.basisMode === 'percentage' ? a.value : undefined,
+              appointmentId: sessionId,
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
 
-      const serviceNameForWorker = (cwId: number): string | null => {
-        const svcIds = [
-          ...new Set(
-            sessionDetails
-              .filter((d) => d.companyWorkerId === cwId && d.status !== 5)
-              .map((d) => d.serviceId),
-          ),
-        ];
-        return svcIds.length === 1
-          ? (svcById.get(svcIds[0])?.name ?? null)
-          : null;
-      };
+        await this.payrollEarningsService.recordAttributionConcepts(
+          adminCompany.id,
+          paidAt,
+          attrItems,
+          dto.method,
+        );
+      } else {
+        // Compatibilidad: sin atribuciones, comportamiento actual (comisión
+        // auto desde el split del servicio + propinas de tips[]).
+        const commissionItems = sessionDetails
+          // Las cortesías no generan comisión de nómina (precio 0, no cuentan).
+          .filter((d) => d.status !== 5 && d.companyWorkerId && !d.isCourtesy)
+          .map((d) => {
+            const svc = svcById.get(d.serviceId);
+            const currency = (svc?.currency || 'USD').toUpperCase();
+            const rawRate = rateByCurrency.get(currency);
+            const rate =
+              rawRate !== undefined ? rawRate : currency === 'VES' ? 1 : null;
+            return {
+              sessionDetailId: d.id,
+              companyWorkerId: d.companyWorkerId,
+              workerAmount: Number(d.totalWorker || 0),
+              serviceCost: Number(d.cost || 0),
+              currency,
+              exchangeRate: rate,
+              label: `Comisión — ${svc?.name || 'Servicio'}`,
+              appointmentId: sessionId,
+            };
+          });
 
-      const tipItems = savedTips.map((t) => ({
-        tipId: t.id,
-        companyWorkerId: t.companyWorkerId,
-        amount: Number(t.amount || 0),
-        currency: (dto.tipCurrency || 'USD').toUpperCase(),
-        exchangeRate: dto.tipExchangeRate ?? null,
-        appointmentId: sessionId,
-        serviceName: serviceNameForWorker(t.companyWorkerId),
-      }));
-      await this.payrollEarningsService.recordTips(
-        adminCompany.id,
-        paidAt,
-        tipItems,
-        dto.method,
-      );
+        await this.payrollEarningsService.recordCommissions(
+          adminCompany.id,
+          paidAt,
+          commissionItems,
+          dto.method,
+        );
+
+        const serviceNameForWorker = (cwId: number): string | null => {
+          const svcIds = [
+            ...new Set(
+              sessionDetails
+                .filter((d) => d.companyWorkerId === cwId && d.status !== 5)
+                .map((d) => d.serviceId),
+            ),
+          ];
+          return svcIds.length === 1
+            ? (svcById.get(svcIds[0])?.name ?? null)
+            : null;
+        };
+
+        const tipItems = savedTips.map((t) => ({
+          tipId: t.id,
+          companyWorkerId: t.companyWorkerId,
+          amount: Number(t.amount || 0),
+          currency: (dto.tipCurrency || 'USD').toUpperCase(),
+          exchangeRate: dto.tipExchangeRate ?? null,
+          appointmentId: sessionId,
+          serviceName: serviceNameForWorker(t.companyWorkerId),
+        }));
+        await this.payrollEarningsService.recordTips(
+          adminCompany.id,
+          paidAt,
+          tipItems,
+          dto.method,
+        );
+      }
     } catch (error) {
       this.logger.warn(
         `Nómina: no se pudieron registrar conceptos de la cita ${sessionId}: ${(error as Error).message}`,

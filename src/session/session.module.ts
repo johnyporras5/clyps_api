@@ -24,6 +24,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
 import { NotificationModule } from '../notification/notification.module';
 import { PayrollModule } from '../payroll/payroll.module';
+import { ProductModule } from '../product/product.module';
 import { FeedbacksModule } from '../feedbacks/feedbacks.module';
 import { SessionNotificationEmitter } from './session-notification.emitter';
 import { ReminderSchedulerService } from './reminder-scheduler.service';
@@ -54,6 +55,7 @@ import { AppointmentBeforeAfterService } from './appointment-before-after.servic
     RealtimeModule,
     NotificationModule,
     PayrollModule,
+    ProductModule,
     FeedbacksModule,
   ],
   providers: [
