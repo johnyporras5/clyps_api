@@ -53,12 +53,14 @@ export class ProductService {
   async findAllByCompany(
     adminId: number,
     categoryId?: number,
+    isActive?: boolean,
   ): Promise<Product[]> {
     const company = await this.getCompanyOrFail(adminId);
     return this.productRepository.find({
       where: {
         companyId: company.id,
         ...(categoryId ? { categoryId } : {}),
+        ...(isActive !== undefined ? { isActive } : {}),
       },
       relations: ['category'],
       order: { name: 'ASC' },
@@ -96,6 +98,7 @@ export class ProductService {
       stock: dto.stock ?? 0,
       appliesCommission,
       commissionBps,
+      isActive: dto.isActive ?? true,
     });
     return this.productRepository.save(product);
   }

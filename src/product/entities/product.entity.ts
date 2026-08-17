@@ -55,6 +55,11 @@ export class Product {
   @Column({ name: 'commission_bps', type: 'int', nullable: true })
   commissionBps: number | null;
 
+  // Activo/inactivo: desactivar lo saca del flujo de venta sin borrarlo (no
+  // toca stock ni histórico).
+  @Column({ name: 'is_active', default: true })
+  isActive: boolean;
+
   @ManyToOne(() => ProductCategory, (c) => c.products, {
     onDelete: 'NO ACTION',
   })

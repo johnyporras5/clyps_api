@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   ParseIntPipe,
   UseGuards,
   Req,
@@ -29,8 +30,14 @@ export class ProductCategoryController {
   ) {}
 
   @Get()
-  findAll(@Req() req: AuthenticatedRequest) {
-    return this.productCategoryService.findAllByCompany(req.user.sub);
+  findAll(
+    @Req() req: AuthenticatedRequest,
+    @Query('isActive') isActive?: string,
+  ) {
+    // Sin el parámetro → todas (activas e inactivas). Con él, filtra.
+    const active =
+      isActive === 'true' ? true : isActive === 'false' ? false : undefined;
+    return this.productCategoryService.findAllByCompany(req.user.sub, active);
   }
 
   @Get(':id')

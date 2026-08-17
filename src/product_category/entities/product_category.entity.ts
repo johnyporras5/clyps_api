@@ -30,6 +30,10 @@ export class ProductCategory {
   @Column({ name: 'default_commission_bps', type: 'int', nullable: true })
   defaultCommissionBps: number | null;
 
+  // Activa/inactiva: desactivar la saca del flujo de venta sin borrarla.
+  @Column({ name: 'is_active', default: true })
+  isActive: boolean;
+
   @ManyToOne(() => Company, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'company_id' })
   company: Company;

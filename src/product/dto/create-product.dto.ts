@@ -47,4 +47,9 @@ export class CreateProductDto {
   @Min(0)
   @Max(10000)
   commissionBps?: number;
+
+  // Activo por defecto si no viene.
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

@@ -32,10 +32,15 @@ export class ProductController {
   findAll(
     @Req() req: AuthenticatedRequest,
     @Query('categoryId') categoryId?: string,
+    @Query('isActive') isActive?: string,
   ) {
+    // Sin isActive → todos (activos e inactivos). Combinable con categoryId.
+    const active =
+      isActive === 'true' ? true : isActive === 'false' ? false : undefined;
     return this.productService.findAllByCompany(
       req.user.sub,
       categoryId ? +categoryId : undefined,
+      active,
     );
   }
 

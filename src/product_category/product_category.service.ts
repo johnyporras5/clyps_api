@@ -29,10 +29,16 @@ export class ProductCategoryService {
     return company;
   }
 
-  async findAllByCompany(adminId: number): Promise<ProductCategory[]> {
+  async findAllByCompany(
+    adminId: number,
+    isActive?: boolean,
+  ): Promise<ProductCategory[]> {
     const company = await this.getCompanyOrFail(adminId);
     return this.categoryRepository.find({
-      where: { companyId: company.id },
+      where: {
+        companyId: company.id,
+        ...(isActive !== undefined ? { isActive } : {}),
+      },
       order: { name: 'ASC' },
     });
   }
@@ -56,6 +62,7 @@ export class ProductCategoryService {
       name: dto.name,
       companyId: company.id,
       defaultCommissionBps: dto.defaultCommissionBps ?? null,
+      isActive: dto.isActive ?? true,
     });
     return this.categoryRepository.save(category);
   }
