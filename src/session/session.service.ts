@@ -10690,6 +10690,55 @@ export class SessionService {
       else tipsFromServices += conv;
     }
 
+    // 2c) Comisiones del cobro flexible que NO están en session_detail:
+    //     - de producto (source_type='product_sale'), y
+    //     - de servicio a un trabajador que NO es el ejecutor (la del ejecutor ya
+    //       viene de session_detail; contarla aquí la duplicaría).
+    const extraCommRange = rangeSql('sess.session_datetime');
+    const extraCommRows: Array<{
+      cur: string;
+      amountMinor: string | null;
+      bsMinor: string | null;
+      rateC: string | null;
+    }> = await this.sessionDetailRepository.manager.query(
+      `SELECT UPPER(pc.currency) AS cur, pc.amount_minor AS amountMinor,
+              pc.amount_bs_minor AS bsMinor, rateC.rate AS rateC
+         FROM payroll_concept pc
+         JOIN period_detail pd ON pd.id = pc.period_detail_id
+         JOIN session_payments sp
+           ON sp.session_id = CAST(JSON_EXTRACT(pc.metadata, '$.appointmentId') AS UNSIGNED)
+         JOIN session sess ON sess.id = sp.session_id
+         LEFT JOIN session_detail sd
+           ON pc.source_type = 'appointment' AND sd.id = pc.source_id
+         LEFT JOIN (
+           SELECT payment_id, AVG(exchange_rate) AS rate
+             FROM session_payment_lines WHERE UPPER(currency) = ?
+            GROUP BY payment_id
+         ) rateC ON rateC.payment_id = sp.id
+        WHERE pd.company_worker_id IN (?)
+          AND pc.type = 'commission'
+          AND JSON_EXTRACT(pc.metadata, '$.attribution') = true
+          AND (
+            pc.source_type = 'product_sale'
+            OR (pc.source_type = 'appointment'
+                AND sd.company_worker_id <> pd.company_worker_id)
+          )${extraCommRange.sql}`,
+      [C, companyWorkerIds, ...extraCommRange.params],
+    );
+    let extraCommissions = 0;
+    for (const r of extraCommRows) {
+      const foreignAmt = (parseFloat(r.amountMinor || '0') || 0) / 100;
+      const bsAmt = (parseFloat(r.bsMinor || '0') || 0) / 100;
+      const amount = r.cur === 'VES' ? bsAmt : foreignAmt;
+      const conv = toC(
+        amount,
+        r.cur,
+        r.rateC != null ? parseFloat(r.rateC) : null,
+      );
+      if (conv == null) unconverted += 1;
+      else extraCommissions += conv;
+    }
+
     // 3) Conceptos manuales de nómina (por occurred_at). Se convierten a C con la
     //    tasa guardada al crearlos (exchange_rate). tip → propinas; bonus/ajuste+
     //    → ingresos adicionales; deducción/ajuste− → egresos.
@@ -10756,7 +10805,7 @@ export class SessionService {
     const cRow = courtesyRows[0];
 
     const totalCommissions = round2(
-      byService.reduce((s, x) => s + x.totalEarned, 0),
+      byService.reduce((s, x) => s + x.totalEarned, 0) + extraCommissions,
     );
     const totalTips = round2(tipsFromServices + manualTips);
     // Se redondean antes de sumar para que el total cuadre con lo que muestran
