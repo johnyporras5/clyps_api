@@ -4148,7 +4148,7 @@ export class SessionService {
               itemPriceMinor = Number(sp.unitPriceMinor) * sp.quantity;
               conceptSource = 'product_sale';
               conceptSourceId = sp.id;
-              itemLabel = 'Producto';
+              itemLabel = sp.product?.name || 'Producto';
             }
             // Moneda del concepto: para montos fijos la atribución puede traer su
             // propia moneda (p. ej. propina en Bs sobre un servicio en $). El %

@@ -119,6 +119,9 @@ export class SessionProductService {
       product.stock -= quantity;
       await productRepo.save(product);
 
+      // Adjuntamos el producto (para que el cobro use su nombre en el label del
+      // concepto de comisión: "Comisión — <nombre>").
+      savedSp.product = product;
       created.push(savedSp);
     }
     return created;
