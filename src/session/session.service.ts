@@ -2196,6 +2196,7 @@ export class SessionService {
     // Construir la respuesta (mismo shape que el listado de admin)
     const response: SessionResponse = {
       id: session.id,
+      publicCode: session.publicCode,
       clientId: session.clientId,
       clientName: `${client.name || ''} ${client.lastName || ''}`.trim(),
       clientLastName: client.lastName || '',
@@ -3171,6 +3172,7 @@ export class SessionService {
 
           return {
             id: session.id,
+            publicCode: session.publicCode,
             clientId: session.clientId,
             clientName: client
               ? `${client.name || ''} ${client.lastName || ''}`.trim()
@@ -3456,6 +3458,7 @@ export class SessionService {
 
         return {
           id: session.id,
+          publicCode: session.publicCode,
           clientId: session.clientId,
           clientName: sessionClient
             ? `${sessionClient.name || ''} ${sessionClient.lastName || ''}`.trim()
@@ -4441,6 +4444,7 @@ export class SessionService {
     const rows: Array<{
       paymentId: number;
       sessionId: number;
+      publicCode: string | null;
       paidAt: Date;
       collectedAt: Date | null;
       clientId: number | null;
@@ -4449,7 +4453,7 @@ export class SessionService {
       clientPicture: string | null;
     }> = await this.sessionPaymentRepository.query(
       `SELECT sp.id AS paymentId, sp.session_id AS sessionId, sp.paid_at AS paidAt,
-              sp.collected_at AS collectedAt,
+              sp.collected_at AS collectedAt, s.public_code AS publicCode,
               s.client_id AS clientId, cl.name AS clientName,
               cl.last_name AS clientLastName, cl.picture AS clientPicture
          FROM session_payments sp
@@ -4539,6 +4543,7 @@ export class SessionService {
       }
       g.debts.push({
         sessionId: r.sessionId,
+        publicCode: r.publicCode ?? null,
         paymentId: r.paymentId,
         paidAt: r.paidAt,
         // null = en deuda; fecha = ya saldada (útil para el historial).
@@ -6256,6 +6261,7 @@ export class SessionService {
       .select([
         // Campos de la sesión (cita)
         'session.id AS sessionId',
+        'session.public_code AS sessionPublicCode',
         'session.client_id AS clientId',
         'session.session_datetime AS sessionDatetime',
         'session.session_status AS sessionStatus',
@@ -6517,6 +6523,7 @@ export class SessionService {
         sessionMap.set(sessionId, {
           // === DATOS DE LA SESIÓN (CITA) ===
           id: sessionId,
+          publicCode: detail.sessionPublicCode ?? null,
           clientId: detail.clientId,
           clientName: detail.clientName
             ? `${detail.clientName || ''} ${detail.clientLastName || ''}`.trim()
@@ -8791,6 +8798,7 @@ export class SessionService {
       .select([
         // Campos de la sesión
         'session.id AS sessionId',
+        'session.public_code AS sessionPublicCode',
         'session.client_id AS clientId',
         'session.session_datetime AS sessionDatetime',
         'session.session_status AS sessionStatus',
@@ -9087,6 +9095,7 @@ export class SessionService {
         sessionMap.set(sessionId, {
           // Datos de la sesión
           id: sessionId,
+          publicCode: detail.sessionPublicCode ?? null,
           clientId: detail.clientId,
           sessionDatetime: detail.sessionDatetime,
           sessionStatus: detail.sessionStatus,

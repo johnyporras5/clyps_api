@@ -31,6 +31,7 @@ import { ReminderSchedulerService } from './reminder-scheduler.service';
 import { AppointmentBeforeAfter } from './entities/appointment-before-after.entity';
 import { AppointmentBeforeAfterController } from './appointment-before-after.controller';
 import { AppointmentBeforeAfterService } from './appointment-before-after.service';
+import { SessionSubscriber } from './session.subscriber';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { AppointmentBeforeAfterService } from './appointment-before-after.servic
     SessionNotificationEmitter,
     ReminderSchedulerService,
     AppointmentBeforeAfterService,
+    SessionSubscriber,
   ],
   controllers: [SessionController, AppointmentBeforeAfterController],
   exports: [SessionService],

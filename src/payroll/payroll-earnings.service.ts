@@ -1137,18 +1137,52 @@ export class PayrollEarningsService {
       return c.label;
     };
 
+    // Código visual (public_code) de la cita que originó cada concepto, para
+    // mostrar "cita CIT-..." en vez del id crudo.
+    const conceptApptId = (c: PayrollConcept): number | null => {
+      const metaId = (c.metadata as { appointmentId?: number } | null)
+        ?.appointmentId;
+      if (metaId != null) return Number(metaId);
+      if (c.sourceType === 'appointment' && c.sourceId != null)
+        return Number(c.sourceId);
+      return null;
+    };
+    const apptIds = [
+      ...new Set(
+        concepts.map(conceptApptId).filter((v): v is number => v != null),
+      ),
+    ];
+    const publicCodeByAppt = new Map<number, string>();
+    if (apptIds.length) {
+      const rows: Array<{ id: number; publicCode: string | null }> =
+        await this.detailRepo.query(
+          `SELECT id, public_code AS publicCode FROM session WHERE id IN (?)`,
+          [apptIds],
+        );
+      rows.forEach((r) => {
+        if (r.publicCode) publicCodeByAppt.set(Number(r.id), r.publicCode);
+      });
+    }
+    const apptPublicCodeOf = (c: PayrollConcept): string | null => {
+      const id = conceptApptId(c);
+      return id != null ? (publicCodeByAppt.get(id) ?? null) : null;
+    };
+
     const courtesyRows: Array<{
       detailId: number;
       sessionId: number;
+      publicCode: string | null;
       serviceName: string | null;
       occurredAt: Date;
       detailStatus: number;
     }> = await this.detailRepo.query(
       `SELECT sd.id AS detailId, sd.session_id AS sessionId,
+              ss.public_code AS publicCode,
               s.name AS serviceName, sd.start_datetime AS occurredAt,
               sd.status AS detailStatus
          FROM session_detail sd
          LEFT JOIN service s ON s.id = sd.service_id
+         LEFT JOIN session ss ON ss.id = sd.session_id
         WHERE sd.company_worker_id = ?
           AND sd.is_courtesy = 1
           AND sd.status IN (3, 4)
@@ -1159,6 +1193,7 @@ export class PayrollEarningsService {
     const courtesies = courtesyRows.map((r) => ({
       detailId: Number(r.detailId),
       sessionId: Number(r.sessionId),
+      publicCode: r.publicCode ?? null,
       serviceName: (r.serviceName || 'Servicio').trim(),
       occurredAt: r.occurredAt,
       detailStatus: Number(r.detailStatus),
@@ -1252,6 +1287,8 @@ export class PayrollEarningsService {
         sourceType: c.sourceType,
         sourceId: c.sourceId,
         metadata: c.metadata,
+        // Código visual de la cita origen (para mostrar "cita CIT-…").
+        appointmentPublicCode: apptPublicCodeOf(c),
         // Fecha/hora real del cobro (usar esta para mostrar, no createdAt).
         occurredAt: c.occurredAt ?? c.createdAt,
         createdAt: c.createdAt,

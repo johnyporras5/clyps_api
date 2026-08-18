@@ -133,6 +133,8 @@ export interface SessionDetailResponse {
 // Mismo shape que cada sesión del listado de admin (findAllSessionsSimple).
 export interface SessionResponse {
   id: number;
+  /** Código visual de la cita (ej. `CIT-048291`). Solo para mostrar. */
+  publicCode?: string | null;
   clientId: number;
   clientName: string;
   clientLastName: string;
