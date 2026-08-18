@@ -283,6 +283,7 @@ export class PayrollEarningsService {
             metadata: {
               ...(it.rateBps != null ? { rateBps: it.rateBps } : {}),
               currency: it.currency,
+              nativeAmountMinor: it.amountItemMinor,
               exchangeRate: rate,
               method: method ?? null,
               attribution: true,
@@ -1673,5 +1674,93 @@ export class PayrollEarningsService {
         metadata: dto.note ? { note: dto.note } : null,
       }),
     );
+  }
+
+  /**
+   * Conceptos (comisiones + propinas) generados por el cobro de una cita, por
+   * persona. Para el recibo de pago. Se rastrean por metadata.appointmentId.
+   */
+  async getConceptsByAppointment(sessionId: number): Promise<
+    {
+      type: string;
+      label: string;
+      personName: string;
+      companyWorkerId: number;
+      amountMinor: number;
+      currency: string;
+      amountBsMinor: number | null;
+      // Moneda/monto nativos del ítem (comisión de servicio en $ → $), para el
+      // recibo. La nómina real puede estar en Bs; esto es solo presentación.
+      nativeAmountMinor: number;
+      nativeCurrency: string;
+      sourceType: string | null;
+      sourceId: number | null;
+    }[]
+  > {
+    const rows = await this.conceptRepo
+      .createQueryBuilder('c')
+      .innerJoin('period_detail', 'pd', 'pd.id = c.period_detail_id')
+      .innerJoin('company_worker', 'cw', 'cw.id = pd.company_worker_id')
+      .innerJoin('worker', 'w', 'w.id = cw.worker_id')
+      .select('c.type', 'type')
+      .addSelect('c.label', 'label')
+      .addSelect('c.amount_minor', 'amountMinor')
+      .addSelect('c.currency', 'currency')
+      .addSelect('c.amount_bs_minor', 'amountBsMinor')
+      .addSelect('c.source_type', 'sourceType')
+      .addSelect('c.source_id', 'sourceId')
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.currency'))",
+        'metaCurrency',
+      )
+      .addSelect("JSON_EXTRACT(c.metadata, '$.exchangeRate')", 'metaRate')
+      .addSelect(
+        "JSON_EXTRACT(c.metadata, '$.nativeAmountMinor')",
+        'metaNative',
+      )
+      .addSelect('pd.company_worker_id', 'companyWorkerId')
+      .addSelect('w.name', 'personName')
+      .where("JSON_EXTRACT(c.metadata, '$.appointmentId') = :sessionId", {
+        sessionId,
+      })
+      .andWhere("c.type IN ('commission', 'tip')")
+      .orderBy('c.id', 'ASC')
+      .getRawMany();
+
+    return rows.map((r) => {
+      const amountMinor = Number(r.amountMinor);
+      const amountBsMinor =
+        r.amountBsMinor != null ? Number(r.amountBsMinor) : null;
+      const nativeCurrency = (r.metaCurrency || r.currency || 'VES') as string;
+      const metaRate = r.metaRate != null ? Number(r.metaRate) : null;
+      let nativeAmountMinor: number;
+      if (r.metaNative != null) {
+        // Cobros nuevos: monto nativo guardado, exacto.
+        nativeAmountMinor = Number(r.metaNative);
+      } else if (
+        nativeCurrency !== 'VES' &&
+        metaRate &&
+        metaRate > 0 &&
+        amountBsMinor != null
+      ) {
+        // Cobros viejos: reconstruir el nativo con la tasa histórica.
+        nativeAmountMinor = Math.round(amountBsMinor / metaRate);
+      } else {
+        nativeAmountMinor = amountMinor;
+      }
+      return {
+        type: r.type,
+        label: r.label,
+        personName: (r.personName || '').trim() || 'Trabajador',
+        companyWorkerId: Number(r.companyWorkerId),
+        amountMinor,
+        currency: r.currency,
+        amountBsMinor,
+        nativeAmountMinor,
+        nativeCurrency,
+        sourceType: r.sourceType ?? null,
+        sourceId: r.sourceId != null ? Number(r.sourceId) : null,
+      };
+    });
   }
 }

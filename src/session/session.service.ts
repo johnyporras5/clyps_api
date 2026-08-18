@@ -2224,7 +2224,7 @@ export class SessionService {
       services: details,
       extraServices: session.extraServices || [],
       // Cobro registrado (POST /sessions/:id/payment); null si aún no se cobró.
-      payment: await this.getSessionPaymentResponse(session.id),
+      payment: await this.getSessionPaymentResponse(session.id, details),
       cancellationReason: session.cancellationReason ?? null,
       cancelledBy: session.cancelledBy ?? null,
       cancelledByText: this.getCancelledByText(session.cancelledBy),
@@ -4289,20 +4289,41 @@ export class SessionService {
    * Cobro de una cita con la misma forma del payload de registro (+ paidAt /
    * paidBy), para exponerlo en GET /sessions/:id. Devuelve null si no hay.
    */
-  private async getSessionPaymentResponse(sessionId: number) {
+  private async getSessionPaymentResponse(
+    sessionId: number,
+    details: any[] = [],
+  ) {
     const payment = await this.sessionPaymentRepository.findOne({
       where: { sessionId },
     });
     if (!payment) return null;
 
-    const [lines, tips] = await Promise.all([
+    const [lines, tips, products, concepts] = await Promise.all([
       this.sessionPaymentLineRepository.find({
         where: { paymentId: payment.id },
       }),
       this.sessionPaymentTipRepository.find({
         where: { paymentId: payment.id },
       }),
+      // CLYP-314: productos vendidos y conceptos (comisión/propina por persona)
+      // para el recibo enriquecido.
+      this.sessionProductService.findBySession(sessionId),
+      this.payrollEarningsService.getConceptsByAppointment(sessionId),
     ]);
+
+    // Servicios detallados (desde los detalles ya armados de la cita).
+    const services = (details ?? [])
+      .filter((d) => d?.detailStatus !== 5 && d?.status !== 5)
+      .map((d) => ({
+        detailId: Number(d?.detailId ?? d?.id ?? 0),
+        name: d?.serviceName ?? 'Servicio',
+        price: Number(d?.serviceCost ?? d?.cost ?? 0),
+        currency: (d?.currency || 'USD').toUpperCase(),
+        workerName:
+          [d?.workerName, d?.workerLastName].filter(Boolean).join(' ').trim() ||
+          null,
+        isCourtesy: !!d?.isCourtesy,
+      }));
 
     return {
       id: payment.id,
@@ -4332,6 +4353,9 @@ export class SessionService {
         companyWorkerId: t.companyWorkerId,
         amount: Number(t.amount),
       })),
+      services,
+      products,
+      concepts,
     };
   }
 

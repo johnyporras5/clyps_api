@@ -123,4 +123,31 @@ export class SessionProductService {
     }
     return created;
   }
+
+  async findBySession(sessionId: number): Promise<
+    {
+      id: number;
+      productId: number;
+      name: string;
+      quantity: number;
+      unitPriceMinor: number;
+      currency: string;
+      sellerName: string | null;
+    }[]
+  > {
+    const rows = await this.sessionProductRepository.find({
+      where: { sessionId },
+      relations: ['product', 'seller', 'seller.worker'],
+      order: { id: 'ASC' },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      productId: r.productId,
+      name: r.product?.name ?? 'Producto',
+      quantity: r.quantity,
+      unitPriceMinor: Number(r.unitPriceMinor),
+      currency: r.currency,
+      sellerName: r.seller?.worker?.name?.trim() || null,
+    }));
+  }
 }
