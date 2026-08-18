@@ -522,6 +522,19 @@ export class SessionController {
   }
 
   /**
+   * Detalle de una cita del cliente autenticado (para su factura). Devuelve el
+   * pago con servicios + productos + total, SIN comisiones ni propinas.
+   */
+  @Get('client/session/:id')
+  @Roles('cli')
+  async getClientSessionDetail(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.sessionService.getClientSessionDetail(req.user.sub, Number(id));
+  }
+
+  /**
    * Lista paginada de servicios asignados al worker (catálogo service.workers)
    * con contadores históricos agregados.
    * - Worker: ve los suyos (workerId se ignora).

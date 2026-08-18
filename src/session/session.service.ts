@@ -8728,6 +8728,29 @@ export class SessionService {
    * @param getSessionsDto DTO con parámetros de filtro y paginación
    * @returns Lista paginada de sesiones del cliente
    */
+  /**
+   * Detalle de UNA cita para el CLIENTE dueño (rol cli). Reusa
+   * findOneWithDetails pero valida que la cita sea suya y ELIMINA los conceptos
+   * de nómina (comisiones/propinas) del pago: el cliente solo ve su factura
+   * (servicios + productos + total), nunca lo que gana cada trabajador.
+   */
+  async getClientSessionDetail(clientUserId: number, sessionId: number) {
+    const client = await this.clientRepository.findOne({
+      where: { userId: clientUserId },
+    });
+    if (!client) throw new NotFoundException('Cliente no encontrado');
+
+    const detail = await this.findOneWithDetails(sessionId);
+    if (!detail || detail.clientId !== client.id) {
+      throw new ForbiddenException('Esta cita no pertenece al cliente');
+    }
+    if (detail.payment) {
+      // Factura: sin comisiones ni propinas (info interna del negocio).
+      detail.payment = { ...detail.payment, concepts: [] };
+    }
+    return detail;
+  }
+
   async getSessionsForAuthenticatedClient(
     clientUserId: number,
     getSessionsDto: GetSessionsDto,
