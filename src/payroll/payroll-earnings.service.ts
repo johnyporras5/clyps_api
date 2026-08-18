@@ -417,10 +417,11 @@ export class PayrollEarningsService {
       paidAt: string | Date;
       tipCurrency: string | null;
       tipRate: string | null;
+      attributions: unknown;
     }> = await this.detailRepo.query(
       `SELECT DISTINCT sp.id AS id, sp.session_id AS sessionId, sp.method AS method,
               sp.paid_at AS paidAt, sp.tip_currency AS tipCurrency,
-              sp.tip_exchange_rate AS tipRate
+              sp.tip_exchange_rate AS tipRate, sp.attributions AS attributions
          FROM session_payments sp
          JOIN session_detail sd ON sd.session_id = sp.session_id
          JOIN company_worker cw ON cw.id = sd.company_worker_id
@@ -434,6 +435,27 @@ export class PayrollEarningsService {
 
     for (const p of payments) {
       const paidAt = new Date(p.paidAt);
+
+      // Cobro flexible: si guardó sus atribuciones resueltas, reconstruimos los
+      // conceptos EXACTAMENTE desde ahí (comisiones + propinas + productos), y
+      // NO derivamos de session_detail para no duplicar/divergir.
+      let attributions = p.attributions;
+      if (typeof attributions === 'string') {
+        try {
+          attributions = JSON.parse(attributions);
+        } catch {
+          attributions = null;
+        }
+      }
+      if (Array.isArray(attributions) && attributions.length > 0) {
+        commissions += await this.recordAttributionConcepts(
+          company.id,
+          paidAt,
+          attributions as AttributionConceptItem[],
+          p.method,
+        );
+        continue;
+      }
 
       const lines: Array<{ currency: string; rate: string | null }> =
         await this.detailRepo.query(

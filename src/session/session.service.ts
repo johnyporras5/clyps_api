@@ -4189,6 +4189,12 @@ export class SessionService {
           attrItems,
           dto.method,
         );
+
+        // Persistir las atribuciones resueltas para poder reconstruir la nómina
+        // si se borra/reactiva (botón "Revertir" + fecha de activación pasada).
+        await this.sessionPaymentRepository.update(savedPayment.id, {
+          attributions: attrItems,
+        });
       } else {
         // Compatibilidad: sin atribuciones, comportamiento actual (comisión
         // auto desde el split del servicio + propinas de tips[]).
