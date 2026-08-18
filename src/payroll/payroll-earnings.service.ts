@@ -1106,6 +1106,37 @@ export class PayrollEarningsService {
         [detail.companyWorkerId],
       );
 
+    // Nombre del producto para los conceptos de venta (el label pudo guardarse
+    // genérico en cobros viejos). Se resuelve al mostrar desde session_product.
+    const productSaleIds = [
+      ...new Set(
+        concepts
+          .filter((c) => c.sourceType === 'product_sale' && c.sourceId != null)
+          .map((c) => c.sourceId as number),
+      ),
+    ];
+    const productNameBySp = new Map<number, string>();
+    if (productSaleIds.length) {
+      const rows: Array<{ id: number; name: string | null }> =
+        await this.detailRepo.query(
+          `SELECT sp.id AS id, p.name AS name
+             FROM session_product sp JOIN product p ON p.id = sp.product_id
+            WHERE sp.id IN (?)`,
+          [productSaleIds],
+        );
+      rows.forEach((r) =>
+        productNameBySp.set(Number(r.id), r.name || 'Producto'),
+      );
+    }
+    const labelOf = (c: PayrollConcept): string => {
+      if (c.sourceType === 'product_sale' && c.sourceId != null) {
+        const name = productNameBySp.get(c.sourceId);
+        if (name)
+          return `${c.type === 'tip' ? 'Propina' : 'Comisión'} — ${name}`;
+      }
+      return c.label;
+    };
+
     const courtesyRows: Array<{
       detailId: number;
       sessionId: number;
@@ -1213,7 +1244,7 @@ export class PayrollEarningsService {
       concepts: concepts.map((c) => ({
         id: c.id,
         type: c.type,
-        label: c.label,
+        label: labelOf(c),
         sign: c.sign,
         amountMinor: c.amountMinor,
         currency: c.currency,
