@@ -10646,6 +10646,50 @@ export class SessionService {
       else tipsFromServices += conv;
     }
 
+    // 2b) Propinas del cobro flexible: conceptos type='tip' con origen en la cita
+    //     o producto (attribution=true). NO están en session_payment_tips, así que
+    //     el paso (2) no las ve. Se convierten a C con la tasa del renglón C del
+    //     mismo cobro (igual que las propinas de servicio).
+    const flexRange = rangeSql('sess.session_datetime');
+    const flexTipRows: Array<{
+      tipCur: string;
+      amountMinor: string | null;
+      bsMinor: string | null;
+      rateC: string | null;
+    }> = await this.sessionDetailRepository.manager.query(
+      `SELECT UPPER(pc.currency) AS tipCur, pc.amount_minor AS amountMinor,
+              pc.amount_bs_minor AS bsMinor, rateC.rate AS rateC
+         FROM payroll_concept pc
+         JOIN period_detail pd ON pd.id = pc.period_detail_id
+         JOIN session_payments sp
+           ON sp.session_id = CAST(JSON_EXTRACT(pc.metadata, '$.appointmentId') AS UNSIGNED)
+         JOIN session sess ON sess.id = sp.session_id
+         LEFT JOIN (
+           SELECT payment_id, AVG(exchange_rate) AS rate
+             FROM session_payment_lines WHERE UPPER(currency) = ?
+            GROUP BY payment_id
+         ) rateC ON rateC.payment_id = sp.id
+        WHERE pd.company_worker_id IN (?)
+          AND pc.type = 'tip'
+          AND pc.source_type <> 'manual'
+          AND JSON_EXTRACT(pc.metadata, '$.attribution') = true${flexRange.sql}`,
+      [C, companyWorkerIds, ...flexRange.params],
+    );
+    for (const r of flexTipRows) {
+      // El monto nativo del concepto: si está en VES se usa el equivalente en Bs.
+      const amount =
+        r.tipCur === 'VES'
+          ? (parseFloat(r.bsMinor || '0') || 0) / 100
+          : (parseFloat(r.amountMinor || '0') || 0) / 100;
+      const conv = toC(
+        amount,
+        r.tipCur,
+        r.rateC != null ? parseFloat(r.rateC) : null,
+      );
+      if (conv == null) unconverted += 1;
+      else tipsFromServices += conv;
+    }
+
     // 3) Conceptos manuales de nómina (por occurred_at). Se convierten a C con la
     //    tasa guardada al crearlos (exchange_rate). tip → propinas; bonus/ajuste+
     //    → ingresos adicionales; deducción/ajuste− → egresos.
