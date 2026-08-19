@@ -49,6 +49,38 @@ export interface SessionPaymentResponse {
     subtotalBs: number | null;
   }>;
   tips: Array<{ companyWorkerId: number; amount: number }>;
+  // CLYP-314: detalles enriquecidos del recibo/factura.
+  services?: Array<{
+    detailId: number;
+    name: string;
+    price: number;
+    currency: string;
+    workerName: string | null;
+    isCourtesy: boolean;
+  }>;
+  products?: Array<{
+    id: number;
+    productId: number;
+    name: string;
+    quantity: number;
+    unitPriceMinor: number;
+    currency: string;
+    sellerName: string | null;
+  }>;
+  // Conceptos de nómina (comisiones/propinas). Se omiten en la factura del cliente.
+  concepts?: Array<{
+    type: string;
+    label: string;
+    personName: string;
+    companyWorkerId: number;
+    amountMinor: number;
+    currency: string;
+    amountBsMinor: number | null;
+    nativeAmountMinor: number;
+    nativeCurrency: string;
+    sourceType: string | null;
+    sourceId: number | null;
+  }>;
 }
 
 // Mismo shape que cada servicio del listado de admin (findAllSessionsSimple).
@@ -101,6 +133,8 @@ export interface SessionDetailResponse {
 // Mismo shape que cada sesión del listado de admin (findAllSessionsSimple).
 export interface SessionResponse {
   id: number;
+  /** Código visual de la cita (ej. `CIT-048291`). Solo para mostrar. */
+  publicCode?: string | null;
   clientId: number;
   clientName: string;
   clientLastName: string;

@@ -112,6 +112,12 @@ export class SessionPayment {
   @Column({ name: 'was_pending', type: 'tinyint', width: 1, default: 0 })
   wasPending: boolean;
 
+  // CLYP-318/314: atribuciones resueltas del cobro flexible (comisiones/propinas
+  // por persona). Se guardan para reconstruir los conceptos de nómina al
+  // reactivar la nómina. null en cobros sin atribuciones (derivan de session_detail).
+  @Column({ name: 'attributions', type: 'json', nullable: true })
+  attributions: unknown[] | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

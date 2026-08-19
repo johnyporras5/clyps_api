@@ -10,6 +10,15 @@ export class Session {
   @PrimaryGeneratedColumn()
   id: number;
 
+  /**
+   * Código público/visual de la cita (ej. `CIT-048291`). Es SOLO para mostrar
+   * al usuario en vez del `id` interno; los enlaces/rutas siguen usando `id`.
+   * Se genera en el SessionSubscriber (beforeInsert) con reintento por
+   * unicidad. Opaco y no secuencial: no filtra volumen ni orden de creación.
+   */
+  @Column({ name: 'public_code', type: 'varchar', length: 16, nullable: true })
+  publicCode: string | null;
+
   @Column({ name: 'client_id' })
   clientId: number;
 

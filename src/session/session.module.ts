@@ -24,12 +24,14 @@ import { RealtimeModule } from '../realtime/realtime.module';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
 import { NotificationModule } from '../notification/notification.module';
 import { PayrollModule } from '../payroll/payroll.module';
+import { ProductModule } from '../product/product.module';
 import { FeedbacksModule } from '../feedbacks/feedbacks.module';
 import { SessionNotificationEmitter } from './session-notification.emitter';
 import { ReminderSchedulerService } from './reminder-scheduler.service';
 import { AppointmentBeforeAfter } from './entities/appointment-before-after.entity';
 import { AppointmentBeforeAfterController } from './appointment-before-after.controller';
 import { AppointmentBeforeAfterService } from './appointment-before-after.service';
+import { SessionSubscriber } from './session.subscriber';
 
 @Module({
   imports: [
@@ -54,6 +56,7 @@ import { AppointmentBeforeAfterService } from './appointment-before-after.servic
     RealtimeModule,
     NotificationModule,
     PayrollModule,
+    ProductModule,
     FeedbacksModule,
   ],
   providers: [
@@ -65,6 +68,7 @@ import { AppointmentBeforeAfterService } from './appointment-before-after.servic
     SessionNotificationEmitter,
     ReminderSchedulerService,
     AppointmentBeforeAfterService,
+    SessionSubscriber,
   ],
   controllers: [SessionController, AppointmentBeforeAfterController],
   exports: [SessionService],

@@ -14,7 +14,7 @@ import { PayrollPeriod } from './entities/payroll-period.entity';
 import { Payout } from './entities/payout.entity';
 import { Company } from '../company/entities/company.entity';
 import { PayrollPeriodService } from './payroll-period.service';
-import type { PeriodStatus } from './payroll.enums';
+import type { PeriodStatus, ConceptSource } from './payroll.enums';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { toMinor, fromMinor } from './payroll-money.util';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
@@ -47,6 +47,22 @@ export interface TipItem {
   exchangeRate: number | null; // Bs por 1 unidad (VES = 1)
   appointmentId?: number;
   serviceName?: string | null;
+}
+
+// Concepto que sale de una atribución del payload de cobro (CLYP-318). El monto
+// ya viene calculado en unidades mínimas de la moneda del ítem; el lado de
+// sesión lo resuelve (porcentaje sobre el precio del ítem, o monto fijo).
+export interface AttributionConceptItem {
+  kind: 'commission' | 'tip';
+  companyWorkerId: number; // employeeId de la atribución
+  amountItemMinor: number; // monto en minor de `currency`
+  currency: string; // moneda del ítem de origen
+  exchangeRate: number | null; // Bs por 1 unidad (VES = 1)
+  sourceType: ConceptSource; // 'appointment' (servicio) | 'product_sale'
+  sourceId: number; // session_detail.id | session_product.id
+  label: string;
+  rateBps?: number; // solo si vino por porcentaje (para metadata)
+  appointmentId?: number;
 }
 
 @Injectable()
@@ -212,6 +228,86 @@ export class PayrollEarningsService {
   }
 
   /**
+   * Genera conceptos desde las atribuciones del payload de cobro (CLYP-318):
+   * comisiones y propinas, sobre servicios o productos, a cualquier empleado.
+   * Un mismo ítem puede repartir a varias personas (idempotencia por
+   * source + type + period_detail_id). Idempotente. Devuelve cuántos creó.
+   */
+  async recordAttributionConcepts(
+    companyId: number,
+    whenPaid: Date,
+    items: AttributionConceptItem[],
+    method?: string | null,
+  ): Promise<number> {
+    if (items.length === 0) return 0;
+    if (await this.isBeforeActivation(companyId, whenPaid)) return 0;
+
+    const period = await this.periodService.ensureOpenPeriod(
+      companyId,
+      whenPaid,
+    );
+    const isCash = method === 'cash' || method === 'efectivo';
+    let created = 0;
+
+    for (const it of items) {
+      const rate = it.exchangeRate ?? (it.currency === 'VES' ? 1 : null);
+      if (rate == null || !(it.amountItemMinor > 0)) continue;
+      const keepForeign = isCash && it.currency !== 'VES';
+      const currency = keepForeign ? it.currency : 'VES';
+      // amountItemMinor está en minor de la moneda del ítem; a Bs = × tasa (las
+      // escalas /100 se cancelan porque la tasa es por unidad entera).
+      const amountBsMinor = Math.round(it.amountItemMinor * rate);
+      const amountMinor = keepForeign ? it.amountItemMinor : amountBsMinor;
+      if (amountMinor <= 0) continue;
+
+      const detail = await this.ensurePeriodDetail(
+        companyId,
+        period.id,
+        it.companyWorkerId,
+      );
+
+      try {
+        await this.conceptRepo.save(
+          this.conceptRepo.create({
+            companyId,
+            periodDetailId: detail.id,
+            type: it.kind,
+            sign: 1,
+            label: it.label,
+            amountMinor,
+            currency,
+            amountBsMinor,
+            occurredAt: whenPaid,
+            sourceType: it.sourceType,
+            sourceId: it.sourceId,
+            metadata: {
+              ...(it.rateBps != null ? { rateBps: it.rateBps } : {}),
+              currency: it.currency,
+              nativeAmountMinor: it.amountItemMinor,
+              exchangeRate: rate,
+              method: method ?? null,
+              attribution: true,
+              ...(it.appointmentId != null
+                ? { appointmentId: it.appointmentId }
+                : {}),
+            },
+          }),
+        );
+        created++;
+      } catch (e) {
+        if (!isDupEntry(e)) throw e; // (source, type, trabajador) ya existe → idempotente
+      }
+    }
+
+    if (created > 0) {
+      this.logger.log(
+        `${created} concepto(s) de atribución en el periodo ${period.id} (company ${companyId})`,
+      );
+    }
+    return created;
+  }
+
+  /**
    * Genera los conceptos de propina de un pago (una por cada propina que pasó
    * por la empresa). Idempotente por propina. El monto se lleva a Bs con la tasa
    * del cobro. Devuelve cuántos creó.
@@ -321,10 +417,11 @@ export class PayrollEarningsService {
       paidAt: string | Date;
       tipCurrency: string | null;
       tipRate: string | null;
+      attributions: unknown;
     }> = await this.detailRepo.query(
       `SELECT DISTINCT sp.id AS id, sp.session_id AS sessionId, sp.method AS method,
               sp.paid_at AS paidAt, sp.tip_currency AS tipCurrency,
-              sp.tip_exchange_rate AS tipRate
+              sp.tip_exchange_rate AS tipRate, sp.attributions AS attributions
          FROM session_payments sp
          JOIN session_detail sd ON sd.session_id = sp.session_id
          JOIN company_worker cw ON cw.id = sd.company_worker_id
@@ -338,6 +435,27 @@ export class PayrollEarningsService {
 
     for (const p of payments) {
       const paidAt = new Date(p.paidAt);
+
+      // Cobro flexible: si guardó sus atribuciones resueltas, reconstruimos los
+      // conceptos EXACTAMENTE desde ahí (comisiones + propinas + productos), y
+      // NO derivamos de session_detail para no duplicar/divergir.
+      let attributions = p.attributions;
+      if (typeof attributions === 'string') {
+        try {
+          attributions = JSON.parse(attributions);
+        } catch {
+          attributions = null;
+        }
+      }
+      if (Array.isArray(attributions) && attributions.length > 0) {
+        commissions += await this.recordAttributionConcepts(
+          company.id,
+          paidAt,
+          attributions as AttributionConceptItem[],
+          p.method,
+        );
+        continue;
+      }
 
       const lines: Array<{ currency: string; rate: string | null }> =
         await this.detailRepo.query(
@@ -988,18 +1106,83 @@ export class PayrollEarningsService {
         [detail.companyWorkerId],
       );
 
+    // Nombre del producto para los conceptos de venta (el label pudo guardarse
+    // genérico en cobros viejos). Se resuelve al mostrar desde session_product.
+    const productSaleIds = [
+      ...new Set(
+        concepts
+          .filter((c) => c.sourceType === 'product_sale' && c.sourceId != null)
+          .map((c) => c.sourceId as number),
+      ),
+    ];
+    const productNameBySp = new Map<number, string>();
+    if (productSaleIds.length) {
+      const rows: Array<{ id: number; name: string | null }> =
+        await this.detailRepo.query(
+          `SELECT sp.id AS id, p.name AS name
+             FROM session_product sp JOIN product p ON p.id = sp.product_id
+            WHERE sp.id IN (?)`,
+          [productSaleIds],
+        );
+      rows.forEach((r) =>
+        productNameBySp.set(Number(r.id), r.name || 'Producto'),
+      );
+    }
+    const labelOf = (c: PayrollConcept): string => {
+      if (c.sourceType === 'product_sale' && c.sourceId != null) {
+        const name = productNameBySp.get(c.sourceId);
+        if (name)
+          return `${c.type === 'tip' ? 'Propina' : 'Comisión'} — ${name}`;
+      }
+      return c.label;
+    };
+
+    // Código visual (public_code) de la cita que originó cada concepto, para
+    // mostrar "cita CIT-..." en vez del id crudo.
+    const conceptApptId = (c: PayrollConcept): number | null => {
+      const metaId = (c.metadata as { appointmentId?: number } | null)
+        ?.appointmentId;
+      if (metaId != null) return Number(metaId);
+      if (c.sourceType === 'appointment' && c.sourceId != null)
+        return Number(c.sourceId);
+      return null;
+    };
+    const apptIds = [
+      ...new Set(
+        concepts.map(conceptApptId).filter((v): v is number => v != null),
+      ),
+    ];
+    const publicCodeByAppt = new Map<number, string>();
+    if (apptIds.length) {
+      const rows: Array<{ id: number; publicCode: string | null }> =
+        await this.detailRepo.query(
+          `SELECT id, public_code AS publicCode FROM session WHERE id IN (?)`,
+          [apptIds],
+        );
+      rows.forEach((r) => {
+        if (r.publicCode) publicCodeByAppt.set(Number(r.id), r.publicCode);
+      });
+    }
+    const apptPublicCodeOf = (c: PayrollConcept): string | null => {
+      const id = conceptApptId(c);
+      return id != null ? (publicCodeByAppt.get(id) ?? null) : null;
+    };
+
     const courtesyRows: Array<{
       detailId: number;
       sessionId: number;
+      publicCode: string | null;
       serviceName: string | null;
       occurredAt: Date;
       detailStatus: number;
     }> = await this.detailRepo.query(
       `SELECT sd.id AS detailId, sd.session_id AS sessionId,
+              ss.public_code AS publicCode,
               s.name AS serviceName, sd.start_datetime AS occurredAt,
               sd.status AS detailStatus
          FROM session_detail sd
          LEFT JOIN service s ON s.id = sd.service_id
+         LEFT JOIN session ss ON ss.id = sd.session_id
         WHERE sd.company_worker_id = ?
           AND sd.is_courtesy = 1
           AND sd.status IN (3, 4)
@@ -1010,6 +1193,7 @@ export class PayrollEarningsService {
     const courtesies = courtesyRows.map((r) => ({
       detailId: Number(r.detailId),
       sessionId: Number(r.sessionId),
+      publicCode: r.publicCode ?? null,
       serviceName: (r.serviceName || 'Servicio').trim(),
       occurredAt: r.occurredAt,
       detailStatus: Number(r.detailStatus),
@@ -1095,7 +1279,7 @@ export class PayrollEarningsService {
       concepts: concepts.map((c) => ({
         id: c.id,
         type: c.type,
-        label: c.label,
+        label: labelOf(c),
         sign: c.sign,
         amountMinor: c.amountMinor,
         currency: c.currency,
@@ -1103,6 +1287,8 @@ export class PayrollEarningsService {
         sourceType: c.sourceType,
         sourceId: c.sourceId,
         metadata: c.metadata,
+        // Código visual de la cita origen (para mostrar "cita CIT-…").
+        appointmentPublicCode: apptPublicCodeOf(c),
         // Fecha/hora real del cobro (usar esta para mostrar, no createdAt).
         occurredAt: c.occurredAt ?? c.createdAt,
         createdAt: c.createdAt,
@@ -1578,5 +1764,93 @@ export class PayrollEarningsService {
         metadata: dto.note ? { note: dto.note } : null,
       }),
     );
+  }
+
+  /**
+   * Conceptos (comisiones + propinas) generados por el cobro de una cita, por
+   * persona. Para el recibo de pago. Se rastrean por metadata.appointmentId.
+   */
+  async getConceptsByAppointment(sessionId: number): Promise<
+    {
+      type: string;
+      label: string;
+      personName: string;
+      companyWorkerId: number;
+      amountMinor: number;
+      currency: string;
+      amountBsMinor: number | null;
+      // Moneda/monto nativos del ítem (comisión de servicio en $ → $), para el
+      // recibo. La nómina real puede estar en Bs; esto es solo presentación.
+      nativeAmountMinor: number;
+      nativeCurrency: string;
+      sourceType: string | null;
+      sourceId: number | null;
+    }[]
+  > {
+    const rows = await this.conceptRepo
+      .createQueryBuilder('c')
+      .innerJoin('period_detail', 'pd', 'pd.id = c.period_detail_id')
+      .innerJoin('company_worker', 'cw', 'cw.id = pd.company_worker_id')
+      .innerJoin('worker', 'w', 'w.id = cw.worker_id')
+      .select('c.type', 'type')
+      .addSelect('c.label', 'label')
+      .addSelect('c.amount_minor', 'amountMinor')
+      .addSelect('c.currency', 'currency')
+      .addSelect('c.amount_bs_minor', 'amountBsMinor')
+      .addSelect('c.source_type', 'sourceType')
+      .addSelect('c.source_id', 'sourceId')
+      .addSelect(
+        "JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.currency'))",
+        'metaCurrency',
+      )
+      .addSelect("JSON_EXTRACT(c.metadata, '$.exchangeRate')", 'metaRate')
+      .addSelect(
+        "JSON_EXTRACT(c.metadata, '$.nativeAmountMinor')",
+        'metaNative',
+      )
+      .addSelect('pd.company_worker_id', 'companyWorkerId')
+      .addSelect('w.name', 'personName')
+      .where("JSON_EXTRACT(c.metadata, '$.appointmentId') = :sessionId", {
+        sessionId,
+      })
+      .andWhere("c.type IN ('commission', 'tip')")
+      .orderBy('c.id', 'ASC')
+      .getRawMany();
+
+    return rows.map((r) => {
+      const amountMinor = Number(r.amountMinor);
+      const amountBsMinor =
+        r.amountBsMinor != null ? Number(r.amountBsMinor) : null;
+      const nativeCurrency = (r.metaCurrency || r.currency || 'VES') as string;
+      const metaRate = r.metaRate != null ? Number(r.metaRate) : null;
+      let nativeAmountMinor: number;
+      if (r.metaNative != null) {
+        // Cobros nuevos: monto nativo guardado, exacto.
+        nativeAmountMinor = Number(r.metaNative);
+      } else if (
+        nativeCurrency !== 'VES' &&
+        metaRate &&
+        metaRate > 0 &&
+        amountBsMinor != null
+      ) {
+        // Cobros viejos: reconstruir el nativo con la tasa histórica.
+        nativeAmountMinor = Math.round(amountBsMinor / metaRate);
+      } else {
+        nativeAmountMinor = amountMinor;
+      }
+      return {
+        type: r.type,
+        label: r.label,
+        personName: (r.personName || '').trim() || 'Trabajador',
+        companyWorkerId: Number(r.companyWorkerId),
+        amountMinor,
+        currency: r.currency,
+        amountBsMinor,
+        nativeAmountMinor,
+        nativeCurrency,
+        sourceType: r.sourceType ?? null,
+        sourceId: r.sourceId != null ? Number(r.sourceId) : null,
+      };
+    });
   }
 }

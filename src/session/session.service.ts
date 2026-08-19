@@ -16,6 +16,9 @@ import { SessionPaymentTip } from './entities/session-payment-tip.entity';
 import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
 import { PayrollPeriodService } from '../payroll/payroll-period.service';
 import { PayrollEarningsService } from '../payroll/payroll-earnings.service';
+import { SessionProductService } from '../product/session_product.service';
+import { SessionProduct } from '../product/entities/session_product.entity';
+import { toMinor, pct } from '../payroll/payroll-money.util';
 import { FeedbacksService } from '../feedbacks/feedbacks.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import {
@@ -111,6 +114,7 @@ export class SessionService {
     private fileUploadService: FileUploadService,
     private payrollPeriodService: PayrollPeriodService,
     private payrollEarningsService: PayrollEarningsService,
+    private sessionProductService: SessionProductService,
     private feedbacksService: FeedbacksService,
   ) {}
 
@@ -2192,6 +2196,7 @@ export class SessionService {
     // Construir la respuesta (mismo shape que el listado de admin)
     const response: SessionResponse = {
       id: session.id,
+      publicCode: session.publicCode,
       clientId: session.clientId,
       clientName: `${client.name || ''} ${client.lastName || ''}`.trim(),
       clientLastName: client.lastName || '',
@@ -2220,7 +2225,7 @@ export class SessionService {
       services: details,
       extraServices: session.extraServices || [],
       // Cobro registrado (POST /sessions/:id/payment); null si aún no se cobró.
-      payment: await this.getSessionPaymentResponse(session.id),
+      payment: await this.getSessionPaymentResponse(session.id, details),
       cancellationReason: session.cancellationReason ?? null,
       cancelledBy: session.cancelledBy ?? null,
       cancelledByText: this.getCancelledByText(session.cancelledBy),
@@ -3167,6 +3172,7 @@ export class SessionService {
 
           return {
             id: session.id,
+            publicCode: session.publicCode,
             clientId: session.clientId,
             clientName: client
               ? `${client.name || ''} ${client.lastName || ''}`.trim()
@@ -3452,6 +3458,7 @@ export class SessionService {
 
         return {
           id: session.id,
+          publicCode: session.publicCode,
           clientId: session.clientId,
           clientName: sessionClient
             ? `${sessionClient.name || ''} ${sessionClient.lastName || ''}`.trim()
@@ -3983,6 +3990,7 @@ export class SessionService {
     const paidAt = new Date();
     let savedPayment: SessionPayment;
     let savedTips: SessionPaymentTip[] = [];
+    let savedProducts: SessionProduct[] = [];
     let updatedSession: Session;
     try {
       savedPayment = await queryRunner.manager.save(SessionPayment, {
@@ -4027,6 +4035,22 @@ export class SessionService {
             companyWorkerId: t.companyWorkerId,
             amount: t.amount,
           })),
+        );
+      }
+
+      // CLYP-321: vender productos (crea session_product + descuenta stock)
+      // dentro de la misma transacción del cobro.
+      if (dto.products?.length) {
+        savedProducts = await this.sessionProductService.sellProducts(
+          sessionId,
+          adminCompany.id,
+          dto.products.map((p) => ({
+            productId: p.productId,
+            quantity: p.quantity,
+            unitPriceMinor: p.unitPriceMinor,
+            sellerEmployeeId: p.sellerEmployeeId ?? null,
+          })),
+          queryRunner.manager,
         );
       }
 
@@ -4094,62 +4118,146 @@ export class SessionService {
         : [];
       const svcById = new Map(services.map((s) => [s.id, s]));
 
-      const commissionItems = sessionDetails
-        // Las cortesías no generan comisión de nómina (precio 0, no cuentan).
-        .filter((d) => d.status !== 5 && d.companyWorkerId && !d.isCourtesy)
-        .map((d) => {
-          const svc = svcById.get(d.serviceId);
-          const currency = (svc?.currency || 'USD').toUpperCase();
-          const rawRate = rateByCurrency.get(currency);
-          const rate =
-            rawRate !== undefined ? rawRate : currency === 'VES' ? 1 : null;
-          return {
-            sessionDetailId: d.id,
-            companyWorkerId: d.companyWorkerId,
-            workerAmount: Number(d.totalWorker || 0),
-            serviceCost: Number(d.cost || 0),
-            currency,
-            exchangeRate: rate,
-            label: `Comisión — ${svc?.name || 'Servicio'}`,
-            appointmentId: sessionId,
-          };
+      if (dto.attributions?.length) {
+        // CLYP-318: los conceptos (comisiones y propinas) salen de las
+        // atribuciones del payload; el % se calcula sobre el precio del ítem de
+        // origen (session_detail de servicio, o session_product de producto).
+        const detailById = new Map(sessionDetails.map((d) => [d.id, d]));
+
+        const attrItems = dto.attributions
+          .map((a) => {
+            let itemPriceMinor: number;
+            let itemCurrency: string;
+            let conceptSource: 'appointment' | 'product_sale';
+            let conceptSourceId: number;
+            let itemLabel: string;
+            if (a.sourceType === 'service') {
+              // sourceId = session_detail.id (existe desde que se creó la cita).
+              const d = detailById.get(a.sourceId);
+              if (!d) return null; // servicio ajeno a la cita → se ignora
+              const svc = svcById.get(d.serviceId);
+              itemCurrency = (svc?.currency || 'USD').toUpperCase();
+              itemPriceMinor = toMinor(Number(d.cost || 0));
+              conceptSource = 'appointment';
+              conceptSourceId = d.id;
+              itemLabel = svc?.name || 'Servicio';
+            } else {
+              // sourceId = índice en products[] (el session_product se crea en
+              // este mismo cobro, así que el front aún no tiene su id). Se
+              // resuelve al id real de la fila creada.
+              const sp = savedProducts[a.sourceId];
+              if (!sp) return null; // índice fuera de rango → se ignora
+              itemCurrency = (sp.currency || 'USD').toUpperCase();
+              itemPriceMinor = Number(sp.unitPriceMinor) * sp.quantity;
+              conceptSource = 'product_sale';
+              conceptSourceId = sp.id;
+              itemLabel = sp.product?.name || 'Producto';
+            }
+            // Moneda del concepto: para montos fijos la atribución puede traer su
+            // propia moneda (p. ej. propina en Bs sobre un servicio en $). El %
+            // siempre se calcula sobre el precio del ítem, en su moneda.
+            const attrCurrency =
+              a.basisMode === 'fixed' && a.currency
+                ? a.currency.toUpperCase()
+                : itemCurrency;
+            const rawRate = rateByCurrency.get(attrCurrency);
+            const rate =
+              rawRate !== undefined
+                ? rawRate
+                : attrCurrency === 'VES'
+                  ? 1
+                  : null;
+            const amountItemMinor =
+              a.basisMode === 'percentage'
+                ? pct(itemPriceMinor, a.value)
+                : Math.round(a.value);
+            return {
+              kind: a.kind,
+              companyWorkerId: a.employeeId,
+              amountItemMinor,
+              currency: attrCurrency,
+              exchangeRate: rate,
+              sourceType: conceptSource,
+              sourceId: conceptSourceId,
+              label: `${a.kind === 'tip' ? 'Propina' : 'Comisión'} — ${itemLabel}`,
+              rateBps: a.basisMode === 'percentage' ? a.value : undefined,
+              appointmentId: sessionId,
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+
+        await this.payrollEarningsService.recordAttributionConcepts(
+          adminCompany.id,
+          paidAt,
+          attrItems,
+          dto.method,
+        );
+
+        // Persistir las atribuciones resueltas para poder reconstruir la nómina
+        // si se borra/reactiva (botón "Revertir" + fecha de activación pasada).
+        await this.sessionPaymentRepository.update(savedPayment.id, {
+          attributions: attrItems,
         });
+      } else {
+        // Compatibilidad: sin atribuciones, comportamiento actual (comisión
+        // auto desde el split del servicio + propinas de tips[]).
+        const commissionItems = sessionDetails
+          // Las cortesías no generan comisión de nómina (precio 0, no cuentan).
+          .filter((d) => d.status !== 5 && d.companyWorkerId && !d.isCourtesy)
+          .map((d) => {
+            const svc = svcById.get(d.serviceId);
+            const currency = (svc?.currency || 'USD').toUpperCase();
+            const rawRate = rateByCurrency.get(currency);
+            const rate =
+              rawRate !== undefined ? rawRate : currency === 'VES' ? 1 : null;
+            return {
+              sessionDetailId: d.id,
+              companyWorkerId: d.companyWorkerId,
+              workerAmount: Number(d.totalWorker || 0),
+              serviceCost: Number(d.cost || 0),
+              currency,
+              exchangeRate: rate,
+              label: `Comisión — ${svc?.name || 'Servicio'}`,
+              appointmentId: sessionId,
+            };
+          });
 
-      await this.payrollEarningsService.recordCommissions(
-        adminCompany.id,
-        paidAt,
-        commissionItems,
-        dto.method,
-      );
+        await this.payrollEarningsService.recordCommissions(
+          adminCompany.id,
+          paidAt,
+          commissionItems,
+          dto.method,
+        );
 
-      const serviceNameForWorker = (cwId: number): string | null => {
-        const svcIds = [
-          ...new Set(
-            sessionDetails
-              .filter((d) => d.companyWorkerId === cwId && d.status !== 5)
-              .map((d) => d.serviceId),
-          ),
-        ];
-        return svcIds.length === 1
-          ? (svcById.get(svcIds[0])?.name ?? null)
-          : null;
-      };
+        const serviceNameForWorker = (cwId: number): string | null => {
+          const svcIds = [
+            ...new Set(
+              sessionDetails
+                .filter((d) => d.companyWorkerId === cwId && d.status !== 5)
+                .map((d) => d.serviceId),
+            ),
+          ];
+          return svcIds.length === 1
+            ? (svcById.get(svcIds[0])?.name ?? null)
+            : null;
+        };
 
-      const tipItems = savedTips.map((t) => ({
-        tipId: t.id,
-        companyWorkerId: t.companyWorkerId,
-        amount: Number(t.amount || 0),
-        currency: (dto.tipCurrency || 'USD').toUpperCase(),
-        exchangeRate: dto.tipExchangeRate ?? null,
-        appointmentId: sessionId,
-        serviceName: serviceNameForWorker(t.companyWorkerId),
-      }));
-      await this.payrollEarningsService.recordTips(
-        adminCompany.id,
-        paidAt,
-        tipItems,
-        dto.method,
-      );
+        const tipItems = savedTips.map((t) => ({
+          tipId: t.id,
+          companyWorkerId: t.companyWorkerId,
+          amount: Number(t.amount || 0),
+          currency: (dto.tipCurrency || 'USD').toUpperCase(),
+          exchangeRate: dto.tipExchangeRate ?? null,
+          appointmentId: sessionId,
+          serviceName: serviceNameForWorker(t.companyWorkerId),
+        }));
+        await this.payrollEarningsService.recordTips(
+          adminCompany.id,
+          paidAt,
+          tipItems,
+          dto.method,
+        );
+      }
     } catch (error) {
       this.logger.warn(
         `Nómina: no se pudieron registrar conceptos de la cita ${sessionId}: ${(error as Error).message}`,
@@ -4190,20 +4298,41 @@ export class SessionService {
    * Cobro de una cita con la misma forma del payload de registro (+ paidAt /
    * paidBy), para exponerlo en GET /sessions/:id. Devuelve null si no hay.
    */
-  private async getSessionPaymentResponse(sessionId: number) {
+  private async getSessionPaymentResponse(
+    sessionId: number,
+    details: any[] = [],
+  ) {
     const payment = await this.sessionPaymentRepository.findOne({
       where: { sessionId },
     });
     if (!payment) return null;
 
-    const [lines, tips] = await Promise.all([
+    const [lines, tips, products, concepts] = await Promise.all([
       this.sessionPaymentLineRepository.find({
         where: { paymentId: payment.id },
       }),
       this.sessionPaymentTipRepository.find({
         where: { paymentId: payment.id },
       }),
+      // CLYP-314: productos vendidos y conceptos (comisión/propina por persona)
+      // para el recibo enriquecido.
+      this.sessionProductService.findBySession(sessionId),
+      this.payrollEarningsService.getConceptsByAppointment(sessionId),
     ]);
+
+    // Servicios detallados (desde los detalles ya armados de la cita).
+    const services = (details ?? [])
+      .filter((d) => d?.detailStatus !== 5 && d?.status !== 5)
+      .map((d) => ({
+        detailId: Number(d?.detailId ?? d?.id ?? 0),
+        name: d?.serviceName ?? 'Servicio',
+        price: Number(d?.serviceCost ?? d?.cost ?? 0),
+        currency: (d?.currency || 'USD').toUpperCase(),
+        workerName:
+          [d?.workerName, d?.workerLastName].filter(Boolean).join(' ').trim() ||
+          null,
+        isCourtesy: !!d?.isCourtesy,
+      }));
 
     return {
       id: payment.id,
@@ -4233,6 +4362,9 @@ export class SessionService {
         companyWorkerId: t.companyWorkerId,
         amount: Number(t.amount),
       })),
+      services,
+      products,
+      concepts,
     };
   }
 
@@ -4312,6 +4444,7 @@ export class SessionService {
     const rows: Array<{
       paymentId: number;
       sessionId: number;
+      publicCode: string | null;
       paidAt: Date;
       collectedAt: Date | null;
       clientId: number | null;
@@ -4320,7 +4453,7 @@ export class SessionService {
       clientPicture: string | null;
     }> = await this.sessionPaymentRepository.query(
       `SELECT sp.id AS paymentId, sp.session_id AS sessionId, sp.paid_at AS paidAt,
-              sp.collected_at AS collectedAt,
+              sp.collected_at AS collectedAt, s.public_code AS publicCode,
               s.client_id AS clientId, cl.name AS clientName,
               cl.last_name AS clientLastName, cl.picture AS clientPicture
          FROM session_payments sp
@@ -4410,6 +4543,7 @@ export class SessionService {
       }
       g.debts.push({
         sessionId: r.sessionId,
+        publicCode: r.publicCode ?? null,
         paymentId: r.paymentId,
         paidAt: r.paidAt,
         // null = en deuda; fecha = ya saldada (útil para el historial).
@@ -6127,6 +6261,7 @@ export class SessionService {
       .select([
         // Campos de la sesión (cita)
         'session.id AS sessionId',
+        'session.public_code AS sessionPublicCode',
         'session.client_id AS clientId',
         'session.session_datetime AS sessionDatetime',
         'session.session_status AS sessionStatus',
@@ -6388,6 +6523,7 @@ export class SessionService {
         sessionMap.set(sessionId, {
           // === DATOS DE LA SESIÓN (CITA) ===
           id: sessionId,
+          publicCode: detail.sessionPublicCode ?? null,
           clientId: detail.clientId,
           clientName: detail.clientName
             ? `${detail.clientName || ''} ${detail.clientLastName || ''}`.trim()
@@ -8599,6 +8735,29 @@ export class SessionService {
    * @param getSessionsDto DTO con parámetros de filtro y paginación
    * @returns Lista paginada de sesiones del cliente
    */
+  /**
+   * Detalle de UNA cita para el CLIENTE dueño (rol cli). Reusa
+   * findOneWithDetails pero valida que la cita sea suya y ELIMINA los conceptos
+   * de nómina (comisiones/propinas) del pago: el cliente solo ve su factura
+   * (servicios + productos + total), nunca lo que gana cada trabajador.
+   */
+  async getClientSessionDetail(clientUserId: number, sessionId: number) {
+    const client = await this.clientRepository.findOne({
+      where: { userId: clientUserId },
+    });
+    if (!client) throw new NotFoundException('Cliente no encontrado');
+
+    const detail = await this.findOneWithDetails(sessionId);
+    if (!detail || detail.clientId !== client.id) {
+      throw new ForbiddenException('Esta cita no pertenece al cliente');
+    }
+    if (detail.payment) {
+      // Factura: sin comisiones ni propinas (info interna del negocio).
+      detail.payment = { ...detail.payment, concepts: [] };
+    }
+    return detail;
+  }
+
   async getSessionsForAuthenticatedClient(
     clientUserId: number,
     getSessionsDto: GetSessionsDto,
@@ -8639,6 +8798,7 @@ export class SessionService {
       .select([
         // Campos de la sesión
         'session.id AS sessionId',
+        'session.public_code AS sessionPublicCode',
         'session.client_id AS clientId',
         'session.session_datetime AS sessionDatetime',
         'session.session_status AS sessionStatus',
@@ -8935,6 +9095,7 @@ export class SessionService {
         sessionMap.set(sessionId, {
           // Datos de la sesión
           id: sessionId,
+          publicCode: detail.sessionPublicCode ?? null,
           clientId: detail.clientId,
           sessionDatetime: detail.sessionDatetime,
           sessionStatus: detail.sessionStatus,
@@ -10517,6 +10678,99 @@ export class SessionService {
       else tipsFromServices += conv;
     }
 
+    // 2b) Propinas del cobro flexible: conceptos type='tip' con origen en la cita
+    //     o producto (attribution=true). NO están en session_payment_tips, así que
+    //     el paso (2) no las ve. Se convierten a C con la tasa del renglón C del
+    //     mismo cobro (igual que las propinas de servicio).
+    const flexRange = rangeSql('sess.session_datetime');
+    const flexTipRows: Array<{
+      tipCur: string;
+      amountMinor: string | null;
+      bsMinor: string | null;
+      rateC: string | null;
+    }> = await this.sessionDetailRepository.manager.query(
+      `SELECT UPPER(pc.currency) AS tipCur, pc.amount_minor AS amountMinor,
+              pc.amount_bs_minor AS bsMinor, rateC.rate AS rateC
+         FROM payroll_concept pc
+         JOIN period_detail pd ON pd.id = pc.period_detail_id
+         JOIN session_payments sp
+           ON sp.session_id = CAST(JSON_EXTRACT(pc.metadata, '$.appointmentId') AS UNSIGNED)
+         JOIN session sess ON sess.id = sp.session_id
+         LEFT JOIN (
+           SELECT payment_id, AVG(exchange_rate) AS rate
+             FROM session_payment_lines WHERE UPPER(currency) = ?
+            GROUP BY payment_id
+         ) rateC ON rateC.payment_id = sp.id
+        WHERE pd.company_worker_id IN (?)
+          AND pc.type = 'tip'
+          AND pc.source_type <> 'manual'
+          AND JSON_EXTRACT(pc.metadata, '$.attribution') = true${flexRange.sql}`,
+      [C, companyWorkerIds, ...flexRange.params],
+    );
+    for (const r of flexTipRows) {
+      // El monto nativo del concepto: si está en VES se usa el equivalente en Bs.
+      const amount =
+        r.tipCur === 'VES'
+          ? (parseFloat(r.bsMinor || '0') || 0) / 100
+          : (parseFloat(r.amountMinor || '0') || 0) / 100;
+      const conv = toC(
+        amount,
+        r.tipCur,
+        r.rateC != null ? parseFloat(r.rateC) : null,
+      );
+      if (conv == null) unconverted += 1;
+      else tipsFromServices += conv;
+    }
+
+    // 2c) Comisiones del cobro flexible que NO están en session_detail:
+    //     - de producto (source_type='product_sale'), y
+    //     - de servicio a un trabajador que NO es el ejecutor (la del ejecutor ya
+    //       viene de session_detail; contarla aquí la duplicaría).
+    const extraCommRange = rangeSql('sess.session_datetime');
+    const extraCommRows: Array<{
+      cur: string;
+      amountMinor: string | null;
+      bsMinor: string | null;
+      rateC: string | null;
+    }> = await this.sessionDetailRepository.manager.query(
+      `SELECT UPPER(pc.currency) AS cur, pc.amount_minor AS amountMinor,
+              pc.amount_bs_minor AS bsMinor, rateC.rate AS rateC
+         FROM payroll_concept pc
+         JOIN period_detail pd ON pd.id = pc.period_detail_id
+         JOIN session_payments sp
+           ON sp.session_id = CAST(JSON_EXTRACT(pc.metadata, '$.appointmentId') AS UNSIGNED)
+         JOIN session sess ON sess.id = sp.session_id
+         LEFT JOIN session_detail sd
+           ON pc.source_type = 'appointment' AND sd.id = pc.source_id
+         LEFT JOIN (
+           SELECT payment_id, AVG(exchange_rate) AS rate
+             FROM session_payment_lines WHERE UPPER(currency) = ?
+            GROUP BY payment_id
+         ) rateC ON rateC.payment_id = sp.id
+        WHERE pd.company_worker_id IN (?)
+          AND pc.type = 'commission'
+          AND JSON_EXTRACT(pc.metadata, '$.attribution') = true
+          AND (
+            pc.source_type = 'product_sale'
+            OR (pc.source_type = 'appointment'
+                AND sd.company_worker_id <> pd.company_worker_id)
+          )${extraCommRange.sql}`,
+      [C, companyWorkerIds, ...extraCommRange.params],
+    );
+    let extraCommissions = 0;
+    for (const r of extraCommRows) {
+      const foreignAmt = (parseFloat(r.amountMinor || '0') || 0) / 100;
+      const bsAmt = (parseFloat(r.bsMinor || '0') || 0) / 100;
+      const amount = r.cur === 'VES' ? bsAmt : foreignAmt;
+      const conv = toC(
+        amount,
+        r.cur,
+        r.rateC != null ? parseFloat(r.rateC) : null,
+      );
+      if (conv == null) unconverted += 1;
+      else extraCommissions += conv;
+    }
+
     // 3) Conceptos manuales de nómina (por occurred_at). Se convierten a C con la
     //    tasa guardada al crearlos (exchange_rate). tip → propinas; bonus/ajuste+
     //    → ingresos adicionales; deducción/ajuste− → egresos.
@@ -10583,7 +10837,7 @@ export class SessionService {
     const cRow = courtesyRows[0];
 
     const totalCommissions = round2(
-      byService.reduce((s, x) => s + x.totalEarned, 0),
+      byService.reduce((s, x) => s + x.totalEarned, 0) + extraCommissions,
     );
     const totalTips = round2(tipsFromServices + manualTips);
     // Se redondean antes de sumar para que el total cuadre con lo que muestran

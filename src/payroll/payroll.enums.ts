@@ -44,7 +44,7 @@ export const CONCEPT_TYPES: ConceptType[] = [
 ];
 
 /** Origen de un concepto (para trazabilidad e idempotencia). */
-export type ConceptSource = 'appointment' | 'tip' | 'manual';
+export type ConceptSource = 'appointment' | 'tip' | 'manual' | 'product_sale';
 
 /** Método con el que se registró un pago al empleado. */
 export type PayoutMethod = 'efectivo' | 'transferencia' | 'otro';
