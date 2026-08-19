@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { OnboardingRubroTemplate } from './entities/onboarding_rubro_template.entity';
 import { CompanyCategory } from '../company_category/entities/company_category.entity';
+import { SiteCategory } from '../site_category/entities/site_category.entity';
 import type {
   TemplateCategory,
   TemplateService,
@@ -35,20 +36,49 @@ export class OnboardingTemplateService {
     private readonly templateRepository: Repository<OnboardingRubroTemplate>,
     @InjectRepository(CompanyCategory)
     private readonly companyCategoryRepository: Repository<CompanyCategory>,
+    @InjectRepository(SiteCategory)
+    private readonly siteCategoryRepository: Repository<SiteCategory>,
   ) {}
 
-  /** Rubros que la company ya marcó al registrarse (`company_category.name`). */
+  /**
+   * Rubros que la company marcó al registrarse. `company_category.name` NO
+   * guarda siempre el slug: según por dónde se haya cargado puede traer el
+   * nombre visible ('Peluquería', 'Spa'). Se devuelve tal cual y la resolución
+   * contra el catálogo se hace en `resolveRubroKeys`.
+   */
   private async getCompanyRubros(companyId: number): Promise<string[]> {
     const rows = await this.companyCategoryRepository.find({
       where: { companyId },
     });
     return [
       ...new Set(
-        rows
-          .map((r) => (r.name || '').trim().toLowerCase())
-          .filter((s) => s.length > 0),
+        rows.map((r) => (r.name || '').trim()).filter((s) => s.length > 0),
       ),
     ];
+  }
+
+  /**
+   * Lleva lo que sea que venga ('peluqueria', 'Peluquería', 'PELUQUERIA') al
+   * `slug` real del catálogo `site_category`, ignorando acentos y mayúsculas.
+   * Lo que no esté en el catálogo se deja en minúsculas y seguirá su camino
+   * (terminará reportado en `unknownRubros`).
+   */
+  private async resolveRubroKeys(
+    inputs: string[],
+  ): Promise<Array<{ input: string; key: string }>> {
+    const sites = await this.siteCategoryRepository.find();
+    const slugByNormalized = new Map<string, string>();
+    for (const site of sites) {
+      if (!site.slug) continue;
+      // Se indexa por slug Y por nombre visible: ambos apuntan al mismo slug.
+      slugByNormalized.set(normalizeName(site.slug), site.slug);
+      if (site.name) slugByNormalized.set(normalizeName(site.name), site.slug);
+    }
+
+    return inputs.map((input) => ({
+      input,
+      key: slugByNormalized.get(normalizeName(input)) ?? input.toLowerCase(),
+    }));
   }
 
   /**
@@ -96,9 +126,7 @@ export class OnboardingTemplateService {
       requestedRubros && requestedRubros.length > 0
         ? [
             ...new Set(
-              requestedRubros
-                .map((r) => r.trim().toLowerCase())
-                .filter((r) => r.length > 0),
+              requestedRubros.map((r) => r.trim()).filter((r) => r.length > 0),
             ),
           ]
         : await this.getCompanyRubros(companyId);
@@ -114,15 +142,24 @@ export class OnboardingTemplateService {
       };
     }
 
+    const resolved = await this.resolveRubroKeys(asked);
+
     const found = await this.templateRepository.find({
-      where: { rubroKey: In(asked), isActive: true },
+      where: {
+        rubroKey: In([...new Set(resolved.map((r) => r.key))]),
+        isActive: true,
+      },
       order: { sortOrder: 'ASC', id: 'ASC' },
     });
 
     const foundKeys = new Set(found.map((t) => t.rubroKey));
     // Rubros pedidos sin plantilla (o inactivos): se ignoran, pero se informan
-    // para que el frontend sepa qué no se pudo precargar.
-    const unknownRubros = asked.filter((r) => !foundKeys.has(r));
+    // tal como llegaron, para que el frontend sepa qué no se pudo precargar.
+    const unknownRubros = [
+      ...new Set(
+        resolved.filter((r) => !foundKeys.has(r.key)).map((r) => r.input),
+      ),
+    ];
 
     // Combinación: las CATEGORÍAS se agrupan solo por `key`. No se fusionan por
     // nombre a propósito: `color_barberia` ("Color" de caballero) y `color`

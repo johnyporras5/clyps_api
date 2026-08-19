@@ -7,6 +7,7 @@ import { OnboardingController } from './onboarding.controller';
 import { OnboardingState } from './entities/onboarding_state.entity';
 import { OnboardingRubroTemplate } from './entities/onboarding_rubro_template.entity';
 import { CompanyCategory } from '../company_category/entities/company_category.entity';
+import { SiteCategory } from '../site_category/entities/site_category.entity';
 import { ServiceCategory } from '../service_category/entities/service_category.entity';
 import { Service } from '../service/entities/service.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
@@ -22,6 +23,7 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
       OnboardingState,
       OnboardingRubroTemplate,
       CompanyCategory,
+      SiteCategory,
       ServiceCategory,
       Service,
       CompanyWorker,
