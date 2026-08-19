@@ -2,12 +2,17 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   Req,
   UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { OnboardingService } from './onboarding.service';
+import {
+  OnboardingTemplateService,
+  DEFAULT_SERVICES_PER_RUBRO,
+} from './onboarding-template.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -16,6 +21,7 @@ import type {
   OnboardingSkipResponse,
   OnboardingStateResponse,
 } from './dto/onboarding-state-response.dto';
+import type { OnboardingTemplatesResponse } from './dto/onboarding-templates-response.dto';
 
 /**
  * ONB-1. Todo va scoped a la company del token (el admin dueño).
@@ -27,7 +33,45 @@ import type {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('adm')
 export class OnboardingController {
-  constructor(private readonly onboardingService: OnboardingService) {}
+  constructor(
+    private readonly onboardingService: OnboardingService,
+    private readonly templateService: OnboardingTemplateService,
+  ) {}
+
+  /**
+   * ONB-2: catálogo maestro de plantillas, combinado por rubro y sin duplicados.
+   *
+   * `?rubros=barberia,salon_belleza` para pedirlos explícitos; sin el parámetro
+   * se usan los rubros que la company ya marcó al registrarse. `?limit=` baja el
+   * tope de servicios por rubro. Solo lee: no crea nada (eso es ONB-3).
+   */
+  @Get('templates')
+  async getTemplates(
+    @Req() req: AuthenticatedRequest,
+    @Query('rubros') rubros?: string,
+    @Query('limit') limit?: string,
+  ): Promise<OnboardingTemplatesResponse> {
+    const companyId = await this.onboardingService.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    const requested = rubros
+      ? rubros
+          .split(',')
+          .map((r) => r.trim())
+          .filter((r) => r.length > 0)
+      : undefined;
+    const parsedLimit = Number(limit);
+    const effectiveLimit =
+      Number.isInteger(parsedLimit) && parsedLimit > 0
+        ? parsedLimit
+        : DEFAULT_SERVICES_PER_RUBRO;
+
+    return this.templateService.getTemplates(
+      companyId,
+      requested,
+      effectiveLimit,
+    );
+  }
 
   /** Checklist que pinta el frontend. */
   @Get('state')
