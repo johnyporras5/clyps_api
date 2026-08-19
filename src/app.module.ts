@@ -28,6 +28,7 @@ import { ReportsModule } from './reports/reports.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { NotificationModule } from './notification/notification.module';
 import { PayrollModule } from './payroll/payroll.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
 
 @Module({
   imports: [
@@ -126,6 +127,7 @@ import { PayrollModule } from './payroll/payroll.module';
     PayrollModule,
     RealtimeModule,
     NotificationModule,
+    OnboardingModule,
   ],
   controllers: [AppController],
   providers: [

@@ -20,6 +20,7 @@ import { CommonModule } from '../common/common.module';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 import { CompanyCategoryModule } from 'src/company_category/company_category.module';
 import { SiteCategoryModule } from 'src/site_category/site_category.module';
+import { OnboardingModule } from 'src/onboarding/onboarding.module';
 import { Service } from 'src/service/entities/service.entity';
 import { ServiceCategory } from 'src/service_category/entities/service_category.entity';
 import { CompanyCategory } from 'src/company_category/entities/company_category.entity';
@@ -74,6 +75,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     CommonModule,
     CompanyCategoryModule,
     SiteCategoryModule,
+    OnboardingModule,
     // forwardRef: RealtimeModule importa AuthModule (Gateway usa AuthService).
     forwardRef(() => RealtimeModule),
   ],

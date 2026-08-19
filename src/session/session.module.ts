@@ -26,6 +26,7 @@ import { NotificationModule } from '../notification/notification.module';
 import { PayrollModule } from '../payroll/payroll.module';
 import { ProductModule } from '../product/product.module';
 import { FeedbacksModule } from '../feedbacks/feedbacks.module';
+import { OnboardingModule } from '../onboarding/onboarding.module';
 import { SessionNotificationEmitter } from './session-notification.emitter';
 import { ReminderSchedulerService } from './reminder-scheduler.service';
 import { AppointmentBeforeAfter } from './entities/appointment-before-after.entity';
@@ -58,6 +59,7 @@ import { SessionSubscriber } from './session.subscriber';
     PayrollModule,
     ProductModule,
     FeedbacksModule,
+    OnboardingModule,
   ],
   providers: [
     SessionService,
