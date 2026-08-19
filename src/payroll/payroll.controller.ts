@@ -23,6 +23,7 @@ import { SetFrequencyDto } from './dto/set-frequency.dto';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
 import { CreatePayoutDto } from './dto/create-payout.dto';
 import { ReverseConceptDto } from './dto/reverse-concept.dto';
+import { CreateProductPurchaseDto } from './dto/create-product-purchase.dto';
 import { ListPeriodsDto } from './dto/list-periods.dto';
 
 @Controller('payroll')
@@ -175,6 +176,18 @@ export class PayrollController {
     @Body() dto: CreateManualConceptDto,
   ) {
     return this.earningsService.addManualConcept(+id, dto, req.user.sub);
+  }
+
+  // Compra de un producto por un trabajador: deduce de su nómina, descuenta
+  // stock y registra la venta ('worker_purchase'). Reversible vía reverse.
+  @Post('period-details/:id/product-purchases')
+  @Roles('adm')
+  async addProductPurchase(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CreateProductPurchaseDto,
+  ) {
+    return this.earningsService.addProductPurchase(+id, dto, req.user.sub);
   }
 
   // PAY-7: revertir un concepto (el ajuste nace en el periodo abierto actual).
