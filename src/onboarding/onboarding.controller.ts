@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   Post,
@@ -22,6 +23,9 @@ import type {
   OnboardingStateResponse,
 } from './dto/onboarding-state-response.dto';
 import type { OnboardingTemplatesResponse } from './dto/onboarding-templates-response.dto';
+import { OnboardingServicesService } from './onboarding-services.service';
+import { ConfirmServicesDto } from './dto/confirm-services.dto';
+import type { ConfirmServicesResponse } from './dto/confirm-services-response.dto';
 
 /**
  * ONB-1. Todo va scoped a la company del token (el admin dueño).
@@ -36,7 +40,24 @@ export class OnboardingController {
   constructor(
     private readonly onboardingService: OnboardingService,
     private readonly templateService: OnboardingTemplateService,
+    private readonly servicesService: OnboardingServicesService,
   ) {}
+
+  /**
+   * ONB-3: convierte las plantillas que el dueño dejó marcadas en SUS categorías
+   * y servicios reales. Atómico e idempotente: reenviarlo no duplica, actualiza.
+   */
+  @Post('services/confirm')
+  @HttpCode(HttpStatus.OK)
+  async confirmServices(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: ConfirmServicesDto,
+  ): Promise<ConfirmServicesResponse> {
+    const companyId = await this.onboardingService.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.servicesService.confirmServices(companyId, dto);
+  }
 
   /**
    * ONB-2: catálogo maestro de plantillas, combinado por rubro y sin duplicados.

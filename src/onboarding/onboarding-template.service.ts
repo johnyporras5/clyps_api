@@ -7,6 +7,7 @@ import type {
   TemplateCategory,
   TemplateService,
 } from './types/rubro-template.types';
+import { normalizeName } from './utils/normalize-name.util';
 import type {
   OnboardingTemplatesResponse,
   ResolvedRubro,
@@ -35,20 +36,6 @@ export class OnboardingTemplateService {
     @InjectRepository(CompanyCategory)
     private readonly companyCategoryRepository: Repository<CompanyCategory>,
   ) {}
-
-  /**
-   * Normaliza un texto para comparar: sin acentos, sin signos y en minúsculas.
-   * Sirve de red para deduplicar dos entradas con `key` distinta pero el mismo
-   * nombre real ("Corte de cabello" vs "corte de Cabello").
-   */
-  private normalize(value: string): string {
-    return (value || '')
-      .normalize('NFD')
-      .replace(/\p{M}/gu, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim();
-  }
 
   /** Rubros que la company ya marcó al registrarse (`company_category.name`). */
   private async getCompanyRubros(companyId: number): Promise<string[]> {
@@ -168,7 +155,7 @@ export class OnboardingTemplateService {
         }
 
         for (const service of category.services || []) {
-          const serviceNameKey = this.normalize(service.name);
+          const serviceNameKey = normalizeName(service.name);
           if (
             seenServiceKeys.has(service.key) ||
             seenServiceNames.has(serviceNameKey)
