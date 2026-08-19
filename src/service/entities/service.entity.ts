@@ -62,6 +62,18 @@ export class Service {
   @Column({ name: 'category_id', nullable: true })
   categoryId: number;
 
+  /**
+   * ONB-3: key de la plantilla de onboarding de la que salió este servicio.
+   * NULL = lo creó el dueño a mano. Es la llave de idempotencia del confirm.
+   */
+  @Column({
+    name: 'source_template_key',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  sourceTemplateKey: string | null;
+
   @ManyToOne(() => ServiceCategory, (category) => category.services, {
     nullable: true,
     eager: true,

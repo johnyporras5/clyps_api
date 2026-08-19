@@ -34,6 +34,7 @@ import { ServiceFeedback } from 'src/service_feedback/entities/service_feedback.
 import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { SiteCategory } from 'src/site_category/entities/site_category.entity';
+import { OnboardingService } from '../onboarding/onboarding.service';
 
 @Injectable()
 export class CompanyService {
@@ -68,6 +69,7 @@ export class CompanyService {
     private siteCategoryRepository: Repository<SiteCategory>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
+    private readonly onboardingService: OnboardingService,
   ) {}
 
   /**
@@ -586,6 +588,12 @@ export class CompanyService {
       categories: companyCategories,
     };
 
+    // ONB-1: guardar el perfil es el evento disparador del paso create_profile.
+    await this.onboardingService.safeRecomputeStep(
+      company.id,
+      'create_profile',
+    );
+
     return companyWithLogo;
   }
 
@@ -745,6 +753,9 @@ export class CompanyService {
     companyWorker.endDate = null as any;
 
     await this.companyWorkerRepository.save(companyWorker);
+
+    // ONB-1: restaurar un trabajador vuelve a activar equipo → add_team.
+    await this.onboardingService.safeRecomputeStep(company.id, 'add_team');
 
     return {
       message: 'Trabajador restaurado exitosamente en la compañía.',

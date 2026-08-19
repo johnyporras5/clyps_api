@@ -31,6 +31,7 @@ import {
 import { RealtimeService } from '../realtime/realtime.service';
 import { ServiceNotificationEmitter } from './service-notification.emitter';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
+import { OnboardingService } from '../onboarding/onboarding.service';
 
 /** Fila cruda (getRawMany) de los workers asignados a un servicio. */
 interface ServiceWorkerRawRow {
@@ -70,6 +71,7 @@ export class ServiceService {
     private fileUploadService: FileUploadService,
     private readonly realtime: RealtimeService,
     private readonly serviceNotifications: ServiceNotificationEmitter,
+    private readonly onboardingService: OnboardingService,
   ) {}
 
   /**
@@ -602,6 +604,13 @@ export class ServiceService {
       (createServiceDto.workers || []).map((w) => w.id),
       adminId,
     );
+
+    // ONB-1: crear un servicio recalcula confirm_services (precio + comisión).
+    await this.onboardingService.safeRecomputeStep(
+      company.id,
+      'confirm_services',
+    );
+
     return full;
   }
 
@@ -666,6 +675,13 @@ export class ServiceService {
         adminId,
       );
     }
+
+    // ONB-1: editar un servicio (poner precio/comisión) recalcula el paso.
+    await this.onboardingService.safeRecomputeStep(
+      company.id,
+      'confirm_services',
+    );
+
     return full;
   }
 
@@ -751,6 +767,12 @@ export class ServiceService {
     // 3. Inactivar el servicio
     service.status = 0; // INACTIVE
     await this.serviceRepository.save(service);
+
+    // ONB-1: cambia el conjunto de servicios activos → recalcular el paso.
+    await this.onboardingService.safeRecomputeStep(
+      service.companyId,
+      'confirm_services',
+    );
 
     // 4. Devolver el servicio actualizado con información de workers
     return await this.findOneWithWorkers(id, adminId);

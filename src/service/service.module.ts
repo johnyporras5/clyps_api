@@ -16,6 +16,7 @@ import { CommonModule } from 'src/common/common.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { NotificationModule } from '../notification/notification.module';
 import { ServiceNotificationEmitter } from './service-notification.emitter';
+import { OnboardingModule } from '../onboarding/onboarding.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { ServiceNotificationEmitter } from './service-notification.emitter';
     CommonModule,
     RealtimeModule,
     NotificationModule,
+    OnboardingModule,
   ],
   providers: [ServiceService, ServiceNotificationEmitter],
   controllers: [ServiceController],

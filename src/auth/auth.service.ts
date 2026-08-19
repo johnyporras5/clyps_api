@@ -38,6 +38,7 @@ import { RegisterAdminDto } from './dto/register-admin.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
 import { SiteCategoryService } from '../site_category/site_category.service';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 import type { AuthenticatedUser } from './types/authenticated-request';
@@ -64,6 +65,7 @@ export class AuthService {
     private readonly companyCategoryService: CompanyCategoryService,
     private readonly siteCategoryService: SiteCategoryService,
     private readonly realtime: RealtimeService,
+    private readonly onboardingService: OnboardingService,
   ) {}
 
   /**
@@ -466,6 +468,9 @@ export class AuthService {
       });
 
       await this.companyWorkerRepository.save(companyWorker);
+
+      // ONB-1: alta de trabajador = evento disparador del paso add_team.
+      await this.onboardingService.safeRecomputeStep(company.id, 'add_team');
     }
 
     // No se genera token JWT en el registro de trabajador

@@ -25,6 +25,7 @@ import {
   FileUploadService,
   AllowedFolder,
 } from '../common/services/file_upload.service';
+import { OnboardingService } from '../onboarding/onboarding.service';
 
 /** Fila cruda (getRawMany) del listado de trabajadores antes de formatear. */
 interface WorkerListRawRow {
@@ -70,6 +71,7 @@ export class CompanyWorkerService {
     private sessionDetailRepository: Repository<SessionDetail>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
+    private readonly onboardingService: OnboardingService,
   ) {}
 
   /**
@@ -124,7 +126,12 @@ export class CompanyWorkerService {
     const companyWorker = this.companyWorkerRepository.create(
       createCompanyWorkerDto,
     );
-    return await this.companyWorkerRepository.save(companyWorker);
+    const saved = await this.companyWorkerRepository.save(companyWorker);
+
+    // ONB-1: crear/activar trabajador dispara el recálculo de add_team.
+    await this.onboardingService.safeRecomputeStep(saved.companyId, 'add_team');
+
+    return saved;
   }
 
   /**
@@ -201,7 +208,12 @@ export class CompanyWorkerService {
     // 5. Actualizar solo los campos permitidos
     Object.assign(companyWorker, allowedUpdates);
 
-    return await this.companyWorkerRepository.save(companyWorker);
+    const saved = await this.companyWorkerRepository.save(companyWorker);
+
+    // ONB-1: activar un trabajador también completa add_team.
+    await this.onboardingService.safeRecomputeStep(saved.companyId, 'add_team');
+
+    return saved;
   }
 
   /**
@@ -279,7 +291,12 @@ export class CompanyWorkerService {
     // 5. Actualizar
     Object.assign(companyWorker, allowedUpdates);
 
-    return await this.companyWorkerRepository.save(companyWorker);
+    const saved = await this.companyWorkerRepository.save(companyWorker);
+
+    // ONB-1: activar un trabajador también completa add_team.
+    await this.onboardingService.safeRecomputeStep(saved.companyId, 'add_team');
+
+    return saved;
   }
 
   /**

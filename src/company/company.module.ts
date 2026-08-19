@@ -18,6 +18,7 @@ import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { SiteCategory } from 'src/site_category/entities/site_category.entity';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { OnboardingModule } from '../onboarding/onboarding.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     ]),
     CommonModule,
     RealtimeModule,
+    OnboardingModule,
   ],
   providers: [CompanyService],
   controllers: [CompanyController],
