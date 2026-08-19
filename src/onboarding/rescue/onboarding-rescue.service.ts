@@ -292,7 +292,14 @@ export class OnboardingRescueService {
         type: 'reminder',
         title: 'Te falta poco para terminar tu configuración',
         body: `Sigue pendiente: ${STEP_LABELS[tenant.step]}. Termínalo y empieza a cobrar con CLYPS.`,
-        data: buildNavigationData('reminder', undefined, tenant.companyId),
+        // `type: 'reminder'` lo comparten los recordatorios de cita, así que se
+        // marca el origen y el paso: con eso el front distingue el aviso y sabe
+        // a qué pantalla del checklist llevar al dueño.
+        data: {
+          ...buildNavigationData('reminder', undefined, tenant.companyId),
+          onboarding: true,
+          step: tenant.step,
+        },
       });
       return true;
     } catch (error) {
