@@ -105,14 +105,30 @@ export class SessionProductService {
         );
       }
 
+      // Congelar costo y comisión de la línea para el reporte. La comisión solo
+      // aplica si el producto la da y hay vendedor; % del total o fijo por unidad.
+      const lineTotal = unitPriceMinor * quantity;
+      const costMinor = (product.costMinor || 0) * quantity;
+      let commissionMinor = 0;
+      if (product.appliesCommission && sellerEmployeeId != null) {
+        commissionMinor =
+          product.commissionMode === 'fixed'
+            ? (product.commissionFixedMinor || 0) * quantity
+            : Math.round((lineTotal * (product.commissionBps || 0)) / 10000);
+      }
+
       const sp = spRepo.create({
         companyId,
         sessionId,
+        saleType: 'client',
         productId: product.id,
         quantity,
         unitPriceMinor,
         currency: product.currency,
+        costMinor,
+        commissionMinor,
         sellerEmployeeId,
+        buyerEmployeeId: null,
       });
       const savedSp = await spRepo.save(sp);
 

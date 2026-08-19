@@ -83,11 +83,17 @@ export class ProductService {
     const category = await this.getCategoryOrFail(dto.categoryId, company.id);
 
     const appliesCommission = dto.appliesCommission ?? false;
-    // Herencia: si aplica comisión y no mandan %, hereda el default de la
-    // categoría (editable). Si no aplica comisión, no se guarda %.
-    const commissionBps = appliesCommission
-      ? (dto.commissionBps ?? category.defaultCommissionBps ?? null)
-      : null;
+    const commissionMode = dto.commissionMode ?? 'percentage';
+    // Herencia: si aplica comisión por % y no mandan uno, hereda el default de
+    // la categoría (editable). Si no aplica comisión, no se guarda nada.
+    const commissionBps =
+      appliesCommission && commissionMode === 'percentage'
+        ? (dto.commissionBps ?? category.defaultCommissionBps ?? null)
+        : null;
+    const commissionFixedMinor =
+      appliesCommission && commissionMode === 'fixed'
+        ? (dto.commissionFixedMinor ?? 0)
+        : 0;
 
     const product = this.productRepository.create({
       companyId: company.id,
@@ -95,9 +101,12 @@ export class ProductService {
       name: dto.name,
       currency: dto.currency ?? 'VES',
       salePriceMinor: dto.salePriceMinor,
+      costMinor: dto.costMinor ?? 0,
       stock: dto.stock ?? 0,
       appliesCommission,
+      commissionMode,
       commissionBps,
+      commissionFixedMinor,
       isActive: dto.isActive ?? true,
     });
     return this.productRepository.save(product);
@@ -116,8 +125,11 @@ export class ProductService {
     }
 
     Object.assign(product, dto);
-    // Si deja de dar comisión, se limpia el %.
-    if (product.appliesCommission === false) product.commissionBps = null;
+    // Si deja de dar comisión, se limpia % y monto fijo.
+    if (product.appliesCommission === false) {
+      product.commissionBps = null;
+      product.commissionFixedMinor = 0;
+    }
     return this.productRepository.save(product);
   }
 
