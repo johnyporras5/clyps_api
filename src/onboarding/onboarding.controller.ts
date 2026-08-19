@@ -28,14 +28,18 @@ import { ConfirmServicesDto } from './dto/confirm-services.dto';
 import type { ConfirmServicesResponse } from './dto/confirm-services-response.dto';
 
 /**
- * ONB-1. Todo va scoped a la company del token (el admin dueño).
+ * ONB-1 / ONB-2 / ONB-3. Todo va scoped a la company del token (el admin dueño).
  *
  * NO existe endpoint para "marcar paso completado": los pasos se actualizan
  * desde los módulos existentes vía hooks internos, nunca por el frontend.
+ *
+ * `@Roles('adm')` va en CADA método a propósito: el RolesGuard lee la metadata
+ * solo del handler (`reflector.get('roles', context.getHandler())`), así que un
+ * `@Roles` a nivel de clase se ignora en silencio y deja pasar a cualquier
+ * usuario autenticado.
  */
 @Controller('onboarding')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('adm')
 export class OnboardingController {
   constructor(
     private readonly onboardingService: OnboardingService,
@@ -47,6 +51,7 @@ export class OnboardingController {
    * ONB-3: convierte las plantillas que el dueño dejó marcadas en SUS categorías
    * y servicios reales. Atómico e idempotente: reenviarlo no duplica, actualiza.
    */
+  @Roles('adm')
   @Post('services/confirm')
   @HttpCode(HttpStatus.OK)
   async confirmServices(
@@ -66,6 +71,7 @@ export class OnboardingController {
    * se usan los rubros que la company ya marcó al registrarse. `?limit=` baja el
    * tope de servicios por rubro. Solo lee: no crea nada (eso es ONB-3).
    */
+  @Roles('adm')
   @Get('templates')
   async getTemplates(
     @Req() req: AuthenticatedRequest,
@@ -95,6 +101,7 @@ export class OnboardingController {
   }
 
   /** Checklist que pinta el frontend. */
+  @Roles('adm')
   @Get('state')
   async getState(
     @Req() req: AuthenticatedRequest,
@@ -106,6 +113,7 @@ export class OnboardingController {
   }
 
   /** El dueño elige "explorar por mi cuenta". No bloquea; puede retomar. */
+  @Roles('adm')
   @Post('skip')
   @HttpCode(HttpStatus.OK)
   async skip(
@@ -122,6 +130,7 @@ export class OnboardingController {
    * Sirve para reparar inconsistencias o al arrancar la feature sobre companies
    * existentes. No se expone en la UI del dueño.
    */
+  @Roles('adm')
   @Post('recompute')
   @HttpCode(HttpStatus.OK)
   async recompute(
