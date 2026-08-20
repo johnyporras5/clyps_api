@@ -499,6 +499,10 @@ export class CompanyService {
           .trim()
           .toLowerCase(),
       );
+    if (updateAdminProfileDto.allowNegativeStock !== undefined)
+      updateData.allowNegativeStock = ['true', '1', 'on', 'yes'].includes(
+        String(updateAdminProfileDto.allowNegativeStock).trim().toLowerCase(),
+      );
 
     // Aplicar actualizaciones
     Object.assign(company, updateData);
