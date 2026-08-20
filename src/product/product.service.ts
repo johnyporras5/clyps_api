@@ -3,6 +3,7 @@ import {
   NotFoundException,
   UnauthorizedException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -135,6 +136,19 @@ export class ProductService {
 
   async remove(id: number, adminId: number): Promise<void> {
     const product = await this.findOne(id, adminId);
+    // Un producto con ventas registradas (session_product) no se puede borrar:
+    // rompería el historial y el reporte. Se desactiva en su lugar.
+    const sales: Array<{ n: number }> =
+      await this.productRepository.manager.query(
+        'SELECT COUNT(*) AS n FROM session_product WHERE product_id = ?',
+        [product.id],
+      );
+    if (Number(sales[0]?.n ?? 0) > 0) {
+      throw new ConflictException(
+        'No se puede eliminar un producto con ventas registradas. Desactívalo en su lugar.',
+      );
+    }
+    // Sin ventas: se puede borrar (los movimientos de stock caen por cascade).
     await this.productRepository.delete(product.id);
   }
 
