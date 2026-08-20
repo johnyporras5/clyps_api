@@ -283,6 +283,8 @@ export class ReportsService {
       revenueMinor: string | null;
       costMinor: string | null;
       commissionMinor: string | null;
+      // Fecha de la venta más reciente del producto en el rango (YYYY-MM-DD).
+      lastSaleAt: string | null;
     }
 
     const rows: ProductSaleRawRow[] =
@@ -293,7 +295,8 @@ export class ReportsService {
               SUM(CASE WHEN sp.sale_type = 'worker_purchase' THEN sp.quantity ELSE 0 END) AS workerUnits,
               SUM(sp.unit_price_minor * sp.quantity) AS revenueMinor,
               SUM(sp.cost_minor) AS costMinor,
-              SUM(sp.commission_minor) AS commissionMinor
+              SUM(sp.commission_minor) AS commissionMinor,
+              DATE_FORMAT(MAX(sp.created_at), '%Y-%m-%d') AS lastSaleAt
          FROM session_product sp
          LEFT JOIN product p ON p.id = sp.product_id
         WHERE sp.company_id = ?
@@ -320,6 +323,7 @@ export class ReportsService {
         costMinor,
         commissionMinor,
         companyProfitMinor: revenueMinor - costMinor - commissionMinor,
+        lastSaleAt: r.lastSaleAt ?? null,
       };
     });
 
