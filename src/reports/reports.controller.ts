@@ -55,6 +55,21 @@ export class ReportsController {
     );
   }
 
+  // Comisiones de productos por empleado (quién ganó comisión y de qué
+  // productos), dentro del rango. Alimenta la vista "Empleados" del reporte.
+  @Get('income-products/commissions')
+  @Roles('adm')
+  async getProductCommissionsByEmployee(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: IncomeServicesQueryDto,
+  ) {
+    return this.reportsService.getProductCommissionsByEmployee(
+      req.user.sub,
+      query.startDate,
+      query.endDate,
+    );
+  }
+
   @Get('income-employees')
   @Roles('adm')
   async getIncomeByEmployees(

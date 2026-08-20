@@ -387,6 +387,125 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Comisiones de productos por empleado: quiénes ganaron comisión vendiendo
+   * productos y de qué productos, dentro del rango. Las comisiones no se
+   * convierten entre monedas (se agrupan por moneda). Alimenta la vista
+   * "Empleados" del reporte de productos.
+   */
+  async getProductCommissionsByEmployee(
+    adminId: number,
+    startDate: string,
+    endDate: string,
+  ) {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+
+    interface Row {
+      employeeId: string;
+      employeeName: string | null;
+      productId: string;
+      productName: string | null;
+      currency: string;
+      units: string | null;
+      commissionMinor: string | null;
+    }
+
+    const rows: Row[] = await this.companyRepository.manager.query(
+      `SELECT sp.seller_employee_id AS employeeId,
+              w.name AS employeeName,
+              sp.product_id AS productId,
+              p.name AS productName,
+              sp.currency AS currency,
+              SUM(sp.quantity) AS units,
+              SUM(sp.commission_minor) AS commissionMinor
+         FROM session_product sp
+         LEFT JOIN product p ON p.id = sp.product_id
+         LEFT JOIN company_worker cw ON cw.id = sp.seller_employee_id
+         LEFT JOIN worker w ON w.id = cw.worker_id
+        WHERE sp.company_id = ?
+          AND sp.created_at BETWEEN ? AND ?
+          AND sp.seller_employee_id IS NOT NULL
+          AND sp.commission_minor > 0
+        GROUP BY sp.seller_employee_id, w.name, sp.product_id, p.name, sp.currency
+        ORDER BY commissionMinor DESC`,
+      [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
+    );
+
+    const num = (v: string | null): number => Number(v ?? 0) || 0;
+
+    type ProductLine = {
+      productId: number;
+      name: string;
+      currency: string;
+      units: number;
+      commissionMinor: number;
+    };
+    // suma cruda por moneda para ordenar; totalsByCurrency guarda el detalle.
+    const byEmployee = new Map<
+      number,
+      {
+        employeeId: number;
+        name: string;
+        products: ProductLine[];
+        totalsByCurrency: Map<string, number>;
+        sortValue: number;
+      }
+    >();
+    for (const r of rows) {
+      const employeeId = Number(r.employeeId);
+      const commissionMinor = num(r.commissionMinor);
+      const agg = byEmployee.get(employeeId) ?? {
+        employeeId,
+        name: r.employeeName || `Empleado #${employeeId}`,
+        products: [],
+        totalsByCurrency: new Map<string, number>(),
+        sortValue: 0,
+      };
+      agg.products.push({
+        productId: Number(r.productId),
+        name: r.productName || 'Producto eliminado',
+        currency: r.currency,
+        units: num(r.units),
+        commissionMinor,
+      });
+      agg.totalsByCurrency.set(
+        r.currency,
+        (agg.totalsByCurrency.get(r.currency) ?? 0) + commissionMinor,
+      );
+      agg.sortValue += commissionMinor;
+      byEmployee.set(employeeId, agg);
+    }
+
+    const employees = [...byEmployee.values()]
+      .sort((a, b) => b.sortValue - a.sortValue)
+      .map((e) => ({
+        employeeId: e.employeeId,
+        name: e.name,
+        products: e.products.map((p) => ({
+          productId: p.productId,
+          name: p.name,
+          currency: p.currency,
+          units: p.units,
+          commissionMinor: p.commissionMinor,
+        })),
+        totalsByCurrency: [...e.totalsByCurrency.entries()].map(
+          ([currency, commissionMinor]) => ({ currency, commissionMinor }),
+        ),
+      }));
+
+    return {
+      range: { startDate, endDate },
+      employees,
+    };
+  }
+
   async getIncomeByEmployees(
     adminId: number,
     startDate: string,
