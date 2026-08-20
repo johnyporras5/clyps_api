@@ -38,6 +38,23 @@ export class ReportsController {
     );
   }
 
+  // Reporte de productos
+  @Get('income-products')
+  @Roles('adm')
+  async getIncomeByProducts(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: IncomeServicesQueryDto,
+  ) {
+    const adminId = req.user.sub;
+    return this.reportsService.getIncomeByProducts(
+      adminId,
+      query.startDate,
+      query.endDate,
+      query.page,
+      query.limit,
+    );
+  }
+
   @Get('income-employees')
   @Roles('adm')
   async getIncomeByEmployees(

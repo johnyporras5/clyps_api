@@ -254,6 +254,135 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Reporte de productos
+   */
+  async getIncomeByProducts(
+    adminId: number,
+    startDate: string,
+    endDate: string,
+    page: number = 1,
+    limit: number = 10,
+  ) {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+
+    interface ProductSaleRawRow {
+      productId: string;
+      name: string | null;
+      currency: string;
+      units: string | null;
+      clientUnits: string | null;
+      workerUnits: string | null;
+      revenueMinor: string | null;
+      costMinor: string | null;
+      commissionMinor: string | null;
+    }
+
+    const rows: ProductSaleRawRow[] =
+      await this.companyRepository.manager.query(
+        `SELECT sp.product_id AS productId, p.name AS name, sp.currency AS currency,
+              SUM(sp.quantity) AS units,
+              SUM(CASE WHEN sp.sale_type = 'client' THEN sp.quantity ELSE 0 END) AS clientUnits,
+              SUM(CASE WHEN sp.sale_type = 'worker_purchase' THEN sp.quantity ELSE 0 END) AS workerUnits,
+              SUM(sp.unit_price_minor * sp.quantity) AS revenueMinor,
+              SUM(sp.cost_minor) AS costMinor,
+              SUM(sp.commission_minor) AS commissionMinor
+         FROM session_product sp
+         LEFT JOIN product p ON p.id = sp.product_id
+        WHERE sp.company_id = ?
+          AND sp.created_at BETWEEN ? AND ?
+        GROUP BY sp.product_id, p.name, sp.currency
+        ORDER BY revenueMinor DESC`,
+        [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
+      );
+
+    const num = (v: string | null): number => Number(v ?? 0) || 0;
+
+    const products = rows.map((r) => {
+      const revenueMinor = num(r.revenueMinor);
+      const costMinor = num(r.costMinor);
+      const commissionMinor = num(r.commissionMinor);
+      return {
+        productId: Number(r.productId),
+        name: r.name || 'Producto eliminado',
+        currency: r.currency,
+        unitsSold: num(r.units),
+        clientUnits: num(r.clientUnits),
+        workerUnits: num(r.workerUnits),
+        revenueMinor,
+        costMinor,
+        commissionMinor,
+        companyProfitMinor: revenueMinor - costMinor - commissionMinor,
+      };
+    });
+
+    // Totales por moneda (no se convierten entre sí) + contadores globales.
+    const byCurrency = new Map<
+      string,
+      {
+        currency: string;
+        unitsSold: number;
+        revenueMinor: number;
+        costMinor: number;
+        commissionMinor: number;
+        companyProfitMinor: number;
+      }
+    >();
+    let totalUnits = 0;
+    let clientUnits = 0;
+    let workerUnits = 0;
+    for (const p of products) {
+      totalUnits += p.unitsSold;
+      clientUnits += p.clientUnits;
+      workerUnits += p.workerUnits;
+      const acc = byCurrency.get(p.currency) ?? {
+        currency: p.currency,
+        unitsSold: 0,
+        revenueMinor: 0,
+        costMinor: 0,
+        commissionMinor: 0,
+        companyProfitMinor: 0,
+      };
+      acc.unitsSold += p.unitsSold;
+      acc.revenueMinor += p.revenueMinor;
+      acc.costMinor += p.costMinor;
+      acc.commissionMinor += p.commissionMinor;
+      acc.companyProfitMinor += p.companyProfitMinor;
+      byCurrency.set(p.currency, acc);
+    }
+
+    const total = products.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const skip = (page - 1) * limit;
+
+    return {
+      range: { startDate, endDate },
+      summary: {
+        byCurrency: [...byCurrency.values()],
+        totalUnits,
+        clientUnits,
+        workerUnits,
+        distinctProducts: total,
+      },
+      products: products.slice(skip, skip + limit),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
   async getIncomeByEmployees(
     adminId: number,
     startDate: string,
