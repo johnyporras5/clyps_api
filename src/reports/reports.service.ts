@@ -410,6 +410,7 @@ export class ReportsService {
     interface Row {
       employeeId: string;
       employeeName: string | null;
+      employeePhoto: string | null;
       productId: string;
       productName: string | null;
       currency: string;
@@ -420,6 +421,7 @@ export class ReportsService {
     const rows: Row[] = await this.companyRepository.manager.query(
       `SELECT sp.seller_employee_id AS employeeId,
               w.name AS employeeName,
+              w.picture AS employeePhoto,
               sp.product_id AS productId,
               p.name AS productName,
               sp.currency AS currency,
@@ -433,7 +435,7 @@ export class ReportsService {
           AND sp.created_at BETWEEN ? AND ?
           AND sp.seller_employee_id IS NOT NULL
           AND sp.commission_minor > 0
-        GROUP BY sp.seller_employee_id, w.name, sp.product_id, p.name, sp.currency
+        GROUP BY sp.seller_employee_id, w.name, w.picture, sp.product_id, p.name, sp.currency
         ORDER BY commissionMinor DESC`,
       [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
     );
@@ -453,6 +455,7 @@ export class ReportsService {
       {
         employeeId: number;
         name: string;
+        image: string | null;
         products: ProductLine[];
         totalsByCurrency: Map<string, number>;
         sortValue: number;
@@ -464,6 +467,12 @@ export class ReportsService {
       const agg = byEmployee.get(employeeId) ?? {
         employeeId,
         name: r.employeeName || `Empleado #${employeeId}`,
+        image: r.employeePhoto
+          ? this.fileUploadService.getFileUrl(
+              this.WORKER_PHOTO_FOLDER,
+              r.employeePhoto,
+            )
+          : null,
         products: [],
         totalsByCurrency: new Map<string, number>(),
         sortValue: 0,
@@ -488,6 +497,7 @@ export class ReportsService {
       .map((e) => ({
         employeeId: e.employeeId,
         name: e.name,
+        image: e.image,
         products: e.products.map((p) => ({
           productId: p.productId,
           name: p.name,
