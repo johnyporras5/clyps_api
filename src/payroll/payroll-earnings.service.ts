@@ -1838,6 +1838,18 @@ export class PayrollEarningsService {
       const currency = (product.currency || 'VES').toUpperCase();
       const totalMinor = product.salePriceMinor * quantity;
 
+      // La deducción SIEMPRE se hace en Bs (no en efectivo de la moneda del
+      // producto). Para productos en Bs se usa el precio; para productos en
+      // moneda extranjera se usa el equivalente en Bs enviado por el admin.
+      const isForeign = currency !== 'VES';
+      if (isForeign && (dto.amountBs == null || dto.amountBs <= 0)) {
+        throw new ConflictException(
+          `El producto "${product.name}" está en ${currency}: indica el monto en Bs a deducir.`,
+        );
+      }
+      const deductionBsMinor =
+        dto.amountBs != null ? toMinor(dto.amountBs) : totalMinor;
+
       // 1) Venta 'worker_purchase' (precio normal, sin comisión).
       const sale = await spRepo.save(
         spRepo.create({
@@ -1868,7 +1880,8 @@ export class PayrollEarningsService {
         }),
       );
 
-      // 3) Deducción en la nómina del trabajador (moneda del producto).
+      // 3) Deducción en la nómina del trabajador, SIEMPRE en Bs. Para productos
+      //    en moneda extranjera se guarda la tasa usada como referencia.
       return conceptRepo.save(
         conceptRepo.create({
           companyId: detail.companyId,
@@ -1876,15 +1889,20 @@ export class PayrollEarningsService {
           type: 'deduction',
           sign: -1,
           label: `Compra: ${product.name}${quantity > 1 ? ` ×${quantity}` : ''}`,
-          amountMinor: totalMinor,
-          currency,
-          amountBsMinor: currency === 'VES' ? totalMinor : null,
-          exchangeRate: null,
+          amountMinor: deductionBsMinor,
+          currency: 'VES',
+          amountBsMinor: deductionBsMinor,
+          exchangeRate: isForeign ? (dto.exchangeRate ?? null) : null,
           occurredAt: new Date(),
           sourceType: 'product_purchase',
           sourceId: sale.id,
           createdByUserId: adminId,
-          metadata: { productId: product.id, quantity },
+          metadata: {
+            productId: product.id,
+            quantity,
+            saleCurrency: currency,
+            saleTotalMinor: totalMinor,
+          },
         }),
       );
     });
