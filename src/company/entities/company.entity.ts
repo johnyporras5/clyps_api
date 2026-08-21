@@ -54,8 +54,8 @@ export class Company {
   allowPastAppointments: boolean;
 
   // CLYP-320: permite vender productos sin stock suficiente (el stock queda
-  // negativo). true por defecto; si es false, la venta se bloquea (CLYP-321).
-  @Column({ name: 'allow_negative_stock', type: 'tinyint', default: 1 })
+  // negativo). INACTIVO por defecto: si es false, la venta sin stock se bloquea
+  @Column({ name: 'allow_negative_stock', type: 'tinyint', default: 0 })
   allowNegativeStock: boolean;
 
   @OneToMany(() => CalendarCompany, (calendar) => calendar.company, {

@@ -20,6 +20,7 @@ import { SessionProductService } from '../product/session_product.service';
 import { SessionProduct } from '../product/entities/session_product.entity';
 import { toMinor, pct } from '../payroll/payroll-money.util';
 import { FeedbacksService } from '../feedbacks/feedbacks.service';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import {
   CreateSessionWithDetailDto,
@@ -116,6 +117,7 @@ export class SessionService {
     private payrollEarningsService: PayrollEarningsService,
     private sessionProductService: SessionProductService,
     private feedbacksService: FeedbacksService,
+    private readonly onboardingService: OnboardingService,
   ) {}
 
   async create(
@@ -1516,6 +1518,12 @@ export class SessionService {
     console.log(`- Total Tiempo: ${totalSessionTime} minutos`);
     console.log(`- Servicios creados: ${createdDetails.length}`);
     console.log(`- Compañía: ${companyName} (ID: ${companyId})`);
+
+    // ONB-1: crear cita es el evento disparador del paso first_appointment.
+    await this.onboardingService.safeRecomputeStep(
+      companyId,
+      'first_appointment',
+    );
 
     return {
       message,
@@ -4263,6 +4271,13 @@ export class SessionService {
         `Nómina: no se pudieron registrar conceptos de la cita ${sessionId}: ${(error as Error).message}`,
       );
     }
+
+    // ONB-1: el "ajá". Cobrar la primera cita completa first_charge y sella
+    // firstChargeAt (one-shot: si ya estaba sellado no se toca).
+    await this.onboardingService.safeRecomputeStep(
+      adminCompany.id,
+      'first_charge',
+    );
 
     return {
       session: updatedSession,

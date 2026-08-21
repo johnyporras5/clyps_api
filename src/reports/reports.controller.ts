@@ -38,6 +38,38 @@ export class ReportsController {
     );
   }
 
+  // Reporte de productos
+  @Get('income-products')
+  @Roles('adm')
+  async getIncomeByProducts(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: IncomeServicesQueryDto,
+  ) {
+    const adminId = req.user.sub;
+    return this.reportsService.getIncomeByProducts(
+      adminId,
+      query.startDate,
+      query.endDate,
+      query.page,
+      query.limit,
+    );
+  }
+
+  // Comisiones de productos por empleado (quién ganó comisión y de qué
+  // productos), dentro del rango. Alimenta la vista "Empleados" del reporte.
+  @Get('income-products/commissions')
+  @Roles('adm')
+  async getProductCommissionsByEmployee(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: IncomeServicesQueryDto,
+  ) {
+    return this.reportsService.getProductCommissionsByEmployee(
+      req.user.sub,
+      query.startDate,
+      query.endDate,
+    );
+  }
+
   @Get('income-employees')
   @Roles('adm')
   async getIncomeByEmployees(

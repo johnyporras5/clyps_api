@@ -18,7 +18,11 @@ import type { PeriodStatus, ConceptSource } from './payroll.enums';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { toMinor, fromMinor } from './payroll-money.util';
 import { CreateManualConceptDto } from './dto/create-manual-concept.dto';
+import { CreateProductPurchaseDto } from './dto/create-product-purchase.dto';
 import { CreatePayoutDto } from './dto/create-payout.dto';
+import { Product } from '../product/entities/product.entity';
+import { SessionProduct } from '../product/entities/session_product.entity';
+import { ProductStockMovement } from '../product/entities/product_stock_movement.entity';
 
 const isDupEntry = (e: unknown): boolean =>
   (e as { code?: string; driverError?: { code?: string } })?.code ===
@@ -1574,6 +1578,12 @@ export class PayrollEarningsService {
       }),
     );
 
+    // Si el concepto revertido era una compra de producto de un trabajador,
+    // además restaurar stock y anular la venta.
+    if (original.sourceType === 'product_purchase' && original.sourceId) {
+      await this.restoreProductPurchase(original.sourceId, adminId);
+    }
+
     this.logger.log(
       `Concepto ${original.id} revertido con el ajuste ${reversal.id} en el periodo ${period.id}`,
     );
@@ -1764,6 +1774,174 @@ export class PayrollEarningsService {
         metadata: dto.note ? { note: dto.note } : null,
       }),
     );
+  }
+
+  /**
+   * Compra de un producto por parte de un trabajador: transacción que descuenta
+   * stock, registra la venta ('worker_purchase', sin comisión) y crea la
+   * deducción en su nómina (precio de venta × cantidad). Revertir esa deducción
+   * (reverseConcept) restaura el stock y anula la venta.
+   */
+  async addProductPurchase(
+    periodDetailId: number,
+    dto: CreateProductPurchaseDto,
+    adminId: number,
+  ): Promise<PayrollConcept> {
+    const detail = await this.detailRepo.findOne({
+      where: { id: periodDetailId },
+    });
+    if (!detail) {
+      throw new NotFoundException(
+        `Detalle de periodo ${periodDetailId} no encontrado`,
+      );
+    }
+    const company = await this.companyRepo.findOne({
+      where: { id: detail.companyId },
+    });
+    if (!company || company.userId !== adminId) {
+      throw new ForbiddenException('No tienes permiso sobre este periodo');
+    }
+    const period = await this.periodRepo.findOne({
+      where: { id: detail.periodId },
+    });
+    if (!period) {
+      throw new NotFoundException(`Periodo ${detail.periodId} no encontrado`);
+    }
+    if (period.status !== 'open' && period.status !== 'review') {
+      throw new ConflictException(
+        `El periodo está "${period.status}": ya no admite conceptos.`,
+      );
+    }
+
+    const quantity = dto.quantity;
+
+    return this.conceptRepo.manager.transaction(async (manager) => {
+      const productRepo = manager.getRepository(Product);
+      const spRepo = manager.getRepository(SessionProduct);
+      const movementRepo = manager.getRepository(ProductStockMovement);
+      const conceptRepo = manager.getRepository(PayrollConcept);
+
+      const product = await productRepo.findOne({
+        where: { id: dto.productId, companyId: detail.companyId },
+      });
+      if (!product) {
+        throw new NotFoundException(
+          `Producto ${dto.productId} no encontrado o no pertenece a tu compañía`,
+        );
+      }
+      if (!company.allowNegativeStock && product.stock < quantity) {
+        throw new ConflictException(
+          `Stock insuficiente para "${product.name}" (disponible ${product.stock}, se piden ${quantity})`,
+        );
+      }
+
+      const currency = (product.currency || 'VES').toUpperCase();
+      const totalMinor = product.salePriceMinor * quantity;
+
+      // La deducción SIEMPRE se hace en Bs (no en efectivo de la moneda del
+      // producto). Para productos en Bs se usa el precio; para productos en
+      // moneda extranjera se usa el equivalente en Bs enviado por el admin.
+      const isForeign = currency !== 'VES';
+      if (isForeign && (dto.amountBs == null || dto.amountBs <= 0)) {
+        throw new ConflictException(
+          `El producto "${product.name}" está en ${currency}: indica el monto en Bs a deducir.`,
+        );
+      }
+      const deductionBsMinor =
+        dto.amountBs != null ? toMinor(dto.amountBs) : totalMinor;
+
+      // 1) Venta 'worker_purchase' (precio normal, sin comisión).
+      const sale = await spRepo.save(
+        spRepo.create({
+          companyId: detail.companyId,
+          sessionId: null,
+          saleType: 'worker_purchase',
+          productId: product.id,
+          quantity,
+          unitPriceMinor: product.salePriceMinor,
+          currency,
+          costMinor: product.costMinor * quantity,
+          commissionMinor: 0,
+          sellerEmployeeId: null,
+          buyerEmployeeId: detail.companyWorkerId,
+        }),
+      );
+
+      // 2) Descontar stock + bitácora.
+      product.stock -= quantity;
+      await productRepo.save(product);
+      await movementRepo.save(
+        movementRepo.create({
+          productId: product.id,
+          delta: -quantity,
+          resultingStock: product.stock,
+          reason: `Compra de trabajador (venta #${sale.id})`,
+          createdByUserId: adminId,
+        }),
+      );
+
+      // 3) Deducción en la nómina del trabajador, SIEMPRE en Bs. Para productos
+      //    en moneda extranjera se guarda la tasa usada como referencia.
+      return conceptRepo.save(
+        conceptRepo.create({
+          companyId: detail.companyId,
+          periodDetailId: detail.id,
+          type: 'deduction',
+          sign: -1,
+          label: `Compra: ${product.name}${quantity > 1 ? ` ×${quantity}` : ''}`,
+          amountMinor: deductionBsMinor,
+          currency: 'VES',
+          amountBsMinor: deductionBsMinor,
+          exchangeRate: isForeign ? (dto.exchangeRate ?? null) : null,
+          occurredAt: new Date(),
+          sourceType: 'product_purchase',
+          sourceId: sale.id,
+          createdByUserId: adminId,
+          metadata: {
+            productId: product.id,
+            quantity,
+            saleCurrency: currency,
+            saleTotalMinor: totalMinor,
+          },
+        }),
+      );
+    });
+  }
+
+  /**
+   * Al revertir la deducción de una compra de trabajador: restaura el stock y
+   * anula (borra) la venta, para que inventario y reporte cuadren.
+   */
+  private async restoreProductPurchase(
+    sessionProductId: number,
+    adminId: number,
+  ): Promise<void> {
+    await this.conceptRepo.manager.transaction(async (manager) => {
+      const spRepo = manager.getRepository(SessionProduct);
+      const productRepo = manager.getRepository(Product);
+      const movementRepo = manager.getRepository(ProductStockMovement);
+
+      const sale = await spRepo.findOne({ where: { id: sessionProductId } });
+      if (!sale || sale.saleType !== 'worker_purchase') return;
+
+      const product = await productRepo.findOne({
+        where: { id: sale.productId },
+      });
+      if (product) {
+        product.stock += sale.quantity;
+        await productRepo.save(product);
+        await movementRepo.save(
+          movementRepo.create({
+            productId: product.id,
+            delta: sale.quantity,
+            resultingStock: product.stock,
+            reason: `Reversión compra de trabajador (venta #${sale.id})`,
+            createdByUserId: adminId,
+          }),
+        );
+      }
+      await spRepo.delete(sale.id);
+    });
   }
 
   /**

@@ -66,6 +66,12 @@ export class UpdateAdminProfileDto {
   @IsString()
   allowPastAppointments?: string;
 
+  // Permite vender productos aunque no haya stock (el stock puede quedar
+  // negativo). Llega como string por multipart; se interpreta en el service.
+  @IsOptional()
+  @IsString()
+  allowNegativeStock?: string;
+
   @IsOptional()
   @Transform(({ value }) => {
     if (value === undefined || value === null) return undefined;

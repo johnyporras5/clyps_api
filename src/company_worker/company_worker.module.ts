@@ -10,6 +10,7 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { CommonModule } from 'src/common/common.module';
+import { OnboardingModule } from 'src/onboarding/onboarding.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { CommonModule } from 'src/common/common.module';
       SessionDetail,
     ]),
     CommonModule,
+    OnboardingModule,
   ],
   controllers: [CompanyWorkerController],
   providers: [CompanyWorkerService],

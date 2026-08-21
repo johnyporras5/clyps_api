@@ -26,6 +26,18 @@ export class ServiceCategory {
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
+  /**
+   * ONB-3: key de la plantilla de onboarding de la que salió esta categoría.
+   * NULL = la creó el dueño a mano. Es la llave de idempotencia del confirm.
+   */
+  @Column({
+    name: 'source_template_key',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  sourceTemplateKey: string | null;
+
   @ManyToOne(() => Company, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'company_id' })
   company: Company;

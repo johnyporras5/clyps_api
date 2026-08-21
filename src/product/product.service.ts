@@ -3,6 +3,7 @@ import {
   NotFoundException,
   UnauthorizedException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -83,11 +84,17 @@ export class ProductService {
     const category = await this.getCategoryOrFail(dto.categoryId, company.id);
 
     const appliesCommission = dto.appliesCommission ?? false;
-    // Herencia: si aplica comisión y no mandan %, hereda el default de la
-    // categoría (editable). Si no aplica comisión, no se guarda %.
-    const commissionBps = appliesCommission
-      ? (dto.commissionBps ?? category.defaultCommissionBps ?? null)
-      : null;
+    const commissionMode = dto.commissionMode ?? 'percentage';
+    // Herencia: si aplica comisión por % y no mandan uno, hereda el default de
+    // la categoría (editable). Si no aplica comisión, no se guarda nada.
+    const commissionBps =
+      appliesCommission && commissionMode === 'percentage'
+        ? (dto.commissionBps ?? category.defaultCommissionBps ?? null)
+        : null;
+    const commissionFixedMinor =
+      appliesCommission && commissionMode === 'fixed'
+        ? (dto.commissionFixedMinor ?? 0)
+        : 0;
 
     const product = this.productRepository.create({
       companyId: company.id,
@@ -95,9 +102,12 @@ export class ProductService {
       name: dto.name,
       currency: dto.currency ?? 'VES',
       salePriceMinor: dto.salePriceMinor,
+      costMinor: dto.costMinor ?? 0,
       stock: dto.stock ?? 0,
       appliesCommission,
+      commissionMode,
       commissionBps,
+      commissionFixedMinor,
       isActive: dto.isActive ?? true,
     });
     return this.productRepository.save(product);
@@ -116,13 +126,29 @@ export class ProductService {
     }
 
     Object.assign(product, dto);
-    // Si deja de dar comisión, se limpia el %.
-    if (product.appliesCommission === false) product.commissionBps = null;
+    // Si deja de dar comisión, se limpia % y monto fijo.
+    if (product.appliesCommission === false) {
+      product.commissionBps = null;
+      product.commissionFixedMinor = 0;
+    }
     return this.productRepository.save(product);
   }
 
   async remove(id: number, adminId: number): Promise<void> {
     const product = await this.findOne(id, adminId);
+    // Un producto con ventas registradas (session_product) no se puede borrar:
+    // rompería el historial y el reporte. Se desactiva en su lugar.
+    const sales: Array<{ n: number }> =
+      await this.productRepository.manager.query(
+        'SELECT COUNT(*) AS n FROM session_product WHERE product_id = ?',
+        [product.id],
+      );
+    if (Number(sales[0]?.n ?? 0) > 0) {
+      throw new ConflictException(
+        'No se puede eliminar un producto con ventas registradas. Desactívalo en su lugar.',
+      );
+    }
+    // Sin ventas: se puede borrar (los movimientos de stock caen por cascade).
     await this.productRepository.delete(product.id);
   }
 
