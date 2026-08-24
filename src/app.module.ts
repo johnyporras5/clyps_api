@@ -28,6 +28,7 @@ import { ReportsModule } from './reports/reports.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { NotificationModule } from './notification/notification.module';
 import { PayrollModule } from './payroll/payroll.module';
+import { DirectSaleModule } from './direct_sale/direct-sale.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.module';
 
@@ -126,6 +127,7 @@ import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.mo
     ReportsModule,
     SessionModule,
     PayrollModule,
+    DirectSaleModule,
     RealtimeModule,
     NotificationModule,
     OnboardingModule,

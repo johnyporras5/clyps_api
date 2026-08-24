@@ -87,6 +87,11 @@ export class SessionProduct {
   @Column({ name: 'buyer_employee_id', type: 'int', nullable: true })
   buyerEmployeeId: number | null;
 
+  // Venta directa (sin cita) a la que pertenece esta línea. null en ventas de
+  // cita y en compras de trabajador.
+  @Column({ name: 'direct_sale_id', type: 'int', nullable: true })
+  directSaleId: number | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
