@@ -181,4 +181,26 @@ export class DirectSaleService {
       })),
     };
   }
+
+  /** Marca una venta directa en deuda como cobrada (el cliente ya pagó). */
+  async markCollected(adminId: number, directSaleId: number) {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new ForbiddenException('No tienes una compañía asignada');
+    }
+    const sale = await this.directSaleRepository.findOne({
+      where: { id: directSaleId, companyId: company.id },
+    });
+    if (!sale) {
+      throw new NotFoundException('Venta directa no encontrada');
+    }
+    if (sale.collectedAt) {
+      return { id: sale.id, collectedAt: sale.collectedAt };
+    }
+    sale.collectedAt = new Date();
+    await this.directSaleRepository.save(sale);
+    return { id: sale.id, collectedAt: sale.collectedAt };
+  }
 }

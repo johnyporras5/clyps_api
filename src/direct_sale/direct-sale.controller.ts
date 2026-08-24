@@ -1,4 +1,12 @@
-import { Body, Controller, Post, Request, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Param,
+  ParseIntPipe,
+  Post,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -19,5 +27,15 @@ export class DirectSaleController {
     @Body() dto: CreateDirectSaleDto,
   ) {
     return this.directSaleService.create(req.user.sub, dto);
+  }
+
+  // Marca una venta directa en deuda como cobrada (el cliente ya pagó).
+  @Post(':id/collect')
+  @Roles('adm')
+  async collect(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.directSaleService.markCollected(req.user.sub, id);
   }
 }
