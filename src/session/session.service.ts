@@ -3990,8 +3990,17 @@ export class SessionService {
     }
 
     // 6.b Fecha del cobro: por defecto "ahora"; para citas pasadas el admin puede
-    // backdatearla (define en qué período cae la comisión y el ingreso).
-    const paidAt = dto.collectedAt ? new Date(dto.collectedAt) : new Date();
+    // backdatearla (define en qué período cae la comisión y el ingreso). Una
+    // fecha "solo día" (YYYY-MM-DD) se ancla al MEDIODÍA UTC para caer dentro de
+    // la ventana del período (que arranca en la frontera del día de negocio) y
+    // no antes de la activación.
+    const paidAt = dto.collectedAt
+      ? new Date(
+          /^\d{4}-\d{2}-\d{2}$/.test(dto.collectedAt)
+            ? `${dto.collectedAt}T12:00:00.000Z`
+            : dto.collectedAt,
+        )
+      : new Date();
     if (Number.isNaN(paidAt.getTime())) {
       throw new BadRequestException('Fecha de cobro inválida.');
     }
