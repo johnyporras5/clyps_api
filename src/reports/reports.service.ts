@@ -950,202 +950,72 @@ export class ReportsService {
       );
     const adjustmentsBs = parseFloat(adjRow[0]?.adjustmentsBs || '0') || 0;
 
-    // Ganancia del negocio por producto vendido a cliente: en cita (cobro de la
-    // sesión) y en venta directa (direct_sale). Ganancia = ingreso − costo −
-    // comisión, en la moneda del producto. La tasa: de las líneas del cobro.
-    const prodRows: Array<{
-      id: number;
-      name: string | null;
-      curr: string;
-      profit: string;
-      revenue: string;
-      method: string | null;
-      rate: string | null;
-    }> = await this.sessionDetailRepository.query(
-      `SELECT sp.product_id AS id, p.name AS name, UPPER(sp.currency) AS curr,
-              (sp.unit_price_minor*sp.quantity - sp.cost_minor - sp.commission_minor)/100 AS profit,
-              (sp.unit_price_minor*sp.quantity)/100 AS revenue,
-              pay.method AS method, rate.rate AS rate
-         FROM session_product sp
-         JOIN session_payments pay ON pay.session_id = sp.session_id
-         LEFT JOIN product p ON p.id = sp.product_id
-         LEFT JOIN (
-           SELECT payment_id, UPPER(currency) AS cur, AVG(exchange_rate) AS rate
-             FROM session_payment_lines GROUP BY payment_id, UPPER(currency)
-         ) rate ON rate.payment_id = pay.id
-                AND rate.cur = UPPER(sp.currency) COLLATE utf8mb4_unicode_ci
-        WHERE sp.company_id = ? AND sp.sale_type = 'client'
-          AND sp.session_id IS NOT NULL
-          AND pay.collected_at IS NOT NULL
-          AND pay.collected_at BETWEEN ? AND ?`,
-      [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
-    );
-
-    const dsProdRows: Array<{
-      id: number;
-      name: string | null;
-      curr: string;
-      profit: string;
-      revenue: string;
-      method: string | null;
-      lines: unknown;
-    }> = await this.sessionDetailRepository.query(
-      `SELECT sp.product_id AS id, p.name AS name, UPPER(sp.currency) AS curr,
-              (sp.unit_price_minor*sp.quantity - sp.cost_minor - sp.commission_minor)/100 AS profit,
-              (sp.unit_price_minor*sp.quantity)/100 AS revenue,
-              ds.method AS method, ds.\`lines\` AS \`lines\`
-         FROM session_product sp
-         JOIN direct_sale ds ON ds.id = sp.direct_sale_id
-         LEFT JOIN product p ON p.id = sp.product_id
-        WHERE sp.company_id = ? AND sp.sale_type = 'client'
-          AND ds.collected_at IS NOT NULL
-          AND ds.collected_at BETWEEN ? AND ?`,
-      [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
-    );
-
-    const nominal = new Map<string, number>(); // moneda → parte del negocio
+    const nominal = new Map<string, number>(); // moneda del servicio → valor
     const cashTotals = new Map<string, number>(); // moneda extranjera → efectivo
     let bsAccumulated = 0; // digital + efectivo Bs, a tasa histórica
     let totalBsAccumulated = 0; // TODO a Bs (incluye efectivo extranjero)
     let missingRateDetails = 0;
 
-    interface ItemAgg {
-      kind: 'service' | 'product';
-      id: number;
-      name: string;
-      count: number;
-      nominal: Map<string, number>;
+    interface SvcAgg {
+      serviceName: string;
+      servicesCount: number;
+      nominal: Map<string, number>; // valor del servicio por moneda (nominal)
       cash: Map<string, number>;
       bsAccumulated: number;
-      sortBs: number; // Bs-equivalente (para ordenar entre monedas)
+      sortBs: number; // Bs-equivalente de todo (para ordenar entre monedas)
       companyTotal: number; // Σ parte del negocio (para el % ponderado)
-      billedTotal: number; // Σ facturado (para el % ponderado)
+      billedTotal: number; // Σ total facturado (para el % ponderado)
     }
-    const itemMap = new Map<string, ItemAgg>();
-    const getAgg = (
-      key: string,
-      kind: 'service' | 'product',
-      id: number,
-      name: string,
-    ): ItemAgg => {
-      let a = itemMap.get(key);
-      if (!a) {
-        a = {
-          kind,
-          id,
-          name,
-          count: 0,
-          nominal: new Map(),
-          cash: new Map(),
-          bsAccumulated: 0,
-          sortBs: 0,
-          companyTotal: 0,
-          billedTotal: 0,
-        };
-        itemMap.set(key, a);
-      }
-      return a;
-    };
+    const svcMap = new Map<number, SvcAgg>();
 
-    // Suma un renglón de ingreso del negocio (efectivo extranjero se queda en su
-    // moneda; el resto va a Bs a la tasa del cobro). `amount` en `cur`.
-    const applyIncome = (
-      amount: number,
-      cur: string,
-      method: string | null,
-      rate: number | null,
-      agg: ItemAgg,
-      billed: number,
-    ) => {
+    for (const r of rows) {
+      const amount = parseFloat(r.companyAmount || '0') || 0;
+      const cur = (r.svcCurrency || 'USD').toUpperCase();
       const isForeign = cur !== 'VES';
-      const isCash = method === 'cash';
+      const isCash = r.method === 'cash';
+      const rate = r.rate != null ? parseFloat(r.rate) : null;
+
+      // Valor nominal por moneda del servicio.
       nominal.set(cur, (nominal.get(cur) ?? 0) + amount);
+
+      // Bs-equivalente de TODO (para el total de referencia y el orden).
       const bsEquiv = isForeign
         ? rate != null
           ? amount * rate
           : null
         : amount;
       if (bsEquiv != null) totalBsAccumulated += bsEquiv;
-      agg.count += 1;
-      agg.sortBs += bsEquiv ?? 0;
-      agg.nominal.set(cur, (agg.nominal.get(cur) ?? 0) + amount);
-      agg.companyTotal += amount;
-      agg.billedTotal += billed;
+
+      const svc = svcMap.get(Number(r.serviceId)) ?? {
+        serviceName: (r.serviceName || 'Servicio').trim(),
+        servicesCount: 0,
+        nominal: new Map<string, number>(),
+        cash: new Map<string, number>(),
+        bsAccumulated: 0,
+        sortBs: 0,
+        companyTotal: 0,
+        billedTotal: 0,
+      };
+      svc.servicesCount += 1;
+      svc.sortBs += bsEquiv ?? 0;
+      // Valor nominal por moneda del servicio (mismo criterio que byCurrency).
+      svc.nominal.set(cur, (svc.nominal.get(cur) ?? 0) + amount);
+      // Para el % ponderado del negocio en este servicio (parte ÷ facturado).
+      svc.companyTotal += amount;
+      svc.billedTotal += parseFloat(r.billedAmount || '0') || 0;
+
       if (isCash && isForeign) {
+        // Efectivo en moneda extranjera → se queda en su moneda.
         cashTotals.set(cur, (cashTotals.get(cur) ?? 0) + amount);
-        agg.cash.set(cur, (agg.cash.get(cur) ?? 0) + amount);
+        svc.cash.set(cur, (svc.cash.get(cur) ?? 0) + amount);
       } else {
+        // Todo lo demás → Bs a tasa histórica (VES nativo ×1).
         const bsAmt = isForeign ? (rate != null ? amount * rate : 0) : amount;
         if (isForeign && rate == null) missingRateDetails += 1;
         bsAccumulated += bsAmt;
-        agg.bsAccumulated += bsAmt;
+        svc.bsAccumulated += bsAmt;
       }
-    };
-
-    // Servicios.
-    for (const r of rows) {
-      const amount = parseFloat(r.companyAmount || '0') || 0;
-      const cur = (r.svcCurrency || 'USD').toUpperCase();
-      const rate = r.rate != null ? parseFloat(r.rate) : null;
-      const agg = getAgg(
-        `s:${r.serviceId}`,
-        'service',
-        Number(r.serviceId),
-        (r.serviceName || 'Servicio').trim(),
-      );
-      applyIncome(
-        amount,
-        cur,
-        r.method,
-        rate,
-        agg,
-        parseFloat(r.billedAmount || '0') || 0,
-      );
-    }
-
-    // Productos vendidos en citas.
-    for (const r of prodRows) {
-      const cur = (r.curr || 'USD').toUpperCase();
-      const rate = r.rate != null ? parseFloat(r.rate) : null;
-      const agg = getAgg(
-        `p:${r.id}`,
-        'product',
-        Number(r.id),
-        (r.name || 'Producto').trim(),
-      );
-      applyIncome(
-        parseFloat(r.profit || '0') || 0,
-        cur,
-        r.method,
-        rate,
-        agg,
-        parseFloat(r.revenue || '0') || 0,
-      );
-    }
-
-    // Productos de venta directa (la tasa sale del JSON `lines` del cobro).
-    for (const r of dsProdRows) {
-      const cur = (r.curr || 'USD').toUpperCase();
-      const parsed = Array.isArray(r.lines)
-        ? (r.lines as Array<{ currency?: string; exchangeRate?: number }>)
-        : [];
-      const line = parsed.find((l) => (l.currency || '').toUpperCase() === cur);
-      const rate =
-        line?.exchangeRate != null ? Number(line.exchangeRate) : null;
-      const agg = getAgg(
-        `p:${r.id}`,
-        'product',
-        Number(r.id),
-        (r.name || 'Producto').trim(),
-      );
-      applyIncome(
-        parseFloat(r.profit || '0') || 0,
-        cur,
-        r.method,
-        rate,
-        agg,
-        parseFloat(r.revenue || '0') || 0,
-      );
+      svcMap.set(Number(r.serviceId), svc);
     }
 
     const round2 = (n: number): number => parseFloat(n.toFixed(2));
@@ -1158,25 +1028,30 @@ export class ReportsService {
         .filter((x) => x.companyAmount > 0)
         .sort((a, b) => b.companyAmount - a.companyAmount);
 
-    const byService = [...itemMap.entries()]
-      .map(([key, s]) => ({
-        key,
-        kind: s.kind,
-        serviceId: s.id,
-        serviceName: s.name,
-        servicesCount: s.count,
+    const byService = [...svcMap.entries()]
+      .map(([serviceId, s]) => ({
+        serviceId,
+        serviceName: s.serviceName,
+        servicesCount: s.servicesCount,
+        // % del negocio en este servicio, ponderado (parte ÷ facturado × 100).
+        // Cuadra con los montos: un mismo servicio con distintos % por trabajador
+        // queda con el efectivo ponderado.
         companyPercentage:
           s.billedTotal > 0
             ? round2((s.companyTotal / s.billedTotal) * 100)
             : 0,
+        // Valor nominal por moneda (la suma de todos los servicios == byCurrency).
         nominal: mapToSortedList(s.nominal),
+        // Efectivo en moneda extranjera (una entrada por moneda).
         cash: mapToSortedList(s.cash),
+        // Resto (digital + efectivo Bs) a tasa histórica.
         bsAccumulated: round2(s.bsAccumulated),
       }))
       .filter((s) => s.cash.length > 0 || s.bsAccumulated > 0)
       .sort(
         (a, b) =>
-          (itemMap.get(b.key)!.sortBs || 0) - (itemMap.get(a.key)!.sortBs || 0),
+          (svcMap.get(b.serviceId)!.sortBs || 0) -
+          (svcMap.get(a.serviceId)!.sortBs || 0),
       );
 
     return {
@@ -1269,49 +1144,6 @@ export class ReportsService {
       [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
     );
 
-    // Ganancia de productos vendidos a cliente (cita + venta directa), por fecha
-    // de cobro, para sumar al mismo bucket.
-    const prodRows: Array<{
-      curr: string;
-      method: string | null;
-      profit: string;
-      rate: string | null;
-      collectedAt: Date | string;
-    }> = await this.sessionDetailRepository.query(
-      `SELECT UPPER(sp.currency) AS curr, pay.method AS method,
-              (sp.unit_price_minor*sp.quantity - sp.cost_minor - sp.commission_minor)/100 AS profit,
-              rate.rate AS rate, pay.collected_at AS collectedAt
-         FROM session_product sp
-         JOIN session_payments pay ON pay.session_id = sp.session_id
-         LEFT JOIN (
-           SELECT payment_id, UPPER(currency) AS cur, AVG(exchange_rate) AS rate
-             FROM session_payment_lines GROUP BY payment_id, UPPER(currency)
-         ) rate ON rate.payment_id = pay.id
-                AND rate.cur = UPPER(sp.currency) COLLATE utf8mb4_unicode_ci
-        WHERE sp.company_id = ? AND sp.sale_type = 'client'
-          AND sp.session_id IS NOT NULL
-          AND pay.collected_at IS NOT NULL
-          AND pay.collected_at BETWEEN ? AND ?`,
-      [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
-    );
-    const dsProdRows: Array<{
-      curr: string;
-      method: string | null;
-      profit: string;
-      lines: unknown;
-      collectedAt: Date | string;
-    }> = await this.sessionDetailRepository.query(
-      `SELECT UPPER(sp.currency) AS curr, ds.method AS method,
-              (sp.unit_price_minor*sp.quantity - sp.cost_minor - sp.commission_minor)/100 AS profit,
-              ds.\`lines\` AS \`lines\`, ds.collected_at AS collectedAt
-         FROM session_product sp
-         JOIN direct_sale ds ON ds.id = sp.direct_sale_id
-        WHERE sp.company_id = ? AND sp.sale_type = 'client'
-          AND ds.collected_at IS NOT NULL
-          AND ds.collected_at BETWEEN ? AND ?`,
-      [company.id, `${startDate} 00:00:00`, `${endDate} 23:59:59`],
-    );
-
     // Índice del bucket que contiene la fecha (buckets contiguos y ordenados):
     // el último cuyo `start` <= t (búsqueda binaria).
     const bucketIndexOf = (t: number): number => {
@@ -1330,18 +1162,18 @@ export class ReportsService {
       return idx;
     };
 
-    const applyToBucket = (
-      collectedAt: Date | string,
-      amount: number,
-      cur: string,
-      method: string | null,
-      rate: number | null,
-    ) => {
-      const idx = bucketIndexOf(new Date(collectedAt).getTime());
-      if (idx < 0) return;
+    for (const r of rows) {
+      const t = new Date(r.collectedAt).getTime();
+      const idx = bucketIndexOf(t);
+      if (idx < 0) continue; // fuera de rango (no debería pasar)
       const a = acc[idx];
+
+      const amount = parseFloat(r.companyAmount || '0') || 0;
+      const cur = (r.svcCurrency || 'USD').toUpperCase();
       const isForeign = cur !== 'VES';
-      const isCash = method === 'cash';
+      const isCash = r.method === 'cash';
+      const rate = r.rate != null ? parseFloat(r.rate) : null;
+
       a.nominal.set(cur, (a.nominal.get(cur) ?? 0) + amount);
       if (isCash && isForeign) {
         a.cash.set(cur, (a.cash.get(cur) ?? 0) + amount);
@@ -1350,42 +1182,6 @@ export class ReportsService {
         if (isForeign && rate == null) missingRateDetails += 1;
         a.bsAccumulated += bsAmt;
       }
-    };
-
-    // Servicios.
-    for (const r of rows) {
-      applyToBucket(
-        r.collectedAt,
-        parseFloat(r.companyAmount || '0') || 0,
-        (r.svcCurrency || 'USD').toUpperCase(),
-        r.method,
-        r.rate != null ? parseFloat(r.rate) : null,
-      );
-    }
-    // Productos en citas.
-    for (const r of prodRows) {
-      applyToBucket(
-        r.collectedAt,
-        parseFloat(r.profit || '0') || 0,
-        (r.curr || 'USD').toUpperCase(),
-        r.method,
-        r.rate != null ? parseFloat(r.rate) : null,
-      );
-    }
-    // Productos de venta directa (tasa desde el JSON `lines`).
-    for (const r of dsProdRows) {
-      const cur = (r.curr || 'USD').toUpperCase();
-      const parsed = Array.isArray(r.lines)
-        ? (r.lines as Array<{ currency?: string; exchangeRate?: number }>)
-        : [];
-      const line = parsed.find((l) => (l.currency || '').toUpperCase() === cur);
-      applyToBucket(
-        r.collectedAt,
-        parseFloat(r.profit || '0') || 0,
-        cur,
-        r.method,
-        line?.exchangeRate != null ? Number(line.exchangeRate) : null,
-      );
     }
 
     // Ajustes (sobrepago/faltante) a favor de la company, por fecha de cobro. Una
