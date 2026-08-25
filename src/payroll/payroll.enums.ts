@@ -51,7 +51,10 @@ export type ConceptSource =
   | 'product_sale'
   // Deducción por la compra de un producto por parte del trabajador
   // (source_id = session_product.id de la venta 'worker_purchase').
-  | 'product_purchase';
+  | 'product_purchase'
+  // Comisión/propina de una venta directa de productos a un cliente (sin cita)
+  // (source_id = session_product.id de la venta 'client' con direct_sale_id).
+  | 'direct_sale';
 
 /** Método con el que se registró un pago al empleado. */
 export type PayoutMethod = 'efectivo' | 'transferencia' | 'otro';

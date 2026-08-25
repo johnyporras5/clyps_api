@@ -11,6 +11,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { IncomeServicesQueryDto } from './dto/income-services-query.dto';
+import { ProductSalesQueryDto } from './dto/product-sales-query.dto';
 import { CompanyIncomeQueryDto } from './dto/company-income-query.dto';
 import { CompanyIncomeTimelineQueryDto } from './dto/company-income-timeline-query.dto';
 import { ClientsReportQueryDto } from './dto/clients-report-query.dto';
@@ -68,6 +69,24 @@ export class ReportsController {
       query.startDate,
       query.endDate,
     );
+  }
+
+  // Historial (ledger) de ventas de productos: cada venta como un movimiento.
+  @Get('product-sales')
+  @Roles('adm')
+  async getProductSalesHistory(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: ProductSalesQueryDto,
+  ) {
+    return this.reportsService.getProductSalesHistory(req.user.sub, {
+      startDate: query.startDate,
+      endDate: query.endDate,
+      page: query.page,
+      limit: query.limit,
+      type: query.type,
+      productId: query.productId,
+      employeeId: query.employeeId,
+    });
   }
 
   @Get('income-employees')

@@ -40,10 +40,12 @@ export class SessionProductService {
    * idempotencia la garantiza el cobro (una sesión solo se cobra una vez).
    */
   async sellProducts(
-    sessionId: number,
+    sessionId: number | null,
     companyId: number,
     lines: SellProductLine[],
     manager?: EntityManager,
+    // Venta directa (sin cita): enlaza cada línea a la cabecera `direct_sale`.
+    directSaleId?: number | null,
   ): Promise<SessionProduct[]> {
     if (!lines?.length) return [];
 
@@ -129,6 +131,7 @@ export class SessionProductService {
         commissionMinor,
         sellerEmployeeId,
         buyerEmployeeId: null,
+        directSaleId: directSaleId ?? null,
       });
       const savedSp = await spRepo.save(sp);
 

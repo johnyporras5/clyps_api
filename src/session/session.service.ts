@@ -3989,13 +3989,58 @@ export class SessionService {
       );
     }
 
+    // 6.b Fecha del cobro: por defecto "ahora"; para citas pasadas el admin puede
+    // backdatearla (define en qué período cae la comisión y el ingreso). Una
+    // fecha "solo día" (YYYY-MM-DD) se ancla al MEDIODÍA UTC para caer dentro de
+    // la ventana del período (que arranca en la frontera del día de negocio) y
+    // no antes de la activación.
+    const paidAt = dto.collectedAt
+      ? new Date(
+          /^\d{4}-\d{2}-\d{2}$/.test(dto.collectedAt)
+            ? `${dto.collectedAt}T12:00:00.000Z`
+            : dto.collectedAt,
+        )
+      : new Date();
+    if (Number.isNaN(paidAt.getTime())) {
+      throw new BadRequestException('Fecha de cobro inválida.');
+    }
+    if (paidAt.getTime() > Date.now() + 60_000) {
+      throw new BadRequestException('La fecha de cobro no puede ser futura.');
+    }
+
+    // Resolver el período destino de la comisión según la fecha del cobro. Si cae
+    // en un período que NO está abierto, se exige confirmación (se recongelará).
+    // Se hace ANTES de crear el cobro para no dejar un pago sin su comisión.
+    let payrollForcedPeriod: { id: number } | null = null;
+    let payrollNeedsRefreeze = false;
+    try {
+      const resolved = await this.payrollPeriodService.resolvePeriodForDate(
+        adminCompany.id,
+        paidAt,
+      );
+      payrollForcedPeriod = { id: resolved.period.id };
+      if (resolved.needsConfirm && !dto.confirmClosedPeriod) {
+        throw new ConflictException({
+          code: 'PERIOD_CLOSED',
+          message: `La fecha elegida cae en el período "${resolved.period.label}" que ya está "${resolved.period.status}". Confirma para sumar la comisión ahí (se recalculará).`,
+          periodId: resolved.period.id,
+          periodLabel: resolved.period.label,
+          periodStatus: resolved.period.status,
+        });
+      }
+      payrollNeedsRefreeze = resolved.needsConfirm;
+    } catch (e) {
+      if (e instanceof ConflictException) throw e; // PERIOD_CLOSED se propaga
+      // Otra falla al resolver (p. ej. nómina no activa): seguimos; la nómina es
+      // best-effort más abajo y caerá al período abierto por defecto.
+      payrollForcedPeriod = null;
+    }
+
     // 7. Transacción: persistir cobro + marcar pagada + cascada a detalles
     const queryRunner =
       this.sessionRepository.manager.connection.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
-
-    const paidAt = new Date();
     let savedPayment: SessionPayment;
     let savedTips: SessionPaymentTip[] = [];
     let savedProducts: SessionProduct[] = [];
@@ -4107,7 +4152,8 @@ export class SessionService {
     // conceptos de comisión (uno por servicio, en Bs con la tasa del cobro).
     // Best-effort: si falla, no rompe el cobro; la idempotencia permite reintentar.
     try {
-      await this.payrollPeriodService.ensureOpenPeriod(adminCompany.id, paidAt);
+      // El período destino ya se resolvió arriba (payrollForcedPeriod) según la
+      // fecha del cobro; no forzamos apertura aquí para no rotar al backdatear.
 
       const rateByCurrency = new Map(
         dto.lines.map((l) => [
@@ -4199,7 +4245,14 @@ export class SessionService {
           paidAt,
           attrItems,
           dto.method,
+          payrollForcedPeriod ?? undefined,
         );
+
+        // Si la comisión cayó en un período ya cerrado (backdate confirmado),
+        // recongelar sus totales para reflejar lo agregado.
+        if (payrollNeedsRefreeze && payrollForcedPeriod) {
+          await this.payrollPeriodService.freezeTotals(payrollForcedPeriod.id);
+        }
 
         // Persistir las atribuciones resueltas para poder reconstruir la nómina
         // si se borra/reactiva (botón "Revertir" + fecha de activación pasada).
@@ -4484,9 +4537,6 @@ export class SessionService {
         ${orderBy}`,
       [company.id],
     );
-    if (rows.length === 0) {
-      return { data: [], meta: { clients: 0, payments: 0, status } };
-    }
 
     const paymentIds = rows.map((r) => r.paymentId);
     const sessionIds = rows.map((r) => r.sessionId);
@@ -4495,20 +4545,24 @@ export class SessionService {
       paymentId: number;
       currency: string;
       amount: string;
-    }> = await this.sessionPaymentRepository.query(
-      `SELECT payment_id AS paymentId, UPPER(currency) AS currency,
-              COALESCE(SUM(subtotal),0) AS amount
-         FROM session_payment_lines WHERE payment_id IN (?)
-        GROUP BY payment_id, currency`,
-      [paymentIds],
-    );
+    }> = paymentIds.length
+      ? await this.sessionPaymentRepository.query(
+          `SELECT payment_id AS paymentId, UPPER(currency) AS currency,
+                  COALESCE(SUM(subtotal),0) AS amount
+             FROM session_payment_lines WHERE payment_id IN (?)
+            GROUP BY payment_id, currency`,
+          [paymentIds],
+        )
+      : [];
     const svcRows: Array<{ sessionId: number; serviceName: string | null }> =
-      await this.sessionPaymentRepository.query(
-        `SELECT sd.session_id AS sessionId, s.name AS serviceName
-           FROM session_detail sd LEFT JOIN service s ON s.id = sd.service_id
-          WHERE sd.session_id IN (?) AND sd.status <> 5`,
-        [sessionIds],
-      );
+      sessionIds.length
+        ? await this.sessionPaymentRepository.query(
+            `SELECT sd.session_id AS sessionId, s.name AS serviceName
+               FROM session_detail sd LEFT JOIN service s ON s.id = sd.service_id
+              WHERE sd.session_id IN (?) AND sd.status <> 5`,
+            [sessionIds],
+          )
+        : [];
 
     const amountsByPayment = new Map<number, Array<{ currency; amount }>>();
     for (const l of lineRows) {
@@ -4557,7 +4611,9 @@ export class SessionService {
         g.totals.set(a.currency, (g.totals.get(a.currency) ?? 0) + a.amount);
       }
       g.debts.push({
+        kind: 'session',
         sessionId: r.sessionId,
+        directSaleId: null,
         publicCode: r.publicCode ?? null,
         paymentId: r.paymentId,
         paidAt: r.paidAt,
@@ -4566,6 +4622,98 @@ export class SessionService {
         pendingCollection: r.collectedAt == null,
         amounts,
         serviceNames: servicesBySession.get(r.sessionId) ?? [],
+      });
+    }
+
+    // Ventas directas en deuda (mismo criterio: was_pending = 1 + filtro estado).
+    const dsCollectedFilter =
+      status === 'collected'
+        ? 'AND ds.collected_at IS NOT NULL'
+        : status === 'all'
+          ? ''
+          : 'AND ds.collected_at IS NULL';
+    const dsOrderBy =
+      status === 'collected'
+        ? 'ORDER BY ds.collected_at DESC'
+        : 'ORDER BY ds.created_at ASC';
+    const dsRows: Array<{
+      directSaleId: number;
+      createdAt: Date;
+      collectedAt: Date | null;
+      lines: unknown;
+      clientId: number | null;
+      clientName: string | null;
+      clientLastName: string | null;
+      clientPicture: string | null;
+    }> = await this.sessionPaymentRepository.query(
+      `SELECT ds.id AS directSaleId, ds.created_at AS createdAt,
+              ds.collected_at AS collectedAt, ds.\`lines\` AS \`lines\`,
+              ds.client_id AS clientId, cl.name AS clientName,
+              cl.last_name AS clientLastName, cl.picture AS clientPicture
+         FROM direct_sale ds
+         LEFT JOIN client cl ON cl.id = ds.client_id
+        WHERE ds.company_id = ? AND ds.was_pending = 1
+          ${dsCollectedFilter}
+        ${dsOrderBy}`,
+      [company.id],
+    );
+
+    let dsProductNames = new Map<number, string[]>();
+    if (dsRows.length) {
+      const dsIds = dsRows.map((r) => r.directSaleId);
+      const prodRows: Array<{ directSaleId: number; name: string | null }> =
+        await this.sessionPaymentRepository.query(
+          `SELECT sp.direct_sale_id AS directSaleId, p.name AS name
+             FROM session_product sp LEFT JOIN product p ON p.id = sp.product_id
+            WHERE sp.direct_sale_id IN (?)`,
+          [dsIds],
+        );
+      dsProductNames = prodRows.reduce((m, r) => {
+        if (!r.name) return m;
+        if (!m.has(r.directSaleId)) m.set(r.directSaleId, []);
+        m.get(r.directSaleId)!.push(r.name);
+        return m;
+      }, new Map<number, string[]>());
+    }
+
+    for (const r of dsRows) {
+      const key = r.clientId ?? 0;
+      if (!byClient.has(key)) {
+        byClient.set(key, {
+          clientId: r.clientId,
+          clientName:
+            `${(r.clientName || '').trim()} ${(r.clientLastName || '').trim()}`.trim(),
+          clientPictureUrl: r.clientPicture
+            ? this.fileUploadService.getFileUrl('client_photo', r.clientPicture)
+            : null,
+          debts: [],
+          totals: new Map(),
+        });
+      }
+      const g = byClient.get(key)!;
+      const parsedLines = Array.isArray(r.lines)
+        ? (r.lines as Array<{ currency?: string; subtotal?: number }>)
+        : [];
+      const amounts = parsedLines
+        .filter((l) => l && l.currency != null)
+        .map((l) => ({
+          currency: String(l.currency).toUpperCase(),
+          amount: Number(l.subtotal) || 0,
+        }));
+      for (const a of amounts) {
+        g.totals.set(a.currency, (g.totals.get(a.currency) ?? 0) + a.amount);
+      }
+      g.debts.push({
+        kind: 'direct_sale',
+        sessionId: null,
+        directSaleId: r.directSaleId,
+        publicCode: null,
+        paymentId: null,
+        paidAt: r.createdAt,
+        collectedAt: r.collectedAt,
+        pendingCollection: r.collectedAt == null,
+        amounts,
+        serviceNames: dsProductNames.get(r.directSaleId) ?? ['Venta directa'],
       });
     }
 
@@ -4585,7 +4733,11 @@ export class SessionService {
 
     return {
       data,
-      meta: { clients: data.length, payments: rows.length, status },
+      meta: {
+        clients: data.length,
+        payments: rows.length + dsRows.length,
+        status,
+      },
     };
   }
 

@@ -516,6 +516,162 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Historial (ledger) de ventas de productos: cada fila de session_product como
+   * un movimiento, con su tipo derivado (venta en cita / venta directa / compra
+   * de trabajador), producto, cliente/comprador, vendedor y montos. Paginado y
+   * filtrable por rango, tipo, producto y trabajador.
+   */
+  async getProductSalesHistory(
+    adminId: number,
+    opts: {
+      startDate: string;
+      endDate: string;
+      page?: number;
+      limit?: number;
+      type?: 'appointment' | 'direct' | 'worker_purchase';
+      productId?: number;
+      employeeId?: number;
+    },
+  ) {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+
+    const page = opts.page && opts.page > 0 ? opts.page : 1;
+    const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
+    const params: (string | number)[] = [
+      company.id,
+      `${opts.startDate} 00:00:00`,
+      `${opts.endDate} 23:59:59`,
+    ];
+
+    let typeFilter = '';
+    if (opts.type === 'worker_purchase') {
+      typeFilter = `AND sp.sale_type = 'worker_purchase'`;
+    } else if (opts.type === 'direct') {
+      typeFilter = `AND sp.sale_type = 'client' AND sp.direct_sale_id IS NOT NULL`;
+    } else if (opts.type === 'appointment') {
+      typeFilter = `AND sp.sale_type = 'client' AND sp.session_id IS NOT NULL`;
+    }
+    if (opts.productId) {
+      typeFilter += ` AND sp.product_id = ?`;
+      params.push(opts.productId);
+    }
+    if (opts.employeeId) {
+      typeFilter += ` AND (sp.seller_employee_id = ? OR sp.buyer_employee_id = ?)`;
+      params.push(opts.employeeId, opts.employeeId);
+    }
+
+    const [{ total }]: [{ total: number }] =
+      await this.companyRepository.manager.query(
+        `SELECT COUNT(*) AS total FROM session_product sp
+          WHERE sp.company_id = ? AND sp.created_at BETWEEN ? AND ? ${typeFilter}`,
+        params,
+      );
+    const totalCount = Number(total) || 0;
+    const totalPages = Math.max(1, Math.ceil(totalCount / limit));
+    const skip = (page - 1) * limit;
+
+    interface Row {
+      id: number;
+      createdAt: string;
+      saleType: string;
+      sessionId: number | null;
+      directSaleId: number | null;
+      quantity: number;
+      unitPriceMinor: string;
+      currency: string;
+      costMinor: string;
+      commissionMinor: string;
+      productName: string | null;
+      sellerName: string | null;
+      buyerName: string | null;
+      clientName: string | null;
+      clientLastName: string | null;
+      publicCode: string | null;
+    }
+
+    const rows: Row[] = await this.companyRepository.manager.query(
+      `SELECT sp.id AS id, sp.created_at AS createdAt, sp.sale_type AS saleType,
+              sp.session_id AS sessionId, sp.direct_sale_id AS directSaleId,
+              sp.quantity AS quantity, sp.unit_price_minor AS unitPriceMinor,
+              sp.currency AS currency, sp.cost_minor AS costMinor,
+              sp.commission_minor AS commissionMinor,
+              p.name AS productName,
+              ws.name AS sellerName, wb.name AS buyerName,
+              COALESCE(cs.name, cds.name) AS clientName,
+              COALESCE(cs.last_name, cds.last_name) AS clientLastName,
+              s.public_code AS publicCode
+         FROM session_product sp
+         LEFT JOIN product p ON p.id = sp.product_id
+         LEFT JOIN company_worker cws ON cws.id = sp.seller_employee_id
+         LEFT JOIN worker ws ON ws.id = cws.worker_id
+         LEFT JOIN company_worker cwb ON cwb.id = sp.buyer_employee_id
+         LEFT JOIN worker wb ON wb.id = cwb.worker_id
+         LEFT JOIN session s ON s.id = sp.session_id
+         LEFT JOIN client cs ON cs.id = s.client_id
+         LEFT JOIN direct_sale ds ON ds.id = sp.direct_sale_id
+         LEFT JOIN client cds ON cds.id = ds.client_id
+        WHERE sp.company_id = ? AND sp.created_at BETWEEN ? AND ? ${typeFilter}
+        ORDER BY sp.created_at DESC, sp.id DESC
+        LIMIT ${limit} OFFSET ${skip}`,
+      params,
+    );
+
+    const num = (v: string | number | null): number => Number(v ?? 0) || 0;
+    const sales = rows.map((r) => {
+      const type =
+        r.saleType === 'worker_purchase'
+          ? 'worker_purchase'
+          : r.directSaleId != null
+            ? 'direct'
+            : 'appointment';
+      const unitPriceMinor = num(r.unitPriceMinor);
+      const clientName = `${(r.clientName || '').trim()} ${(
+        r.clientLastName || ''
+      ).trim()}`.trim();
+      return {
+        id: r.id,
+        createdAt: r.createdAt,
+        type,
+        productName: r.productName || 'Producto eliminado',
+        quantity: num(r.quantity),
+        unitPriceMinor,
+        currency: r.currency,
+        totalMinor: unitPriceMinor * num(r.quantity),
+        costMinor: num(r.costMinor),
+        commissionMinor: num(r.commissionMinor),
+        // Cliente (venta) o comprador trabajador (compra).
+        counterpartyName:
+          type === 'worker_purchase'
+            ? r.buyerName || 'Trabajador'
+            : clientName || 'Cliente',
+        sellerName: r.sellerName || null,
+        publicCode: r.publicCode ?? null,
+        directSaleId: r.directSaleId ?? null,
+      };
+    });
+
+    return {
+      range: { startDate: opts.startDate, endDate: opts.endDate },
+      sales,
+      meta: {
+        page,
+        limit,
+        total: totalCount,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
   async getIncomeByEmployees(
     adminId: number,
     startDate: string,

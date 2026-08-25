@@ -334,6 +334,32 @@ export class PayrollPeriodService {
   }
 
   /**
+   * Resuelve el período que CONTIENE una fecha, sin importar su estado (abierto o
+   * cerrado). Para cobros con fecha pasada: la comisión debe caer en el período
+   * de esa fecha. Si no existe ninguno que la cubra, cae en `ensureOpenPeriod`
+   * (crea la ventana anclada). `needsConfirm` = true si el período no está abierto
+   * (el front debe confirmar antes de sumarle conceptos y recongelar).
+   */
+  async resolvePeriodForDate(
+    companyId: number,
+    date: Date,
+  ): Promise<{ period: PayrollPeriod; needsConfirm: boolean }> {
+    const containing = await this.periodRepo
+      .createQueryBuilder('p')
+      .where('p.company_id = :companyId', { companyId })
+      .andWhere('p.starts_at <= :date AND p.ends_at >= :date', { date })
+      .orderBy('p.starts_at', 'DESC')
+      .getOne();
+
+    if (containing) {
+      return { period: containing, needsConfirm: containing.status !== 'open' };
+    }
+    // Ninguno la cubre → usar/crear el abierto anclado (comportamiento normal).
+    const period = await this.ensureOpenPeriod(companyId, date);
+    return { period, needsConfirm: false };
+  }
+
+  /**
    * Primer periodo (bootstrap del onboarding). Idempotente: si la empresa ya
    * tiene CUALQUIER periodo, no crea otro. Arranca EXACTO en `signupDate` (el día
    * que el admin eligió) y corre lo que dure la frecuencia. La nómina no cuenta
@@ -382,6 +408,7 @@ export class PayrollPeriodService {
     periodId: number,
     newStatus: PeriodStatus,
     adminId: number,
+    confirmUncharged?: boolean,
   ): Promise<PayrollPeriod> {
     const period = await this.periodRepo.findOne({ where: { id: periodId } });
     if (!period) {
@@ -399,6 +426,24 @@ export class PayrollPeriodService {
       throw new ConflictException(
         `Transición inválida: ${period.status} → ${newStatus}`,
       );
+    }
+
+    // Candado: al cerrar el período actual (open→review), avisar si quedan citas
+    // Completadas SIN cobrar dentro de él (evita cobrarlas luego y que la comisión
+    // caiga en el período siguiente).
+    if (
+      period.status === 'open' &&
+      newStatus === 'review' &&
+      !confirmUncharged
+    ) {
+      const pending = await this.countUnchargedInPeriod(period);
+      if (pending > 0) {
+        throw new ConflictException({
+          code: 'UNCHARGED_APPOINTMENTS',
+          message: `Hay ${pending} cita(s) completada(s) sin cobrar en este período. Cóbralas antes de cerrar, o confirma para cerrar de todos modos (sus comisiones caerían en el período siguiente).`,
+          count: pending,
+        });
+      }
     }
 
     // Reabrir (review → open) solo si no hay ya otro periodo abierto: si el
@@ -474,5 +519,23 @@ export class PayrollPeriodService {
         WHERE d.period_id = ?`,
       [periodId],
     );
+  }
+
+  /**
+   * Cuenta las citas Completadas (status 3) SIN cobrar dentro de la ventana del
+   * período (excluye cortesías, que no se cobran). Usado por el candado al cerrar.
+   */
+  private async countUnchargedInPeriod(period: PayrollPeriod): Promise<number> {
+    const rows: Array<{ n: string }> = await this.periodRepo.manager.query(
+      `SELECT COUNT(DISTINCT sd.session_id) AS n
+         FROM session_detail sd
+         JOIN company_worker cw ON cw.id = sd.company_worker_id
+        WHERE cw.company_id = ?
+          AND sd.status = 3
+          AND sd.is_courtesy = 0
+          AND sd.start_datetime >= ? AND sd.start_datetime <= ?`,
+      [period.companyId, period.startsAt, period.endsAt],
+    );
+    return Number(rows[0]?.n ?? 0) || 0;
   }
 }
