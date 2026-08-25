@@ -3989,13 +3989,49 @@ export class SessionService {
       );
     }
 
+    // 6.b Fecha del cobro: por defecto "ahora"; para citas pasadas el admin puede
+    // backdatearla (define en qué período cae la comisión y el ingreso).
+    const paidAt = dto.collectedAt ? new Date(dto.collectedAt) : new Date();
+    if (Number.isNaN(paidAt.getTime())) {
+      throw new BadRequestException('Fecha de cobro inválida.');
+    }
+    if (paidAt.getTime() > Date.now() + 60_000) {
+      throw new BadRequestException('La fecha de cobro no puede ser futura.');
+    }
+
+    // Resolver el período destino de la comisión según la fecha del cobro. Si cae
+    // en un período que NO está abierto, se exige confirmación (se recongelará).
+    // Se hace ANTES de crear el cobro para no dejar un pago sin su comisión.
+    let payrollForcedPeriod: { id: number } | null = null;
+    let payrollNeedsRefreeze = false;
+    try {
+      const resolved = await this.payrollPeriodService.resolvePeriodForDate(
+        adminCompany.id,
+        paidAt,
+      );
+      payrollForcedPeriod = { id: resolved.period.id };
+      if (resolved.needsConfirm && !dto.confirmClosedPeriod) {
+        throw new ConflictException({
+          code: 'PERIOD_CLOSED',
+          message: `La fecha elegida cae en el período "${resolved.period.label}" que ya está "${resolved.period.status}". Confirma para sumar la comisión ahí (se recalculará).`,
+          periodId: resolved.period.id,
+          periodLabel: resolved.period.label,
+          periodStatus: resolved.period.status,
+        });
+      }
+      payrollNeedsRefreeze = resolved.needsConfirm;
+    } catch (e) {
+      if (e instanceof ConflictException) throw e; // PERIOD_CLOSED se propaga
+      // Otra falla al resolver (p. ej. nómina no activa): seguimos; la nómina es
+      // best-effort más abajo y caerá al período abierto por defecto.
+      payrollForcedPeriod = null;
+    }
+
     // 7. Transacción: persistir cobro + marcar pagada + cascada a detalles
     const queryRunner =
       this.sessionRepository.manager.connection.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
-
-    const paidAt = new Date();
     let savedPayment: SessionPayment;
     let savedTips: SessionPaymentTip[] = [];
     let savedProducts: SessionProduct[] = [];
@@ -4107,7 +4143,8 @@ export class SessionService {
     // conceptos de comisión (uno por servicio, en Bs con la tasa del cobro).
     // Best-effort: si falla, no rompe el cobro; la idempotencia permite reintentar.
     try {
-      await this.payrollPeriodService.ensureOpenPeriod(adminCompany.id, paidAt);
+      // El período destino ya se resolvió arriba (payrollForcedPeriod) según la
+      // fecha del cobro; no forzamos apertura aquí para no rotar al backdatear.
 
       const rateByCurrency = new Map(
         dto.lines.map((l) => [
@@ -4199,7 +4236,14 @@ export class SessionService {
           paidAt,
           attrItems,
           dto.method,
+          payrollForcedPeriod ?? undefined,
         );
+
+        // Si la comisión cayó en un período ya cerrado (backdate confirmado),
+        // recongelar sus totales para reflejar lo agregado.
+        if (payrollNeedsRefreeze && payrollForcedPeriod) {
+          await this.payrollPeriodService.freezeTotals(payrollForcedPeriod.id);
+        }
 
         // Persistir las atribuciones resueltas para poder reconstruir la nómina
         // si se borra/reactiva (botón "Revertir" + fecha de activación pasada).

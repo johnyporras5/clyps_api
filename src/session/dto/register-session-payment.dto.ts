@@ -198,4 +198,17 @@ export class RegisterSessionPaymentDto {
   @Type(() => Number)
   @IsNumber()
   companyAdjustmentBs?: number | null;
+
+  // Fecha del cobro (para citas pasadas: define en qué período cae la comisión y
+  // el ingreso). Si se omite, es "ahora". Formato YYYY-MM-DD o ISO.
+  @IsOptional()
+  @IsString()
+  collectedAt?: string;
+
+  // Si la fecha cae en un período que NO está abierto, el backend responde 409
+  // PERIOD_CLOSED. El front muestra un aviso y reenvía con esto en true para
+  // confirmar que sí quiere sumar la comisión a ese período (se recongela).
+  @IsOptional()
+  @IsBoolean()
+  confirmClosedPeriod?: boolean;
 }

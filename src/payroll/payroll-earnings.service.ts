@@ -242,14 +242,16 @@ export class PayrollEarningsService {
     whenPaid: Date,
     items: AttributionConceptItem[],
     method?: string | null,
+    // Período destino ya resuelto (p. ej. cobro con fecha pasada que cae en un
+    // período específico). Si se omite, se usa/crea el período abierto.
+    forcedPeriod?: { id: number },
   ): Promise<number> {
     if (items.length === 0) return 0;
     if (await this.isBeforeActivation(companyId, whenPaid)) return 0;
 
-    const period = await this.periodService.ensureOpenPeriod(
-      companyId,
-      whenPaid,
-    );
+    const period =
+      forcedPeriod ??
+      (await this.periodService.ensureOpenPeriod(companyId, whenPaid));
     const isCash = method === 'cash' || method === 'efectivo';
     let created = 0;
 

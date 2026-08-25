@@ -164,7 +164,12 @@ export class PayrollController {
     @Param('id') id: string,
     @Body() dto: ChangePeriodStatusDto,
   ) {
-    return this.periodService.changeStatus(+id, dto.status, req.user.sub);
+    return this.periodService.changeStatus(
+      +id,
+      dto.status,
+      req.user.sub,
+      dto.confirmUncharged,
+    );
   }
 
   // PAY-5: concepto manual (bono/deducción/ajuste) sobre el detalle de un empleado.
