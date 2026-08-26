@@ -30,6 +30,7 @@ import { NotificationModule } from './notification/notification.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { DirectSaleModule } from './direct_sale/direct-sale.module';
 import { CashCategoryModule } from './cash_category/cash-category.module';
+import { CashTransactionModule } from './cash_transaction/cash-transaction.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.module';
 
@@ -130,6 +131,7 @@ import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.mo
     PayrollModule,
     DirectSaleModule,
     CashCategoryModule,
+    CashTransactionModule,
     RealtimeModule,
     NotificationModule,
     OnboardingModule,
