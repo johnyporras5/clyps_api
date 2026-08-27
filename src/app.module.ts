@@ -29,6 +29,7 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { NotificationModule } from './notification/notification.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { DirectSaleModule } from './direct_sale/direct-sale.module';
+import { StandingCommissionModule } from './standing_commission/standing-commission.module';
 import { CashCategoryModule } from './cash_category/cash-category.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.module';
@@ -129,6 +130,7 @@ import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.mo
     SessionModule,
     PayrollModule,
     DirectSaleModule,
+    StandingCommissionModule,
     CashCategoryModule,
     RealtimeModule,
     NotificationModule,
