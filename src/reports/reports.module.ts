@@ -24,5 +24,6 @@ import { CommonModule } from '../common/common.module';
   ],
   providers: [ReportsService],
   controllers: [ReportsController],
+  exports: [ReportsService],
 })
 export class ReportsModule {}

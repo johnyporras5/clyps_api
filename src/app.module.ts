@@ -31,6 +31,7 @@ import { PayrollModule } from './payroll/payroll.module';
 import { DirectSaleModule } from './direct_sale/direct-sale.module';
 import { StandingCommissionModule } from './standing_commission/standing-commission.module';
 import { CashCategoryModule } from './cash_category/cash-category.module';
+import { CashTransactionModule } from './cash_transaction/cash-transaction.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.module';
 
@@ -132,6 +133,7 @@ import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.mo
     DirectSaleModule,
     StandingCommissionModule,
     CashCategoryModule,
+    CashTransactionModule,
     RealtimeModule,
     NotificationModule,
     OnboardingModule,
