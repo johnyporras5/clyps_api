@@ -118,6 +118,12 @@ export class PaymentAttributionDto {
   @IsOptional()
   @IsIn(['VES', 'USD', 'EUR'])
   currency?: string;
+
+  // Rol de la comisión (cuando viene de una regla "por rol"). Solo para mostrar
+  // en nómina; se guarda como etiqueta en el concepto.
+  @IsOptional()
+  @IsString()
+  roleLabel?: string;
 }
 
 export class RegisterSessionPaymentDto {

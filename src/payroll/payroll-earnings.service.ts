@@ -67,6 +67,7 @@ export interface AttributionConceptItem {
   label: string;
   rateBps?: number; // solo si vino por porcentaje (para metadata)
   appointmentId?: number;
+  roleLabel?: string; // comisión por rol: etiqueta a mostrar en nómina
 }
 
 @Injectable()
@@ -296,6 +297,8 @@ export class PayrollEarningsService {
               ...(it.appointmentId != null
                 ? { appointmentId: it.appointmentId }
                 : {}),
+              // Rol de la comisión (por rol): se muestra en nómina.
+              ...(it.roleLabel ? { roleLabel: it.roleLabel } : {}),
             },
           }),
         );
@@ -1293,6 +1296,9 @@ export class PayrollEarningsService {
         sourceType: c.sourceType,
         sourceId: c.sourceId,
         metadata: c.metadata,
+        // Rol de la comisión (por rol), para mostrar en nómina. null si no aplica.
+        roleLabel:
+          (c.metadata as { roleLabel?: string } | null)?.roleLabel ?? null,
         // Código visual de la cita origen (para mostrar "cita CIT-…").
         appointmentPublicCode: apptPublicCodeOf(c),
         // Fecha/hora real del cobro (usar esta para mostrar, no createdAt).

@@ -4236,6 +4236,7 @@ export class SessionService {
               label: `${a.kind === 'tip' ? 'Propina' : 'Comisión'} — ${itemLabel}`,
               rateBps: a.basisMode === 'percentage' ? a.value : undefined,
               appointmentId: sessionId,
+              ...(a.roleLabel ? { roleLabel: a.roleLabel } : {}),
             };
           })
           .filter((x): x is NonNullable<typeof x> => x !== null);

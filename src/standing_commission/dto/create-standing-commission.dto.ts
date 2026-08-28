@@ -16,8 +16,15 @@ import {
  *  - Exclusión:  scope='service', serviceId, isExclusion=true (sin monto).
  */
 export class CreateStandingCommissionDto {
+  // Por PERSONA: enviar companyWorkerId. Por ROL: enviar commissionRoleId.
+  // Exactamente uno de los dos (el servicio valida que no vengan ambos).
+  @ValidateIf((o) => o.commissionRoleId == null)
   @IsInt()
-  companyWorkerId: number;
+  companyWorkerId?: number;
+
+  @IsOptional()
+  @IsInt()
+  commissionRoleId?: number;
 
   @IsIn(['all_services', 'service'])
   scope: 'all_services' | 'service';
