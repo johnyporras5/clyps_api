@@ -18,7 +18,7 @@ import { PayrollPeriodService } from '../payroll/payroll-period.service';
 import { PayrollEarningsService } from '../payroll/payroll-earnings.service';
 import { SessionProductService } from '../product/session_product.service';
 import { SessionProduct } from '../product/entities/session_product.entity';
-import { toMinor, pct } from '../payroll/payroll-money.util';
+import { toMinor, pct, fromMinor } from '../payroll/payroll-money.util';
 import { FeedbacksService } from '../feedbacks/feedbacks.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { CreateSessionDto } from './dto/create-session.dto';
@@ -4259,6 +4259,67 @@ export class SessionService {
         await this.sessionPaymentRepository.update(savedPayment.id, {
           attributions: attrItems,
         });
+
+        // Las COMISIONES (no las propinas) le restan a la parte de la compañía:
+        // ese dinero es del trabajador, no ganancia del negocio. `total_company`
+        // se creó con el split del ejecutor; aquí restamos las comisiones EXTRA
+        // (fijas o manuales para un tercero). Best-effort, como el resto del bloque.
+        try {
+          const extraByDetail = new Map<number, number>(); // detailId → restar (moneda del servicio)
+          for (const it of attrItems) {
+            if (it.kind !== 'commission' || it.sourceType !== 'appointment') {
+              continue;
+            }
+            const d = detailById.get(it.sourceId);
+            if (!d) continue;
+            // La comisión del ejecutor ya está reflejada en total_company.
+            if (it.companyWorkerId === d.companyWorkerId) continue;
+            const svcCurrency = (
+              svcById.get(d.serviceId)?.currency || 'USD'
+            ).toUpperCase();
+            const attrCurrency = (it.currency || svcCurrency).toUpperCase();
+            const major = fromMinor(it.amountItemMinor);
+            let amountInSvc: number | null;
+            if (attrCurrency === svcCurrency) {
+              amountInSvc = major;
+            } else {
+              const attrRate =
+                attrCurrency === 'VES'
+                  ? 1
+                  : (rateByCurrency.get(attrCurrency) ?? null);
+              const svcRate =
+                svcCurrency === 'VES'
+                  ? 1
+                  : (rateByCurrency.get(svcCurrency) ?? null);
+              amountInSvc =
+                attrRate != null && svcRate
+                  ? (major * attrRate) / svcRate
+                  : null;
+            }
+            // Sin tasa fiable no restamos (mejor de menos que una cifra errada).
+            if (amountInSvc == null) continue;
+            extraByDetail.set(
+              d.id,
+              (extraByDetail.get(d.id) ?? 0) + amountInSvc,
+            );
+          }
+          for (const [detailId, extra] of extraByDetail.entries()) {
+            const d = detailById.get(detailId)!;
+            const current = Number(d.totalCompany || 0);
+            const next = Math.max(0, Number((current - extra).toFixed(2)));
+            if (next !== current) {
+              await this.sessionDetailRepository.update(detailId, {
+                totalCompany: next,
+              });
+            }
+          }
+        } catch (e) {
+          this.logger.warn(
+            `No se pudo ajustar total_company por comisiones en cita ${sessionId}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        }
       } else {
         // Compatibilidad: sin atribuciones, comportamiento actual (comisión
         // auto desde el split del servicio + propinas de tips[]).
