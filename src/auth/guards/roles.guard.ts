@@ -31,6 +31,7 @@ export class RolesGuard implements CanActivate {
         adm: 'administrador',
         wrk: 'trabajador',
         cli: 'cliente',
+        padm: 'administrador de la plataforma',
       };
 
       const requiredRoleNames = requiredRoles.map(

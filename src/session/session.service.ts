@@ -1,3 +1,4 @@
+import type { UserRole } from '../auth/types/authenticated-request';
 import {
   Injectable,
   NotFoundException,
@@ -6259,7 +6260,7 @@ export class SessionService {
   async validateSessionAccess(
     sessionId: number,
     userId: number,
-    userRole: 'adm' | 'wrk' | 'cli',
+    userRole: UserRole,
     requireWrite = false,
   ): Promise<Session> {
     const session = await this.sessionRepository.findOne({
@@ -6358,7 +6359,7 @@ export class SessionService {
    */
   async resolveUploaderInfo(
     userId: number,
-    userRole: 'adm' | 'wrk' | 'cli',
+    userRole: UserRole,
   ): Promise<{ id: string; name: string }> {
     let name = '';
     if (userRole === 'wrk') {
@@ -6380,7 +6381,7 @@ export class SessionService {
   async getSessionDetailsWithValidation(
     sessionId: number,
     userId: number,
-    userRole: 'adm' | 'wrk' | 'cli',
+    userRole: UserRole,
   ): Promise<{
     session: any;
     details: any[];
