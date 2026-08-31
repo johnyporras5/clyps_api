@@ -34,6 +34,7 @@ import { CashCategoryModule } from './cash_category/cash-category.module';
 import { CashTransactionModule } from './cash_transaction/cash-transaction.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.module';
+import { SubscriptionModule } from './subscription/subscription.module';
 
 @Module({
   imports: [
@@ -138,6 +139,7 @@ import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.mo
     NotificationModule,
     OnboardingModule,
     OnboardingRescueModule,
+    SubscriptionModule,
   ],
   controllers: [AppController],
   providers: [
