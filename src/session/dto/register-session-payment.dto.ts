@@ -118,6 +118,12 @@ export class PaymentAttributionDto {
   @IsOptional()
   @IsIn(['VES', 'USD', 'EUR'])
   currency?: string;
+
+  // Rol de la comisión (cuando viene de una regla "por rol"). Solo para mostrar
+  // en nómina; se guarda como etiqueta en el concepto.
+  @IsOptional()
+  @IsString()
+  roleLabel?: string;
 }
 
 export class RegisterSessionPaymentDto {
@@ -211,4 +217,47 @@ export class RegisterSessionPaymentDto {
   @IsOptional()
   @IsBoolean()
   confirmClosedPeriod?: boolean;
+
+  // CLYP-362: descuentos por servicio (0..N, uno por servicio con descuento).
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ItemDiscountDto)
+  discounts?: ItemDiscountDto[];
+}
+
+/**
+ * CLYP-362: descuento aplicado a UN servicio de la cita. `absorbedBy` decide
+ * quién lo paga (salón / trabajador / ambos) y cambia el cálculo de comisión.
+ */
+export class ItemDiscountDto {
+  // session_detail al que aplica el descuento.
+  @Type(() => Number)
+  @IsNumber()
+  sessionDetailId: number;
+
+  @IsIn(['percentage', 'fixed'])
+  mode: 'percentage' | 'fixed';
+
+  // percentage → basis points (20% = 2000). fixed → monto en unidades mínimas.
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  value: number;
+
+  // Quién absorbe el descuento (obligatorio cuando hay descuento).
+  @IsIn(['salon', 'worker', 'both'])
+  absorbedBy: 'salon' | 'worker' | 'both';
+
+  // Requerido implícitamente solo si absorbedBy='worker'; por defecto el
+  // ejecutor del servicio.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  workerId?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  reason?: string;
 }

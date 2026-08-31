@@ -67,6 +67,21 @@ export interface AttributionConceptItem {
   label: string;
   rateBps?: number; // solo si vino por porcentaje (para metadata)
   appointmentId?: number;
+  roleLabel?: string; // comisión por rol: etiqueta a mostrar en nómina
+}
+
+// CLYP-362: deducción por descuento absorbido por un trabajador. El monto ya
+// viene topado (nunca deja la comisión del trabajador negativa).
+export interface DiscountConceptItem {
+  companyWorkerId: number;
+  amountItemMinor: number; // monto POSITIVO del descuento en `currency`
+  currency: string;
+  exchangeRate: number | null; // Bs por 1 unidad (VES = 1)
+  sourceType: ConceptSource; // 'appointment' (source_id = session_detail.id)
+  sourceId: number;
+  label: string;
+  reason?: string | null;
+  appointmentId?: number;
 }
 
 @Injectable()
@@ -296,6 +311,8 @@ export class PayrollEarningsService {
               ...(it.appointmentId != null
                 ? { appointmentId: it.appointmentId }
                 : {}),
+              // Rol de la comisión (por rol): se muestra en nómina.
+              ...(it.roleLabel ? { roleLabel: it.roleLabel } : {}),
             },
           }),
         );
@@ -309,6 +326,79 @@ export class PayrollEarningsService {
       this.logger.log(
         `${created} concepto(s) de atribución en el periodo ${period.id} (company ${companyId})`,
       );
+    }
+    return created;
+  }
+
+  /**
+   * CLYP-362: registra DESCUENTOS absorbidos por un trabajador. Un concepto
+   * negativo (type 'discount', sign −1) por ítem, con el monto ya topado para
+   * que la comisión del trabajador no quede negativa. Mismo motor/tasa que las
+   * atribuciones; idempotente por (source, type, trabajador).
+   */
+  async recordDiscountConcepts(
+    companyId: number,
+    whenPaid: Date,
+    items: DiscountConceptItem[],
+    method?: string | null,
+    forcedPeriod?: { id: number },
+  ): Promise<number> {
+    if (items.length === 0) return 0;
+    if (await this.isBeforeActivation(companyId, whenPaid)) return 0;
+
+    const period =
+      forcedPeriod ??
+      (await this.periodService.ensureOpenPeriod(companyId, whenPaid));
+    const isCash = method === 'cash' || method === 'efectivo';
+    let created = 0;
+
+    for (const it of items) {
+      const rate = it.exchangeRate ?? (it.currency === 'VES' ? 1 : null);
+      if (rate == null || !(it.amountItemMinor > 0)) continue;
+      const keepForeign = isCash && it.currency !== 'VES';
+      const currency = keepForeign ? it.currency : 'VES';
+      const amountBsMinor = Math.round(it.amountItemMinor * rate);
+      const amountMinor = keepForeign ? it.amountItemMinor : amountBsMinor;
+      if (amountMinor <= 0) continue;
+
+      const detail = await this.ensurePeriodDetail(
+        companyId,
+        period.id,
+        it.companyWorkerId,
+      );
+
+      try {
+        await this.conceptRepo.save(
+          this.conceptRepo.create({
+            companyId,
+            periodDetailId: detail.id,
+            type: 'discount',
+            sign: -1,
+            label: it.label,
+            amountMinor,
+            currency,
+            amountBsMinor,
+            occurredAt: whenPaid,
+            sourceType: it.sourceType,
+            sourceId: it.sourceId,
+            metadata: {
+              discount: true,
+              absorbedBy: 'worker',
+              reason: it.reason ?? null,
+              currency: it.currency,
+              nativeAmountMinor: it.amountItemMinor,
+              exchangeRate: rate,
+              method: method ?? null,
+              ...(it.appointmentId != null
+                ? { appointmentId: it.appointmentId }
+                : {}),
+            },
+          }),
+        );
+        created++;
+      } catch (e) {
+        if (!isDupEntry(e)) throw e; // idempotente
+      }
     }
     return created;
   }
@@ -1293,6 +1383,9 @@ export class PayrollEarningsService {
         sourceType: c.sourceType,
         sourceId: c.sourceId,
         metadata: c.metadata,
+        // Rol de la comisión (por rol), para mostrar en nómina. null si no aplica.
+        roleLabel:
+          (c.metadata as { roleLabel?: string } | null)?.roleLabel ?? null,
         // Código visual de la cita origen (para mostrar "cita CIT-…").
         appointmentPublicCode: apptPublicCodeOf(c),
         // Fecha/hora real del cobro (usar esta para mostrar, no createdAt).

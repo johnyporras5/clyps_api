@@ -31,6 +31,7 @@ export type ConceptType =
   | 'base'
   | 'bonus'
   | 'deduction'
+  | 'discount'
   | 'adjustment'
   | 'booth_rent';
 export const CONCEPT_TYPES: ConceptType[] = [
@@ -39,6 +40,7 @@ export const CONCEPT_TYPES: ConceptType[] = [
   'base',
   'bonus',
   'deduction',
+  'discount',
   'adjustment',
   'booth_rent',
 ];

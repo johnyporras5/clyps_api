@@ -118,6 +118,11 @@ export class SessionPayment {
   @Column({ name: 'attributions', type: 'json', nullable: true })
   attributions: unknown[] | null;
 
+  // CLYP-362: descuentos aplicados por servicio (auditoría). Cada uno:
+  // { sessionDetailId, mode, value, absorbedBy, workerId, reason, appliedByUserId }.
+  @Column({ name: 'discounts', type: 'json', nullable: true })
+  discounts: unknown[] | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

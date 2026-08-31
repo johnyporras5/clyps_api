@@ -25,6 +25,34 @@ import { UpdateStandingCommissionDto } from './dto/update-standing-commission.dt
 export class StandingCommissionController {
   constructor(private readonly service: StandingCommissionService) {}
 
+  // ---- Roles (catálogo). Siembra los por defecto en el primer GET. ----
+  @Get('roles')
+  listRoles(@Request() req: AuthenticatedRequest) {
+    return this.service.listRoles(req.user.sub);
+  }
+
+  @Post('roles')
+  createRole(@Request() req: AuthenticatedRequest, @Body('name') name: string) {
+    return this.service.createRole(req.user.sub, name);
+  }
+
+  @Patch('roles/:id')
+  updateRole(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body('name') name: string,
+  ) {
+    return this.service.updateRole(req.user.sub, id, name);
+  }
+
+  @Delete('roles/:id')
+  removeRole(
+    @Request() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.service.removeRole(req.user.sub, id);
+  }
+
   // Todas las reglas de la compañía (para las pantallas de configuración).
   @Get()
   list(@Request() req: AuthenticatedRequest) {

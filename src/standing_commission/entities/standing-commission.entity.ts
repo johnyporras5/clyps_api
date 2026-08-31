@@ -28,6 +28,7 @@ export type StandingCommissionBasis = 'percentage' | 'fixed';
 @Entity('standing_commission')
 @Index('IDX_standing_commission_company', ['companyId'])
 @Index('IDX_standing_commission_worker', ['companyWorkerId'])
+@Index('IDX_standing_commission_role', ['commissionRoleId'])
 @Index('IDX_standing_commission_service', ['serviceId'])
 export class StandingCommission {
   @PrimaryGeneratedColumn()
@@ -36,9 +37,14 @@ export class StandingCommission {
   @Column({ name: 'company_id' })
   companyId: number;
 
-  // Trabajador que RECIBE la comisión (puede no ejecutar el servicio).
-  @Column({ name: 'company_worker_id' })
-  companyWorkerId: number;
+  // Trabajador que RECIBE la comisión (puede no ejecutar el servicio). NULL en
+  // filas "por rol": ahí la persona se elige en cada cobro.
+  @Column({ name: 'company_worker_id', type: 'int', nullable: true })
+  companyWorkerId: number | null;
+
+  // Rol genérico (fila "por rol"). NULL en filas "por persona". Excluyentes.
+  @Column({ name: 'commission_role_id', type: 'int', nullable: true })
+  commissionRoleId: number | null;
 
   @Column({
     name: 'scope',
