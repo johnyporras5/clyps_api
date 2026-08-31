@@ -118,6 +118,14 @@ export class PaymentReport {
   })
   payerEmail: string | null;
 
+  /** Red de la transacción en Binance (BEP20, TRC20…). Ubica el txId. */
+  @Column({ name: 'network', type: 'varchar', length: 20, nullable: true })
+  network: string | null;
+
+  /** Aclaratoria libre que escribe el dueño al reportar (SUB-3). */
+  @Column({ name: 'note', type: 'varchar', length: 255, nullable: true })
+  note: string | null;
+
   /** Comprobante (imagen). Recomendado, no obligatorio. */
   @Column({
     name: 'proof_url',

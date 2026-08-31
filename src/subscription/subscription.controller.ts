@@ -1,4 +1,14 @@
-import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { SubscriptionService } from './subscription.service';
 import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -8,6 +18,8 @@ import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import type { PlansResponse } from './dto/plans-response.dto';
 import type { QuoteResponse } from './dto/quote-response.dto';
 import { QueryQuoteDto } from './dto/query-quote.dto';
+import { ReportPaymentDto } from './dto/report-payment.dto';
+import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 
 /**
  * SUB-1 / SUB-2 (CLYP-333 / CLYP-334). Todo va detrás del token: quien elige
@@ -45,5 +57,22 @@ export class SubscriptionController {
       req.user.sub,
     );
     return this.paymentsService.computeQuote(companyId, query.planId);
+  }
+
+  /**
+   * SUB-3: el dueño reporta el pago que hizo. Queda como reclamo `reported` —
+   * no activa nada hasta que se verifique (SUB-4).
+   */
+  @Roles('adm')
+  @Post('payments/report')
+  @HttpCode(HttpStatus.CREATED)
+  async reportPayment(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: ReportPaymentDto,
+  ): Promise<PaymentReportResponse> {
+    const companyId = await this.paymentsService.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.paymentsService.reportPayment(companyId, dto);
   }
 }
