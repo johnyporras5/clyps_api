@@ -25,9 +25,13 @@ import type {
 @Entity('payment_report')
 // La bandeja de conciliación: "los reportes de esta company en este estado".
 @Index('IDX_payment_report_company_status', ['companyId', 'status'])
-// Búsqueda por referencia: es el cruce contra el pago recibido y el candado
-// contra reportar dos veces la misma.
+// Búsqueda por referencia: es el cruce contra el pago recibido.
 @Index('IDX_payment_report_reference', ['reference'])
+// OJO: el candado anti-duplicado NO se declara aquí. Es un índice único sobre
+// (company_id, active_reference), una columna GENERADA que vale NULL cuando el
+// reporte está rechazado — así una referencia rechazada se puede volver a
+// reportar corregida. Vive solo en la migración ...058 porque TypeORM no
+// modela columnas generadas de MySQL; no mapearla evita que intente escribirla.
 export class PaymentReport {
   @PrimaryGeneratedColumn()
   id: number;

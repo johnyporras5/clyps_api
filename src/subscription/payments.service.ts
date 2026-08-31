@@ -241,7 +241,15 @@ export class PaymentsService {
     return pending > 0;
   }
 
-  /** Un mismo pago no se reporta dos veces. */
+  /**
+   * Un mismo pago no se reporta dos veces… salvo que el anterior haya sido
+   * RECHAZADO: ahí la referencia se libera.
+   *
+   * Es el caso del dueño que puso mal el monto: la referencia del banco es la
+   * única que tiene, y sin esto se quedaba sin forma de corregir. Lo que sigue
+   * bloqueado es repetir una referencia ya verificada (sería cobrar dos veces el
+   * mismo pago) o una que todavía está en revisión.
+   */
   private async assertReferenceIsNew(
     companyId: number,
     reference: string,
@@ -249,11 +257,16 @@ export class PaymentsService {
     const existing = await this.reports.findOne({
       where: { companyId, reference },
       select: { id: true, status: true },
+      // Si hubo varios intentos con la misma referencia, manda el último.
+      order: { id: 'DESC' },
     });
-    if (existing)
-      throw new ConflictException(
-        `Ese pago ya fue reportado (referencia ${reference}).`,
-      );
+    if (!existing || existing.status === 'rejected') return;
+
+    throw new ConflictException(
+      existing.status === 'verified'
+        ? `Ese pago ya fue verificado (referencia ${reference}).`
+        : `Ese pago ya está en revisión (referencia ${reference}).`,
+    );
   }
 
   /**
@@ -269,10 +282,10 @@ export class PaymentsService {
     } catch (error) {
       if (
         error instanceof QueryFailedError &&
-        error.message.includes('UQ_payment_report_company_reference')
+        error.message.includes('UQ_payment_report_company_active_reference')
       ) {
         throw new ConflictException(
-          `Ese pago ya fue reportado (referencia ${draft.reference}).`,
+          `Ese pago ya está reportado (referencia ${draft.reference}).`,
         );
       }
       throw error;
@@ -362,10 +375,11 @@ export class PaymentsService {
     report.rejectionReason = null;
     await this.saveDecision(report);
 
-    // SUB-6: verificar es lo único que da acceso.
-    const advanced = await this.subscriptionService.activateAfterPayment(
+    // SUB-6: verificar es lo único que da acceso. El avance es idempotente por
+    // reporte y deja su rastro en `subscription_event`.
+    const advanced = await this.subscriptionService.advanceSubscription(
       subscription,
-      report.planId,
+      report,
     );
 
     return this.toDecision(report, advanced);
