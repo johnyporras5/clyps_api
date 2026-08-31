@@ -4418,6 +4418,9 @@ export class SessionService {
               const companyBase =
                 disc.absorbedBy === 'worker' ? price : price - disc.amountMajor;
               next = Math.max(0, Number((companyBase - allComm).toFixed(2)));
+              this.logger.log(
+                `[DISCOUNT] detalle ${detailId} (${disc.absorbedBy}): total_company ${current} → ${next} (base ${companyBase}, comisiones ${allComm})`,
+              );
             } else {
               const extra = extraByDetail.get(detailId) ?? 0;
               next = Math.max(0, Number((current - extra).toFixed(2)));
@@ -4626,6 +4629,25 @@ export class SessionService {
         isCourtesy: !!d?.isCourtesy,
       }));
 
+    // CLYP-363: descuentos aplicados (para mostrarlos en el recibo).
+    const discounts = (payment.discounts ?? []).map((raw) => {
+      const d = raw as {
+        sessionDetailId?: number;
+        amount?: number;
+        absorbedBy?: string;
+        reason?: string | null;
+      };
+      const svc = services.find((s) => s.detailId === d.sessionDetailId);
+      return {
+        sessionDetailId: d.sessionDetailId ?? null,
+        serviceName: svc?.name ?? null,
+        amount: Number(d.amount ?? 0),
+        currency: svc?.currency ?? 'USD',
+        absorbedBy: d.absorbedBy ?? null,
+        reason: d.reason ?? null,
+      };
+    });
+
     return {
       id: payment.id,
       method: payment.method,
@@ -4657,6 +4679,7 @@ export class SessionService {
       services,
       products,
       concepts,
+      discounts,
     };
   }
 
