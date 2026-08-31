@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { Company } from '../company/entities/company.entity';
+import { FileUploadService } from '../common/services/file_upload.service';
 import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
 import { ExchangeRateService } from './rate/exchange-rate.service';
@@ -48,6 +49,7 @@ export class PaymentsService {
     @InjectRepository(Company)
     private readonly companies: Repository<Company>,
     private readonly rates: ExchangeRateService,
+    private readonly files: FileUploadService,
     private readonly config: ConfigService,
   ) {}
 
@@ -145,6 +147,7 @@ export class PaymentsService {
   async reportPayment(
     companyId: number,
     dto: ReportPaymentDto,
+    proof?: Express.Multer.File,
   ): Promise<PaymentReportResponse> {
     const subscription = await this.subscriptions.findOne({
       where: { companyId },
@@ -164,12 +167,28 @@ export class PaymentsService {
       );
     }
 
-    const draft = buildPaymentReportDraft(dto, {
-      companyId,
-      subscriptionId: subscription.id,
-      planId: subscription.planId,
-      reportedAt: new Date(),
-    });
+    // La foto se sube DESPUÉS de validar: un reporte rechazado no deja
+    // comprobantes huérfanos en el bucket.
+    const proofUrl = proof
+      ? (
+          await this.files.saveFile(
+            proof,
+            'payment_proof',
+            'payment-proof',
+            companyId,
+          )
+        ).fileUrl
+      : dto.proofUrl;
+
+    const draft = buildPaymentReportDraft(
+      { ...dto, proofUrl },
+      {
+        companyId,
+        subscriptionId: subscription.id,
+        planId: subscription.planId,
+        reportedAt: new Date(),
+      },
+    );
 
     const saved = await this.save(draft);
 
@@ -187,6 +206,7 @@ export class PaymentsService {
       currency: saved.currency,
       frozenRate: saved.frozenRate,
       reference: saved.reference,
+      proofUrl: saved.proofUrl,
       reportedAt: saved.reportedAt.toISOString(),
       // SUB-8 lee esto mismo para callar los avisos de vencimiento.
       remindersPaused: true,

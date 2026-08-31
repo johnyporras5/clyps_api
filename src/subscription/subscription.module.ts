@@ -7,6 +7,7 @@ import { SubscriptionController } from './subscription.controller';
 import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
 import { Company } from '../company/entities/company.entity';
+import { CommonModule } from '../common/common.module';
 
 /**
  * SUB-1 + SUB-2 + SUB-3 (CLYP-333 / CLYP-334 / CLYP-335).
@@ -16,7 +17,11 @@ import { Company } from '../company/entities/company.entity';
  * con el job de recordatorios (SUB-8).
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Subscription, PaymentReport, Company])],
+  imports: [
+    TypeOrmModule.forFeature([Subscription, PaymentReport, Company]),
+    // Sube la foto del comprobante a Spaces (SUB-3).
+    CommonModule,
+  ],
   providers: [SubscriptionService, PaymentsService, ExchangeRateService],
   controllers: [SubscriptionController],
   exports: [SubscriptionService, PaymentsService, ExchangeRateService],
