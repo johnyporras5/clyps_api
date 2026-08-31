@@ -4429,9 +4429,13 @@ export class SessionService {
               next = Math.max(0, Number((current - extra).toFixed(2)));
             }
             if (next !== current) {
-              await this.sessionDetailRepository.update(detailId, {
-                totalCompany: next,
-              });
+              // session_detail tiene PK compuesta (id + service_id +
+              // session_id); hay que actualizar por objeto, no por escalar, o
+              // TypeORM no encuentra la fila y el ajuste se pierde.
+              await this.sessionDetailRepository.update(
+                { id: detailId },
+                { totalCompany: next },
+              );
             }
           }
 
