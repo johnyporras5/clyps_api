@@ -10,8 +10,13 @@ export interface QuoteResponse {
   planName: string;
   /** Base de precio del plan, en centavos de USD. */
   priceUsdMinor: number;
-  /** Lo que hay que pagar, en céntimos de Bs. */
+  /** Lo que hay que pagar, en céntimos de Bs. Es el monto que manda. */
   amountVesMinor: number;
+  /**
+   * El mismo monto ya legible ("22.259,77"). Solo para mostrar: lo que se
+   * congela y se verifica es `amountVesMinor`.
+   */
+  amountVesFormatted: string;
   currency: string;
   /** Bs por 1 USD usada en el cálculo. */
   rate: number;

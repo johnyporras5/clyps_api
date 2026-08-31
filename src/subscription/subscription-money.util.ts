@@ -59,3 +59,22 @@ export function usdMinorToVesMinor(usdMinor: number, rate: number): number {
   }
   return Math.round((usdMinor || 0) * rate);
 }
+
+/**
+ * Céntimos → texto en formato venezolano: 2225977 → "22.259,77".
+ *
+ * Es SOLO presentación: el monto que manda sigue siendo el entero en céntimos.
+ * Se formatea a mano en vez de con `toLocaleString('es-VE')` para que el
+ * resultado no dependa de qué datos de ICU traiga el Node de cada entorno.
+ */
+export function formatVesMinor(minor: number): string {
+  const value = Math.round(minor || 0);
+  const sign = value < 0 ? '-' : '';
+  const absolute = Math.abs(value);
+
+  const bs = String(Math.trunc(absolute / 100));
+  const cents = String(absolute % 100).padStart(2, '0');
+  const grouped = bs.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+  return `${sign}${grouped},${cents}`;
+}

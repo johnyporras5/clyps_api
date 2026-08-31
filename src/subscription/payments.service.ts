@@ -11,7 +11,7 @@ import { Subscription } from './entities/subscription.entity';
 import { ExchangeRateService } from './rate/exchange-rate.service';
 import { RATE_DEFAULTS } from './config/rate.config';
 import { getPlan, type PlanId } from './config/plans.config';
-import { CURRENCY_VES } from './subscription-money.util';
+import { CURRENCY_VES, formatVesMinor } from './subscription-money.util';
 import {
   quoteAmountVesMinor,
   quoteValidUntil,
@@ -84,12 +84,14 @@ export class PaymentsService {
 
     const fetched = await this.rates.fetchRate();
     const quotedAt = fetched.fetchedAt;
+    const amountVesMinor = quoteAmountVesMinor(plan.id, fetched.rate);
 
     return {
       planId: plan.id,
       planName: plan.name,
       priceUsdMinor: plan.priceUsdMinor,
-      amountVesMinor: quoteAmountVesMinor(plan.id, fetched.rate),
+      amountVesMinor,
+      amountVesFormatted: formatVesMinor(amountVesMinor),
       currency: CURRENCY_VES,
       rate: fetched.rate,
       rateType: fetched.type,

@@ -1,4 +1,5 @@
 import {
+  formatVesMinor,
   nullableMoneyTransformer,
   rateTransformer,
   usdMinorToVesMinor,
@@ -17,6 +18,25 @@ describe('usdMinorToVesMinor', () => {
   it('rechaza una tasa no positiva', () => {
     expect(() => usdMinorToVesMinor(1500, 0)).toThrow();
     expect(() => usdMinorToVesMinor(1500, -1)).toThrow();
+  });
+});
+
+describe('formatVesMinor', () => {
+  it('separa los miles con punto y los céntimos con coma', () => {
+    // Plan Full a la tasa oficial del 2026-08-31.
+    expect(formatVesMinor(2225977)).toBe('22.259,77');
+    expect(formatVesMinor(1192488)).toBe('11.924,88');
+  });
+
+  it('rellena los céntimos y agrupa montos grandes', () => {
+    expect(formatVesMinor(5)).toBe('0,05');
+    expect(formatVesMinor(100)).toBe('1,00');
+    expect(formatVesMinor(0)).toBe('0,00');
+    expect(formatVesMinor(123456789012)).toBe('1.234.567.890,12');
+  });
+
+  it('conserva el signo', () => {
+    expect(formatVesMinor(-2225977)).toBe('-22.259,77');
   });
 });
 
