@@ -10,6 +10,7 @@ import {
   Length,
   MaxLength,
   Min,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -260,4 +261,12 @@ export class ItemDiscountDto {
   @IsString()
   @MaxLength(160)
   reason?: string;
+}
+
+/** Revertir un cobro (motivo obligatorio para auditoría). */
+export class RevertPaymentDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(255)
+  reason: string;
 }

@@ -13,6 +13,7 @@ import { Session } from './entities/session.entity';
 import { SessionPayment } from './entities/session-payment.entity';
 import { SessionPaymentLine } from './entities/session-payment-line.entity';
 import { SessionPaymentTip } from './entities/session-payment-tip.entity';
+import { SessionPaymentReversal } from './entities/session-payment-reversal.entity';
 import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
 import { PayrollPeriodService } from '../payroll/payroll-period.service';
 import {
@@ -115,6 +116,8 @@ export class SessionService {
     private sessionPaymentLineRepository: Repository<SessionPaymentLine>,
     @InjectRepository(SessionPaymentTip)
     private sessionPaymentTipRepository: Repository<SessionPaymentTip>,
+    @InjectRepository(SessionPaymentReversal)
+    private sessionPaymentReversalRepository: Repository<SessionPaymentReversal>,
     private fileUploadService: FileUploadService,
     private payrollPeriodService: PayrollPeriodService,
     private payrollEarningsService: PayrollEarningsService,
@@ -4681,6 +4684,229 @@ export class SessionService {
       concepts,
       discounts,
     };
+  }
+
+  /**
+   * Revierte un cobro: la cita vuelve de Pagada (4) a Completada (3). Deshace la
+   * nómina (borra conceptos si el período está abierto, o crea reversiones si
+   * está cerrado), restaura el stock de productos vendidos, resetea el split del
+   * salón y ARCHIVA todo el cobro (snapshot) para auditoría. Tras esto la cita
+   * se puede volver a cobrar. Solo el admin dueño de la compañía.
+   */
+  async revertPayment(sessionId: number, adminId: number, reason: string) {
+    const cleanReason = (reason || '').trim();
+    if (!cleanReason) {
+      throw new BadRequestException(
+        'El motivo es obligatorio para revertir un cobro',
+      );
+    }
+
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      throw new NotFoundException(`Cita ${sessionId} no encontrada`);
+    }
+    if (session.sessionStatus !== 4) {
+      throw new ConflictException(
+        'Solo se puede revertir una cita que está Pagada',
+      );
+    }
+
+    const payment = await this.sessionPaymentRepository.findOne({
+      where: { sessionId },
+    });
+    if (!payment) {
+      throw new NotFoundException('La cita no tiene un cobro registrado');
+    }
+
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!adminCompany) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+    const details = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    // Propiedad: al menos un trabajador del detalle es de la compañía del admin.
+    let owns = false;
+    for (const d of details) {
+      if (!d.companyWorkerId) continue;
+      const cw = await this.companyWorkerRepository.findOne({
+        where: { id: d.companyWorkerId },
+        relations: ['company'],
+      });
+      if (cw?.company?.id === adminCompany.id) {
+        owns = true;
+        break;
+      }
+    }
+    if (!owns) {
+      throw new ForbiddenException('No tienes permiso sobre esta cita');
+    }
+
+    // Snapshot del cobro (para auditoría).
+    const [lines, tips] = await Promise.all([
+      this.sessionPaymentLineRepository.find({
+        where: { paymentId: payment.id },
+      }),
+      this.sessionPaymentTipRepository.find({
+        where: { paymentId: payment.id },
+      }),
+    ]);
+    const paymentSnapshot = {
+      paymentId: payment.id,
+      method: payment.method,
+      reference: payment.reference,
+      totalBs: payment.totalBs != null ? Number(payment.totalBs) : null,
+      companyAdjustmentBs:
+        payment.companyAdjustmentBs != null
+          ? Number(payment.companyAdjustmentBs)
+          : null,
+      collectedAt: payment.collectedAt,
+      paidAt: payment.paidAt,
+      attributions: payment.attributions ?? null,
+      discounts: payment.discounts ?? null,
+      lines: lines.map((l) => ({
+        currency: l.currency,
+        subtotal: Number(l.subtotal),
+        exchangeRate: l.exchangeRate != null ? Number(l.exchangeRate) : null,
+        subtotalBs: l.subtotalBs != null ? Number(l.subtotalBs) : null,
+      })),
+      tips: tips.map((t) => ({
+        companyWorkerId: t.companyWorkerId,
+        amount: Number(t.amount),
+      })),
+    };
+
+    // 1) Snapshot de la nómina (solo lectura) para el historial. La reversión
+    // real se hace DESPUÉS del commit para no borrar conceptos si la
+    // transacción de la sesión falla (best-effort, como el cobro).
+    const conceptsSnapshot =
+      await this.payrollEarningsService.getAppointmentConceptsSnapshot(
+        sessionId,
+      );
+
+    // 2) Sesión + productos + archivo, atómico.
+    const queryRunner =
+      this.sessionRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      const m = queryRunner.manager;
+
+      // Restaurar stock de productos vendidos en el cobro.
+      const productsSnapshot =
+        await this.sessionProductService.restoreSessionProducts(sessionId, m);
+
+      // Resetear el split del salón (total_company = costo − total_worker, o sea
+      // el split original del ejecutor) y volver el detalle a Completada (3).
+      for (const d of details) {
+        if (d.status === 5) continue; // cancelado: no tocar
+        const resetCompany = Number(
+          (Number(d.cost || 0) - Number(d.totalWorker || 0)).toFixed(2),
+        );
+        await m.update(
+          SessionDetail,
+          { sessionId: d.sessionId, serviceId: d.serviceId },
+          {
+            totalCompany: resetCompany,
+            status: 3,
+          },
+        );
+      }
+
+      // Cita: Pagada (4) → Completada (3).
+      await m.update(Session, sessionId, { sessionStatus: 3 });
+
+      // Borrar el cobro activo (líneas, propinas, pago) → libera UNIQUE(session_id).
+      await m.delete(SessionPaymentLine, { paymentId: payment.id });
+      await m.delete(SessionPaymentTip, { paymentId: payment.id });
+      await m.delete(SessionPayment, { id: payment.id });
+
+      // Archivar el snapshot para auditoría.
+      const reversal = m.create(SessionPaymentReversal, {
+        sessionId,
+        companyId: adminCompany.id,
+        revertedByUserId: adminId,
+        reason: cleanReason,
+        paymentSnapshot,
+        conceptsSnapshot,
+        productsSnapshot,
+      });
+      const saved = await m.save(reversal);
+
+      await queryRunner.commitTransaction();
+      this.logger.log(
+        `↩️ Cobro de la cita ${sessionId} revertido por admin ${adminId} (reversal ${saved.id}). Motivo: ${cleanReason}`,
+      );
+
+      // 3) Deshacer la nómina DESPUÉS del commit (best-effort). Si algo falla
+      // aquí, la cita ya quedó revertida; se registra para revisión manual.
+      try {
+        await this.payrollEarningsService.reverseAppointmentConcepts(
+          sessionId,
+          adminCompany.id,
+          adminId,
+          cleanReason,
+        );
+      } catch (payrollError) {
+        this.logger.error(
+          `Cobro de la cita ${sessionId} revertido, pero falló deshacer la nómina: ${
+            payrollError instanceof Error
+              ? payrollError.message
+              : String(payrollError)
+          }`,
+        );
+      }
+
+      return {
+        id: saved.id,
+        sessionId,
+        revertedAt: saved.createdAt,
+        reason: cleanReason,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /** Historial de reversiones de cobro de una cita (auditoría). */
+  async getPaymentReversals(sessionId: number, adminId: number) {
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!adminCompany) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+    const reversals = await this.sessionPaymentReversalRepository.find({
+      where: { sessionId, companyId: adminCompany.id },
+      order: { id: 'DESC' },
+    });
+    const userIds = [...new Set(reversals.map((r) => r.revertedByUserId))];
+    const users = userIds.length
+      ? await this.userRepository.find({ where: { id: In(userIds) } })
+      : [];
+    const nameById = new Map(users.map((u) => [u.id, u.username || '—']));
+    return reversals.map((r) => ({
+      id: r.id,
+      sessionId: r.sessionId,
+      reason: r.reason,
+      revertedByUserId: r.revertedByUserId,
+      revertedByName: nameById.get(r.revertedByUserId) ?? '—',
+      revertedAt: r.createdAt,
+      payment: r.paymentSnapshot,
+      concepts: r.conceptsSnapshot,
+      products: r.productsSnapshot,
+    }));
   }
 
   /**
