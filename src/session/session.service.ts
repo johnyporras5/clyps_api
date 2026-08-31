@@ -4748,39 +4748,11 @@ export class SessionService {
       throw new ForbiddenException('No tienes permiso sobre esta cita');
     }
 
-    // Snapshot del cobro (para auditoría).
-    const [lines, tips] = await Promise.all([
-      this.sessionPaymentLineRepository.find({
-        where: { paymentId: payment.id },
-      }),
-      this.sessionPaymentTipRepository.find({
-        where: { paymentId: payment.id },
-      }),
-    ]);
-    const paymentSnapshot = {
-      paymentId: payment.id,
-      method: payment.method,
-      reference: payment.reference,
-      totalBs: payment.totalBs != null ? Number(payment.totalBs) : null,
-      companyAdjustmentBs:
-        payment.companyAdjustmentBs != null
-          ? Number(payment.companyAdjustmentBs)
-          : null,
-      collectedAt: payment.collectedAt,
-      paidAt: payment.paidAt,
-      attributions: payment.attributions ?? null,
-      discounts: payment.discounts ?? null,
-      lines: lines.map((l) => ({
-        currency: l.currency,
-        subtotal: Number(l.subtotal),
-        exchangeRate: l.exchangeRate != null ? Number(l.exchangeRate) : null,
-        subtotalBs: l.subtotalBs != null ? Number(l.subtotalBs) : null,
-      })),
-      tips: tips.map((t) => ({
-        companyWorkerId: t.companyWorkerId,
-        amount: Number(t.amount),
-      })),
-    };
+    // Snapshot del cobro (para auditoría): guardamos el MISMO payload que el
+    // recibo (servicios, comisiones/propinas por persona, productos, descuentos,
+    // método, total en Bs, etc.) para poder mostrarlo íntegro en el historial.
+    const fullSession = await this.findOneWithDetails(sessionId);
+    const paymentSnapshot = fullSession?.payment ?? null;
 
     // 1) Snapshot de la nómina (solo lectura) para el historial. La reversión
     // real se hace DESPUÉS del commit para no borrar conceptos si la
