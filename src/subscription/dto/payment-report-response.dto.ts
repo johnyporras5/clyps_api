@@ -22,6 +22,8 @@ export interface PaymentReportResponse {
   /** Tasa congelada al cotizar, solo Pago Móvil. */
   frozenRate: number | null;
   reference: string;
+  /** URL del comprobante ya subido, si el dueño mandó la foto. */
+  proofUrl: string | null;
   reportedAt: string;
   /** Los recordatorios de cobro quedan en pausa mientras esté por verificar. */
   remindersPaused: boolean;

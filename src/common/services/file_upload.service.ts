@@ -18,7 +18,9 @@ export type AllowedFolder =
   | 'worker_photo'
   | 'portfolio'
   | 'before_after'
-  | 'offer_logo';
+  | 'offer_logo'
+  // Comprobantes de pago de la suscripción (SUB-3).
+  | 'payment_proof';
 
 export interface FileInfo {
   fileName: string;
@@ -42,6 +44,7 @@ export class FileUploadService {
     'portfolio',
     'before_after',
     'offer_logo',
+    'payment_proof',
   ];
 
   constructor(
