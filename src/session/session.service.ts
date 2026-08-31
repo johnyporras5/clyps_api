@@ -15,7 +15,10 @@ import { SessionPaymentLine } from './entities/session-payment-line.entity';
 import { SessionPaymentTip } from './entities/session-payment-tip.entity';
 import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
 import { PayrollPeriodService } from '../payroll/payroll-period.service';
-import { PayrollEarningsService } from '../payroll/payroll-earnings.service';
+import {
+  PayrollEarningsService,
+  DiscountConceptItem,
+} from '../payroll/payroll-earnings.service';
 import { SessionProductService } from '../product/session_product.service';
 import { SessionProduct } from '../product/entities/session_product.entity';
 import { toMinor, pct, fromMinor } from '../payroll/payroll-money.util';
@@ -3918,6 +3921,72 @@ export class SessionService {
       );
     }
 
+    // CLYP-362: resolver los descuentos por servicio (validación + monto). Cada
+    // uno lleva quién lo absorbe (salón/trabajador/ambos) y el trabajador que lo
+    // paga (default: el ejecutor del servicio).
+    interface ResolvedDiscount {
+      sessionDetailId: number;
+      amountMajor: number; // en la moneda del servicio
+      absorbedBy: 'salon' | 'worker' | 'both';
+      workerId: number | null; // quién lo absorbe (por defecto el ejecutor)
+      mode: 'percentage' | 'fixed';
+      value: number;
+      reason: string | null;
+    }
+    const discountByDetail = new Map<number, ResolvedDiscount>();
+    for (const disc of dto.discounts ?? []) {
+      const d = sessionDetails.find((sd) => sd.id === disc.sessionDetailId);
+      if (!d) {
+        throw new BadRequestException(
+          `El servicio ${disc.sessionDetailId} no pertenece a esta cita`,
+        );
+      }
+      const price = Number(d.cost || 0);
+      if (d.isCourtesy || price <= 0) {
+        throw new BadRequestException(
+          'No se puede descontar sobre un servicio de cortesía o sin precio',
+        );
+      }
+      const raw =
+        disc.mode === 'percentage'
+          ? (price * disc.value) / 10000
+          : disc.value / 100;
+      const amount = Math.min(Number(raw.toFixed(2)), price); // no mayor al precio
+      if (amount <= 0) {
+        throw new BadRequestException('El descuento debe ser mayor a 0');
+      }
+      const workerId =
+        disc.absorbedBy === 'worker'
+          ? (disc.workerId ?? d.companyWorkerId ?? null)
+          : (d.companyWorkerId ?? null);
+      if (disc.absorbedBy === 'worker' && workerId == null) {
+        throw new BadRequestException(
+          'El descuento por trabajador requiere un ejecutor',
+        );
+      }
+      discountByDetail.set(d.id, {
+        sessionDetailId: d.id,
+        amountMajor: amount,
+        absorbedBy: disc.absorbedBy,
+        workerId,
+        mode: disc.mode,
+        value: disc.value,
+        reason: disc.reason ?? null,
+      });
+    }
+    // Auditoría (se guarda como JSON en el pago) + avisos (tope del trabajador).
+    const discountsAudit = [...discountByDetail.values()].map((disc) => ({
+      sessionDetailId: disc.sessionDetailId,
+      mode: disc.mode,
+      value: disc.value,
+      amount: disc.amountMajor,
+      absorbedBy: disc.absorbedBy,
+      workerId: disc.workerId,
+      reason: disc.reason,
+      appliedByUserId: adminId,
+    }));
+    const discountWarnings: string[] = [];
+
     // 5. Validaciones de negocio (422)
     const tip = dto.tip ?? 0;
     const tips = dto.tips ?? [];
@@ -4066,6 +4135,8 @@ export class SessionService {
         companyAdjustmentBs: dto.companyAdjustmentBs
           ? dto.companyAdjustmentBs
           : null,
+        // CLYP-362: descuentos aplicados (auditoría). null si no hubo.
+        discounts: discountsAudit.length > 0 ? discountsAudit : null,
       });
 
       if (dto.lines.length > 0) {
@@ -4191,7 +4262,14 @@ export class SessionService {
               if (!d) return null; // servicio ajeno a la cita → se ignora
               const svc = svcById.get(d.serviceId);
               itemCurrency = (svc?.currency || 'USD').toUpperCase();
-              itemPriceMinor = toMinor(Number(d.cost || 0));
+              // CLYP-362: con descuento 'both' la comisión va sobre el precio YA
+              // con descuento (base menor); salón/trabajador van sobre el original.
+              const disc = discountByDetail.get(d.id);
+              const basePrice =
+                disc && disc.absorbedBy === 'both'
+                  ? Number(d.cost || 0) - disc.amountMajor
+                  : Number(d.cost || 0);
+              itemPriceMinor = toMinor(basePrice);
               conceptSource = 'appointment';
               conceptSourceId = d.id;
               itemLabel = svc?.name || 'Servicio';
@@ -4266,57 +4344,137 @@ export class SessionService {
         // se creó con el split del ejecutor; aquí restamos las comisiones EXTRA
         // (fijas o manuales para un tercero). Best-effort, como el resto del bloque.
         try {
-          const extraByDetail = new Map<number, number>(); // detailId → restar (moneda del servicio)
+          // Monto de una atribución en la moneda del servicio (convierte si el
+          // monto fijo vino en otra moneda). null si no hay tasa fiable.
+          const svcAmountOf = (
+            it: (typeof attrItems)[number],
+            svcCurrency: string,
+          ): number | null => {
+            const attrCurrency = (it.currency || svcCurrency).toUpperCase();
+            const major = fromMinor(it.amountItemMinor);
+            if (attrCurrency === svcCurrency) return major;
+            const attrRate =
+              attrCurrency === 'VES'
+                ? 1
+                : (rateByCurrency.get(attrCurrency) ?? null);
+            const svcRate =
+              svcCurrency === 'VES'
+                ? 1
+                : (rateByCurrency.get(svcCurrency) ?? null);
+            return attrRate != null && svcRate
+              ? (major * attrRate) / svcRate
+              : null;
+          };
+
+          const extraByDetail = new Map<number, number>(); // no-ejecutor
+          const allCommByDetail = new Map<number, number>(); // todas
+          const commByDetailWorker = new Map<string, number>(); // por trabajador
           for (const it of attrItems) {
             if (it.kind !== 'commission' || it.sourceType !== 'appointment') {
               continue;
             }
             const d = detailById.get(it.sourceId);
             if (!d) continue;
-            // La comisión del ejecutor ya está reflejada en total_company.
-            if (it.companyWorkerId === d.companyWorkerId) continue;
             const svcCurrency = (
               svcById.get(d.serviceId)?.currency || 'USD'
             ).toUpperCase();
-            const attrCurrency = (it.currency || svcCurrency).toUpperCase();
-            const major = fromMinor(it.amountItemMinor);
-            let amountInSvc: number | null;
-            if (attrCurrency === svcCurrency) {
-              amountInSvc = major;
-            } else {
-              const attrRate =
-                attrCurrency === 'VES'
-                  ? 1
-                  : (rateByCurrency.get(attrCurrency) ?? null);
-              const svcRate =
-                svcCurrency === 'VES'
-                  ? 1
-                  : (rateByCurrency.get(svcCurrency) ?? null);
-              amountInSvc =
-                attrRate != null && svcRate
-                  ? (major * attrRate) / svcRate
-                  : null;
-            }
-            // Sin tasa fiable no restamos (mejor de menos que una cifra errada).
+            const amountInSvc = svcAmountOf(it, svcCurrency);
             if (amountInSvc == null) continue;
-            extraByDetail.set(
+            allCommByDetail.set(
               d.id,
-              (extraByDetail.get(d.id) ?? 0) + amountInSvc,
+              (allCommByDetail.get(d.id) ?? 0) + amountInSvc,
             );
+            commByDetailWorker.set(
+              `${d.id}:${it.companyWorkerId}`,
+              (commByDetailWorker.get(`${d.id}:${it.companyWorkerId}`) ?? 0) +
+                amountInSvc,
+            );
+            // La comisión del ejecutor ya está reflejada en total_company.
+            if (it.companyWorkerId !== d.companyWorkerId) {
+              extraByDetail.set(
+                d.id,
+                (extraByDetail.get(d.id) ?? 0) + amountInSvc,
+              );
+            }
           }
-          for (const [detailId, extra] of extraByDetail.entries()) {
-            const d = detailById.get(detailId)!;
+
+          // Ajustar total_company por detalle (comisiones extra y/o descuento).
+          const affected = new Set<number>([
+            ...extraByDetail.keys(),
+            ...discountByDetail.keys(),
+          ]);
+          for (const detailId of affected) {
+            const d = detailById.get(detailId);
+            if (!d) continue;
             const current = Number(d.totalCompany || 0);
-            const next = Math.max(0, Number((current - extra).toFixed(2)));
+            let next: number;
+            const disc = discountByDetail.get(detailId);
+            if (disc) {
+              // Con descuento recomponemos: base − TODAS las comisiones del ítem.
+              // salon/both → el cliente pagó (precio − descuento); worker → el
+              // salón conserva su parte (el descuento lo paga el trabajador).
+              const price = Number(d.cost || 0);
+              const allComm = allCommByDetail.get(detailId) ?? 0;
+              const companyBase =
+                disc.absorbedBy === 'worker' ? price : price - disc.amountMajor;
+              next = Math.max(0, Number((companyBase - allComm).toFixed(2)));
+            } else {
+              const extra = extraByDetail.get(detailId) ?? 0;
+              next = Math.max(0, Number((current - extra).toFixed(2)));
+            }
             if (next !== current) {
               await this.sessionDetailRepository.update(detailId, {
                 totalCompany: next,
               });
             }
           }
+
+          // Descuento absorbido por el TRABAJADOR → concepto negativo (topado a su
+          // comisión para no dejarla en negativo).
+          const discountConcepts: DiscountConceptItem[] = [];
+          for (const disc of discountByDetail.values()) {
+            if (disc.absorbedBy !== 'worker' || disc.workerId == null) continue;
+            const d = detailById.get(disc.sessionDetailId);
+            if (!d) continue;
+            const svc = svcById.get(d.serviceId);
+            const svcCurrency = (svc?.currency || 'USD').toUpperCase();
+            const workerComm =
+              commByDetailWorker.get(`${d.id}:${disc.workerId}`) ?? 0;
+            const capped = Math.min(disc.amountMajor, workerComm);
+            if (capped < disc.amountMajor) {
+              discountWarnings.push(
+                `El descuento de "${svc?.name || 'Servicio'}" excede la comisión del trabajador; se topó en ${capped.toFixed(2)}.`,
+              );
+            }
+            if (capped <= 0) continue;
+            const rate =
+              svcCurrency === 'VES'
+                ? 1
+                : (rateByCurrency.get(svcCurrency) ?? null);
+            discountConcepts.push({
+              companyWorkerId: disc.workerId,
+              amountItemMinor: toMinor(capped),
+              currency: svcCurrency,
+              exchangeRate: rate,
+              sourceType: 'appointment',
+              sourceId: d.id,
+              label: `Descuento — ${svc?.name || 'Servicio'}`,
+              reason: disc.reason,
+              appointmentId: sessionId,
+            });
+          }
+          if (discountConcepts.length > 0) {
+            await this.payrollEarningsService.recordDiscountConcepts(
+              adminCompany.id,
+              paidAt,
+              discountConcepts,
+              dto.method,
+              payrollForcedPeriod ?? undefined,
+            );
+          }
         } catch (e) {
           this.logger.warn(
-            `No se pudo ajustar total_company por comisiones en cita ${sessionId}: ${
+            `No se pudo ajustar total_company/descuentos en cita ${sessionId}: ${
               e instanceof Error ? e.message : String(e)
             }`,
           );
@@ -4421,6 +4579,10 @@ export class SessionService {
           amount: t.amount,
         })),
       },
+      // CLYP-362: descuentos aplicados (auditoría) y avisos (p. ej. descuento del
+      // trabajador topado a su comisión).
+      ...(discountsAudit.length > 0 ? { discounts: discountsAudit } : {}),
+      ...(discountWarnings.length > 0 ? { warnings: discountWarnings } : {}),
     };
   }
 
