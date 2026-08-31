@@ -86,6 +86,101 @@ export class ReportsService {
     private fileUploadService: FileUploadService,
   ) {}
 
+  private async getPaidAdjustments(
+    serviceIds: number[],
+    startDate: string,
+    endDate: string,
+  ): Promise<{
+    discountByService: Map<number, number>;
+    commissionByWorker: Map<number, number>;
+  }> {
+    const discountByService = new Map<number, number>();
+    const commissionByWorker = new Map<number, number>();
+    if (serviceIds.length === 0) {
+      return { discountByService, commissionByWorker };
+    }
+
+    // Detalles pagados en el rango: id → serviceId, y sus sesiones.
+    const detailRows = await this.sessionDetailRepository
+      .createQueryBuilder('sd')
+      .select('sd.id', 'id')
+      .addSelect('sd.service_id', 'serviceId')
+      .addSelect('sd.session_id', 'sessionId')
+      .where('sd.service_id IN (:...serviceIds)', { serviceIds })
+      .andWhere('sd.start_datetime BETWEEN :s AND :e', {
+        s: `${startDate} 00:00:00`,
+        e: `${endDate} 23:59:59`,
+      })
+      .andWhere('sd.status = :paid', { paid: 4 })
+      .andWhere('sd.is_courtesy = 0')
+      .getRawMany<{ id: string; serviceId: string; sessionId: string }>();
+
+    const detailToService = new Map<number, number>();
+    const sessionIds = new Set<number>();
+    for (const r of detailRows) {
+      detailToService.set(Number(r.id), Number(r.serviceId));
+      sessionIds.add(Number(r.sessionId));
+    }
+    if (sessionIds.size === 0) {
+      return { discountByService, commissionByWorker };
+    }
+
+    const ids = [...sessionIds];
+    const placeholders = ids.map(() => '?').join(',');
+    const payments: Array<{
+      discounts: unknown;
+      attributions: unknown;
+    }> = await this.sessionDetailRepository.manager.query(
+      `SELECT discounts, attributions FROM session_payments WHERE session_id IN (${placeholders})`,
+      ids,
+    );
+
+    const asArray = (v: unknown): any[] => {
+      if (v == null) return [];
+      const parsed = typeof v === 'string' ? JSON.parse(v || '[]') : v;
+      return Array.isArray(parsed) ? parsed : [];
+    };
+    // Descuento absorbido por el trabajador, para netear su comisión.
+    const workerDiscount = new Map<number, number>();
+
+    for (const p of payments) {
+      for (const d of asArray(p.discounts)) {
+        const detailId = Number(d?.sessionDetailId);
+        const amount = Number(d?.amount ?? 0);
+        const serviceId = detailToService.get(detailId);
+        if (serviceId != null && amount > 0) {
+          discountByService.set(
+            serviceId,
+            (discountByService.get(serviceId) ?? 0) + amount,
+          );
+        }
+        if (d?.absorbedBy === 'worker' && d?.workerId != null && amount > 0) {
+          const w = Number(d.workerId);
+          workerDiscount.set(w, (workerDiscount.get(w) ?? 0) + amount);
+        }
+      }
+      for (const a of asArray(p.attributions)) {
+        if (a?.kind !== 'commission' || a?.sourceType !== 'appointment') {
+          continue;
+        }
+        const detailId = Number(a?.sourceId);
+        if (!detailToService.has(detailId)) continue; // fuera del rango/servicios
+        const w = Number(a?.companyWorkerId);
+        const amount = Number(a?.amountItemMinor ?? 0) / 100;
+        if (!Number.isFinite(w) || amount <= 0) continue;
+        commissionByWorker.set(w, (commissionByWorker.get(w) ?? 0) + amount);
+      }
+    }
+
+    // Netear la comisión del trabajador que absorbió su propio descuento.
+    for (const [w, disc] of workerDiscount) {
+      const comm = commissionByWorker.get(w) ?? 0;
+      commissionByWorker.set(w, Math.max(0, comm - disc));
+    }
+
+    return { discountByService, commissionByWorker };
+  }
+
   async getIncomeByServices(
     adminId: number,
     startDate: string,
@@ -170,26 +265,37 @@ export class ReportsService {
       courtesyServices += n;
     }
 
-    // 4. Calcular totales generales (solo ingreso pagado)
-    const totalIncome = allResults.reduce(
-      (sum, r) => sum + parseFloat(r.totalIncome || '0'),
-      0,
+    // Descuentos aplicados por servicio: el ingreso "por servicio" es NETO
+    // (precio − descuento), lo que el cliente realmente pagó por ese servicio.
+    const { discountByService } = await this.getPaidAdjustments(
+      serviceIds,
+      startDate,
+      endDate,
     );
-    const totalServices = allResults.reduce(
-      (sum, r) => sum + parseInt(r.servicesCount || '0'),
-      0,
-    );
+    const netIncomeOf = (serviceId: number, gross: number) =>
+      Math.max(0, gross - (discountByService.get(serviceId) ?? 0));
 
     const incomeByService = new Map<
       number,
       { totalIncome: number; servicesCount: number }
     >();
     for (const r of allResults) {
-      incomeByService.set(parseInt(r.serviceId), {
-        totalIncome: parseFloat(r.totalIncome || '0'),
+      const serviceId = parseInt(r.serviceId);
+      incomeByService.set(serviceId, {
+        totalIncome: netIncomeOf(serviceId, parseFloat(r.totalIncome || '0')),
         servicesCount: parseInt(r.servicesCount || '0', 10) || 0,
       });
     }
+
+    // 4. Totales generales (ingreso pagado neto de descuentos)
+    const totalIncome = [...incomeByService.values()].reduce(
+      (sum, v) => sum + v.totalIncome,
+      0,
+    );
+    const totalServices = allResults.reduce(
+      (sum, r) => sum + parseInt(r.servicesCount || '0'),
+      0,
+    );
 
     const combined = [
       ...new Set([...incomeByService.keys(), ...courtesyByService.keys()]),
@@ -765,14 +871,26 @@ export class ReportsService {
       courtesyServices += n;
     }
 
+    const companyServiceIds = (
+      await this.serviceRepository.find({
+        where: { companyId: company.id },
+        select: ['id'],
+      })
+    ).map((s) => s.id);
+    const { commissionByWorker } = await this.getPaidAdjustments(
+      companyServiceIds,
+      startDate,
+      endDate,
+    );
+
     // 5. Calcular totales generales (solo ingreso pagado)
     const totalIncome = allResults.reduce(
       (sum, r) => sum + parseFloat(r.totalIncome || '0'),
       0,
     );
-    // Total de comisiones de los empleados (vista "ganancia del empleado").
-    const totalWorkerIncome = allResults.reduce(
-      (sum, r) => sum + parseFloat(r.workerIncome || '0'),
+    // Total de lo que ganan los empleados = suma de comisiones reales.
+    const totalWorkerIncome = [...commissionByWorker.values()].reduce(
+      (sum, v) => sum + v,
       0,
     );
     const totalServices = allResults.reduce(
@@ -780,30 +898,36 @@ export class ReportsService {
       0,
     );
 
+    // Valor de los servicios EJECUTADOS por el empleado (vista "valor manejado").
     const incomeByWorker = new Map<
       number,
-      { totalIncome: number; workerIncome: number; servicesCount: number }
+      { totalIncome: number; servicesCount: number }
     >();
     for (const r of allResults) {
       incomeByWorker.set(parseInt(r.companyWorkerId), {
         totalIncome: parseFloat(r.totalIncome || '0'),
-        workerIncome: parseFloat(r.workerIncome || '0'),
         servicesCount: parseInt(r.servicesCount || '0', 10) || 0,
       });
     }
 
     const combined = [
-      ...new Set([...incomeByWorker.keys(), ...courtesyByWorker.keys()]),
+      ...new Set([
+        ...incomeByWorker.keys(),
+        ...commissionByWorker.keys(),
+        ...courtesyByWorker.keys(),
+      ]),
     ]
       .map((cwId) => ({
         companyWorkerId: cwId,
         totalIncome: incomeByWorker.get(cwId)?.totalIncome ?? 0,
-        workerIncome: incomeByWorker.get(cwId)?.workerIncome ?? 0,
+        // Lo que gana el empleado: su comisión real en el rango.
+        workerIncome: commissionByWorker.get(cwId) ?? 0,
         servicesCount: incomeByWorker.get(cwId)?.servicesCount ?? 0,
         courtesyServices: courtesyByWorker.get(cwId) ?? 0,
       }))
       .sort(
         (a, b) =>
+          b.workerIncome - a.workerIncome ||
           b.totalIncome - a.totalIncome ||
           b.courtesyServices - a.courtesyServices ||
           a.companyWorkerId - b.companyWorkerId,
