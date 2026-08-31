@@ -92,19 +92,22 @@ export class ReportsService {
     endDate: string,
   ): Promise<{
     discountByService: Map<number, number>;
+    discountByExecutor: Map<number, number>;
     commissionByWorker: Map<number, number>;
   }> {
     const discountByService = new Map<number, number>();
+    const discountByExecutor = new Map<number, number>();
     const commissionByWorker = new Map<number, number>();
     if (serviceIds.length === 0) {
-      return { discountByService, commissionByWorker };
+      return { discountByService, discountByExecutor, commissionByWorker };
     }
 
-    // Detalles pagados en el rango: id → serviceId, y sus sesiones.
+    // Detalles pagados en el rango: id → serviceId / ejecutor, y sus sesiones.
     const detailRows = await this.sessionDetailRepository
       .createQueryBuilder('sd')
       .select('sd.id', 'id')
       .addSelect('sd.service_id', 'serviceId')
+      .addSelect('sd.company_worker_id', 'companyWorkerId')
       .addSelect('sd.session_id', 'sessionId')
       .where('sd.service_id IN (:...serviceIds)', { serviceIds })
       .andWhere('sd.start_datetime BETWEEN :s AND :e', {
@@ -113,16 +116,25 @@ export class ReportsService {
       })
       .andWhere('sd.status = :paid', { paid: 4 })
       .andWhere('sd.is_courtesy = 0')
-      .getRawMany<{ id: string; serviceId: string; sessionId: string }>();
+      .getRawMany<{
+        id: string;
+        serviceId: string;
+        companyWorkerId: string | null;
+        sessionId: string;
+      }>();
 
     const detailToService = new Map<number, number>();
+    const detailToExecutor = new Map<number, number>();
     const sessionIds = new Set<number>();
     for (const r of detailRows) {
       detailToService.set(Number(r.id), Number(r.serviceId));
+      if (r.companyWorkerId != null) {
+        detailToExecutor.set(Number(r.id), Number(r.companyWorkerId));
+      }
       sessionIds.add(Number(r.sessionId));
     }
     if (sessionIds.size === 0) {
-      return { discountByService, commissionByWorker };
+      return { discountByService, discountByExecutor, commissionByWorker };
     }
 
     const ids = [...sessionIds];
@@ -154,6 +166,13 @@ export class ReportsService {
             (discountByService.get(serviceId) ?? 0) + amount,
           );
         }
+        const executor = detailToExecutor.get(detailId);
+        if (executor != null && amount > 0) {
+          discountByExecutor.set(
+            executor,
+            (discountByExecutor.get(executor) ?? 0) + amount,
+          );
+        }
         if (d?.absorbedBy === 'worker' && d?.workerId != null && amount > 0) {
           const w = Number(d.workerId);
           workerDiscount.set(w, (workerDiscount.get(w) ?? 0) + amount);
@@ -178,7 +197,7 @@ export class ReportsService {
       commissionByWorker.set(w, Math.max(0, comm - disc));
     }
 
-    return { discountByService, commissionByWorker };
+    return { discountByService, discountByExecutor, commissionByWorker };
   }
 
   async getIncomeByServices(
@@ -877,15 +896,28 @@ export class ReportsService {
         select: ['id'],
       })
     ).map((s) => s.id);
-    const { commissionByWorker } = await this.getPaidAdjustments(
-      companyServiceIds,
-      startDate,
-      endDate,
-    );
+    const { discountByExecutor, commissionByWorker } =
+      await this.getPaidAdjustments(companyServiceIds, startDate, endDate);
+    // "Facturado con el empleado" = valor de sus servicios NETO de descuento.
+    const netExecutedOf = (cwId: number, gross: number) =>
+      Math.max(0, gross - (discountByExecutor.get(cwId) ?? 0));
 
-    // 5. Calcular totales generales (solo ingreso pagado)
-    const totalIncome = allResults.reduce(
-      (sum, r) => sum + parseFloat(r.totalIncome || '0'),
+    // Valor de los servicios EJECUTADOS por el empleado (vista "valor manejado").
+    const incomeByWorker = new Map<
+      number,
+      { totalIncome: number; servicesCount: number }
+    >();
+    for (const r of allResults) {
+      const cwId = parseInt(r.companyWorkerId);
+      incomeByWorker.set(cwId, {
+        totalIncome: netExecutedOf(cwId, parseFloat(r.totalIncome || '0')),
+        servicesCount: parseInt(r.servicesCount || '0', 10) || 0,
+      });
+    }
+
+    // 5. Totales generales (ingreso pagado neto de descuentos)
+    const totalIncome = [...incomeByWorker.values()].reduce(
+      (sum, v) => sum + v.totalIncome,
       0,
     );
     // Total de lo que ganan los empleados = suma de comisiones reales.
@@ -897,18 +929,6 @@ export class ReportsService {
       (sum, r) => sum + parseInt(r.servicesCount || '0'),
       0,
     );
-
-    // Valor de los servicios EJECUTADOS por el empleado (vista "valor manejado").
-    const incomeByWorker = new Map<
-      number,
-      { totalIncome: number; servicesCount: number }
-    >();
-    for (const r of allResults) {
-      incomeByWorker.set(parseInt(r.companyWorkerId), {
-        totalIncome: parseFloat(r.totalIncome || '0'),
-        servicesCount: parseInt(r.servicesCount || '0', 10) || 0,
-      });
-    }
 
     const combined = [
       ...new Set([
