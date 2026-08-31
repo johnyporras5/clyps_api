@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -27,7 +28,19 @@ import {
   frozenQuoteOf,
   paymentReference,
 } from './payment-report.util';
+import {
+  DEFAULT_AMOUNT_TOLERANCE_BPS,
+  amountDiscrepancy,
+} from './payment-discrepancy.util';
+import { SubscriptionService } from './subscription.service';
+import type { PaginationResult } from '../common/dto/pagination.dto';
 import type { QuoteResponse } from './dto/quote-response.dto';
+import type { QueryAdminPaymentsDto } from './dto/query-admin-payments.dto';
+import type { RejectPaymentDto } from './dto/reject-payment.dto';
+import type {
+  AdminPaymentDecisionResponse,
+  AdminPaymentItem,
+} from './dto/admin-payment-response.dto';
 import type { ReportPaymentDto } from './dto/report-payment.dto';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 
@@ -50,6 +63,7 @@ export class PaymentsService {
     private readonly companies: Repository<Company>,
     private readonly rates: ExchangeRateService,
     private readonly files: FileUploadService,
+    private readonly subscriptionService: SubscriptionService,
     private readonly config: ConfigService,
   ) {}
 
@@ -263,6 +277,233 @@ export class PaymentsService {
       }
       throw error;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cola de verificación del admin de plataforma (SUB-4)
+  // ---------------------------------------------------------------------------
+
+  /** Banda de tolerancia del monto reportado. Configurable por entorno. */
+  get amountToleranceBps(): number {
+    const raw = Number(
+      this.config.get<string>('SUBSCRIPTION_AMOUNT_TOLERANCE_BPS'),
+    );
+    return Number.isFinite(raw) && raw >= 0
+      ? raw
+      : DEFAULT_AMOUNT_TOLERANCE_BPS;
+  }
+
+  /**
+   * La cola de verificación: por defecto los `reported`, **más antiguo primero**
+   * — es una cola con SLA, no un listado; lo que lleva más esperando se atiende
+   * antes.
+   */
+  async listForAdmin(
+    query: QueryAdminPaymentsDto,
+  ): Promise<PaginationResult<AdminPaymentItem>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const status = query.status ?? 'reported';
+
+    const builder = this.reports
+      .createQueryBuilder('report')
+      .where('report.status = :status', { status })
+      .orderBy('report.reportedAt', 'ASC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.method)
+      builder.andWhere('report.method = :method', { method: query.method });
+
+    const [reports, total] = await builder.getManyAndCount();
+    // El admin necesita saber DE QUIÉN es el pago, no solo el company_id. Los
+    // nombres se traen en UNA consulta para la página completa, no uno por fila.
+    const names = await this.companyNames(reports.map((r) => r.companyId));
+
+    return {
+      data: reports.map((report) =>
+        this.toAdminItem(report, names.get(report.companyId) ?? null),
+      ),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  /**
+   * Verificación manual: el admin da por bueno el pago y la suscripción avanza.
+   *
+   * Una discrepancia de monto NO bloquea: el admin ya la vio marcada en la cola
+   * y decidió verificar igual (un pago de menos puede estar acordado). Lo que sí
+   * se rechaza es verificar dos veces — un reporte ya resuelto no se re-resuelve.
+   */
+  async verifyPayment(
+    reportId: number,
+    verifiedByUserId: number,
+  ): Promise<AdminPaymentDecisionResponse> {
+    const report = await this.findReportedOrFail(reportId);
+    const subscription = await this.subscriptions.findOne({
+      where: { companyId: report.companyId },
+    });
+    if (!subscription)
+      throw new BadRequestException(
+        'El tenant no tiene suscripción: no hay nada que activar.',
+      );
+
+    report.status = 'verified';
+    report.verificationMethod = 'manual';
+    report.verifiedByUserId = verifiedByUserId;
+    report.verifiedAt = new Date();
+    report.rejectionReason = null;
+    await this.saveDecision(report);
+
+    // SUB-6: verificar es lo único que da acceso.
+    const advanced = await this.subscriptionService.activateAfterPayment(
+      subscription,
+      report.planId,
+    );
+
+    return this.toDecision(report, advanced);
+  }
+
+  /**
+   * Rechazo manual: el pago no aparece o no cuadra.
+   *
+   * NO toca la suscripción — el tenant sigue como estaba (en gracia, bloqueado o
+   * en prueba). El motivo viaja al dueño para que sepa qué corregir (SUB-9).
+   */
+  async rejectPayment(
+    reportId: number,
+    dto: RejectPaymentDto,
+    verifiedByUserId: number,
+  ): Promise<AdminPaymentDecisionResponse> {
+    const report = await this.findReportedOrFail(reportId);
+
+    report.status = 'rejected';
+    report.verificationMethod = 'manual';
+    report.verifiedByUserId = verifiedByUserId;
+    report.verifiedAt = new Date();
+    report.rejectionReason = dto.rejectionReason;
+    await this.saveDecision(report);
+
+    const subscription = await this.subscriptions.findOne({
+      where: { companyId: report.companyId },
+    });
+
+    return this.toDecision(report, subscription);
+  }
+
+  /**
+   * Guarda la decisión traduciendo un `verifiedByUserId` inexistente a un 400:
+   * el id lo escribe quien llama al endpoint interno, y equivocarse no debería
+   * verse como un error del servidor.
+   */
+  private async saveDecision(report: PaymentReport): Promise<PaymentReport> {
+    try {
+      return await this.reports.save(report);
+    } catch (error) {
+      if (
+        error instanceof QueryFailedError &&
+        error.message.includes('FK_payment_report_verified_by')
+      ) {
+        throw new BadRequestException(
+          `El usuario ${report.verifiedByUserId} no existe.`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /** Un reporte solo se resuelve una vez, y solo si está por resolver. */
+  private async findReportedOrFail(reportId: number): Promise<PaymentReport> {
+    const report = await this.reports.findOne({ where: { id: reportId } });
+    if (!report) throw new NotFoundException('El reporte de pago no existe.');
+    if (report.status !== 'reported')
+      throw new ConflictException(
+        `Ese pago ya fue ${report.status === 'verified' ? 'verificado' : 'rechazado'}.`,
+      );
+    return report;
+  }
+
+  /** Nombres de los tenants de la página, en una sola consulta. */
+  private async companyNames(
+    companyIds: number[],
+  ): Promise<Map<number, string | null>> {
+    if (!companyIds.length) return new Map();
+    const companies = await this.companies.find({
+      where: companyIds.map((id) => ({ id })),
+      select: { id: true, name: true },
+    });
+    return new Map(companies.map((company) => [company.id, company.name]));
+  }
+
+  private toAdminItem(
+    report: PaymentReport,
+    companyName: string | null,
+  ): AdminPaymentItem {
+    const discrepancy = amountDiscrepancy(report, this.amountToleranceBps);
+
+    return {
+      id: report.id,
+      status: report.status,
+      method: report.method,
+      company: { id: report.companyId, name: companyName },
+      planId: report.planId,
+      planName: getPlan(report.planId).name,
+      amountMinor: discrepancy.reportedMinor,
+      currency: report.currency,
+      amountVesFormatted:
+        report.amountVesMinor === null
+          ? null
+          : formatVesMinor(report.amountVesMinor),
+      frozenRate: report.frozenRate,
+      quotedAt: report.quotedAt ? report.quotedAt.toISOString() : null,
+      methodData: {
+        reference: report.reference,
+        payerPhone: report.payerPhone,
+        payerBankCode: report.payerBankCode,
+        payerEmail: report.payerEmail,
+        network: report.network,
+      },
+      proofUrl: report.proofUrl,
+      note: report.note,
+      reportedAt: report.reportedAt.toISOString(),
+      discrepancy,
+      verificationMethod: report.verificationMethod,
+      verifiedByUserId: report.verifiedByUserId,
+      verifiedAt: report.verifiedAt ? report.verifiedAt.toISOString() : null,
+      rejectionReason: report.rejectionReason,
+    };
+  }
+
+  private toDecision(
+    report: PaymentReport,
+    subscription: Subscription | null,
+  ): AdminPaymentDecisionResponse {
+    return {
+      id: report.id,
+      status: report.status,
+      verificationMethod: report.verificationMethod,
+      verifiedByUserId: report.verifiedByUserId,
+      verifiedAt: report.verifiedAt ? report.verifiedAt.toISOString() : null,
+      rejectionReason: report.rejectionReason,
+      subscription: {
+        companyId: report.companyId,
+        planId: subscription?.planId ?? report.planId,
+        status: subscription?.status ?? 'blocked',
+        currentPeriodEnd: subscription?.currentPeriodEnd
+          ? subscription.currentPeriodEnd.toISOString()
+          : null,
+        graceEndsAt: subscription?.graceEndsAt
+          ? subscription.graceEndsAt.toISOString()
+          : null,
+      },
+    };
   }
 
   /** Plan de la suscripción vigente de la company. */

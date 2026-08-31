@@ -4,6 +4,7 @@ import { SubscriptionService } from './subscription.service';
 import { PaymentsService } from './payments.service';
 import { ExchangeRateService } from './rate/exchange-rate.service';
 import { SubscriptionController } from './subscription.controller';
+import { AdminPaymentsController } from './admin-payments.controller';
 import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
 import { Company } from '../company/entities/company.entity';
@@ -23,7 +24,7 @@ import { CommonModule } from '../common/common.module';
     CommonModule,
   ],
   providers: [SubscriptionService, PaymentsService, ExchangeRateService],
-  controllers: [SubscriptionController],
+  controllers: [SubscriptionController, AdminPaymentsController],
   exports: [SubscriptionService, PaymentsService, ExchangeRateService],
 })
 export class SubscriptionModule {}

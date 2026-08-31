@@ -1,3 +1,4 @@
+import type { UserRole } from '../auth/types/authenticated-request';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -29,7 +30,7 @@ export class AppointmentBeforeAfterService {
   async getBeforeAfter(
     sessionId: number,
     userId: number,
-    userRole: 'adm' | 'wrk' | 'cli',
+    userRole: UserRole,
   ): Promise<AppointmentBeforeAfterResponse> {
     await this.sessionService.validateSessionAccess(
       sessionId,
@@ -49,7 +50,7 @@ export class AppointmentBeforeAfterService {
     slot: string,
     file: Express.Multer.File,
     userId: number,
-    userRole: 'adm' | 'wrk' | 'cli',
+    userRole: UserRole,
   ): Promise<AppointmentBeforeAfterResponse> {
     const validSlot = this.assertSlot(slot);
 
@@ -113,7 +114,7 @@ export class AppointmentBeforeAfterService {
     sessionId: number,
     slot: string,
     userId: number,
-    userRole: 'adm' | 'wrk' | 'cli',
+    userRole: UserRole,
   ): Promise<AppointmentBeforeAfterResponse> {
     const validSlot = this.assertSlot(slot);
 

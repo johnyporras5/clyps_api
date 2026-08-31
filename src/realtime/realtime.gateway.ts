@@ -1,3 +1,4 @@
+import type { UserRole } from '../auth/types/authenticated-request';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -28,7 +29,7 @@ import {
 interface SocketUser {
   userId: number;
   email: string;
-  userType: 'adm' | 'wrk' | 'cli';
+  userType: UserRole;
   companyId: number | null;
   companyWorkerId: number | null;
 }
