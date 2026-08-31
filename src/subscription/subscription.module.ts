@@ -7,6 +7,7 @@ import { SubscriptionController } from './subscription.controller';
 import { AdminPaymentsController } from './admin-payments.controller';
 import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
+import { SubscriptionEvent } from './entities/subscription-event.entity';
 import { Company } from '../company/entities/company.entity';
 import { CommonModule } from '../common/common.module';
 
@@ -19,7 +20,12 @@ import { CommonModule } from '../common/common.module';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Subscription, PaymentReport, Company]),
+    TypeOrmModule.forFeature([
+      Subscription,
+      SubscriptionEvent,
+      PaymentReport,
+      Company,
+    ]),
     // Sube la foto del comprobante a Spaces (SUB-3).
     CommonModule,
   ],

@@ -375,10 +375,11 @@ export class PaymentsService {
     report.rejectionReason = null;
     await this.saveDecision(report);
 
-    // SUB-6: verificar es lo único que da acceso.
-    const advanced = await this.subscriptionService.activateAfterPayment(
+    // SUB-6: verificar es lo único que da acceso. El avance es idempotente por
+    // reporte y deja su rastro en `subscription_event`.
+    const advanced = await this.subscriptionService.advanceSubscription(
       subscription,
-      report.planId,
+      report,
     );
 
     return this.toDecision(report, advanced);

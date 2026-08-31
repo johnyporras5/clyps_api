@@ -1,13 +1,18 @@
 import { ConflictException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import type { Repository } from 'typeorm';
+import type { EventEmitter2 } from '@nestjs/event-emitter';
+import type { DataSource, EntityManager, Repository } from 'typeorm';
 import { PaymentsService } from './payments.service';
-import { SubscriptionService } from './subscription.service';
+import {
+  SUBSCRIPTION_ACTIVATED,
+  SubscriptionService,
+} from './subscription.service';
 import type { ExchangeRateService } from './rate/exchange-rate.service';
 import type { FileUploadService } from '../common/services/file_upload.service';
 import type { Company } from '../company/entities/company.entity';
 import { PaymentReport } from './entities/payment-report.entity';
 import { Subscription } from './entities/subscription.entity';
+import type { SubscriptionEvent } from './entities/subscription-event.entity';
 import type { ReportPaymentDto } from './dto/report-payment.dto';
 
 // El servicio de archivos arrastra `uuid` (ESM puro) y jest no lo transforma.
@@ -17,8 +22,9 @@ jest.mock('../common/services/file_upload.service', () => ({
 }));
 
 /**
- * Las pruebas que pide SUB-4: verificar avanza la suscripción, rechazar no la
- * toca, y un monto fuera de tolerancia se MARCA pero no se auto-rechaza.
+ * Las pruebas de SUB-4 y SUB-6: verificar avanza la suscripción (una sola vez y
+ * dejando rastro), rechazar no la toca, y un monto fuera de tolerancia se MARCA
+ * pero no se auto-rechaza.
  *
  * Los repositorios van mockeados: lo que se prueba es la decisión, no TypeORM.
  */
@@ -73,18 +79,18 @@ function subscriptionFixture(
 
 interface Harness {
   service: PaymentsService;
-  reports: {
-    findOne: jest.Mock;
-    save: jest.Mock;
-    createQueryBuilder: jest.Mock;
-  };
-  subscriptions: { findOne: jest.Mock; save: jest.Mock };
+  reports: { findOne: jest.Mock; save: jest.Mock };
+  /** El manager de la transacción: por aquí pasan la suscripción y su evento. */
+  manager: { findOne: jest.Mock; save: jest.Mock; create: jest.Mock };
+  events: { emit: jest.Mock };
 }
 
 function buildService(options: {
   report?: PaymentReport;
   subscription?: Subscription | null;
   queueRows?: PaymentReport[];
+  /** Evento ya registrado para ese reporte: simula un avance previo. */
+  existingEvent?: Partial<SubscriptionEvent>;
 }): Harness {
   const builder = {
     where: jest.fn().mockReturnThis(),
@@ -121,10 +127,34 @@ function buildService(options: {
     find: jest.fn().mockResolvedValue([{ id: 7, name: 'Salón Bella' }]),
   };
 
+  // Manager de la transacción de `advanceSubscription`: ahí dentro se guardan
+  // la suscripción y su evento de auditoría, juntos o ninguno.
+  const manager = {
+    findOne: jest.fn().mockResolvedValue(options.existingEvent ?? null),
+    save: jest
+      .fn()
+      .mockImplementation(
+        (target: unknown, entity?: unknown) => entity ?? target,
+      ),
+    create: jest
+      .fn()
+      .mockImplementation((_target: unknown, obj: unknown) => obj),
+  };
+  const dataSource = {
+    transaction: jest
+      .fn()
+      .mockImplementation((run: (m: EntityManager) => Promise<unknown>) =>
+        run(manager as unknown as EntityManager),
+      ),
+  };
+  const events = { emit: jest.fn() };
+
   // El servicio de suscripciones va REAL: avanzar el período es justo lo que
   // se está probando.
   const subscriptionService = new SubscriptionService(
     subscriptions as unknown as Repository<Subscription>,
+    dataSource as unknown as DataSource,
+    events as unknown as EventEmitter2,
   );
 
   const service = new PaymentsService(
@@ -137,21 +167,30 @@ function buildService(options: {
     { get: () => undefined } as unknown as ConfigService,
   );
 
-  return { service, reports, subscriptions };
+  return { service, reports, manager, events };
 }
 
-/** La suscripción que se mandó a guardar en la enésima llamada. */
-function savedSubscription(save: jest.Mock, index = 0): Subscription {
+/** La suscripción que se mandó a guardar dentro de la transacción. */
+function savedSubscription(save: jest.Mock): Subscription {
   const calls = save.mock.calls as unknown as unknown[][];
-  return calls[index]?.[0] as Subscription;
+  const call = calls.find((args) => args[1] instanceof Subscription);
+  return call?.[1] as Subscription;
+}
+
+/** El evento de auditoría que se registró. */
+function savedEvent(save: jest.Mock): Partial<SubscriptionEvent> | undefined {
+  const calls = save.mock.calls as unknown as unknown[][];
+  const call = calls.find(
+    (args) => (args[0] as Partial<SubscriptionEvent>)?.type !== undefined,
+  );
+  return call?.[0] as Partial<SubscriptionEvent> | undefined;
 }
 
 describe('verificar un pago', () => {
   it('avanza la suscripción: la activa y le da un mes', async () => {
-    const subscription = subscriptionFixture({ status: 'grace' });
-    const { service, subscriptions } = buildService({
+    const { service, manager } = buildService({
       report: reportFixture(),
-      subscription,
+      subscription: subscriptionFixture({ status: 'grace' }),
     });
 
     const result = await service.verifyPayment(1, 42);
@@ -161,11 +200,9 @@ describe('verificar un pago', () => {
     // Quién verificó sale del token del admin de plataforma.
     expect(result.verifiedByUserId).toBe(42);
 
-    expect(subscriptions.save).toHaveBeenCalledTimes(1);
-    const saved = savedSubscription(subscriptions.save);
+    const saved = savedSubscription(manager.save);
     expect(saved.status).toBe('active');
     expect(saved.graceEndsAt).toBeNull();
-    expect(saved.currentPeriodEnd).toBeInstanceOf(Date);
     // Un mes por delante, no unos días.
     const days =
       (saved.currentPeriodEnd!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
@@ -174,18 +211,79 @@ describe('verificar un pago', () => {
   });
 
   it('deja la suscripción en el plan que se pagó', async () => {
-    const { service, subscriptions } = buildService({
+    const { service, manager } = buildService({
       report: reportFixture({ planId: 'basico' }),
       subscription: subscriptionFixture({ planId: 'full' }),
     });
 
     await service.verifyPayment(1, 42);
 
-    expect(savedSubscription(subscriptions.save).planId).toBe('basico');
+    expect(savedSubscription(manager.save).planId).toBe('basico');
+  });
+
+  it('encadena el mes al período vigente: pagar antes no regala días', async () => {
+    const vigente = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+    const { service, manager } = buildService({
+      report: reportFixture(),
+      subscription: subscriptionFixture({
+        status: 'active',
+        currentPeriodEnd: vigente,
+      }),
+    });
+
+    await service.verifyPayment(1, 42);
+
+    const saved = savedSubscription(manager.save);
+    const days =
+      (saved.currentPeriodEnd!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+    // Los diez días que quedaban MÁS un mes.
+    expect(days).toBeGreaterThan(37);
+  });
+
+  it('deja rastro de auditoría: qué reporte extendió qué período', async () => {
+    const vigente = new Date('2026-12-01T10:00:00.000Z');
+    const { service, manager } = buildService({
+      report: reportFixture({ id: 55 }),
+      subscription: subscriptionFixture({
+        status: 'grace',
+        currentPeriodEnd: vigente,
+      }),
+    });
+
+    await service.verifyPayment(55, 42);
+
+    expect(savedEvent(manager.save)).toMatchObject({
+      companyId: 7,
+      subscriptionId: 3,
+      paymentReportId: 55,
+      type: 'payment_verified',
+      planId: 'full',
+      previousStatus: 'grace',
+      newStatus: 'active',
+      previousPeriodEnd: vigente,
+    });
+  });
+
+  it('emite el evento de activación para SUB-9', async () => {
+    const { service, events } = buildService({
+      report: reportFixture({ id: 55 }),
+      subscription: subscriptionFixture(),
+    });
+
+    await service.verifyPayment(55, 42);
+
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    const [name, payload] = events.emit.mock.calls[0] as [string, unknown];
+    expect(name).toBe(SUBSCRIPTION_ACTIVATED);
+    expect(payload).toMatchObject({
+      companyId: 7,
+      paymentReportId: 55,
+      planId: 'full',
+    });
   });
 
   it('no se puede verificar dos veces', async () => {
-    const { service, subscriptions } = buildService({
+    const { service, manager } = buildService({
       report: reportFixture({ status: 'verified' }),
       subscription: subscriptionFixture(),
     });
@@ -193,14 +291,28 @@ describe('verificar un pago', () => {
     await expect(service.verifyPayment(1, 42)).rejects.toBeInstanceOf(
       ConflictException,
     );
-    expect(subscriptions.save).not.toHaveBeenCalled();
+    expect(manager.save).not.toHaveBeenCalled();
+  });
+
+  it('idempotente: si el reporte ya extendió el período, no da otro mes', async () => {
+    const { service, manager, events } = buildService({
+      report: reportFixture(),
+      subscription: subscriptionFixture(),
+      // Ya hay un evento para ese reporte: el avance no debe repetirse.
+      existingEvent: { id: 1, paymentReportId: 1 },
+    });
+
+    await service.verifyPayment(1, 42);
+
+    expect(manager.save).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
   });
 });
 
 describe('rechazar un pago', () => {
   it('NO toca la suscripción', async () => {
     const subscription = subscriptionFixture({ status: 'grace' });
-    const { service, subscriptions } = buildService({
+    const { service, manager, events } = buildService({
       report: reportFixture(),
       subscription,
     });
@@ -214,7 +326,8 @@ describe('rechazar un pago', () => {
     expect(result.status).toBe('rejected');
     expect(result.rejectionReason).toBe('No aparece el pago en la cuenta');
     // Lo único que se guardó fue el reporte: la suscripción quedó como estaba.
-    expect(subscriptions.save).not.toHaveBeenCalled();
+    expect(manager.save).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
     expect(subscription.status).toBe('grace');
     expect(subscription.currentPeriodEnd).toBeNull();
   });
@@ -309,7 +422,7 @@ describe('monto fuera de tolerancia', () => {
       amountUsdMinor: 1500,
       frozenRate: null,
     });
-    const { service, subscriptions } = buildService({
+    const { service, manager } = buildService({
       report: flojo,
       subscription: subscriptionFixture(),
     });
@@ -317,6 +430,6 @@ describe('monto fuera de tolerancia', () => {
     const result = await service.verifyPayment(1, 42);
 
     expect(result.status).toBe('verified');
-    expect(savedSubscription(subscriptions.save).status).toBe('active');
+    expect(savedSubscription(manager.save).status).toBe('active');
   });
 });
