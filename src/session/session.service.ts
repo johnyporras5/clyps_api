@@ -4636,6 +4636,8 @@ export class SessionService {
     const discounts = (payment.discounts ?? []).map((raw) => {
       const d = raw as {
         sessionDetailId?: number;
+        mode?: 'percentage' | 'fixed';
+        value?: number;
         amount?: number;
         absorbedBy?: string;
         reason?: string | null;
@@ -4644,6 +4646,9 @@ export class SessionService {
       return {
         sessionDetailId: d.sessionDetailId ?? null,
         serviceName: svc?.name ?? null,
+        // mode 'percentage' → value en basis points (1000 = 10%).
+        mode: d.mode ?? null,
+        value: d.value != null ? Number(d.value) : null,
         amount: Number(d.amount ?? 0),
         currency: svc?.currency ?? 'USD',
         absorbedBy: d.absorbedBy ?? null,
