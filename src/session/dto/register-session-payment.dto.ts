@@ -10,6 +10,7 @@ import {
   Length,
   MaxLength,
   Min,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -36,6 +37,12 @@ export class SessionPaymentLineDto {
   @IsNumber()
   @Min(0)
   subtotalBs?: number | null;
+
+  // Pago mixto: método de esta parte (efectivo/pago_móvil/…). Opcional.
+  @IsOptional()
+  @IsString()
+  @Length(2, 20)
+  method?: string | null;
 }
 
 export class SessionPaymentTipDto {
@@ -260,4 +267,12 @@ export class ItemDiscountDto {
   @IsString()
   @MaxLength(160)
   reason?: string;
+}
+
+/** Revertir un cobro (motivo obligatorio para auditoría). */
+export class RevertPaymentDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(255)
+  reason: string;
 }

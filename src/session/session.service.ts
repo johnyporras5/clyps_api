@@ -14,6 +14,7 @@ import { Session } from './entities/session.entity';
 import { SessionPayment } from './entities/session-payment.entity';
 import { SessionPaymentLine } from './entities/session-payment-line.entity';
 import { SessionPaymentTip } from './entities/session-payment-tip.entity';
+import { SessionPaymentReversal } from './entities/session-payment-reversal.entity';
 import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
 import { PayrollPeriodService } from '../payroll/payroll-period.service';
 import {
@@ -116,6 +117,8 @@ export class SessionService {
     private sessionPaymentLineRepository: Repository<SessionPaymentLine>,
     @InjectRepository(SessionPaymentTip)
     private sessionPaymentTipRepository: Repository<SessionPaymentTip>,
+    @InjectRepository(SessionPaymentReversal)
+    private sessionPaymentReversalRepository: Repository<SessionPaymentReversal>,
     private fileUploadService: FileUploadService,
     private payrollPeriodService: PayrollPeriodService,
     private payrollEarningsService: PayrollEarningsService,
@@ -4149,6 +4152,7 @@ export class SessionService {
             subtotal: l.subtotal,
             exchangeRate: l.exchangeRate ?? null,
             subtotalBs: l.subtotalBs ?? null,
+            method: l.method ?? null,
           })),
         );
       }
@@ -4320,10 +4324,127 @@ export class SessionService {
           })
           .filter((x): x is NonNullable<typeof x> => x !== null);
 
+        // --- Pago mixto (B): repartir el EFECTIVO 50/50 entre el ejecutor y la
+        // company. La comisión del ejecutor se parte en 2 conceptos (efectivo +
+        // Bs); la porción de la company se guarda en el cobro para el reporte.
+        const r2 = (n: number) => parseFloat(n.toFixed(2));
+        let finalAttrItems = attrItems;
+        let companyCashMinor = 0;
+        let companyCashCurrency: string | null = null;
+        const cashLineB = (dto.lines ?? []).find(
+          (l) => l.method === 'cash' && l.currency.toUpperCase() !== 'VES',
+        );
+        const hasRestB = (dto.lines ?? []).some((l) => l.method !== 'cash');
+        if (cashLineB && hasRestB && Number(cashLineB.subtotal) > 0) {
+          companyCashCurrency = cashLineB.currency.toUpperCase();
+          const activeForCash = sessionDetails.filter(
+            (d) => d.status !== 5 && !d.isCourtesy && Number(d.cost || 0) > 0,
+          );
+          const totalCostMajor = activeForCash.reduce(
+            (s, d) => s + Number(d.cost || 0),
+            0,
+          );
+          const totalCashMajor = Number(cashLineB.subtotal);
+          // Comisiones por detalle (moneda del servicio, mayor) y comisión del
+          // EJECUTOR, para repartir el efectivo sobre la parte REAL de cada uno
+          // (no la base), ya con descuento y roles aplicados.
+          const allCommMajorByDetail = new Map<number, number>();
+          const execCommMajorByDetail = new Map<number, number>();
+          for (const it of attrItems) {
+            if (it.kind !== 'commission' || it.sourceType !== 'appointment') {
+              continue;
+            }
+            const major = it.amountItemMinor / 100;
+            allCommMajorByDetail.set(
+              it.sourceId,
+              (allCommMajorByDetail.get(it.sourceId) ?? 0) + major,
+            );
+            if (
+              detailById.get(it.sourceId)?.companyWorkerId ===
+              it.companyWorkerId
+            ) {
+              execCommMajorByDetail.set(
+                it.sourceId,
+                (execCommMajorByDetail.get(it.sourceId) ?? 0) + major,
+              );
+            }
+          }
+          // detailId → efectivo (minor, moneda del servicio) que le toca al barbero.
+          const barberCashByDetail = new Map<number, number>();
+          for (const d of activeForCash) {
+            const detailCost = Number(d.cost || 0);
+            const cashForDetail =
+              totalCostMajor > 0
+                ? r2(totalCashMajor * (detailCost / totalCostMajor))
+                : 0;
+            if (cashForDetail <= 0) continue;
+            // Parte REAL del ejecutor = su comisión; de la company = total_company
+            // final (costo − TODAS las comisiones − parte del descuento del salón).
+            const barberActual = execCommMajorByDetail.get(d.id) ?? 0;
+            const allComm = allCommMajorByDetail.get(d.id) ?? 0;
+            const disc = discountByDetail.get(d.id);
+            let companyActual: number;
+            if (disc) {
+              const companyBase =
+                disc.absorbedBy === 'worker'
+                  ? detailCost
+                  : r2(detailCost - disc.amountMajor);
+              companyActual = Math.max(0, r2(companyBase - allComm));
+            } else {
+              const extra = r2(allComm - barberActual); // comisiones NO ejecutor
+              companyActual = Math.max(
+                0,
+                r2(detailCost - Number(d.totalWorker || 0) - extra),
+              );
+            }
+            // 50/50 con tope (Opción 1) sobre la parte real: la company hasta su
+            // parte; el sobrante al barbero; y si el barbero se pasa, vuelve a la
+            // company.
+            let cCompany = Math.min(cashForDetail / 2, companyActual);
+            let cBarber = r2(cashForDetail - cCompany);
+            if (cBarber > barberActual) {
+              const over = r2(cBarber - barberActual);
+              cBarber = barberActual;
+              cCompany = Math.min(companyActual, r2(cCompany + over));
+            }
+            companyCashMinor += toMinor(r2(cCompany));
+            barberCashByDetail.set(d.id, toMinor(r2(cBarber)));
+          }
+          // Partir la comisión del EJECUTOR (no los roles) de cada detalle.
+          finalAttrItems = attrItems.flatMap((it) => {
+            const execCash =
+              it.kind === 'commission' &&
+              it.sourceType === 'appointment' &&
+              detailById.get(it.sourceId)?.companyWorkerId ===
+                it.companyWorkerId
+                ? (barberCashByDetail.get(it.sourceId) ?? 0)
+                : 0;
+            if (execCash <= 0) return [it];
+            if (execCash >= it.amountItemMinor) {
+              // El efectivo cubre toda su comisión → todo en efectivo.
+              return [{ ...it, keepForeignOverride: true }];
+            }
+            return [
+              {
+                ...it,
+                amountItemMinor: execCash,
+                keepForeignOverride: true,
+                label: `${it.label} (efectivo)`,
+              },
+              {
+                ...it,
+                amountItemMinor: it.amountItemMinor - execCash,
+                keepForeignOverride: false,
+                label: `${it.label} (Bs)`,
+              },
+            ];
+          });
+        }
+
         await this.payrollEarningsService.recordAttributionConcepts(
           adminCompany.id,
           paidAt,
-          attrItems,
+          finalAttrItems,
           dto.method,
           payrollForcedPeriod ?? undefined,
         );
@@ -4334,10 +4455,14 @@ export class SessionService {
           await this.payrollPeriodService.freezeTotals(payrollForcedPeriod.id);
         }
 
-        // Persistir las atribuciones resueltas para poder reconstruir la nómina
-        // si se borra/reactiva (botón "Revertir" + fecha de activación pasada).
+        // Persistir las atribuciones resueltas (ya con el split de efectivo) para
+        // reconstruir la nómina si se borra/reactiva, y la porción de EFECTIVO de
+        // la company (pago mixto) para el reporte "Por compañía".
         await this.sessionPaymentRepository.update(savedPayment.id, {
-          attributions: attrItems,
+          attributions: finalAttrItems,
+          companyCashMinor: companyCashMinor > 0 ? companyCashMinor : null,
+          companyCashCurrency:
+            companyCashMinor > 0 ? companyCashCurrency : null,
         });
 
         // Las COMISIONES (no las propinas) le restan a la parte de la compañía:
@@ -4427,9 +4552,13 @@ export class SessionService {
               next = Math.max(0, Number((current - extra).toFixed(2)));
             }
             if (next !== current) {
-              await this.sessionDetailRepository.update(detailId, {
-                totalCompany: next,
-              });
+              // session_detail tiene PK compuesta (id + service_id +
+              // session_id); hay que actualizar por objeto, no por escalar, o
+              // TypeORM no encuentra la fila y el ajuste se pierde.
+              await this.sessionDetailRepository.update(
+                { id: detailId },
+                { totalCompany: next },
+              );
             }
           }
 
@@ -4577,6 +4706,7 @@ export class SessionService {
           subtotal: l.subtotal,
           exchangeRate: l.exchangeRate ?? null,
           subtotalBs: l.subtotalBs ?? null,
+          method: l.method ?? null,
         })),
         tips: tips.map((t) => ({
           companyWorkerId: t.companyWorkerId,
@@ -4634,6 +4764,8 @@ export class SessionService {
     const discounts = (payment.discounts ?? []).map((raw) => {
       const d = raw as {
         sessionDetailId?: number;
+        mode?: 'percentage' | 'fixed';
+        value?: number;
         amount?: number;
         absorbedBy?: string;
         reason?: string | null;
@@ -4642,6 +4774,9 @@ export class SessionService {
       return {
         sessionDetailId: d.sessionDetailId ?? null,
         serviceName: svc?.name ?? null,
+        // mode 'percentage' → value en basis points (1000 = 10%).
+        mode: d.mode ?? null,
+        value: d.value != null ? Number(d.value) : null,
         amount: Number(d.amount ?? 0),
         currency: svc?.currency ?? 'USD',
         absorbedBy: d.absorbedBy ?? null,
@@ -4672,6 +4807,7 @@ export class SessionService {
         subtotal: Number(l.subtotal),
         exchangeRate: l.exchangeRate != null ? Number(l.exchangeRate) : null,
         subtotalBs: l.subtotalBs != null ? Number(l.subtotalBs) : null,
+        method: l.method ?? null,
       })),
       tips: tips.map((t) => ({
         companyWorkerId: t.companyWorkerId,
@@ -4682,6 +4818,201 @@ export class SessionService {
       concepts,
       discounts,
     };
+  }
+
+  /**
+   * Revierte un cobro: la cita vuelve de Pagada (4) a Completada (3). Deshace la
+   * nómina (borra conceptos si el período está abierto, o crea reversiones si
+   * está cerrado), restaura el stock de productos vendidos, resetea el split del
+   * salón y ARCHIVA todo el cobro (snapshot) para auditoría. Tras esto la cita
+   * se puede volver a cobrar. Solo el admin dueño de la compañía.
+   */
+  async revertPayment(sessionId: number, adminId: number, reason: string) {
+    const cleanReason = (reason || '').trim();
+    if (!cleanReason) {
+      throw new BadRequestException(
+        'El motivo es obligatorio para revertir un cobro',
+      );
+    }
+
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      throw new NotFoundException(`Cita ${sessionId} no encontrada`);
+    }
+    if (session.sessionStatus !== 4) {
+      throw new ConflictException(
+        'Solo se puede revertir una cita que está Pagada',
+      );
+    }
+
+    const payment = await this.sessionPaymentRepository.findOne({
+      where: { sessionId },
+    });
+    if (!payment) {
+      throw new NotFoundException('La cita no tiene un cobro registrado');
+    }
+
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!adminCompany) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+    const details = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    // Propiedad: al menos un trabajador del detalle es de la compañía del admin.
+    let owns = false;
+    for (const d of details) {
+      if (!d.companyWorkerId) continue;
+      const cw = await this.companyWorkerRepository.findOne({
+        where: { id: d.companyWorkerId },
+        relations: ['company'],
+      });
+      if (cw?.company?.id === adminCompany.id) {
+        owns = true;
+        break;
+      }
+    }
+    if (!owns) {
+      throw new ForbiddenException('No tienes permiso sobre esta cita');
+    }
+
+    // Snapshot del cobro (para auditoría): guardamos el MISMO payload que el
+    // recibo (servicios, comisiones/propinas por persona, productos, descuentos,
+    // método, total en Bs, etc.) para poder mostrarlo íntegro en el historial.
+    const fullSession = await this.findOneWithDetails(sessionId);
+    const paymentSnapshot = fullSession?.payment ?? null;
+
+    // 1) Snapshot de la nómina (solo lectura) para el historial. La reversión
+    // real se hace DESPUÉS del commit para no borrar conceptos si la
+    // transacción de la sesión falla (best-effort, como el cobro).
+    const conceptsSnapshot =
+      await this.payrollEarningsService.getAppointmentConceptsSnapshot(
+        sessionId,
+      );
+
+    // 2) Sesión + productos + archivo, atómico.
+    const queryRunner =
+      this.sessionRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      const m = queryRunner.manager;
+
+      // Restaurar stock de productos vendidos en el cobro.
+      const productsSnapshot =
+        await this.sessionProductService.restoreSessionProducts(sessionId, m);
+
+      // Resetear el split del salón (total_company = costo − total_worker, o sea
+      // el split original del ejecutor) y volver el detalle a Completada (3).
+      for (const d of details) {
+        if (d.status === 5) continue; // cancelado: no tocar
+        const resetCompany = Number(
+          (Number(d.cost || 0) - Number(d.totalWorker || 0)).toFixed(2),
+        );
+        await m.update(
+          SessionDetail,
+          { sessionId: d.sessionId, serviceId: d.serviceId },
+          {
+            totalCompany: resetCompany,
+            status: 3,
+          },
+        );
+      }
+
+      // Cita: Pagada (4) → Completada (3).
+      await m.update(Session, sessionId, { sessionStatus: 3 });
+
+      // Borrar el cobro activo (líneas, propinas, pago) → libera UNIQUE(session_id).
+      await m.delete(SessionPaymentLine, { paymentId: payment.id });
+      await m.delete(SessionPaymentTip, { paymentId: payment.id });
+      await m.delete(SessionPayment, { id: payment.id });
+
+      // Archivar el snapshot para auditoría.
+      const reversal = m.create(SessionPaymentReversal, {
+        sessionId,
+        companyId: adminCompany.id,
+        revertedByUserId: adminId,
+        reason: cleanReason,
+        paymentSnapshot,
+        conceptsSnapshot,
+        productsSnapshot,
+      });
+      const saved = await m.save(reversal);
+
+      await queryRunner.commitTransaction();
+      this.logger.log(
+        `↩️ Cobro de la cita ${sessionId} revertido por admin ${adminId} (reversal ${saved.id}). Motivo: ${cleanReason}`,
+      );
+
+      // 3) Deshacer la nómina DESPUÉS del commit (best-effort). Si algo falla
+      // aquí, la cita ya quedó revertida; se registra para revisión manual.
+      try {
+        await this.payrollEarningsService.reverseAppointmentConcepts(
+          sessionId,
+          adminCompany.id,
+          adminId,
+          cleanReason,
+        );
+      } catch (payrollError) {
+        this.logger.error(
+          `Cobro de la cita ${sessionId} revertido, pero falló deshacer la nómina: ${
+            payrollError instanceof Error
+              ? payrollError.message
+              : String(payrollError)
+          }`,
+        );
+      }
+
+      return {
+        id: saved.id,
+        sessionId,
+        revertedAt: saved.createdAt,
+        reason: cleanReason,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /** Historial de reversiones de cobro de una cita (auditoría). */
+  async getPaymentReversals(sessionId: number, adminId: number) {
+    const adminCompany = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!adminCompany) {
+      throw new NotFoundException(
+        'El administrador no tiene una compañía asignada',
+      );
+    }
+    const reversals = await this.sessionPaymentReversalRepository.find({
+      where: { sessionId, companyId: adminCompany.id },
+      order: { id: 'DESC' },
+    });
+    const userIds = [...new Set(reversals.map((r) => r.revertedByUserId))];
+    const users = userIds.length
+      ? await this.userRepository.find({ where: { id: In(userIds) } })
+      : [];
+    const nameById = new Map(users.map((u) => [u.id, u.username || '—']));
+    return reversals.map((r) => ({
+      id: r.id,
+      sessionId: r.sessionId,
+      reason: r.reason,
+      revertedByUserId: r.revertedByUserId,
+      revertedByName: nameById.get(r.revertedByUserId) ?? '—',
+      revertedAt: r.createdAt,
+      payment: r.paymentSnapshot,
+      concepts: r.conceptsSnapshot,
+      products: r.productsSnapshot,
+    }));
   }
 
   /**
