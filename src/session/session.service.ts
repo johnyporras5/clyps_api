@@ -4344,6 +4344,30 @@ export class SessionService {
             0,
           );
           const totalCashMajor = Number(cashLineB.subtotal);
+          // Comisiones por detalle (moneda del servicio, mayor) y comisión del
+          // EJECUTOR, para repartir el efectivo sobre la parte REAL de cada uno
+          // (no la base), ya con descuento y roles aplicados.
+          const allCommMajorByDetail = new Map<number, number>();
+          const execCommMajorByDetail = new Map<number, number>();
+          for (const it of attrItems) {
+            if (it.kind !== 'commission' || it.sourceType !== 'appointment') {
+              continue;
+            }
+            const major = it.amountItemMinor / 100;
+            allCommMajorByDetail.set(
+              it.sourceId,
+              (allCommMajorByDetail.get(it.sourceId) ?? 0) + major,
+            );
+            if (
+              detailById.get(it.sourceId)?.companyWorkerId ===
+              it.companyWorkerId
+            ) {
+              execCommMajorByDetail.set(
+                it.sourceId,
+                (execCommMajorByDetail.get(it.sourceId) ?? 0) + major,
+              );
+            }
+          }
           // detailId → efectivo (minor, moneda del servicio) que le toca al barbero.
           const barberCashByDetail = new Map<number, number>();
           for (const d of activeForCash) {
@@ -4353,16 +4377,34 @@ export class SessionService {
                 ? r2(totalCashMajor * (detailCost / totalCostMajor))
                 : 0;
             if (cashForDetail <= 0) continue;
-            const barberShare = Number(d.totalWorker || 0);
-            const companyShareBase = r2(detailCost - barberShare);
-            // 50/50 con tope (Opción 1): la company hasta su parte; el sobrante
-            // al barbero; y si el barbero se pasa, el sobrante vuelve a la company.
-            let cCompany = Math.min(cashForDetail / 2, companyShareBase);
+            // Parte REAL del ejecutor = su comisión; de la company = total_company
+            // final (costo − TODAS las comisiones − parte del descuento del salón).
+            const barberActual = execCommMajorByDetail.get(d.id) ?? 0;
+            const allComm = allCommMajorByDetail.get(d.id) ?? 0;
+            const disc = discountByDetail.get(d.id);
+            let companyActual: number;
+            if (disc) {
+              const companyBase =
+                disc.absorbedBy === 'worker'
+                  ? detailCost
+                  : r2(detailCost - disc.amountMajor);
+              companyActual = Math.max(0, r2(companyBase - allComm));
+            } else {
+              const extra = r2(allComm - barberActual); // comisiones NO ejecutor
+              companyActual = Math.max(
+                0,
+                r2(detailCost - Number(d.totalWorker || 0) - extra),
+              );
+            }
+            // 50/50 con tope (Opción 1) sobre la parte real: la company hasta su
+            // parte; el sobrante al barbero; y si el barbero se pasa, vuelve a la
+            // company.
+            let cCompany = Math.min(cashForDetail / 2, companyActual);
             let cBarber = r2(cashForDetail - cCompany);
-            if (cBarber > barberShare) {
-              const over = r2(cBarber - barberShare);
-              cBarber = barberShare;
-              cCompany = Math.min(companyShareBase, r2(cCompany + over));
+            if (cBarber > barberActual) {
+              const over = r2(cBarber - barberActual);
+              cBarber = barberActual;
+              cCompany = Math.min(companyActual, r2(cCompany + over));
             }
             companyCashMinor += toMinor(r2(cCompany));
             barberCashByDetail.set(d.id, toMinor(r2(cBarber)));
