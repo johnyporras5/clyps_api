@@ -13,6 +13,7 @@ import type {
   ConfirmServicesDto,
 } from './dto/confirm-services.dto';
 import type { ConfirmServicesResponse } from './dto/confirm-services-response.dto';
+import type { DefaultCategoryResponse } from './dto/default-category-response.dto';
 
 /** Índice en memoria de lo que la company ya tiene, para el get-or-create. */
 interface ExistingIndex<T> {
@@ -30,6 +31,13 @@ interface ExistingIndex<T> {
  * Todo ocurre en una sola transacción: o se crea la confirmación completa, o no
  * se crea nada.
  */
+/**
+ * Categoría que se crea al arrancar "desde cero". El dueño la puede renombrar
+ * o borrar: no tiene `source_template_key`, así que es indistinguible de una
+ * que hubiera creado a mano.
+ */
+export const DEFAULT_SCRATCH_CATEGORY_NAME = 'Servicio General';
+
 @Injectable()
 export class OnboardingServicesService {
   private readonly logger = new Logger(OnboardingServicesService.name);
@@ -231,6 +239,56 @@ export class OnboardingServicesService {
     const saved = await em.save(Service, created);
     this.track(index, dto.templateKey, saved);
     return { created: true };
+  }
+
+  /**
+   * ONB-3 ("desde cero"): el dueño rechaza las plantillas y va a cargar sus
+   * servicios a mano, pero el formulario de servicios exige elegir una
+   * categoría. Si la company todavía no tiene NINGUNA se le deja creada
+   * `Servicio General` para que no quede sin salida.
+   *
+   * Idempotente: si ya existe cualquier categoría (aunque sea inactiva, o con
+   * otro nombre) no se crea nada y se devuelve esa. El `FOR UPDATE` bloquea el
+   * hueco del índice por company_id: dos clicks simultáneos no crean dos.
+   *
+   * NO toca el paso `confirm_services`: una categoría vacía no es un servicio,
+   * y ese paso se mide sobre los servicios activos del tenant.
+   */
+  async ensureDefaultCategory(
+    companyId: number,
+  ): Promise<DefaultCategoryResponse> {
+    return this.dataSource.transaction(async (em) => {
+      const existing = await em
+        .getRepository(ServiceCategory)
+        .createQueryBuilder('category')
+        .setLock('pessimistic_write')
+        .where('category.company_id = :companyId', { companyId })
+        .orderBy('category.id', 'ASC')
+        .limit(1)
+        .getOne();
+
+      if (existing) {
+        return {
+          categoryId: existing.id,
+          name: existing.name,
+          created: false,
+        };
+      }
+
+      const created = em.create(ServiceCategory, {
+        companyId,
+        name: DEFAULT_SCRATCH_CATEGORY_NAME,
+        description: null as unknown as string,
+        isActive: true,
+        sourceTemplateKey: null,
+      });
+      const saved = await em.save(ServiceCategory, created);
+      this.logger.log(
+        `Onboarding desde cero: categoria por defecto ${saved.id} creada para company ${companyId}`,
+      );
+
+      return { categoryId: saved.id, name: saved.name, created: true };
+    });
   }
 
   /** POST /onboarding/services/confirm */
