@@ -1048,6 +1048,9 @@ export class ReportsService {
       companyAmount: string | null;
       billedAmount: string | null;
       rate: string | null;
+      paymentId: number;
+      companyCashMinor: string | null;
+      companyCashCurrency: string | null;
     }> = await this.sessionDetailRepository.query(
       `SELECT sd.service_id AS serviceId,
               svc.name AS serviceName,
@@ -1055,7 +1058,10 @@ export class ReportsService {
               sp.method AS method,
               sd.total_company AS companyAmount,
               sd.cost AS billedAmount,
-              rate.rate AS rate
+              rate.rate AS rate,
+              sp.id AS paymentId,
+              sp.company_cash_minor AS companyCashMinor,
+              UPPER(sp.company_cash_currency) AS companyCashCurrency
          FROM session_payments sp
          JOIN session_detail sd
            ON sd.session_id = sp.session_id
@@ -1112,12 +1118,30 @@ export class ReportsService {
     }
     const svcMap = new Map<number, SvcAgg>();
 
+    // Pago mixto: la company recibió parte en efectivo. `company_cash_minor` es
+    // por cobro; se reparte entre sus detalles proporcional a su total_company.
+    const paymentTotalCompany = new Map<number, number>();
+    for (const r of rows) {
+      const pid = Number(r.paymentId);
+      paymentTotalCompany.set(
+        pid,
+        (paymentTotalCompany.get(pid) ?? 0) +
+          (parseFloat(r.companyAmount || '0') || 0),
+      );
+    }
+
     for (const r of rows) {
       const amount = parseFloat(r.companyAmount || '0') || 0;
       const cur = (r.svcCurrency || 'USD').toUpperCase();
       const isForeign = cur !== 'VES';
       const isCash = r.method === 'cash';
       const rate = r.rate != null ? parseFloat(r.rate) : null;
+      // Porción de efectivo de la company para ESTE detalle (moneda del servicio).
+      const companyCashMajor =
+        r.companyCashMinor != null
+          ? (parseInt(r.companyCashMinor, 10) || 0) / 100
+          : 0;
+      const companyCashCur = (r.companyCashCurrency || '').toUpperCase();
 
       // Valor nominal por moneda del servicio.
       nominal.set(cur, (nominal.get(cur) ?? 0) + amount);
@@ -1148,13 +1172,32 @@ export class ReportsService {
       svc.companyTotal += amount;
       svc.billedTotal += parseFloat(r.billedAmount || '0') || 0;
 
-      if (isCash && isForeign) {
+      // Parte en EFECTIVO (moneda extranjera) de la company para este detalle:
+      //  - cobro 100% efectivo → todo el monto;
+      //  - pago mixto → la porción proporcional de `company_cash`.
+      let cashPart = 0;
+      if (isForeign && isCash) {
+        cashPart = amount;
+      } else if (isForeign && companyCashMajor > 0 && companyCashCur === cur) {
+        const payTotal = paymentTotalCompany.get(Number(r.paymentId)) ?? 0;
+        cashPart =
+          payTotal > 0
+            ? Math.min(
+                amount,
+                parseFloat((companyCashMajor * (amount / payTotal)).toFixed(2)),
+              )
+            : 0;
+      }
+      const bsPart = parseFloat((amount - cashPart).toFixed(2));
+
+      if (cashPart > 0) {
         // Efectivo en moneda extranjera → se queda en su moneda.
-        cashTotals.set(cur, (cashTotals.get(cur) ?? 0) + amount);
-        svc.cash.set(cur, (svc.cash.get(cur) ?? 0) + amount);
-      } else {
-        // Todo lo demás → Bs a tasa histórica (VES nativo ×1).
-        const bsAmt = isForeign ? (rate != null ? amount * rate : 0) : amount;
+        cashTotals.set(cur, (cashTotals.get(cur) ?? 0) + cashPart);
+        svc.cash.set(cur, (svc.cash.get(cur) ?? 0) + cashPart);
+      }
+      if (bsPart > 0) {
+        // El resto → Bs a tasa histórica (VES nativo ×1).
+        const bsAmt = isForeign ? (rate != null ? bsPart * rate : 0) : bsPart;
         if (isForeign && rate == null) missingRateDetails += 1;
         bsAccumulated += bsAmt;
         svc.bsAccumulated += bsAmt;

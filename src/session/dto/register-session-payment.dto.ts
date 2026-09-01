@@ -37,6 +37,12 @@ export class SessionPaymentLineDto {
   @IsNumber()
   @Min(0)
   subtotalBs?: number | null;
+
+  // Pago mixto: método de esta parte (efectivo/pago_móvil/…). Opcional.
+  @IsOptional()
+  @IsString()
+  @Length(2, 20)
+  method?: string | null;
 }
 
 export class SessionPaymentTipDto {

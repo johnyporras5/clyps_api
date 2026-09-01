@@ -68,6 +68,10 @@ export interface AttributionConceptItem {
   rateBps?: number; // solo si vino por porcentaje (para metadata)
   appointmentId?: number;
   roleLabel?: string; // comisión por rol: etiqueta a mostrar en nómina
+  // Pago mixto (B): fuerza la moneda del concepto sin importar el método.
+  // true → se queda en la moneda del ítem (efectivo $/€); false → se pasa a Bs.
+  // undefined → comportamiento normal (según el método del cobro).
+  keepForeignOverride?: boolean;
 }
 
 // CLYP-362: deducción por descuento absorbido por un trabajador. El monto ya
@@ -273,7 +277,10 @@ export class PayrollEarningsService {
     for (const it of items) {
       const rate = it.exchangeRate ?? (it.currency === 'VES' ? 1 : null);
       if (rate == null || !(it.amountItemMinor > 0)) continue;
-      const keepForeign = isCash && it.currency !== 'VES';
+      // Pago mixto: un ítem puede forzar su moneda (efectivo vs Bs) sin importar
+      // el método; si no, se usa la lógica normal por método.
+      const keepForeign =
+        it.keepForeignOverride ?? (isCash && it.currency !== 'VES');
       const currency = keepForeign ? it.currency : 'VES';
       // amountItemMinor está en minor de la moneda del ítem; a Bs = × tasa (las
       // escalas /100 se cancelan porque la tasa es por unidad entera).

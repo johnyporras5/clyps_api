@@ -4151,6 +4151,7 @@ export class SessionService {
             subtotal: l.subtotal,
             exchangeRate: l.exchangeRate ?? null,
             subtotalBs: l.subtotalBs ?? null,
+            method: l.method ?? null,
           })),
         );
       }
@@ -4322,10 +4323,85 @@ export class SessionService {
           })
           .filter((x): x is NonNullable<typeof x> => x !== null);
 
+        // --- Pago mixto (B): repartir el EFECTIVO 50/50 entre el ejecutor y la
+        // company. La comisión del ejecutor se parte en 2 conceptos (efectivo +
+        // Bs); la porción de la company se guarda en el cobro para el reporte.
+        const r2 = (n: number) => parseFloat(n.toFixed(2));
+        let finalAttrItems = attrItems;
+        let companyCashMinor = 0;
+        let companyCashCurrency: string | null = null;
+        const cashLineB = (dto.lines ?? []).find(
+          (l) => l.method === 'cash' && l.currency.toUpperCase() !== 'VES',
+        );
+        const hasRestB = (dto.lines ?? []).some((l) => l.method !== 'cash');
+        if (cashLineB && hasRestB && Number(cashLineB.subtotal) > 0) {
+          companyCashCurrency = cashLineB.currency.toUpperCase();
+          const activeForCash = sessionDetails.filter(
+            (d) => d.status !== 5 && !d.isCourtesy && Number(d.cost || 0) > 0,
+          );
+          const totalCostMajor = activeForCash.reduce(
+            (s, d) => s + Number(d.cost || 0),
+            0,
+          );
+          const totalCashMajor = Number(cashLineB.subtotal);
+          // detailId → efectivo (minor, moneda del servicio) que le toca al barbero.
+          const barberCashByDetail = new Map<number, number>();
+          for (const d of activeForCash) {
+            const detailCost = Number(d.cost || 0);
+            const cashForDetail =
+              totalCostMajor > 0
+                ? r2(totalCashMajor * (detailCost / totalCostMajor))
+                : 0;
+            if (cashForDetail <= 0) continue;
+            const barberShare = Number(d.totalWorker || 0);
+            const companyShareBase = r2(detailCost - barberShare);
+            // 50/50 con tope (Opción 1): la company hasta su parte; el sobrante
+            // al barbero; y si el barbero se pasa, el sobrante vuelve a la company.
+            let cCompany = Math.min(cashForDetail / 2, companyShareBase);
+            let cBarber = r2(cashForDetail - cCompany);
+            if (cBarber > barberShare) {
+              const over = r2(cBarber - barberShare);
+              cBarber = barberShare;
+              cCompany = Math.min(companyShareBase, r2(cCompany + over));
+            }
+            companyCashMinor += toMinor(r2(cCompany));
+            barberCashByDetail.set(d.id, toMinor(r2(cBarber)));
+          }
+          // Partir la comisión del EJECUTOR (no los roles) de cada detalle.
+          finalAttrItems = attrItems.flatMap((it) => {
+            const execCash =
+              it.kind === 'commission' &&
+              it.sourceType === 'appointment' &&
+              detailById.get(it.sourceId)?.companyWorkerId ===
+                it.companyWorkerId
+                ? (barberCashByDetail.get(it.sourceId) ?? 0)
+                : 0;
+            if (execCash <= 0) return [it];
+            if (execCash >= it.amountItemMinor) {
+              // El efectivo cubre toda su comisión → todo en efectivo.
+              return [{ ...it, keepForeignOverride: true }];
+            }
+            return [
+              {
+                ...it,
+                amountItemMinor: execCash,
+                keepForeignOverride: true,
+                label: `${it.label} (efectivo)`,
+              },
+              {
+                ...it,
+                amountItemMinor: it.amountItemMinor - execCash,
+                keepForeignOverride: false,
+                label: `${it.label} (Bs)`,
+              },
+            ];
+          });
+        }
+
         await this.payrollEarningsService.recordAttributionConcepts(
           adminCompany.id,
           paidAt,
-          attrItems,
+          finalAttrItems,
           dto.method,
           payrollForcedPeriod ?? undefined,
         );
@@ -4336,10 +4412,14 @@ export class SessionService {
           await this.payrollPeriodService.freezeTotals(payrollForcedPeriod.id);
         }
 
-        // Persistir las atribuciones resueltas para poder reconstruir la nómina
-        // si se borra/reactiva (botón "Revertir" + fecha de activación pasada).
+        // Persistir las atribuciones resueltas (ya con el split de efectivo) para
+        // reconstruir la nómina si se borra/reactiva, y la porción de EFECTIVO de
+        // la company (pago mixto) para el reporte "Por compañía".
         await this.sessionPaymentRepository.update(savedPayment.id, {
-          attributions: attrItems,
+          attributions: finalAttrItems,
+          companyCashMinor: companyCashMinor > 0 ? companyCashMinor : null,
+          companyCashCurrency:
+            companyCashMinor > 0 ? companyCashCurrency : null,
         });
 
         // Las COMISIONES (no las propinas) le restan a la parte de la compañía:
@@ -4583,6 +4663,7 @@ export class SessionService {
           subtotal: l.subtotal,
           exchangeRate: l.exchangeRate ?? null,
           subtotalBs: l.subtotalBs ?? null,
+          method: l.method ?? null,
         })),
         tips: tips.map((t) => ({
           companyWorkerId: t.companyWorkerId,
@@ -4683,6 +4764,7 @@ export class SessionService {
         subtotal: Number(l.subtotal),
         exchangeRate: l.exchangeRate != null ? Number(l.exchangeRate) : null,
         subtotalBs: l.subtotalBs != null ? Number(l.subtotalBs) : null,
+        method: l.method ?? null,
       })),
       tips: tips.map((t) => ({
         companyWorkerId: t.companyWorkerId,
