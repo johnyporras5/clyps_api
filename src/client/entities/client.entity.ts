@@ -42,6 +42,9 @@ export class Client {
   @Column({ type: 'json', nullable: true })
   companies: number[];
 
+  @Column({ name: 'inactive_companies', type: 'json', nullable: true })
+  inactiveCompanies: number[];
+
   @Column({ name: 'created_by_company_worker_id', type: 'int', nullable: true })
   createdByCompanyWorkerId: number | null;
 

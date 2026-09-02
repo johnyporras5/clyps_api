@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { ClientFavoriteCompany } from './entities/client-favorite-company.entity';
 import { Client } from '../client/entities/client.entity';
+import { normalizeCompanyIds } from '../client/client-activation.util';
 import { Company } from '../company/entities/company.entity';
 import { paginate, PaginationResult } from '../common/utils/pagination.util';
 import { FileUploadService } from '../common/services/file_upload.service';
@@ -32,6 +33,14 @@ export class ClientFavoriteCompanyService {
       throw new NotFoundException(`No client found for user id ${userId}`);
     }
     return client.id;
+  }
+
+  private async getHiddenCompanyIds(userId: number): Promise<number[]> {
+    const client = await this.clientRepository.findOne({
+      where: { userId },
+      select: ['id', 'inactiveCompanies'],
+    });
+    return client ? normalizeCompanyIds(client.inactiveCompanies) : [];
   }
 
   async addFavorite(
@@ -76,6 +85,7 @@ export class ClientFavoriteCompanyService {
     limit = 10,
   ): Promise<PaginationResult<ClientFavoriteCompany>> {
     const clientId = await this.getClientIdByUserId(userId);
+    const hiddenCompanyIds = await this.getHiddenCompanyIds(userId);
 
     const queryBuilder: SelectQueryBuilder<ClientFavoriteCompany> =
       this.favoriteRepository
@@ -83,6 +93,15 @@ export class ClientFavoriteCompanyService {
         .leftJoinAndSelect('favorite.company', 'company')
         .where('favorite.clientId = :clientId', { clientId })
         .orderBy('favorite.createdAt', 'DESC');
+
+    if (hiddenCompanyIds.length) {
+      queryBuilder.andWhere(
+        'favorite.companyId NOT IN (:...hiddenCompanyIds)',
+        {
+          hiddenCompanyIds,
+        },
+      );
+    }
 
     const result = await paginate<ClientFavoriteCompany>(queryBuilder, {
       page,

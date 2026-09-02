@@ -81,6 +81,7 @@ export class CompanyController {
       date: query.date,
       slots: query.slot,
       viewerType: req.user.userType,
+      viewerId: req.user.sub,
     });
   }
 

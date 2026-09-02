@@ -6,7 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
 import { User } from '../user/entities/user.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -22,6 +22,7 @@ import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { normalizeCompanyCalendarDetail } from '../common/utils/company-calendar.util';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Client } from '../client/entities/client.entity';
+import { normalizeCompanyIds } from '../client/client-activation.util';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
 import { Service } from 'src/service/entities/service.entity';
@@ -1311,14 +1312,29 @@ export class CompanyService {
       date?: string;
       slots?: string[];
       viewerType?: string;
+      viewerId?: number;
     },
   ): Promise<PaginationResult<any>> {
-    const { page, limit, city, categoryIds, date, slots, viewerType } = options;
+    const {
+      page,
+      limit,
+      city,
+      categoryIds,
+      date,
+      slots,
+      viewerType,
+      viewerId,
+    } = options;
     const hasFilters =
       !!city ||
       (categoryIds?.length ?? 0) > 0 ||
       !!date ||
       (slots?.length ?? 0) > 0;
+
+    const hiddenCompanyIds = await this.resolveCompaniesHiddenForClient(
+      viewerType,
+      viewerId,
+    );
 
     let companies: Company[];
     let total: number;
@@ -1327,6 +1343,7 @@ export class CompanyService {
       // Comportamiento original: paginación directa sin filtros.
       const skip = (page - 1) * limit;
       [companies, total] = await this.companyRepository.findAndCount({
+        where: hiddenCompanyIds.length ? { id: Not(In(hiddenCompanyIds)) } : {},
         take: limit,
         skip,
         order: { id: 'ASC' },
@@ -1339,6 +1356,7 @@ export class CompanyService {
         categoryIds,
         date,
         slots,
+        excludeCompanyIds: hiddenCompanyIds,
       });
       total = matched.length;
       const skip = (page - 1) * limit;
@@ -1354,6 +1372,20 @@ export class CompanyService {
     );
   }
 
+  private async resolveCompaniesHiddenForClient(
+    viewerType?: string,
+    viewerId?: number,
+  ): Promise<number[]> {
+    if (viewerType !== 'cli' || !viewerId) return [];
+
+    const client = await this.clientRepository.findOne({
+      where: { userId: viewerId },
+      select: ['id', 'inactiveCompanies'],
+    });
+
+    return client ? normalizeCompanyIds(client.inactiveCompanies) : [];
+  }
+
   /**
    * Aplica los filtros del directorio (ciudad, categoría y disponibilidad por
    * fecha + franjas) y devuelve las compañías coincidentes (sin paginar).
@@ -1364,8 +1396,15 @@ export class CompanyService {
     categoryIds?: number[];
     date?: string;
     slots?: string[];
+    excludeCompanyIds?: number[];
   }): Promise<Company[]> {
     const query = this.companyRepository.createQueryBuilder('company');
+
+    if (filter.excludeCompanyIds?.length) {
+      query.andWhere('company.id NOT IN (:...excludeCompanyIds)', {
+        excludeCompanyIds: filter.excludeCompanyIds,
+      });
+    }
 
     if (filter.categoryIds?.length) {
       // categoryId son ids del catálogo global `site_category`. Resolvemos a

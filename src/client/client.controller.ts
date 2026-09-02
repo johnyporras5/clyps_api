@@ -149,6 +149,7 @@ export class ClientController {
       photoFile,
       req.user.sub,
       req.user?.userType,
+      req.user?.companyId ?? null,
     );
   }
 

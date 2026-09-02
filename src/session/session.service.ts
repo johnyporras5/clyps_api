@@ -34,6 +34,7 @@ import {
 import type { AuthenticatedUser } from '../auth/types/authenticated-request';
 import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { Client } from '../client/entities/client.entity';
+import { isClientInactiveForCompany } from '../client/client-activation.util';
 import { Company } from '../company/entities/company.entity';
 import { User } from '../user/entities/user.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
@@ -7729,6 +7730,15 @@ export class SessionService {
     }
 
     const companyName = company.name;
+
+    // 3.b El salón puede haber desactivado a este cliente. Ocultarlo del
+    // directorio no alcanza: el cliente puede llegar igual por favoritos, por
+    // una pantalla que ya tenía abierta o por un link directo. Se corta aquí.
+    if (isClientInactiveForCompany(client, companyId)) {
+      throw new ForbiddenException(
+        `${companyName} no está disponible para agendar en este momento.`,
+      );
+    }
 
     // 4. Verificar si el cliente ya tiene una cita en la misma fecha y hora
     if (createSessionWithDetailDto.sessionDatetime) {

@@ -738,14 +738,12 @@ export class AuthService {
         console.log('Cambio detectado en foto (archivo)');
       }
 
-      if (
-        registerDto.isActive !== undefined &&
-        registerDto.isActive !== client.isActive
-      ) {
-        updateData.isActive = registerDto.isActive;
-        hasChanges = true;
-        console.log('Cambio detectado en estado activo');
-      }
+      // `isActive` NO se toca aquí: activar/desactivar es por salón y este
+      // registro no sabe desde qué compañía se está haciendo. El estado se
+      // cambia por PUT /clients/admin/:clientId/update, que sí lo acota al
+      // salón de quien edita (ver client-activation.util.ts). Escribir la
+      // bandera global desde aquí dejaría al cliente inactivo también en los
+      // otros salones a los que va.
 
       if (
         registerDto.location !== undefined &&
