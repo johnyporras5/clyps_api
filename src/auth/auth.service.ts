@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   HttpStatus,
 } from '@nestjs/common';
@@ -35,6 +36,7 @@ import {
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { RegisterAdminDto } from './dto/register-admin.dto';
+import { AssignClientEmailDto } from './dto/assign-client-email.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
 import { SiteCategoryService } from '../site_category/site_category.service';
@@ -894,6 +896,124 @@ export class AuthService {
   private buildClientDisplayName(client: Client | null, user: User): string {
     const fullName = `${client?.name ?? ''} ${client?.lastName ?? ''}`.trim();
     return fullName || user.username;
+  }
+
+  /**
+   * Le da acceso a un cliente que el salón dio de alta SIN correo.
+   *
+   * Esas fichas quedan a medias: sirven para agendar, pero su dueño no puede
+   * entrar. La contraseña se generó al vuelo y no se envió a ningún sitio (no
+   * había dirección), y el login exige el correo verificado. Lo único que les
+   * falta es tener `user.email`.
+   *
+   * El salón aporta la dirección; nada más. La contraseña la recibe el cliente
+   * en ese buzón y la cambia cuando quiera, así que quien demuestra ser el
+   * dueño de la cuenta es él y no el negocio. Por eso esto NO es una edición
+   * del perfil (que sigue cerrada al salón) sino una invitación.
+   *
+   * Reenviar es válido mientras el cliente no haya verificado: se le manda una
+   * contraseña nueva al mismo correo. Una cuenta ya verificada no se toca desde
+   * aquí bajo ningún concepto.
+   */
+  /**
+   * Compañía del admin autenticado. Solo el dueño tiene una fila en `company`
+   * con su `userId`, así que esto ya restringe la operación a administradores.
+   */
+  private async resolveCallerCompany(
+    caller: AuthenticatedUser,
+  ): Promise<Company> {
+    const company = await this.companyRepository.findOne({
+      where: { userId: caller.sub },
+    });
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+    return company;
+  }
+
+  async assignClientEmail(
+    clientId: number,
+    dto: AssignClientEmailDto,
+    caller: AuthenticatedUser,
+  ): Promise<{ message: string; clientId: number; credentialsSent: boolean }> {
+    const company = await this.resolveCallerCompany(caller);
+
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+      relations: ['user'],
+    });
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    const clientCompanies = Array.isArray(client.companies)
+      ? client.companies.map((id) => Number(id))
+      : [];
+    if (!clientCompanies.includes(company.id)) {
+      throw new ForbiddenException('Este cliente no pertenece a tu negocio');
+    }
+
+    const user = client.user;
+    if (!user) {
+      throw new NotFoundException('El cliente no tiene una cuenta asociada');
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const hasEmail = !isEmailUnavailable(user.email);
+
+    if (hasEmail) {
+      // Con correo ya puesto esto sería editar datos del cliente, que es suyo.
+      // La única excepción es reenviar el acceso al MISMO correo mientras no lo
+      // haya verificado: esa cuenta todavía no la ha usado nadie.
+      const sameEmail = user.email.trim().toLowerCase() === email;
+      if (!sameEmail || user.emailVerified === 1) {
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'CLIENT_ALREADY_HAS_EMAIL',
+          message:
+            'Este cliente ya tiene un correo. Solo él puede cambiarlo desde su perfil.',
+        });
+      }
+    }
+
+    // El correo identifica la cuenta: si ya es de otra persona, mandarle ahí las
+    // credenciales sería entregarle a un tercero el acceso a esta ficha.
+    const taken = await this.userRepository.findOne({ where: { email } });
+    if (taken && taken.id !== user.id) {
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'Conflict',
+        code: 'EMAIL_ALREADY_REGISTERED',
+        message:
+          'Ese correo ya tiene una cuenta en CLYPS. Si es la misma persona, agrégala a tu negocio desde el alta de clientes.',
+      });
+    }
+
+    const generatedPassword = this.generateRandomPassword(8);
+    user.email = email;
+    user.password = await bcrypt.hash(generatedPassword, 10);
+    // Sigue sin verificar: lo verifica él al usar el código que le llega.
+    user.emailVerified = 0;
+    await this.userRepository.save(user);
+
+    client.email = email;
+    await this.clientRepository.save(client);
+
+    const credentialsSent = await this.emailService.sendClientCredentials(
+      email,
+      user.username,
+      generatedPassword,
+    );
+    await this.trySendVerificationCode(email);
+
+    return {
+      message: credentialsSent
+        ? `Se enviaron las credenciales a ${email}.`
+        : `El correo quedó guardado, pero no se pudo enviar el mensaje a ${email}. Vuelve a intentarlo.`,
+      clientId: client.id,
+      credentialsSent,
+    };
   }
 
   async registerClientByAdmin(
