@@ -27,26 +27,22 @@ export class RolesGuard implements CanActivate {
 
     if (!hasRole) {
       // Obtener el nombre del rol requerido para el mensaje personalizado
+      // En plural desde el catálogo: antes se formaba pegándole una "s" al
+      // singular y salía "Solo administradors pueden acceder a este recurso".
       const roleNames = {
-        adm: 'administrador',
-        wrk: 'trabajador',
-        cli: 'cliente',
-        padm: 'administrador de la plataforma',
+        adm: 'administradores',
+        wrk: 'trabajadores',
+        cli: 'clientes',
+        padm: 'administradores de la plataforma',
       };
 
       const requiredRoleNames = requiredRoles.map(
         (role) => roleNames[role] || role,
       );
 
-      if (requiredRoleNames.length === 1) {
-        throw new ForbiddenException(
-          `Solo ${requiredRoleNames[0]}s pueden acceder a este recurso`,
-        );
-      } else {
-        throw new ForbiddenException(
-          `Solo ${requiredRoleNames.join(' o ')} pueden acceder a este recurso`,
-        );
-      }
+      throw new ForbiddenException(
+        `Solo ${requiredRoleNames.join(' o ')} pueden acceder a este recurso`,
+      );
     }
 
     return true;
