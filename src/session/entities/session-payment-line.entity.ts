@@ -31,4 +31,9 @@ export class SessionPaymentLine {
     nullable: true,
   })
   subtotalBs: number | null;
+
+  // Pago mixto: método de ESTA parte (p. ej. 'cash' en $, 'transfer' en Bs).
+  // null en cobros de método único (se usa session_payments.method).
+  @Column({ name: 'method', type: 'varchar', length: 20, nullable: true })
+  method: string | null;
 }

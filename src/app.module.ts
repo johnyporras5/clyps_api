@@ -29,9 +29,12 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { NotificationModule } from './notification/notification.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { DirectSaleModule } from './direct_sale/direct-sale.module';
+import { StandingCommissionModule } from './standing_commission/standing-commission.module';
 import { CashCategoryModule } from './cash_category/cash-category.module';
+import { CashTransactionModule } from './cash_transaction/cash-transaction.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.module';
+import { SubscriptionModule } from './subscription/subscription.module';
 
 @Module({
   imports: [
@@ -129,11 +132,14 @@ import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.mo
     SessionModule,
     PayrollModule,
     DirectSaleModule,
+    StandingCommissionModule,
     CashCategoryModule,
+    CashTransactionModule,
     RealtimeModule,
     NotificationModule,
     OnboardingModule,
     OnboardingRescueModule,
+    SubscriptionModule,
   ],
   controllers: [AppController],
   providers: [

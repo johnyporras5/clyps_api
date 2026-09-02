@@ -1,8 +1,10 @@
 import {
   IsBoolean,
   IsDateString,
+  IsEnum,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -10,6 +12,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { Currency } from '../../common/enum/currency.enum';
 import {
   CASH_TRANSACTION_KINDS,
   CASH_PAYMENT_METHODS,
@@ -36,12 +39,26 @@ export class CreateCashTransactionDto {
   @IsPositive()
   categoryId: number;
 
-  // Céntimos de Bs, SIEMPRE positivo: un gasto se manda con kind='expense', no
-  // con monto negativo. Entero, porque la unidad mínima no se fracciona.
+  // Céntimos de `currency`, SIEMPRE positivo: un gasto se manda con
+  // kind='expense', no con monto negativo. Entero, porque la unidad mínima no se
+  // fracciona.
   @Type(() => Number)
   @IsInt()
   @IsPositive()
   amountMinor: number;
+
+  // Moneda del movimiento. Si se omite, Bs.
+  @IsOptional()
+  @IsEnum(Currency)
+  currency?: Currency;
+
+  // Tasa histórica (Bs por 1 unidad de `currency`). Obligatoria si la moneda no
+  // es Bs; el servicio la exige y con ella calcula el equivalente en Bs.
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  exchangeRate?: number;
 
   // Fecha contable YYYY-MM-DD.
   @IsDateString()

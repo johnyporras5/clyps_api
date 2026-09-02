@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Get,
   Param,
+  ParseIntPipe,
   Query,
   UseGuards,
   Req,
@@ -22,6 +23,9 @@ import type { AuthenticatedRequest } from './types/authenticated-request';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
 import { RegisterClientDto } from './dto/register-client.dto';
 import { RegisterClientByAdminDto } from './dto/register-client-by-admin.dto';
+import { AssignClientEmailDto } from './dto/assign-client-email.dto';
+import { Roles } from './decorators/roles.decorator';
+import { RolesGuard } from './guards/roles.guard';
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -146,6 +150,24 @@ export class AuthController {
       req.user,
       pictureFile,
     );
+  }
+
+  /**
+   * Le da acceso a un cliente que se dio de alta sin correo: guarda la
+   * dirección y le envía sus credenciales para que entre por su cuenta.
+   * Reenviable mientras no haya verificado. Solo el admin del negocio.
+   * POST /auth/clients/:clientId/email
+   */
+  @Post('clients/:clientId/email')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('adm')
+  @HttpCode(HttpStatus.OK)
+  async assignClientEmail(
+    @Param('clientId', ParseIntPipe) clientId: number,
+    @Body() dto: AssignClientEmailDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.authService.assignClientEmail(clientId, dto, req.user);
   }
 
   // ==================== ENDPOINTS DE LOGIN ====================

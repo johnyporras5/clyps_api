@@ -22,7 +22,10 @@ import { GetSessionsDto } from './dto/get-sessions.dto';
 import { UpdateSessionDto } from './dto/update-session-and-detail.dto';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { UpdateSessionStatusDto } from './dto/update-session-status.dto';
-import { RegisterSessionPaymentDto } from './dto/register-session-payment.dto';
+import {
+  RegisterSessionPaymentDto,
+  RevertPaymentDto,
+} from './dto/register-session-payment.dto';
 import { UpdateDetailStatusDto } from './dto/update-detail-status.dto';
 import { AddExtraServicesDto } from './dto/add-extra-services.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
@@ -235,6 +238,35 @@ export class SessionController {
     await this.realtimeEmitter.emitStatusChanged(+id);
     await this.notificationEmitter.notifyStatusChanged(+id, adminId);
     return result;
+  }
+
+  // Revertir un cobro: la cita vuelve de Pagada a Completada (audita todo). Admin.
+  @Post(':id/payment/revert')
+  @Roles('adm')
+  async revertPayment(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: RevertPaymentDto,
+  ) {
+    const adminId = req.user.sub;
+    const result = await this.sessionService.revertPayment(
+      +id,
+      adminId,
+      dto.reason,
+    );
+    await this.realtimeEmitter.emitStatusChanged(+id);
+    await this.notificationEmitter.notifyStatusChanged(+id, adminId);
+    return result;
+  }
+
+  // Historial de reversiones de cobro de una cita (auditoría). Admin.
+  @Get(':id/payment/reversals')
+  @Roles('adm')
+  async getPaymentReversals(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.sessionService.getPaymentReversals(+id, req.user.sub);
   }
 
   /**

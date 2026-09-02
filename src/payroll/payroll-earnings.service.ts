@@ -67,6 +67,25 @@ export interface AttributionConceptItem {
   label: string;
   rateBps?: number; // solo si vino por porcentaje (para metadata)
   appointmentId?: number;
+  roleLabel?: string; // comisión por rol: etiqueta a mostrar en nómina
+  // Pago mixto (B): fuerza la moneda del concepto sin importar el método.
+  // true → se queda en la moneda del ítem (efectivo $/€); false → se pasa a Bs.
+  // undefined → comportamiento normal (según el método del cobro).
+  keepForeignOverride?: boolean;
+}
+
+// CLYP-362: deducción por descuento absorbido por un trabajador. El monto ya
+// viene topado (nunca deja la comisión del trabajador negativa).
+export interface DiscountConceptItem {
+  companyWorkerId: number;
+  amountItemMinor: number; // monto POSITIVO del descuento en `currency`
+  currency: string;
+  exchangeRate: number | null; // Bs por 1 unidad (VES = 1)
+  sourceType: ConceptSource; // 'appointment' (source_id = session_detail.id)
+  sourceId: number;
+  label: string;
+  reason?: string | null;
+  appointmentId?: number;
 }
 
 @Injectable()
@@ -258,7 +277,10 @@ export class PayrollEarningsService {
     for (const it of items) {
       const rate = it.exchangeRate ?? (it.currency === 'VES' ? 1 : null);
       if (rate == null || !(it.amountItemMinor > 0)) continue;
-      const keepForeign = isCash && it.currency !== 'VES';
+      // Pago mixto: un ítem puede forzar su moneda (efectivo vs Bs) sin importar
+      // el método; si no, se usa la lógica normal por método.
+      const keepForeign =
+        it.keepForeignOverride ?? (isCash && it.currency !== 'VES');
       const currency = keepForeign ? it.currency : 'VES';
       // amountItemMinor está en minor de la moneda del ítem; a Bs = × tasa (las
       // escalas /100 se cancelan porque la tasa es por unidad entera).
@@ -296,6 +318,8 @@ export class PayrollEarningsService {
               ...(it.appointmentId != null
                 ? { appointmentId: it.appointmentId }
                 : {}),
+              // Rol de la comisión (por rol): se muestra en nómina.
+              ...(it.roleLabel ? { roleLabel: it.roleLabel } : {}),
             },
           }),
         );
@@ -309,6 +333,79 @@ export class PayrollEarningsService {
       this.logger.log(
         `${created} concepto(s) de atribución en el periodo ${period.id} (company ${companyId})`,
       );
+    }
+    return created;
+  }
+
+  /**
+   * CLYP-362: registra DESCUENTOS absorbidos por un trabajador. Un concepto
+   * negativo (type 'discount', sign −1) por ítem, con el monto ya topado para
+   * que la comisión del trabajador no quede negativa. Mismo motor/tasa que las
+   * atribuciones; idempotente por (source, type, trabajador).
+   */
+  async recordDiscountConcepts(
+    companyId: number,
+    whenPaid: Date,
+    items: DiscountConceptItem[],
+    method?: string | null,
+    forcedPeriod?: { id: number },
+  ): Promise<number> {
+    if (items.length === 0) return 0;
+    if (await this.isBeforeActivation(companyId, whenPaid)) return 0;
+
+    const period =
+      forcedPeriod ??
+      (await this.periodService.ensureOpenPeriod(companyId, whenPaid));
+    const isCash = method === 'cash' || method === 'efectivo';
+    let created = 0;
+
+    for (const it of items) {
+      const rate = it.exchangeRate ?? (it.currency === 'VES' ? 1 : null);
+      if (rate == null || !(it.amountItemMinor > 0)) continue;
+      const keepForeign = isCash && it.currency !== 'VES';
+      const currency = keepForeign ? it.currency : 'VES';
+      const amountBsMinor = Math.round(it.amountItemMinor * rate);
+      const amountMinor = keepForeign ? it.amountItemMinor : amountBsMinor;
+      if (amountMinor <= 0) continue;
+
+      const detail = await this.ensurePeriodDetail(
+        companyId,
+        period.id,
+        it.companyWorkerId,
+      );
+
+      try {
+        await this.conceptRepo.save(
+          this.conceptRepo.create({
+            companyId,
+            periodDetailId: detail.id,
+            type: 'discount',
+            sign: -1,
+            label: it.label,
+            amountMinor,
+            currency,
+            amountBsMinor,
+            occurredAt: whenPaid,
+            sourceType: it.sourceType,
+            sourceId: it.sourceId,
+            metadata: {
+              discount: true,
+              absorbedBy: 'worker',
+              reason: it.reason ?? null,
+              currency: it.currency,
+              nativeAmountMinor: it.amountItemMinor,
+              exchangeRate: rate,
+              method: method ?? null,
+              ...(it.appointmentId != null
+                ? { appointmentId: it.appointmentId }
+                : {}),
+            },
+          }),
+        );
+        created++;
+      } catch (e) {
+        if (!isDupEntry(e)) throw e; // idempotente
+      }
     }
     return created;
   }
@@ -1293,6 +1390,9 @@ export class PayrollEarningsService {
         sourceType: c.sourceType,
         sourceId: c.sourceId,
         metadata: c.metadata,
+        // Rol de la comisión (por rol), para mostrar en nómina. null si no aplica.
+        roleLabel:
+          (c.metadata as { roleLabel?: string } | null)?.roleLabel ?? null,
         // Código visual de la cita origen (para mostrar "cita CIT-…").
         appointmentPublicCode: apptPublicCodeOf(c),
         // Fecha/hora real del cobro (usar esta para mostrar, no createdAt).
@@ -1590,6 +1690,116 @@ export class PayrollEarningsService {
       `Concepto ${original.id} revertido con el ajuste ${reversal.id} en el periodo ${period.id}`,
     );
     return reversal;
+  }
+
+  /**
+   * Revierte TODOS los conceptos de nómina de un cobro (cita). Si el concepto
+   * está en un período ABIERTO se borra (limpio); si el período está
+   * cerrado/pagado se crea un ajuste de reversión (no se toca el período
+   * cerrado). Devuelve el snapshot de los conceptos para auditoría y recongela
+   * los períodos afectados. Idempotente por naturaleza (si no hay conceptos, no
+   * hace nada).
+   */
+  /** Lee (solo lectura) los conceptos de nómina de un cobro para auditoría. */
+  private async queryAppointmentConcepts(sessionId: number): Promise<
+    Array<{
+      id: number;
+      type: string;
+      sign: number;
+      label: string;
+      amountMinor: string | number;
+      currency: string;
+      amountBsMinor: string | number | null;
+      metadata: unknown;
+      periodId: number;
+      periodStatus: string;
+      companyWorkerId: number;
+    }>
+  > {
+    return this.conceptRepo.query(
+      `SELECT pc.id, pc.type, pc.sign, pc.label, pc.amount_minor AS amountMinor,
+              pc.currency, pc.amount_bs_minor AS amountBsMinor, pc.metadata,
+              p.id AS periodId, p.status AS periodStatus,
+              pd.company_worker_id AS companyWorkerId
+         FROM payroll_concept pc
+         JOIN period_detail pd ON pd.id = pc.period_detail_id
+         JOIN payroll_period p ON p.id = pd.period_id
+        WHERE JSON_EXTRACT(pc.metadata, '$.appointmentId') = ?`,
+      [sessionId],
+    );
+  }
+
+  /** Snapshot (solo lectura) de los conceptos de un cobro, para el historial. */
+  async getAppointmentConceptsSnapshot(sessionId: number): Promise<unknown[]> {
+    const rows = await this.queryAppointmentConcepts(sessionId);
+    return rows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      sign: Number(r.sign),
+      label: r.label,
+      amountMinor: Number(r.amountMinor),
+      currency: r.currency,
+      amountBsMinor: r.amountBsMinor != null ? Number(r.amountBsMinor) : null,
+      companyWorkerId: r.companyWorkerId,
+      periodId: Number(r.periodId),
+      periodStatus: r.periodStatus,
+      metadata: r.metadata,
+    }));
+  }
+
+  async reverseAppointmentConcepts(
+    sessionId: number,
+    companyId: number,
+    adminId: number,
+    reason: string,
+  ): Promise<unknown[]> {
+    const rows = await this.queryAppointmentConcepts(sessionId);
+
+    const snapshot = rows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      sign: Number(r.sign),
+      label: r.label,
+      amountMinor: Number(r.amountMinor),
+      currency: r.currency,
+      amountBsMinor: r.amountBsMinor != null ? Number(r.amountBsMinor) : null,
+      companyWorkerId: r.companyWorkerId,
+      periodId: Number(r.periodId),
+      periodStatus: r.periodStatus,
+      metadata: r.metadata,
+    }));
+
+    const periodsToFreeze = new Set<number>();
+    let hadReversal = false;
+    for (const r of rows) {
+      if (r.periodStatus === 'open') {
+        await this.conceptRepo.delete(r.id);
+        periodsToFreeze.add(Number(r.periodId));
+      } else {
+        // Período cerrado/pagado → ajuste de reversión en el período abierto.
+        await this.reverseConcept(r.id, reason, adminId);
+        hadReversal = true;
+      }
+    }
+    if (hadReversal) {
+      const open = await this.periodService.ensureOpenPeriod(
+        companyId,
+        new Date(),
+      );
+      periodsToFreeze.add(open.id);
+    }
+    for (const pid of periodsToFreeze) {
+      try {
+        await this.periodService.freezeTotals(pid);
+      } catch (e) {
+        this.logger.warn(
+          `No se pudo recongelar el periodo ${pid} al revertir: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+    return snapshot;
   }
 
   /**

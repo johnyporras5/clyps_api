@@ -40,3 +40,25 @@ export function assertPositiveAmountMinor(amountMinor: number): void {
     );
   }
 }
+
+/**
+ * Equivalente en céntimos de Bs de un monto en su moneda.
+ *
+ * En Bs no hay conversión ni tasa que guardar. En cualquier otra moneda la tasa
+ * es obligatoria: sin ella no hay forma de sumar el movimiento en un reporte, y
+ * adivinarla con la tasa de hoy falsearía el histórico.
+ *
+ * La tasa es "Bs por 1 unidad de la moneda", igual que en los cobros y en
+ * nómina. Céntimos de USD × (Bs por USD) = céntimos de Bs.
+ */
+export function toBsMinor(
+  currency: string,
+  amountMinor: number,
+  exchangeRate: number | null | undefined,
+): number {
+  if (currency === 'VES') return amountMinor;
+  if (exchangeRate == null || !(exchangeRate > 0)) {
+    throw new Error(`Falta la tasa de cambio para la moneda ${currency}.`);
+  }
+  return Math.round(amountMinor * exchangeRate);
+}

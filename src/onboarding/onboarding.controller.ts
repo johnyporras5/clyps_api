@@ -26,6 +26,7 @@ import type { OnboardingTemplatesResponse } from './dto/onboarding-templates-res
 import { OnboardingServicesService } from './onboarding-services.service';
 import { ConfirmServicesDto } from './dto/confirm-services.dto';
 import type { ConfirmServicesResponse } from './dto/confirm-services-response.dto';
+import type { DefaultCategoryResponse } from './dto/default-category-response.dto';
 
 /**
  * ONB-1 / ONB-2 / ONB-3. Todo va scoped a la company del token (el admin dueño).
@@ -62,6 +63,24 @@ export class OnboardingController {
       req.user.sub,
     );
     return this.servicesService.confirmServices(companyId, dto);
+  }
+
+  /**
+   * ONB-3: el dueño elige "desde cero" (sin plantillas). Deja lista una
+   * categoría para que pueda crear su primer servicio, porque el formulario de
+   * servicios exige elegir una y una company recién creada no tiene ninguna.
+   * Idempotente: si ya tiene categorías no crea nada.
+   */
+  @Roles('adm')
+  @Post('services/scratch')
+  @HttpCode(HttpStatus.OK)
+  async startFromScratch(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<DefaultCategoryResponse> {
+    const companyId = await this.onboardingService.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.servicesService.ensureDefaultCategory(companyId);
   }
 
   /**

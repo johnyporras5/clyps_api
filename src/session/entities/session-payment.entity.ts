@@ -118,6 +118,25 @@ export class SessionPayment {
   @Column({ name: 'attributions', type: 'json', nullable: true })
   attributions: unknown[] | null;
 
+  // CLYP-362: descuentos aplicados por servicio (auditoría). Cada uno:
+  // { sessionDetailId, mode, value, absorbedBy, workerId, reason, appliedByUserId }.
+  @Column({ name: 'discounts', type: 'json', nullable: true })
+  discounts: unknown[] | null;
+
+  // Pago mixto: porción del EFECTIVO que le tocó a la company (50/50 con el
+  // ejecutor). En unidades mínimas de `companyCashCurrency` (moneda del servicio).
+  // La porción del barbero queda en sus conceptos de nómina.
+  @Column({ name: 'company_cash_minor', type: 'bigint', nullable: true })
+  companyCashMinor: number | null;
+
+  @Column({
+    name: 'company_cash_currency',
+    type: 'varchar',
+    length: 10,
+    nullable: true,
+  })
+  companyCashCurrency: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

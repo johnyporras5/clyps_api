@@ -42,6 +42,13 @@ export class Client {
   @Column({ type: 'json', nullable: true })
   companies: number[];
 
+  // Compañías donde este cliente está desactivado. La desactivación es POR
+  // salón: que uno lo desactive no lo toca en los demás salones donde está.
+  // `is_active` queda solo para el cliente sin salón y para el borrado suave.
+  // Ver client-activation.util.ts.
+  @Column({ name: 'inactive_companies', type: 'json', nullable: true })
+  inactiveCompanies: number[];
+
   @Column({ name: 'created_by_company_worker_id', type: 'int', nullable: true })
   createdByCompanyWorkerId: number | null;
 
