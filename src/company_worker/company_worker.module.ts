@@ -11,6 +11,7 @@ import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { CommonModule } from 'src/common/common.module';
 import { OnboardingModule } from 'src/onboarding/onboarding.module';
+import { SubscriptionModule } from '../subscription/subscription.module';
 
 @Module({
   imports: [
@@ -25,6 +26,8 @@ import { OnboardingModule } from 'src/onboarding/onboarding.module';
     ]),
     CommonModule,
     OnboardingModule,
+    // SUB-5: el tope de trabajadores lo decide el plan.
+    SubscriptionModule,
   ],
   controllers: [CompanyWorkerController],
   providers: [CompanyWorkerService],

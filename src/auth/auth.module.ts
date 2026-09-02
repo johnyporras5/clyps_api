@@ -21,6 +21,7 @@ import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.
 import { CompanyCategoryModule } from 'src/company_category/company_category.module';
 import { SiteCategoryModule } from 'src/site_category/site_category.module';
 import { OnboardingModule } from 'src/onboarding/onboarding.module';
+import { SubscriptionModule } from '../subscription/subscription.module';
 import { Service } from 'src/service/entities/service.entity';
 import { ServiceCategory } from 'src/service_category/entities/service_category.entity';
 import { CompanyCategory } from 'src/company_category/entities/company_category.entity';
@@ -76,6 +77,8 @@ import { RealtimeModule } from '../realtime/realtime.module';
     CompanyCategoryModule,
     SiteCategoryModule,
     OnboardingModule,
+    // SUB-5: el alta de trabajador respeta el tope del plan.
+    SubscriptionModule,
     // forwardRef: RealtimeModule importa AuthModule (Gateway usa AuthService).
     forwardRef(() => RealtimeModule),
   ],
