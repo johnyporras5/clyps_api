@@ -22,7 +22,7 @@ import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { normalizeCompanyCalendarDetail } from '../common/utils/company-calendar.util';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Client } from '../client/entities/client.entity';
-import { normalizeCompanyIds } from '../client/client-activation.util';
+import { resolveVisibleCompanyIds } from '../client/client-activation.util';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
 import { Service } from 'src/service/entities/service.entity';
@@ -1331,10 +1331,17 @@ export class CompanyService {
       !!date ||
       (slots?.length ?? 0) > 0;
 
-    const hiddenCompanyIds = await this.resolveCompaniesHiddenForClient(
+    // Al cliente solo se le muestran SUS negocios (los que lo registraron o
+    // donde tiene citas). `null` = sin restricción (admin/worker ven todo).
+    const visibleCompanyIds = await this.resolveVisibleCompanyIdsForClient(
       viewerType,
       viewerId,
     );
+
+    // Cliente sin ningún negocio todavía: la búsqueda le sale vacía.
+    if (visibleCompanyIds !== null && visibleCompanyIds.length === 0) {
+      return this.buildDirectoryDetails([], page, limit, 0, viewerType);
+    }
 
     let companies: Company[];
     let total: number;
@@ -1343,7 +1350,7 @@ export class CompanyService {
       // Comportamiento original: paginación directa sin filtros.
       const skip = (page - 1) * limit;
       [companies, total] = await this.companyRepository.findAndCount({
-        where: hiddenCompanyIds.length ? { id: Not(In(hiddenCompanyIds)) } : {},
+        where: visibleCompanyIds ? { id: In(visibleCompanyIds) } : {},
         take: limit,
         skip,
         order: { id: 'ASC' },
@@ -1356,7 +1363,7 @@ export class CompanyService {
         categoryIds,
         date,
         slots,
-        excludeCompanyIds: hiddenCompanyIds,
+        restrictToCompanyIds: visibleCompanyIds,
       });
       total = matched.length;
       const skip = (page - 1) * limit;
@@ -1372,18 +1379,32 @@ export class CompanyService {
     );
   }
 
-  private async resolveCompaniesHiddenForClient(
+  /**
+   * Negocios que este cliente puede ver en la búsqueda: los suyos, es decir
+   * `client.companies` — el negocio que lo registró y aquellos donde tiene
+   * citas (esa columna se llena en ambos casos). No es un directorio público:
+   * un negocio con el que no tiene relación no le aparece.
+   *
+   * Se descuentan además los salones que lo desactivaron
+   * (`client.inactive_companies`): la desactivación es por salón, así que solo
+   * se le oculta a él y no toca a los demás clientes ni a sus otros salones.
+   *
+   * Devuelve `null` para admin/worker: a ellos el directorio no se les recorta.
+   * Devuelve `[]` para el cliente que todavía no tiene ningún negocio.
+   */
+  private async resolveVisibleCompanyIdsForClient(
     viewerType?: string,
     viewerId?: number,
-  ): Promise<number[]> {
-    if (viewerType !== 'cli' || !viewerId) return [];
+  ): Promise<number[] | null> {
+    if (viewerType !== 'cli' || !viewerId) return null;
 
     const client = await this.clientRepository.findOne({
       where: { userId: viewerId },
-      select: ['id', 'inactiveCompanies'],
+      select: ['id', 'companies', 'inactiveCompanies'],
     });
+    if (!client) return [];
 
-    return client ? normalizeCompanyIds(client.inactiveCompanies) : [];
+    return resolveVisibleCompanyIds(client);
   }
 
   /**
@@ -1396,13 +1417,15 @@ export class CompanyService {
     categoryIds?: number[];
     date?: string;
     slots?: string[];
-    excludeCompanyIds?: number[];
+    restrictToCompanyIds?: number[] | null;
   }): Promise<Company[]> {
     const query = this.companyRepository.createQueryBuilder('company');
 
-    if (filter.excludeCompanyIds?.length) {
-      query.andWhere('company.id NOT IN (:...excludeCompanyIds)', {
-        excludeCompanyIds: filter.excludeCompanyIds,
+    // Cliente: solo sus negocios. `null`/undefined = sin restricción.
+    if (filter.restrictToCompanyIds) {
+      if (filter.restrictToCompanyIds.length === 0) return [];
+      query.andWhere('company.id IN (:...restrictToCompanyIds)', {
+        restrictToCompanyIds: filter.restrictToCompanyIds,
       });
     }
 

@@ -868,6 +868,8 @@ export class ClientService {
       saved.user = userWithoutPassword;
     }
 
+    // Se devuelve el estado tal como lo ve ESTE salón, que es lo que el front
+    // vuelve a pintar en el toggle después de guardar.
     return {
       ...saved,
       isActive: resolveIsActiveForCompanies(saved, targetCompanyIds),
@@ -875,6 +877,13 @@ export class ClientService {
     } as any;
   }
 
+  /**
+   * Compañías a las que aplica el toggle "Activo" de un admin/worker: las que
+   * comparte con el cliente. Si el token trae la compañía activa y es una de
+   * ellas se usa solo esa (caso normal, un salón); si no, se aplican todas las
+   * compartidas. Vacío = el cliente no está en ningún salón del que edita, así
+   * que el estado se guarda en la bandera global.
+   */
   private async resolveActivationTargets(
     client: Client,
     callerId: number,

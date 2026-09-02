@@ -149,6 +149,7 @@ export class ClientController {
       photoFile,
       req.user.sub,
       req.user?.userType,
+      // Compañía activa del token: acota el toggle "Activo" a ESE salón.
       req.user?.companyId ?? null,
     );
   }

@@ -35,6 +35,7 @@ export class ClientFavoriteCompanyService {
     return client.id;
   }
 
+  /** Salones que desactivaron a este cliente: no se le listan como favoritos. */
   private async getHiddenCompanyIds(userId: number): Promise<number[]> {
     const client = await this.clientRepository.findOne({
       where: { userId },
@@ -94,6 +95,7 @@ export class ClientFavoriteCompanyService {
         .where('favorite.clientId = :clientId', { clientId })
         .orderBy('favorite.createdAt', 'DESC');
 
+    // Se excluyen antes de paginar para que meta.total siga cuadrando.
     if (hiddenCompanyIds.length) {
       queryBuilder.andWhere(
         'favorite.companyId NOT IN (:...hiddenCompanyIds)',

@@ -1,5 +1,16 @@
 /**
  * Activación de clientes POR COMPAÑÍA.
+ *
+ * `client.is_active` es una sola columna global, así que cuando un salón
+ * desactivaba a un cliente lo dejaba inactivo también en los demás salones
+ * donde ese mismo cliente estaba. Para que la desactivación sea de cada
+ * compañía se usa `client.inactive_companies`: la lista de compañías donde ESE
+ * cliente está desactivado.
+ *
+ * La columna global se conserva para los casos que no tienen compañía de por
+ * medio (clientes creados por un usuario que aún no pertenecen a ningún salón)
+ * y para el borrado suave (`temporarily_deleted` / `permanently_deleted`), que
+ * sigue funcionando como hasta ahora.
  */
 
 /** Lo mínimo que hace falta de un cliente para resolver su estado. */
@@ -20,6 +31,21 @@ export function normalizeCompanyIds(value: unknown): number[] {
       value.map((id) => Number(id)).filter((id) => Number.isFinite(id)),
     ),
   ];
+}
+
+/**
+ * Negocios que este cliente ve: los suyos (`companies`, que se llena cuando un
+ * negocio lo registra y cuando agenda una cita) menos los salones que lo
+ * desactivaron. Es la MISMA regla en la búsqueda y en las ofertas: para él solo
+ * existen los negocios con los que tiene relación.
+ */
+export function resolveVisibleCompanyIds(
+  client: ClientActivationState,
+): number[] {
+  const inactive = normalizeCompanyIds(client.inactiveCompanies);
+  return normalizeCompanyIds(client.companies).filter(
+    (id) => !inactive.includes(id),
+  );
 }
 
 /** ¿Este cliente está desactivado en esta compañía en concreto? */
