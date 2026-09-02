@@ -7,9 +7,10 @@ import {
   IsEmail,
   IsNumber,
   IsIn,
+  IsBoolean,
   ValidateIf,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 /**
  * El email se considera "no disponible" cuando no se envía, viene vacío o el
@@ -71,4 +72,17 @@ export class RegisterClientByAdminDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  /**
+   * El cliente ya existe en CLYPS y el admin confirmó que quiere agregarlo a su
+   * negocio. Sin esto, un alta que cae sobre un cliente existente responde 409
+   * con `CLIENT_EXISTS_CONFIRM_LINK` en vez de vincularlo en silencio: el admin
+   * debe saber que está agregando a alguien que ya existía, no creándolo.
+   *
+   * Llega por form-data, así que puede venir como el texto "true".
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  confirmLink?: boolean;
 }

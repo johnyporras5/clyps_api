@@ -886,6 +886,16 @@ export class AuthService {
     return { companyId: cw.companyId, companyWorkerId: cw.id };
   }
 
+  /**
+   * Nombre con el que se le muestra al admin un cliente que ya existe, para que
+   * pueda reconocerlo antes de agregarlo. Si el perfil todavía no tiene nombre
+   * cargado se cae al username, que siempre está.
+   */
+  private buildClientDisplayName(client: Client | null, user: User): string {
+    const fullName = `${client?.name ?? ''} ${client?.lastName ?? ''}`.trim();
+    return fullName || user.username;
+  }
+
   async registerClientByAdmin(
     registerDto: RegisterClientByAdminDto,
     caller: AuthenticatedUser,
@@ -893,6 +903,7 @@ export class AuthService {
   ): Promise<{
     message: string;
     user: Partial<User>;
+    clientId: number;
   }> {
     let company: Company;
     let createdByCompanyWorkerId: number | null = null;
@@ -947,31 +958,40 @@ export class AuthService {
     let isExistingUser = false;
     let generatedPassword: string | undefined;
 
-    if (existingUserByEmail) {
-      if (existingUserByEmail.userType !== 'cli') {
-        throw new ConflictException({
-          statusCode: HttpStatus.CONFLICT,
-          error: 'Conflict',
-          code: 'EMAIL_REGISTERED_DIFFERENT_ROLE',
-          message:
-            'El email ya está registrado con un rol diferente (no cliente).',
+    // Si el correo no identifica a nadie, el `username` todavía puede estar
+    // apuntando a un cliente que ya existe: es el caso del admin que da de alta
+    // a alguien que ya está en CLYPS y no sabe con qué correo se registró.
+    // Antes eso moría en un 409 seco; ahora sirve para reconocerlo y ofrecer
+    // vincularlo a su negocio.
+    const existingUserByUsername = existingUserByEmail
+      ? null
+      : await this.userRepository.findOne({
+          where: { username: registerDto.username },
         });
+    const existingUser = existingUserByEmail ?? existingUserByUsername;
+
+    if (existingUser) {
+      if (existingUser.userType !== 'cli') {
+        throw new ConflictException(
+          existingUserByEmail
+            ? {
+                statusCode: HttpStatus.CONFLICT,
+                error: 'Conflict',
+                code: 'EMAIL_REGISTERED_DIFFERENT_ROLE',
+                message:
+                  'El email ya está registrado con un rol diferente (no cliente).',
+              }
+            : {
+                statusCode: HttpStatus.CONFLICT,
+                error: 'Conflict',
+                code: 'USERNAME_TAKEN',
+                message: 'El nombre de usuario ya está en uso.',
+              },
+        );
       }
-      user = existingUserByEmail;
+      user = existingUser;
       isExistingUser = true;
     } else {
-      const existingByUsername = await this.userRepository.findOne({
-        where: { username: registerDto.username },
-      });
-      if (existingByUsername) {
-        throw new ConflictException({
-          statusCode: HttpStatus.CONFLICT,
-          error: 'Conflict',
-          code: 'USERNAME_TAKEN',
-          message: 'El nombre de usuario ya está en uso.',
-        });
-      }
-
       generatedPassword = this.generateRandomPassword(8);
       const hashedPassword = await bcrypt.hash(generatedPassword, 10);
 
@@ -1014,7 +1034,24 @@ export class AuthService {
           statusCode: HttpStatus.CONFLICT,
           error: 'Conflict',
           code: 'CLIENT_ALREADY_IN_COMPANY',
+          clientId: client.id,
           message: `El cliente ya estaba registrado y vinculado a la compañía '${company.name}'.`,
+        });
+      }
+
+      // Vincular a alguien que ya existe no es lo mismo que crearlo: el admin
+      // confirma primero, viendo de quién se trata. El front reintenta la
+      // misma petición con `confirmLink` y ahí sí se hace la asociación.
+      if (!registerDto.confirmLink) {
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'CLIENT_EXISTS_CONFIRM_LINK',
+          clientId: client.id,
+          clientName: this.buildClientDisplayName(client, user),
+          clientUsername: user.username,
+          companyName: company.name,
+          message: `${this.buildClientDisplayName(client, user)} ya está registrado en CLYPS. ¿Quieres agregarlo a ${company.name}?`,
         });
       }
 
@@ -1028,6 +1065,21 @@ export class AuthService {
         ...(shouldSetCreator ? { createdByCompanyWorkerId } : {}),
       });
     } else {
+      // Cuenta que ya existía pero sin perfil de cliente: se le completa aquí.
+      // Sigue siendo alguien que ya estaba en CLYPS, así que también se confirma.
+      if (isExistingUser && !registerDto.confirmLink) {
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'CLIENT_EXISTS_CONFIRM_LINK',
+          clientId: null,
+          clientName: this.buildClientDisplayName(null, user),
+          clientUsername: user.username,
+          companyName: company.name,
+          message: `${user.username} ya está registrado en CLYPS. ¿Quieres agregarlo a ${company.name}?`,
+        });
+      }
+
       // No existe perfil de cliente: procesamos la foto (si la hay) y lo creamos.
       let pictureFileName: string | undefined;
       if (pictureFile) {
@@ -1083,7 +1135,9 @@ export class AuthService {
 
     // No se retorna `generatedPassword`: la contraseña en texto plano no debe
     // salir en la respuesta. Cuando hay email, se envía por correo.
-    return { message, user: userWithoutPassword };
+    // `clientId` va para que el front pueda llevar al admin a la ficha del
+    // cliente recién creado o vinculado.
+    return { message, user: userWithoutPassword, clientId: client.id };
   }
 
   // ==================== MÉTODOS DE LOGIN ====================
