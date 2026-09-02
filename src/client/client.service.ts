@@ -773,64 +773,42 @@ export class ClientService {
       throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
     }
 
-    if (photoFile) {
-      try {
-        const photoInfo = await this.fileUploadService.saveFile(
-          photoFile,
-          this.CLIENT_PHOTO_FOLDER,
-          'client',
-          client.userId,
-        );
-
-        if (client.picture) {
-          await this.fileUploadService.deleteFile(
-            this.CLIENT_PHOTO_FOLDER,
-            client.picture,
-          );
-        }
-
-        updateClientDto.picture = photoInfo.fileName;
-      } catch (error) {
-        this.logger.error('Error al guardar la foto del cliente:', error);
-        throw new BadRequestException('Error al guardar la foto de perfil');
-      }
-    }
-
-    // Actualizar username en la entidad User si se proporcionó
-    if (updateClientDto.username !== undefined && client.user) {
-      await this.userRepository.update(client.user.id, {
-        username: updateClientDto.username,
-      });
-      client.user.username = updateClientDto.username;
-    }
-
-    this.normalizeBirthdate(updateClientDto);
-
-    // `isActive` no entra por aquí: se aplica por compañía más abajo.
-    const allowedFields = [
+    // Los datos personales del cliente (nombre, correo, teléfono, fecha, ciudad
+    // y foto) son SUYOS: los edita él desde su perfil. El salón no los toca,
+    // aunque haya sido quien lo dio de alta. Lo que sí maneja desde aquí es lo
+    // que es de la relación: el alias con el que lo ve en su negocio (endpoint
+    // aparte) y si puede agendarle o no.
+    //
+    // Los campos personales que lleguen se ignoran en vez de rechazarse: el
+    // front y el backend no se despliegan a la vez, y una app vieja que todavía
+    // los mande debe poder seguir usando el toggle. La respuesta devuelve el
+    // cliente sin cambios, así que nadie ve un dato guardado que no se guardó.
+    const ignoredPersonalFields = [
       'name',
       'lastName',
       'email',
       'phone',
       'birthDate',
+      'birthdate',
       'location',
       'picture',
-    ];
-    const updates: Partial<Client> = {};
+      'username',
+    ].filter((field) => updateClientDto[field] !== undefined);
 
-    Object.keys(updateClientDto).forEach((key) => {
-      if (!allowedFields.includes(key) || updateClientDto[key] === undefined)
-        return;
+    if (ignoredPersonalFields.length > 0 || photoFile) {
+      this.logger.warn(
+        `Edición de datos personales ignorada para el cliente ${clientId}: ${[
+          ...ignoredPersonalFields,
+          ...(photoFile ? ['photo'] : []),
+        ].join(', ')}`,
+      );
+    }
 
-      let value = updateClientDto[key];
-      if (key === 'birthDate' && typeof value === 'string')
-        value = new Date(value);
-
-      updates[key] = value;
-    });
-
-    Object.assign(client, updates);
-
+    // Activar/desactivar es POR SALÓN. Se aplica sobre las compañías que quien
+    // edita comparte con el cliente, así el mismo cliente puede seguir activo
+    // en los otros salones a los que va. Solo cuando no hay compañía de por
+    // medio (cliente propio que aún no está en ningún salón) se usa la bandera
+    // global `is_active`.
     const targetCompanyIds = callerId
       ? await this.resolveActivationTargets(
           client,
