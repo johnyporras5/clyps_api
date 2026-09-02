@@ -6,7 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
 import { User } from '../user/entities/user.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -22,6 +22,7 @@ import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { normalizeCompanyCalendarDetail } from '../common/utils/company-calendar.util';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Client } from '../client/entities/client.entity';
+import { resolveVisibleCompanyIds } from '../client/client-activation.util';
 import { CalendarCompany } from 'src/calendar_company/entities/calendar-company.entity';
 import { GetCompaniesFilterDto } from './dto/get-companies-filter.dto';
 import { Service } from 'src/service/entities/service.entity';
@@ -1311,14 +1312,36 @@ export class CompanyService {
       date?: string;
       slots?: string[];
       viewerType?: string;
+      viewerId?: number;
     },
   ): Promise<PaginationResult<any>> {
-    const { page, limit, city, categoryIds, date, slots, viewerType } = options;
+    const {
+      page,
+      limit,
+      city,
+      categoryIds,
+      date,
+      slots,
+      viewerType,
+      viewerId,
+    } = options;
     const hasFilters =
       !!city ||
       (categoryIds?.length ?? 0) > 0 ||
       !!date ||
       (slots?.length ?? 0) > 0;
+
+    // Al cliente solo se le muestran SUS negocios (los que lo registraron o
+    // donde tiene citas). `null` = sin restricción (admin/worker ven todo).
+    const visibleCompanyIds = await this.resolveVisibleCompanyIdsForClient(
+      viewerType,
+      viewerId,
+    );
+
+    // Cliente sin ningún negocio todavía: la búsqueda le sale vacía.
+    if (visibleCompanyIds !== null && visibleCompanyIds.length === 0) {
+      return this.buildDirectoryDetails([], page, limit, 0, viewerType);
+    }
 
     let companies: Company[];
     let total: number;
@@ -1327,6 +1350,7 @@ export class CompanyService {
       // Comportamiento original: paginación directa sin filtros.
       const skip = (page - 1) * limit;
       [companies, total] = await this.companyRepository.findAndCount({
+        where: visibleCompanyIds ? { id: In(visibleCompanyIds) } : {},
         take: limit,
         skip,
         order: { id: 'ASC' },
@@ -1339,6 +1363,7 @@ export class CompanyService {
         categoryIds,
         date,
         slots,
+        restrictToCompanyIds: visibleCompanyIds,
       });
       total = matched.length;
       const skip = (page - 1) * limit;
@@ -1355,6 +1380,34 @@ export class CompanyService {
   }
 
   /**
+   * Negocios que este cliente puede ver en la búsqueda: los suyos, es decir
+   * `client.companies` — el negocio que lo registró y aquellos donde tiene
+   * citas (esa columna se llena en ambos casos). No es un directorio público:
+   * un negocio con el que no tiene relación no le aparece.
+   *
+   * Se descuentan además los salones que lo desactivaron
+   * (`client.inactive_companies`): la desactivación es por salón, así que solo
+   * se le oculta a él y no toca a los demás clientes ni a sus otros salones.
+   *
+   * Devuelve `null` para admin/worker: a ellos el directorio no se les recorta.
+   * Devuelve `[]` para el cliente que todavía no tiene ningún negocio.
+   */
+  private async resolveVisibleCompanyIdsForClient(
+    viewerType?: string,
+    viewerId?: number,
+  ): Promise<number[] | null> {
+    if (viewerType !== 'cli' || !viewerId) return null;
+
+    const client = await this.clientRepository.findOne({
+      where: { userId: viewerId },
+      select: ['id', 'companies', 'inactiveCompanies'],
+    });
+    if (!client) return [];
+
+    return resolveVisibleCompanyIds(client);
+  }
+
+  /**
    * Aplica los filtros del directorio (ciudad, categoría y disponibilidad por
    * fecha + franjas) y devuelve las compañías coincidentes (sin paginar).
    * AND entre los filtros; OR entre categorías y entre franjas.
@@ -1364,8 +1417,17 @@ export class CompanyService {
     categoryIds?: number[];
     date?: string;
     slots?: string[];
+    restrictToCompanyIds?: number[] | null;
   }): Promise<Company[]> {
     const query = this.companyRepository.createQueryBuilder('company');
+
+    // Cliente: solo sus negocios. `null`/undefined = sin restricción.
+    if (filter.restrictToCompanyIds) {
+      if (filter.restrictToCompanyIds.length === 0) return [];
+      query.andWhere('company.id IN (:...restrictToCompanyIds)', {
+        restrictToCompanyIds: filter.restrictToCompanyIds,
+      });
+    }
 
     if (filter.categoryIds?.length) {
       // categoryId son ids del catálogo global `site_category`. Resolvemos a

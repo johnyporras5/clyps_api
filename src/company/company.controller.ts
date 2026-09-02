@@ -81,6 +81,8 @@ export class CompanyController {
       date: query.date,
       slots: query.slot,
       viewerType: req.user.userType,
+      // Para recortarle al cliente el directorio a sus propios negocios.
+      viewerId: req.user.sub,
     });
   }
 

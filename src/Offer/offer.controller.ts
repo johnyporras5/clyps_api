@@ -87,14 +87,15 @@ export class OfferController {
   }
 
   /**
-   * Obtener todas las ofertas de todas las compañías
+   * Ofertas disponibles. Admin y worker las ven todas; al cliente se le
+   * muestran solo las de los negocios con los que tiene relación.
    * GET /offers/all
    */
   @Get('all')
   @Roles('adm', 'wrk', 'cli')
   @HttpCode(HttpStatus.OK)
-  async findAll() {
-    return this.offerService.findAll();
+  async findAll(@Req() req: AuthenticatedRequest) {
+    return this.offerService.findAll(req.user.userType, req.user.sub);
   }
 
   /**

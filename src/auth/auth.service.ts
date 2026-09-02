@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   HttpStatus,
 } from '@nestjs/common';
@@ -35,6 +36,7 @@ import {
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { RegisterAdminDto } from './dto/register-admin.dto';
+import { AssignClientEmailDto } from './dto/assign-client-email.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
 import { SiteCategoryService } from '../site_category/site_category.service';
@@ -738,14 +740,12 @@ export class AuthService {
         console.log('Cambio detectado en foto (archivo)');
       }
 
-      if (
-        registerDto.isActive !== undefined &&
-        registerDto.isActive !== client.isActive
-      ) {
-        updateData.isActive = registerDto.isActive;
-        hasChanges = true;
-        console.log('Cambio detectado en estado activo');
-      }
+      // `isActive` NO se toca aquí: activar/desactivar es por salón y este
+      // registro no sabe desde qué compañía se está haciendo. El estado se
+      // cambia por PUT /clients/admin/:clientId/update, que sí lo acota al
+      // salón de quien edita (ver client-activation.util.ts). Escribir la
+      // bandera global desde aquí dejaría al cliente inactivo también en los
+      // otros salones a los que va.
 
       if (
         registerDto.location !== undefined &&
@@ -888,6 +888,134 @@ export class AuthService {
     return { companyId: cw.companyId, companyWorkerId: cw.id };
   }
 
+  /**
+   * Nombre con el que se le muestra al admin un cliente que ya existe, para que
+   * pueda reconocerlo antes de agregarlo. Si el perfil todavía no tiene nombre
+   * cargado se cae al username, que siempre está.
+   */
+  private buildClientDisplayName(client: Client | null, user: User): string {
+    const fullName = `${client?.name ?? ''} ${client?.lastName ?? ''}`.trim();
+    return fullName || user.username;
+  }
+
+  /**
+   * Le da acceso a un cliente que el salón dio de alta SIN correo.
+   *
+   * Esas fichas quedan a medias: sirven para agendar, pero su dueño no puede
+   * entrar. La contraseña se generó al vuelo y no se envió a ningún sitio (no
+   * había dirección), y el login exige el correo verificado. Lo único que les
+   * falta es tener `user.email`.
+   *
+   * El salón aporta la dirección; nada más. La contraseña la recibe el cliente
+   * en ese buzón y la cambia cuando quiera, así que quien demuestra ser el
+   * dueño de la cuenta es él y no el negocio. Por eso esto NO es una edición
+   * del perfil (que sigue cerrada al salón) sino una invitación.
+   *
+   * Reenviar es válido mientras el cliente no haya verificado: se le manda una
+   * contraseña nueva al mismo correo. Una cuenta ya verificada no se toca desde
+   * aquí bajo ningún concepto.
+   */
+  /**
+   * Compañía del admin autenticado. Solo el dueño tiene una fila en `company`
+   * con su `userId`, así que esto ya restringe la operación a administradores.
+   */
+  private async resolveCallerCompany(
+    caller: AuthenticatedUser,
+  ): Promise<Company> {
+    const company = await this.companyRepository.findOne({
+      where: { userId: caller.sub },
+    });
+    if (!company) {
+      throw new NotFoundException('No tienes una compañía asignada');
+    }
+    return company;
+  }
+
+  async assignClientEmail(
+    clientId: number,
+    dto: AssignClientEmailDto,
+    caller: AuthenticatedUser,
+  ): Promise<{ message: string; clientId: number; credentialsSent: boolean }> {
+    const company = await this.resolveCallerCompany(caller);
+
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+      relations: ['user'],
+    });
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    const clientCompanies = Array.isArray(client.companies)
+      ? client.companies.map((id) => Number(id))
+      : [];
+    if (!clientCompanies.includes(company.id)) {
+      throw new ForbiddenException('Este cliente no pertenece a tu negocio');
+    }
+
+    const user = client.user;
+    if (!user) {
+      throw new NotFoundException('El cliente no tiene una cuenta asociada');
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const hasEmail = !isEmailUnavailable(user.email);
+
+    if (hasEmail) {
+      // Con correo ya puesto esto sería editar datos del cliente, que es suyo.
+      // La única excepción es reenviar el acceso al MISMO correo mientras no lo
+      // haya verificado: esa cuenta todavía no la ha usado nadie.
+      const sameEmail = user.email.trim().toLowerCase() === email;
+      if (!sameEmail || user.emailVerified === 1) {
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'CLIENT_ALREADY_HAS_EMAIL',
+          message:
+            'Este cliente ya tiene un correo. Solo él puede cambiarlo desde su perfil.',
+        });
+      }
+    }
+
+    // El correo identifica la cuenta: si ya es de otra persona, mandarle ahí las
+    // credenciales sería entregarle a un tercero el acceso a esta ficha.
+    const taken = await this.userRepository.findOne({ where: { email } });
+    if (taken && taken.id !== user.id) {
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'Conflict',
+        code: 'EMAIL_ALREADY_REGISTERED',
+        message:
+          'Ese correo ya tiene una cuenta en CLYPS. Si es la misma persona, agrégala a tu negocio desde el alta de clientes.',
+      });
+    }
+
+    const generatedPassword = this.generateRandomPassword(8);
+    user.email = email;
+    user.password = await bcrypt.hash(generatedPassword, 10);
+    // Sigue sin verificar: lo verifica él al usar el código que le llega.
+    user.emailVerified = 0;
+    await this.userRepository.save(user);
+
+    client.email = email;
+    await this.clientRepository.save(client);
+
+    const credentialsSent = await this.emailService.sendClientCredentials(
+      email,
+      user.username,
+      generatedPassword,
+    );
+    await this.trySendVerificationCode(email);
+
+    return {
+      message: credentialsSent
+        ? `Se enviaron las credenciales a ${email}.`
+        : `El correo quedó guardado, pero no se pudo enviar el mensaje a ${email}. Vuelve a intentarlo.`,
+      clientId: client.id,
+      credentialsSent,
+    };
+  }
+
   async registerClientByAdmin(
     registerDto: RegisterClientByAdminDto,
     caller: AuthenticatedUser,
@@ -895,6 +1023,7 @@ export class AuthService {
   ): Promise<{
     message: string;
     user: Partial<User>;
+    clientId: number;
   }> {
     let company: Company;
     let createdByCompanyWorkerId: number | null = null;
@@ -949,31 +1078,40 @@ export class AuthService {
     let isExistingUser = false;
     let generatedPassword: string | undefined;
 
-    if (existingUserByEmail) {
-      if (existingUserByEmail.userType !== 'cli') {
-        throw new ConflictException({
-          statusCode: HttpStatus.CONFLICT,
-          error: 'Conflict',
-          code: 'EMAIL_REGISTERED_DIFFERENT_ROLE',
-          message:
-            'El email ya está registrado con un rol diferente (no cliente).',
+    // Si el correo no identifica a nadie, el `username` todavía puede estar
+    // apuntando a un cliente que ya existe: es el caso del admin que da de alta
+    // a alguien que ya está en CLYPS y no sabe con qué correo se registró.
+    // Antes eso moría en un 409 seco; ahora sirve para reconocerlo y ofrecer
+    // vincularlo a su negocio.
+    const existingUserByUsername = existingUserByEmail
+      ? null
+      : await this.userRepository.findOne({
+          where: { username: registerDto.username },
         });
+    const existingUser = existingUserByEmail ?? existingUserByUsername;
+
+    if (existingUser) {
+      if (existingUser.userType !== 'cli') {
+        throw new ConflictException(
+          existingUserByEmail
+            ? {
+                statusCode: HttpStatus.CONFLICT,
+                error: 'Conflict',
+                code: 'EMAIL_REGISTERED_DIFFERENT_ROLE',
+                message:
+                  'El email ya está registrado con un rol diferente (no cliente).',
+              }
+            : {
+                statusCode: HttpStatus.CONFLICT,
+                error: 'Conflict',
+                code: 'USERNAME_TAKEN',
+                message: 'El nombre de usuario ya está en uso.',
+              },
+        );
       }
-      user = existingUserByEmail;
+      user = existingUser;
       isExistingUser = true;
     } else {
-      const existingByUsername = await this.userRepository.findOne({
-        where: { username: registerDto.username },
-      });
-      if (existingByUsername) {
-        throw new ConflictException({
-          statusCode: HttpStatus.CONFLICT,
-          error: 'Conflict',
-          code: 'USERNAME_TAKEN',
-          message: 'El nombre de usuario ya está en uso.',
-        });
-      }
-
       generatedPassword = this.generateRandomPassword(8);
       const hashedPassword = await bcrypt.hash(generatedPassword, 10);
 
@@ -1016,7 +1154,24 @@ export class AuthService {
           statusCode: HttpStatus.CONFLICT,
           error: 'Conflict',
           code: 'CLIENT_ALREADY_IN_COMPANY',
+          clientId: client.id,
           message: `El cliente ya estaba registrado y vinculado a la compañía '${company.name}'.`,
+        });
+      }
+
+      // Vincular a alguien que ya existe no es lo mismo que crearlo: el admin
+      // confirma primero, viendo de quién se trata. El front reintenta la
+      // misma petición con `confirmLink` y ahí sí se hace la asociación.
+      if (!registerDto.confirmLink) {
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'CLIENT_EXISTS_CONFIRM_LINK',
+          clientId: client.id,
+          clientName: this.buildClientDisplayName(client, user),
+          clientUsername: user.username,
+          companyName: company.name,
+          message: `${this.buildClientDisplayName(client, user)} ya está registrado en CLYPS. ¿Quieres agregarlo a ${company.name}?`,
         });
       }
 
@@ -1030,6 +1185,21 @@ export class AuthService {
         ...(shouldSetCreator ? { createdByCompanyWorkerId } : {}),
       });
     } else {
+      // Cuenta que ya existía pero sin perfil de cliente: se le completa aquí.
+      // Sigue siendo alguien que ya estaba en CLYPS, así que también se confirma.
+      if (isExistingUser && !registerDto.confirmLink) {
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'CLIENT_EXISTS_CONFIRM_LINK',
+          clientId: null,
+          clientName: this.buildClientDisplayName(null, user),
+          clientUsername: user.username,
+          companyName: company.name,
+          message: `${user.username} ya está registrado en CLYPS. ¿Quieres agregarlo a ${company.name}?`,
+        });
+      }
+
       // No existe perfil de cliente: procesamos la foto (si la hay) y lo creamos.
       let pictureFileName: string | undefined;
       if (pictureFile) {
@@ -1085,7 +1255,9 @@ export class AuthService {
 
     // No se retorna `generatedPassword`: la contraseña en texto plano no debe
     // salir en la respuesta. Cuando hay email, se envía por correo.
-    return { message, user: userWithoutPassword };
+    // `clientId` va para que el front pueda llevar al admin a la ficha del
+    // cliente recién creado o vinculado.
+    return { message, user: userWithoutPassword, clientId: client.id };
   }
 
   // ==================== MÉTODOS DE LOGIN ====================

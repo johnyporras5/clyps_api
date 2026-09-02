@@ -23,6 +23,12 @@ import {
 import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
 import { FindAllClientsDto } from './dto/find-all-clients.dto';
+import {
+  applyCompanyActivation,
+  normalizeCompanyIds,
+  resolveIsActiveForCompanies,
+  sharedCompanyIds,
+} from './client-activation.util';
 
 @Injectable()
 export class ClientService {
@@ -357,11 +363,38 @@ export class ClientService {
       );
     }
 
-    // 3.c Filtro por estado: '1' = activo, '0' = inactivo, ausente = todos
     if (options.isActive !== undefined) {
-      queryBuilder.andWhere('client.is_active = :isActive', {
-        isActive: parseInt(options.isActive, 10),
-      });
+      const wantsActive = parseInt(options.isActive, 10) === 1;
+
+      if (adminCompanyIds.length === 0) {
+        queryBuilder.andWhere('client.is_active = :isActiveFlag', {
+          isActiveFlag: wantsActive ? 1 : 0,
+        });
+      } else {
+        // COALESCE porque ambas columnas son JSON nullable y JSON_CONTAINS
+        // devuelve NULL (no false) cuando el documento es NULL.
+        const sharesAny = adminCompanyIds
+          .map(
+            (_, i) =>
+              `JSON_CONTAINS(COALESCE(client.companies, JSON_ARRAY()), :actCid${i})`,
+          )
+          .join(' OR ');
+        const activeInShared = adminCompanyIds
+          .map(
+            (_, i) =>
+              `(JSON_CONTAINS(COALESCE(client.companies, JSON_ARRAY()), :actCid${i}) AND NOT JSON_CONTAINS(COALESCE(client.inactive_companies, JSON_ARRAY()), :actCid${i}))`,
+          )
+          .join(' OR ');
+
+        const effectiveActive = `client.is_active = 1 AND (NOT (${sharesAny}) OR (${activeInShared}))`;
+        queryBuilder.andWhere(
+          wantsActive ? `(${effectiveActive})` : `NOT (${effectiveActive})`,
+        );
+
+        adminCompanyIds.forEach((companyId, i) => {
+          queryBuilder.setParameter(`actCid${i}`, JSON.stringify(companyId));
+        });
+      }
     }
 
     // 4. Aplicar paginación
@@ -457,6 +490,13 @@ export class ClientService {
 
       return {
         ...client,
+        // El estado va POR COMPAÑÍA: se resuelve contra las compañías que este
+        // admin/worker comparte con el cliente, no contra la bandera global.
+        // Así, si otro salón lo desactivó, aquí sigue saliendo activo.
+        isActive: resolveIsActiveForCompanies(
+          client,
+          sharedCompanies.map((c) => c.id),
+        ),
         pictureUrl: client.picture
           ? this.fileUploadService.getFileUrl('client_photo', client.picture)
           : null,
@@ -536,6 +576,8 @@ export class ClientService {
     // 3. Campos permitidos (exactamente los que puede actualizar el cliente)
     this.normalizeBirthdate(updateClientDto);
 
+    // `isActive` NO está permitido aquí: el estado lo maneja el salón, no el
+    // propio cliente (si no, podría reactivarse solo mandando isActive=1).
     const allowedFields = [
       'name',
       'lastName',
@@ -543,7 +585,6 @@ export class ClientService {
       'phone',
       'birthDate',
       'location',
-      'isActive',
       'picture',
       'companies',
     ];
@@ -626,8 +667,16 @@ export class ClientService {
       client.user = userWithoutPassword as any;
     }
 
+    // `companies` alimenta "mis salones" en el home del cliente. Se ocultan los
+    // salones que lo desactivaron: para él, ese negocio deja de existir.
+    const inactiveForClient = normalizeCompanyIds(client.inactiveCompanies);
+    const visibleCompanies = normalizeCompanyIds(client.companies).filter(
+      (id) => !inactiveForClient.includes(id),
+    );
+
     return {
       ...client,
+      companies: visibleCompanies,
       // La entidad guarda la propiedad como `birthDate`, pero el contrato
       // público del API es `birthdate` (igual que en el alta y que en worker).
       // Se expone en minúscula y se mantiene `birthDate` por compatibilidad.
@@ -675,6 +724,17 @@ export class ClientService {
 
     return {
       ...client,
+      // Estado POR COMPAÑÍA: es el que alimenta el toggle "Activo" de la
+      // pantalla de edición, así que debe reflejar solo a este salón.
+      isActive: resolveIsActiveForCompanies(
+        client,
+        callerId
+          ? sharedCompanyIds(
+              client,
+              await this.resolveCallerCompanyIds(callerId, callerRole),
+            )
+          : [],
+      ),
       // La entidad guarda la propiedad como `birthDate`, pero el contrato
       // público del API es `birthdate` (igual que en el alta y que en worker).
       // Se expone en minúscula y se mantiene `birthDate` por compatibilidad.
@@ -695,6 +755,7 @@ export class ClientService {
     photoFile?: Express.Multer.File,
     callerId?: number,
     callerRole?: string,
+    callerCompanyId?: number | null,
   ): Promise<Client> {
     // El cliente debe ser del usuario autenticado o de su compañía. Aplica a
     // admin y trabajador; antes no se validaba nada y se podía editar cualquier
@@ -712,64 +773,65 @@ export class ClientService {
       throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
     }
 
-    if (photoFile) {
-      try {
-        const photoInfo = await this.fileUploadService.saveFile(
-          photoFile,
-          this.CLIENT_PHOTO_FOLDER,
-          'client',
-          client.userId,
-        );
-
-        if (client.picture) {
-          await this.fileUploadService.deleteFile(
-            this.CLIENT_PHOTO_FOLDER,
-            client.picture,
-          );
-        }
-
-        updateClientDto.picture = photoInfo.fileName;
-      } catch (error) {
-        this.logger.error('Error al guardar la foto del cliente:', error);
-        throw new BadRequestException('Error al guardar la foto de perfil');
-      }
-    }
-
-    // Actualizar username en la entidad User si se proporcionó
-    if (updateClientDto.username !== undefined && client.user) {
-      await this.userRepository.update(client.user.id, {
-        username: updateClientDto.username,
-      });
-      client.user.username = updateClientDto.username;
-    }
-
-    this.normalizeBirthdate(updateClientDto);
-
-    const allowedFields = [
+    // Los datos personales del cliente (nombre, correo, teléfono, fecha, ciudad
+    // y foto) son SUYOS: los edita él desde su perfil. El salón no los toca,
+    // aunque haya sido quien lo dio de alta. Lo que sí maneja desde aquí es lo
+    // que es de la relación: el alias con el que lo ve en su negocio (endpoint
+    // aparte) y si puede agendarle o no.
+    //
+    // Los campos personales que lleguen se ignoran en vez de rechazarse: el
+    // front y el backend no se despliegan a la vez, y una app vieja que todavía
+    // los mande debe poder seguir usando el toggle. La respuesta devuelve el
+    // cliente sin cambios, así que nadie ve un dato guardado que no se guardó.
+    const ignoredPersonalFields = [
       'name',
       'lastName',
       'email',
       'phone',
       'birthDate',
+      'birthdate',
       'location',
-      'isActive',
       'picture',
-    ];
-    const updates: Partial<Client> = {};
+      'username',
+    ].filter((field) => updateClientDto[field] !== undefined);
 
-    Object.keys(updateClientDto).forEach((key) => {
-      if (!allowedFields.includes(key) || updateClientDto[key] === undefined)
-        return;
+    if (ignoredPersonalFields.length > 0 || photoFile) {
+      this.logger.warn(
+        `Edición de datos personales ignorada para el cliente ${clientId}: ${[
+          ...ignoredPersonalFields,
+          ...(photoFile ? ['photo'] : []),
+        ].join(', ')}`,
+      );
+    }
 
-      let value = updateClientDto[key];
-      if (key === 'birthDate' && typeof value === 'string')
-        value = new Date(value);
-      if (key === 'isActive' && value !== undefined) value = Number(value);
+    // Activar/desactivar es POR SALÓN. Se aplica sobre las compañías que quien
+    // edita comparte con el cliente, así el mismo cliente puede seguir activo
+    // en los otros salones a los que va. Solo cuando no hay compañía de por
+    // medio (cliente propio que aún no está en ningún salón) se usa la bandera
+    // global `is_active`.
+    const targetCompanyIds = callerId
+      ? await this.resolveActivationTargets(
+          client,
+          callerId,
+          callerRole,
+          callerCompanyId,
+        )
+      : [];
 
-      updates[key] = value;
-    });
+    if (updateClientDto.isActive !== undefined) {
+      const shouldBeActive = Number(updateClientDto.isActive) === 1;
 
-    Object.assign(client, updates);
+      if (targetCompanyIds.length > 0) {
+        client.inactiveCompanies = applyCompanyActivation(
+          client,
+          targetCompanyIds,
+          shouldBeActive,
+        );
+      } else {
+        client.isActive = shouldBeActive ? 1 : 0;
+      }
+    }
+
     const saved = await this.clientRepository.save(client);
 
     const photoUrl = saved.picture
@@ -784,7 +846,38 @@ export class ClientService {
       saved.user = userWithoutPassword;
     }
 
-    return { ...saved, photoUrl } as any;
+    // Se devuelve el estado tal como lo ve ESTE salón, que es lo que el front
+    // vuelve a pintar en el toggle después de guardar.
+    return {
+      ...saved,
+      isActive: resolveIsActiveForCompanies(saved, targetCompanyIds),
+      photoUrl,
+    } as any;
+  }
+
+  /**
+   * Compañías a las que aplica el toggle "Activo" de un admin/worker: las que
+   * comparte con el cliente. Si el token trae la compañía activa y es una de
+   * ellas se usa solo esa (caso normal, un salón); si no, se aplican todas las
+   * compartidas. Vacío = el cliente no está en ningún salón del que edita, así
+   * que el estado se guarda en la bandera global.
+   */
+  private async resolveActivationTargets(
+    client: Client,
+    callerId: number,
+    callerRole?: string,
+    callerCompanyId?: number | null,
+  ): Promise<number[]> {
+    const shared = sharedCompanyIds(
+      client,
+      await this.resolveCallerCompanyIds(callerId, callerRole),
+    );
+
+    if (callerCompanyId && shared.includes(Number(callerCompanyId))) {
+      return [Number(callerCompanyId)];
+    }
+
+    return shared;
   }
 
   /**
