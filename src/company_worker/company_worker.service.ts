@@ -26,6 +26,7 @@ import {
   AllowedFolder,
 } from '../common/services/file_upload.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { EntitlementsService } from '../subscription/entitlements.service';
 
 /** Fila cruda (getRawMany) del listado de trabajadores antes de formatear. */
 interface WorkerListRawRow {
@@ -72,6 +73,7 @@ export class CompanyWorkerService {
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
     private readonly onboardingService: OnboardingService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   /**
@@ -123,6 +125,12 @@ export class CompanyWorkerService {
   async create(
     createCompanyWorkerDto: CreateCompanyWorkerDto,
   ): Promise<CompanyWorker> {
+    // SUB-5: el tope de trabajadores es del plan. Se pregunta antes de crear;
+    // los que ya existen nunca se tocan.
+    await this.entitlements.assertCanAddWorker(
+      createCompanyWorkerDto.companyId,
+    );
+
     const companyWorker = this.companyWorkerRepository.create(
       createCompanyWorkerDto,
     );

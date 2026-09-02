@@ -3,6 +3,8 @@ import {
   Controller,
   FileTypeValidator,
   Get,
+  Param,
+  ParseIntPipe,
   HttpCode,
   HttpStatus,
   MaxFileSizeValidator,
@@ -17,6 +19,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { SubscriptionService } from './subscription.service';
 import { PaymentsService } from './payments.service';
+import { EntitlementsService } from './entitlements.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -26,6 +29,7 @@ import type { QuoteResponse } from './dto/quote-response.dto';
 import { QueryQuoteDto } from './dto/query-quote.dto';
 import { ReportPaymentDto } from './dto/report-payment.dto';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
+import type { AccessResponse } from './dto/access-response.dto';
 
 /**
  * SUB-1 / SUB-2 (CLYP-333 / CLYP-334). Todo va detrás del token: quien elige
@@ -40,6 +44,7 @@ export class SubscriptionController {
   constructor(
     private readonly subscriptionService: SubscriptionService,
     private readonly paymentsService: PaymentsService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   /** Planes disponibles con sus límites, más los días de prueba y gracia. */
@@ -47,6 +52,34 @@ export class SubscriptionController {
   @Get('plans')
   getPlans(): PlansResponse {
     return this.subscriptionService.getPlans();
+  }
+
+  /**
+   * SUB-5: qué puede hacer este salón ahora mismo. Es la fuente para pintar el
+   * panel: qué funciones tiene, cuáles necesitan upgrade y cuánto le queda.
+   *
+   * Siempre permitido, también con el tenant bloqueado: es justo la pantalla
+   * que le dice que está bloqueado.
+   */
+  @Roles('adm')
+  @Get('access')
+  async getAccess(@Req() req: AuthenticatedRequest): Promise<AccessResponse> {
+    const companyId = await this.entitlements.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.entitlements.getAccessResponse(companyId);
+  }
+
+  /**
+   * SUB-5: lo que la app del cliente final necesita saber del salón antes de
+   * renderizar — hoy, si mostrar la sugerencia con IA.
+   *
+   * Sin `@Roles`: lo consulta el cliente (`cli`), no el dueño. Devuelve solo
+   * banderas de presentación, ningún dato de cobro.
+   */
+  @Get('features/company/:companyId')
+  getCompanyFeatures(@Param('companyId', ParseIntPipe) companyId: number) {
+    return this.entitlements.getPublicFeatures(companyId);
   }
 
   /**

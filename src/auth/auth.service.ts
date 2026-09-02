@@ -40,6 +40,7 @@ import { CompanyCategoryService } from '../company_category/company_category.ser
 import { SiteCategoryService } from '../site_category/site_category.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { EntitlementsService } from '../subscription/entitlements.service';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 import type { AuthenticatedUser } from './types/authenticated-request';
 
@@ -66,6 +67,7 @@ export class AuthService {
     private readonly siteCategoryService: SiteCategoryService,
     private readonly realtime: RealtimeService,
     private readonly onboardingService: OnboardingService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   /**
@@ -307,6 +309,10 @@ export class AuthService {
         'El administrador no tiene una compañía asignada',
       );
     }
+
+    // SUB-5: el tope de trabajadores lo decide el plan. Se pregunta ANTES de
+    // crear el usuario, para no dejar cuentas huérfanas si el cupo está lleno.
+    await this.entitlements.assertCanAddWorker(company.id);
 
     // ==================== VERIFICAR SI YA EXISTE EL TRABAJADOR ====================
     // Un trabajador pertenece a una sola compañía: cualquier re-registro con un
