@@ -192,7 +192,10 @@ export class CashProfitabilityService {
       // La venta directa guarda su desglose por moneda como JSON.
       const sales: Array<{ id: number; lines: unknown }> =
         await this.transactionRepository.query(
-          `SELECT id, lines FROM direct_sale WHERE id IN (?)`,
+          // `lines` es palabra reservada en MySQL 8 (LOAD DATA ... LINES
+          // TERMINATED BY), así que va escapada: sin backticks el parser corta
+          // ahí y tumba el reporte entero con ER_PARSE_ERROR.
+          `SELECT id, \`lines\` FROM direct_sale WHERE id IN (?)`,
           [directSaleIds],
         );
       for (const sale of sales) {
