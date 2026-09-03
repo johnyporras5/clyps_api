@@ -1,0 +1,168 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [development, main]
+  push:
+    branches: [development, main]
+  # Permite redesplegar la rama actual sin tener que empujar un commit vacio.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Solo se cancelan runs de PRs: los pushes a development y main terminan en
+  # deploy y no hay que interrumpirlos.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: Build y tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci --prefer-offline --no-audit --fund=false
+
+      - name: Build
+        run: npm run build
+
+      - name: Tests
+        run: npm test -- --ci --runInBand
+
+  lint:
+    name: Lint (informativo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # TODO: quitar cuando se limpie la deuda de ESLint (hoy ~8700 errores
+    # heredados). Mientras tanto reporta sin bloquear el merge.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci --prefer-offline --no-audit --fund=false
+
+      - name: Lint
+        # ESLint se queda sin memoria sobre este arbol con el heap por defecto.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: npm run lint:ci
+
+  docker:
+    name: Build de la imagen
+    # Solo en PRs: valida el Dockerfile antes de mergear, porque App Platform
+    # construye con ese mismo Dockerfile al desplegar.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (sin push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy a App Platform
+    # Todo lo que aterrice en development o main se despliega igual: un merge de
+    # feature/* a development es un push a development y pasa por este mismo
+    # job (migraciones -> deploy -> health check) contra la app de desarrollo.
+    # El check del ref evita que un workflow_dispatch sobre una rama suelta
+    # termine desplegandola.
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
+    needs: [verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Cada rama despliega a su propia app, con su propia base. Los secrets
+    # tienen el mismo nombre en los dos entornos y GitHub inyecta los del que
+    # corresponda: development -> vita_dev, main -> wellnessme.
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+      url: ${{ vars.APP_URL }}
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci --prefer-offline --no-audit --fund=false
+
+      # Corre ANTES del deploy: si una migracion falla, el job se corta aca y
+      # no se dispara ningun deployment. Produccion sigue con el contenedor
+      # viejo, intacto.
+      #
+      # NODE_ENV queda sin definir a proposito: el DataSource usa las entidades
+      # y migraciones .ts de src/, que es lo que hay en el runner (no hay build).
+      - name: Migraciones
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_DATABASE: ${{ secrets.DB_DATABASE }}
+          # El runner entra por la red publica de la base gestionada, que
+          # exige TLS. Dentro del VPC la app usa el host privado y no lo
+          # necesita, por eso no se activa en DigitalOcean.
+          DB_SSL: "true"
+        run: npm run migration:run
+
+      - name: Instalar doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Disparar deployment
+        run: |
+          doctl apps create-deployment "${{ secrets.DO_APP_ID }}" \
+            --wait \
+            --format ID,Phase,Created
+
+      - name: Verificar que Node responde
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          if [ -z "${APP_URL}" ]; then
+            echo "Falta la variable de entorno APP_URL en este environment."
+            exit 1
+          fi
+          url="${APP_URL%/}/ping"
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$url" || echo 000)
+            echo "intento $i -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "App arriba."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "La app no respondio 200 en /ping despues del deploy."
+          exit 1

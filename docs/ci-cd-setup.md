@@ -1,78 +1,98 @@
 # CI/CD setup
 
-Todo está definido en código. No requiere configuración manual de DigitalOcean.
+Todo el pipeline vive en un solo archivo: `.github/workflows/ci-cd.yml`.
 
 ## Flujo de ramas
 
 ```
-feature/*  ──PR──▶  development  ──PR──▶  main  ──auto deploy──▶  DigitalOcean
-                       │                    │
-                       └─ CI (tests)        └─ CI + CD (build, push, trigger)
+feature/*  ──PR──▶  development  ──PR──▶  main
+                        │                   │
+                        │                   └─ migraciones + deploy a wellnessme (production)
+                        └─ migraciones + deploy a vita_dev (development)
 ```
 
-- `feature/*` y `fix/*`: ramas de trabajo. Se mergean a `development` via PR.
-- `development`: integración. CI corre lint + build + tests + migraciones contra MySQL efímero.
-- `main`: producción. CI + CD: además de tests, builda la imagen, la sube a GHCR y dispara deploy a DigitalOcean App Platform.
+- `feature/*` y `fix/*`: ramas de trabajo. No despliegan nada.
+- PR hacia `development` o `main`: corre `verify` (build + tests), `lint` (informativo) y
+  `docker` (build de la imagen sin push, para validar el Dockerfile).
+- Push a `development` o `main` — que es lo que pasa al mergear un PR: corre `verify` y
+  después `deploy`. **Un merge de una rama nueva a `development` ejecuta las migraciones
+  exactamente igual que un merge de `development` a `main`**, solo que contra la app y la
+  base de desarrollo.
 
-## Workflows
+## Jobs
 
-- `.github/workflows/ci.yml` — corre en cualquier PR hacia `development`/`main` y en push a esas ramas. Lint + build + tests. **No** corre migraciones contra una BD efímera porque las migraciones del proyecto asumen que existen tablas creadas originalmente con `synchronize: true` y no pueden bootstrappear desde una BD vacía. La validación de migraciones ocurre al arrancar el contenedor en producción.
-- `.github/workflows/cd.yml` — corre sólo en push a `main`: buildea la imagen Docker, la publica en GHCR y dispara un deploy en DO.
+| Job | Cuándo | Qué hace |
+|---|---|---|
+| `verify` | siempre | `npm run build` + `npm test -- --ci --runInBand`. Bloquea el merge y el deploy. |
+| `lint` | siempre | `npm run lint:ci` con `continue-on-error: true`. Informativo mientras se limpia la deuda de ESLint. |
+| `docker` | solo PRs | Build del `Dockerfile` sin push. App Platform construye con ese mismo Dockerfile. |
+| `deploy` | push a `development` / `main` | Migraciones → `doctl apps create-deployment --wait` → health check a `/ping`. |
 
-## Cómo se corren las migraciones en producción
+El job `deploy` sólo corre si el ref es `refs/heads/development` o `refs/heads/main`, así un
+`workflow_dispatch` sobre una rama suelta no despliega por accidente.
 
-Las migraciones se ejecutan **al arrancar el contenedor**, antes de que se levante la app. Está implementado en el `entrypoint.sh` del `Dockerfile`:
+## Orden del deploy
 
-```sh
-# Run database migrations before starting the app (fail fast if migrations fail)
-if [ "${SKIP_MIGRATIONS}" != "true" ]; then
-  echo "Running database migrations..."
-  cd /app && npm run migration:run:prod
-  echo "Migrations finished successfully"
-fi
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
-```
+1. **Migraciones desde el runner** (`npm run migration:run`, contra `src/`, con ts-node).
+   Si una migración falla, el job se corta acá: no se dispara ningún deployment y el
+   contenedor viejo sigue sirviendo tráfico intacto.
+2. `doctl apps create-deployment --wait`: App Platform buildea desde el `Dockerfile` del
+   commit y espera a que el deployment termine.
+3. Health check: hasta 12 intentos (2 min) de `GET $APP_URL/ping` esperando un 200.
 
-Comportamiento:
-- Cada vez que arranca el contenedor en producción, primero corre `migration:run:prod` (migraciones compiladas en `dist/database/migrations/*.js`).
-- Si una migración falla, el script sale con error y el contenedor no arranca → DO marca el deploy como fallido y mantiene la versión anterior corriendo → **no se rompe prod**.
-- Las migraciones son idempotentes (TypeORM guarda en la tabla `migrations` cuáles ya corrieron), así que reiniciar el contenedor no causa problemas.
-- Si necesitas desactivarlas temporalmente, agrega la env var `SKIP_MIGRATIONS=true` en DO.
+> Nota: el `entrypoint.sh` del contenedor también corre `migration:run:prod` al arrancar.
+> Es idempotente (TypeORM lleva la tabla `migrations`), así que no rompe nada, pero una vez
+> que confíes en el paso de CI conviene poner `SKIP_MIGRATIONS=true` en las env vars de la
+> app para que el arranque sea más rápido y determinista.
 
-## Secrets en GitHub
+## Environments en GitHub
 
-Necesarios para el workflow CD (Settings → Secrets and variables → Actions):
+Settings → Environments. Hay dos, y los secrets se llaman igual en ambos: GitHub inyecta los
+del environment que le toque según la rama.
+
+| Environment | Rama | App de DO |
+|---|---|---|
+| `development` | `development` | `vita_dev` |
+| `production` | `main` | `wellnessme` |
+
+**Secrets por environment:**
 
 | Secret | Para qué |
 |---|---|
-| `DIGITALOCEAN_ACCESS_TOKEN` | Token personal de DO con scopes `app read/create/update` |
-| `DIGITALOCEAN_APP_ID` | UUID de la app en DO |
+| `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE` | Migraciones desde el runner |
+| `DIGITALOCEAN_ACCESS_TOKEN` | Token de DO con scopes `app read/create/update` |
+| `DO_APP_ID` | UUID de la app en DO |
 
-`GITHUB_TOKEN` lo provee automáticamente GitHub para push a GHCR.
+**Variables por environment** (Variables, no Secrets):
 
-## Secrets / Env vars en DigitalOcean
+| Variable | Para qué |
+|---|---|
+| `APP_URL` | Base URL pública, sin barra final. Ej: `https://vita-dev-xxxx.ondigitalocean.app` |
 
-Se configuran en el panel de DO → App → Settings → App-Level Environment Variables (marcar `Encrypt` en todas las sensibles):
+En `production` conviene activar *Required reviewers* para que el deploy a `main` quede en
+pausa hasta que alguien lo apruebe.
 
-`DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`, `NODE_ENV=production`, `PORT=4000`,
-más las que ya estés usando: `JWT_SECRET`, `JWT_EXPIRES_IN`, `RESEND_API_KEY`, `RESEND_DOMAIN`, `RESEND_FROM_EMAIL`,
-`ASSETS_BASE_URL`, `DO_SPACES_*`, `OPENAI_API_KEY`, etc.
+## Requisito de red
+
+El runner de GitHub tiene IP dinámica. Para que el paso de migraciones pueda conectarse, la
+base tiene que aceptar conexiones desde fuera de DO (trusted sources abiertos, o abrirlos y
+cerrarlos con `doctl databases firewalls` dentro del job). Si no quieres eso, la alternativa
+es borrar el paso `Migraciones` y dejar que corran en el `entrypoint` del contenedor como
+antes.
+
+## Env vars en DigitalOcean
+
+Panel de DO → App → Settings → App-Level Environment Variables (marcar `Encrypt` en las
+sensibles): `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`,
+`NODE_ENV=production`, `PORT=4000`, `JWT_SECRET`, `JWT_EXPIRATION`, `CORS_ORIGINS`,
+`RESEND_*`, `FIREBASE_CREDENTIALS_BASE64`, `SUBSCRIPTION_*`, `ONBOARDING_*`, etc.
+Ver `.env.example` para la lista completa.
 
 ## Probar el flujo localmente
 
 ```bash
-# Levantar MySQL local
-npm run docker:up
-
-# Build de la imagen como en prod
-docker build -t clyps-api .
-
-# Correr con env file de prueba (las migraciones se ejecutan automáticamente al arrancar)
+npm run docker:up                  # MySQL local
+docker build -t clyps-api .        # build como en prod
 docker run --rm -p 3001:81 --env-file .env clyps-api
+curl http://localhost:3001/ping
 ```
-
-## Si necesitas agregar staging más adelante
-
-1. Crear una segunda DO App apuntando a la rama `development` (con su propia BD).
-2. Agregar un nuevo job en `cd.yml` que se dispare en push a `development` con secrets propios (`DIGITALOCEAN_STAGING_APP_ID`, etc.).
-3. Las migraciones de staging corren automáticamente igual que en prod (vía entrypoint del contenedor).
