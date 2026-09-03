@@ -10,6 +10,7 @@ import { SessionDetail } from 'src/session_detail/entities/session_detail.entity
 import { SessionPayment } from './entities/session-payment.entity';
 import { SessionPaymentLine } from './entities/session-payment-line.entity';
 import { SessionPaymentTip } from './entities/session-payment-tip.entity';
+import { SessionPaymentReversal } from './entities/session-payment-reversal.entity';
 import { Service } from 'src/service/entities/service.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { Worker } from 'src/worker/entities/worker.entity';
@@ -52,6 +53,7 @@ import { SessionSubscriber } from './session.subscriber';
       SessionPayment,
       SessionPaymentLine,
       SessionPaymentTip,
+      SessionPaymentReversal,
     ]),
     EmailModule,
     RealtimeModule,

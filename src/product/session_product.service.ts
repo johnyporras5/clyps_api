@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, IsNull, Repository } from 'typeorm';
 import { SessionProduct } from './entities/session_product.entity';
 import { Product } from './entities/product.entity';
 import { Company } from '../company/entities/company.entity';
@@ -144,6 +144,60 @@ export class SessionProductService {
       created.push(savedSp);
     }
     return created;
+  }
+
+  /**
+   * Al revertir un cobro: restaura el stock de los productos vendidos al cliente
+   * en ESA cita (sale_type='client', sin venta directa) y borra sus filas.
+   * Devuelve un snapshot para auditoría. Usa el manager de la transacción si se
+   * pasa. NO toca compras de trabajador ni ventas directas.
+   */
+  async restoreSessionProducts(
+    sessionId: number,
+    manager?: EntityManager,
+  ): Promise<
+    {
+      productId: number;
+      name: string;
+      quantity: number;
+      unitPriceMinor: number;
+      currency: string;
+    }[]
+  > {
+    const spRepo = manager
+      ? manager.getRepository(SessionProduct)
+      : this.sessionProductRepository;
+    const productRepo = manager
+      ? manager.getRepository(Product)
+      : this.productRepository;
+
+    const rows = await spRepo.find({
+      where: { sessionId, saleType: 'client', directSaleId: IsNull() },
+      relations: ['product'],
+    });
+    const snapshot: {
+      productId: number;
+      name: string;
+      quantity: number;
+      unitPriceMinor: number;
+      currency: string;
+    }[] = [];
+    for (const sp of rows) {
+      const product = sp.product ?? null;
+      if (product) {
+        product.stock += sp.quantity;
+        await productRepo.save(product);
+      }
+      snapshot.push({
+        productId: sp.productId,
+        name: product?.name ?? 'Producto',
+        quantity: sp.quantity,
+        unitPriceMinor: Number(sp.unitPriceMinor),
+        currency: sp.currency,
+      });
+      await spRepo.delete(sp.id);
+    }
+    return snapshot;
   }
 
   async findBySession(sessionId: number): Promise<

@@ -13,6 +13,8 @@ import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
 import { Company } from '../company/entities/company.entity';
 import { Service } from '../service/entities/service.entity';
+import { Client } from '../client/entities/client.entity';
+import { resolveVisibleCompanyIds } from '../client/client-activation.util';
 import { FileUploadService } from '../common/services/file_upload.service';
 import {
   paginate,
@@ -34,6 +36,8 @@ export class OfferService {
     private companyRepository: Repository<Company>,
     @InjectRepository(Service)
     private serviceRepository: Repository<Service>,
+    @InjectRepository(Client)
+    private clientRepository: Repository<Client>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
     private readonly realtime: RealtimeService,
@@ -104,11 +108,45 @@ export class OfferService {
     };
   }
 
-  async findAll(): Promise<any[]> {
+  /**
+   * Ofertas para la pestaña del cliente. Al rol cliente se le muestran solo las
+   * de SUS negocios: los que lo registraron o donde tiene citas, descontando
+   * los salones que lo desactivaron. Es la misma regla que en la búsqueda, si
+   * no, por aquí seguiría llegando a negocios con los que no tiene relación.
+   * Admin y worker las siguen viendo todas.
+   */
+  async findAll(viewerType?: string, viewerId?: number): Promise<any[]> {
+    const visibleCompanyIds = await this.resolveVisibleCompanyIdsForClient(
+      viewerType,
+      viewerId,
+    );
+
+    if (visibleCompanyIds !== null && visibleCompanyIds.length === 0) return [];
+
     const offers = await this.offerRepository.find({
+      where: visibleCompanyIds ? { companyId: In(visibleCompanyIds) } : {},
       relations: ['company', 'serviceOffers', 'serviceOffers.service'],
     });
     return offers.map((offer) => this.addLogoUrl(offer));
+  }
+
+  /**
+   * `null` para admin/worker (ven todas las ofertas); la lista de negocios del
+   * cliente en cualquier otro caso, vacía si todavía no tiene ninguno.
+   */
+  private async resolveVisibleCompanyIdsForClient(
+    viewerType?: string,
+    viewerId?: number,
+  ): Promise<number[] | null> {
+    if (viewerType !== 'cli' || !viewerId) return null;
+
+    const client = await this.clientRepository.findOne({
+      where: { userId: viewerId },
+      select: ['id', 'companies', 'inactiveCompanies'],
+    });
+    if (!client) return [];
+
+    return resolveVisibleCompanyIds(client);
   }
 
   async findOne(id: number, adminId: number): Promise<any> {
