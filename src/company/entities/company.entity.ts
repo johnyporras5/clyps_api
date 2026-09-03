@@ -18,7 +18,8 @@ export class Company {
   @Column({ name: 'address', length: 255, nullable: true })
   address: string;
 
-  @Column({ name: 'email', length: 145, nullable: true })
+  /** Obligatorio: es el correo con el que se factura la suscripción (SUB-10). */
+  @Column({ name: 'email', length: 145 })
   email: string;
 
   @Column({ name: 'logo', length: 245, nullable: true })

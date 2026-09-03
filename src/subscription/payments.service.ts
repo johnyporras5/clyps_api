@@ -33,6 +33,8 @@ import {
   amountDiscrepancy,
 } from './payment-discrepancy.util';
 import { SubscriptionService } from './subscription.service';
+import { CobrixConfig } from './cobrix/cobrix.config';
+import { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
 import type { PaginationResult } from '../common/dto/pagination.dto';
 import type { QuoteResponse } from './dto/quote-response.dto';
 import type { QueryAdminPaymentsDto } from './dto/query-admin-payments.dto';
@@ -43,6 +45,7 @@ import type {
 } from './dto/admin-payment-response.dto';
 import type { ReportPaymentDto } from './dto/report-payment.dto';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
+import type { AutoCheckStatus, PaymentMethod } from './subscription.enums';
 
 /**
  * Pagos de la suscripción: cotizar (SUB-2 / CLYP-334) y reportar (SUB-3 /
@@ -65,6 +68,8 @@ export class PaymentsService {
     private readonly files: FileUploadService,
     private readonly subscriptionService: SubscriptionService,
     private readonly config: ConfigService,
+    private readonly cobrix: CobrixConfig,
+    private readonly cobrixInvoices: CobrixInvoiceService,
   ) {}
 
   private num(key: string, fallback: number): number {
@@ -194,6 +199,14 @@ export class PaymentsService {
         ).fileUrl
       : dto.proofUrl;
 
+    // SUB-10: el reporte se ata a la factura viva de Cobrix, que es el
+    // documento contra el que se concilia el movimiento bancario. Sin factura
+    // emitida no hay conciliación posible y el pago se verifica a mano.
+    const invoice = this.cobrix.enabled
+      ? await this.cobrixInvoices.findLive(companyId)
+      : null;
+    const autoCheck = this.autoCheckFor(dto.method, invoice !== null);
+
     const draft = buildPaymentReportDraft(
       { ...dto, proofUrl },
       {
@@ -201,6 +214,10 @@ export class PaymentsService {
         subscriptionId: subscription.id,
         planId: subscription.planId,
         reportedAt: new Date(),
+        autoCheckStatus: autoCheck.status,
+        autoCheckReason: autoCheck.reason,
+        invoiceId: invoice?.id ?? null,
+        payerIdentification: invoice?.payerIdentification ?? null,
       },
     );
 
@@ -222,6 +239,9 @@ export class PaymentsService {
       reference: saved.reference,
       proofUrl: saved.proofUrl,
       reportedAt: saved.reportedAt.toISOString(),
+      // SUB-10: 'pending' es el estado "validando" que pinta la app mientras
+      // Cobrix responde. Sea cual sea, el acceso ya está concedido.
+      autoCheckStatus: saved.autoCheckStatus,
       // SUB-8 lee esto mismo para callar los avisos de vencimiento.
       remindersPaused: true,
     };
@@ -412,6 +432,96 @@ export class PaymentsService {
     return this.toDecision(report, subscription);
   }
 
+  // ---------------------------------------------------------------------------
+  // Verificación automática (SUB-10)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Con qué marca nace el reporte de cara a la conciliación automática.
+   *
+   * Sin Cobrix configurado devuelve `null` y todo sigue como en SUB-4: cola
+   * manual y nada más. `unsupported` es la forma de decirle al admin "este no
+   * lo va a resolver el robot", y lleva el motivo para que no tenga que
+   * adivinarlo.
+   */
+  private autoCheckFor(
+    method: PaymentMethod,
+    hasInvoice: boolean,
+  ): { status: AutoCheckStatus | null; reason: string | null } {
+    if (!this.cobrix.enabled) return { status: null, reason: null };
+    if (!this.cobrix.covers(method))
+      return {
+        status: 'unsupported',
+        reason: `Cobrix no concilia los pagos por ${method}.`,
+      };
+    if (!hasInvoice)
+      return {
+        status: 'unsupported',
+        reason:
+          'No había un cobro emitido en Cobrix para este pago: verificar a mano.',
+      };
+    return { status: 'pending', reason: null };
+  }
+
+  /**
+   * Verificación automática: la firmó Cobrix, no una persona (SUB-10).
+   *
+   * Es el mismo camino que `verifyPayment`, con dos diferencias: queda
+   * `verificationMethod = 'auto'` y `verified_by_user_id` en null —no hubo
+   * humano que responda por esto— y el avance del período lo sigue haciendo
+   * SUB-6, que es idempotente por reporte.
+   *
+   * Devuelve `null` si el tenant no tiene suscripción: ahí no hay nada que
+   * activar y quien llama lo manda a revisión manual.
+   */
+  async verifyFromGateway(
+    report: PaymentReport,
+    options: { gatewayPaymentId?: string | null; at?: Date } = {},
+  ): Promise<Subscription | null> {
+    const subscription = await this.subscriptions.findOne({
+      where: { companyId: report.companyId },
+    });
+    if (!subscription) return null;
+
+    const at = options.at ?? new Date();
+    report.status = 'verified';
+    report.verificationMethod = 'auto';
+    report.verifiedByUserId = null;
+    report.verifiedAt = at;
+    report.rejectionReason = null;
+    report.autoCheckStatus = 'approved';
+    report.autoCheckAt = at;
+    report.autoCheckReason = null;
+    if (options.gatewayPaymentId)
+      report.gatewayPaymentId = options.gatewayPaymentId;
+    await this.reports.save(report);
+
+    return this.subscriptionService.advanceSubscription(subscription, report);
+  }
+
+  /**
+   * Manda el reporte a la cola manual sin resolverlo (SUB-10 → SUB-4).
+   *
+   * NO cambia `status`: sigue siendo `reported`, y por eso sigue apareciendo en
+   * la cola del admin y sigue concediendo acceso mientras tanto. Que Cobrix no
+   * dé por bueno un pago es una OPINIÓN, no un rechazo: el rechazo duro lo firma
+   * una persona con su motivo (SUB-4).
+   */
+  async flagForManualReview(
+    report: PaymentReport,
+    status: AutoCheckStatus,
+    reason: string | null,
+    options: { gatewayPaymentId?: string | null; at?: Date } = {},
+  ): Promise<PaymentReport> {
+    report.autoCheckStatus = status;
+    report.autoCheckAt = options.at ?? new Date();
+    // La columna son 255 caracteres: el motivo que manda Cobrix es texto libre.
+    report.autoCheckReason = reason ? reason.slice(0, 255) : null;
+    if (options.gatewayPaymentId)
+      report.gatewayPaymentId = options.gatewayPaymentId;
+    return this.reports.save(report);
+  }
+
   /**
    * Guarda la decisión traduciendo un `verifiedByUserId` inexistente a un 400:
    * el id lo escribe quien llama al endpoint interno, y equivocarse no debería
@@ -488,6 +598,16 @@ export class PaymentsService {
       note: report.note,
       reportedAt: report.reportedAt.toISOString(),
       discrepancy,
+      // SUB-10: por qué está esto en la cola manual pudiendo haberse resuelto
+      // solo. `null` = nunca pasó por Cobrix.
+      autoCheck: report.autoCheckStatus
+        ? {
+            status: report.autoCheckStatus,
+            reason: report.autoCheckReason,
+            at: report.autoCheckAt ? report.autoCheckAt.toISOString() : null,
+            gatewayPaymentId: report.gatewayPaymentId,
+          }
+        : null,
       verificationMethod: report.verificationMethod,
       verifiedByUserId: report.verifiedByUserId,
       verifiedAt: report.verifiedAt ? report.verifiedAt.toISOString() : null,
