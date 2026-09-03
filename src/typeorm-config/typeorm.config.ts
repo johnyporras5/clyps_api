@@ -3,6 +3,17 @@ import { config } from 'dotenv';
 
 config();
 
+// Las bases gestionadas de DigitalOcean (puerto 25060) declaran
+// sslmode=REQUIRED, asi que el runner de CI tiene que entrar por TLS. Dentro
+// del VPC la app usa el host privado y no hace falta, por eso queda apagado
+// mientras DB_SSL no valga 'true'.
+const ssl =
+  process.env.DB_SSL === 'true'
+    ? process.env.DB_SSL_CA
+      ? { ca: Buffer.from(process.env.DB_SSL_CA, 'base64').toString('utf8') }
+      : { rejectUnauthorized: false }
+    : undefined;
+
 export default new DataSource({
   type: 'mysql',
   host: process.env.DB_HOST || 'localhost',
@@ -11,6 +22,7 @@ export default new DataSource({
   password: process.env.DB_PASSWORD || 'password',
   database: process.env.DB_DATABASE || 'wellnessme',
   charset: 'utf8mb4',
+  ssl,
   // Rutas relativas a ESTE archivo, nunca a NODE_ENV: compilado resuelve los
   // .js de `dist/`, y por ts-node los .ts de `src/`. Depender de NODE_ENV hacía
   // que el contenedor buscara en `src/` —que la imagen de producción no copia—
