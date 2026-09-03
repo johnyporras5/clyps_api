@@ -8,6 +8,7 @@ import {
   ArrayMaxSize,
   ArrayUnique,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class UpdateAdminProfileDto {
@@ -23,7 +24,8 @@ export class UpdateAdminProfileDto {
   @IsString()
   address?: string;
 
-  @IsOptional()
+  // Se puede omitir, pero no vaciar: el correo de la compañía es obligatorio.
+  @ValidateIf((dto: UpdateAdminProfileDto) => dto.email !== undefined)
   @IsEmail()
   email?: string;
 

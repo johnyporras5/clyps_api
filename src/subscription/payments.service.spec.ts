@@ -8,6 +8,8 @@ import {
   SubscriptionService,
 } from './subscription.service';
 import type { ExchangeRateService } from './rate/exchange-rate.service';
+import { CobrixConfig } from './cobrix/cobrix.config';
+import type { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
 import type { FileUploadService } from '../common/services/file_upload.service';
 import type { Company } from '../company/entities/company.entity';
 import { PaymentReport } from './entities/payment-report.entity';
@@ -165,6 +167,13 @@ function buildService(options: {
     {} as FileUploadService,
     subscriptionService,
     { get: () => undefined } as unknown as ConfigService,
+    // Sin `COBRIX_API_KEY` ni `COBRIX_WEBHOOK_SECRET`: aquí se prueba el camino
+    // manual de SUB-4, que es el que sigue vigente con la conciliación
+    // automática apagada.
+    new CobrixConfig({ get: () => undefined } as unknown as ConfigService),
+    {
+      findLive: jest.fn().mockResolvedValue(null),
+    } as unknown as CobrixInvoiceService,
   );
 
   return { service, reports, manager, events };

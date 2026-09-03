@@ -1,6 +1,7 @@
 import {
   IsOptional,
   IsEmail,
+  ValidateIf,
   IsString,
   IsNumber,
   IsDateString,
@@ -20,7 +21,8 @@ export class UpdateCompanyDto {
   @IsString()
   address?: string;
 
-  @IsOptional()
+  // Se puede omitir, pero no vaciar: el correo de la compañía es obligatorio.
+  @ValidateIf((dto: UpdateCompanyDto) => dto.email !== undefined)
   @IsEmail()
   email?: string;
 

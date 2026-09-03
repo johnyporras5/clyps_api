@@ -1,6 +1,7 @@
 import {
   IsOptional,
   IsEmail,
+  IsNotEmpty,
   IsString,
   IsNumber,
   IsDateString,
@@ -19,9 +20,15 @@ export class CreateCompanyDto {
   @IsString()
   address?: string;
 
-  @IsOptional()
+  /**
+   * OBLIGATORIO. Es el correo de la compañía y el que se usa para facturar:
+   * Cobrix identifica al cliente con él y sin correo no emite el cobro
+   * (SUB-10). El registro ya lo manda —es el mismo del dueño—, así que exigirlo
+   * aquí solo cierra la puerta a crear compañías sin él por la API.
+   */
   @IsEmail()
-  email?: string;
+  @IsNotEmpty({ message: 'El correo de la compañía es obligatorio' })
+  email: string;
 
   @IsOptional()
   @IsString()

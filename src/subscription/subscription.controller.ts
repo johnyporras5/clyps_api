@@ -28,8 +28,11 @@ import type { PlansResponse } from './dto/plans-response.dto';
 import type { QuoteResponse } from './dto/quote-response.dto';
 import { QueryQuoteDto } from './dto/query-quote.dto';
 import { ReportPaymentDto } from './dto/report-payment.dto';
+import { StartCheckoutDto } from './dto/start-checkout.dto';
+import { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type { AccessResponse } from './dto/access-response.dto';
+import type { CheckoutResponse } from './dto/checkout-response.dto';
 
 /**
  * SUB-1 / SUB-2 (CLYP-333 / CLYP-334). Todo va detrás del token: quien elige
@@ -45,6 +48,7 @@ export class SubscriptionController {
     private readonly subscriptionService: SubscriptionService,
     private readonly paymentsService: PaymentsService,
     private readonly entitlements: EntitlementsService,
+    private readonly checkout: CobrixInvoiceService,
   ) {}
 
   /** Planes disponibles con sus límites, más los días de prueba y gracia. */
@@ -96,6 +100,32 @@ export class SubscriptionController {
       req.user.sub,
     );
     return this.paymentsService.computeQuote(companyId, query.planId);
+  }
+
+  /**
+   * SUB-10: emite el documento de cobro en Cobrix y devuelve su enlace de pago.
+   *
+   * Va SEPARADO de la cotización a propósito: cotizar no escribe ni llama a
+   * nadie, y emitir un cobro real es una acción explícita del dueño. Pulsarlo
+   * dos veces no emite dos facturas — mientras haya una viva se devuelve la
+   * misma.
+   *
+   * Lo importante del orden: la factura tiene que existir ANTES de que el dueño
+   * pague. Cobrix concilia los movimientos del banco contra documentos
+   * ABIERTOS; sin documento, el pago que entra es plata que ve pero no sabe a
+   * quién aplicar.
+   */
+  @Roles('adm')
+  @Post('payments/checkout')
+  @HttpCode(HttpStatus.CREATED)
+  async startCheckout(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: StartCheckoutDto,
+  ): Promise<CheckoutResponse> {
+    const companyId = await this.paymentsService.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.checkout.startCheckout(companyId, dto);
   }
 
   /**
