@@ -129,6 +129,10 @@ jobs:
           DB_USERNAME: ${{ secrets.DB_USERNAME }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           DB_DATABASE: ${{ secrets.DB_DATABASE }}
+          # El runner entra por la red publica de la base gestionada, que
+          # exige TLS. Dentro del VPC la app usa el host privado y no lo
+          # necesita, por eso no se activa en DigitalOcean.
+          DB_SSL: "true"
         run: npm run migration:run
 
       - name: Instalar doctl
