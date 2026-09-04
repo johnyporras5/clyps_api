@@ -5,6 +5,7 @@ import {
 } from '../subscription-money.util';
 import type { PlanId } from '../config/plans.config';
 import type {
+  AutoCheckStatus,
   PaymentMethod,
   PaymentReportStatus,
   VerificationMethod,
@@ -173,4 +174,63 @@ export class PaymentReport {
     nullable: true,
   })
   rejectionReason: string | null;
+
+  // -------------------------------------------------------------------------
+  // Conciliación automática con Cobrix (SUB-10)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Qué contestó el conciliador automático. Es INDEPENDIENTE de `status`: un
+   * `rejected` de Cobrix deja el reporte en `reported` y lo manda a la cola
+   * manual, no lo rechaza. `null` = este reporte nunca entró a la conciliación
+   * (Cobrix apagado).
+   */
+  @Column({
+    name: 'auto_check_status',
+    type: 'varchar',
+    length: 12,
+    nullable: true,
+  })
+  autoCheckStatus: AutoCheckStatus | null;
+
+  @Column({ name: 'auto_check_at', type: 'datetime', nullable: true })
+  autoCheckAt: Date | null;
+
+  /** Por qué Cobrix no lo dio por bueno. Es lo que lee el admin en la cola. */
+  @Column({
+    name: 'auto_check_reason',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  autoCheckReason: string | null;
+
+  /** El `paymentId` con el que Cobrix identifica ese pago (`pay_…`). */
+  @Column({
+    name: 'gateway_payment_id',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  gatewayPaymentId: string | null;
+
+  /**
+   * Cédula o RIF con el que se emitió la factura. Cobrix resuelve al cliente
+   * por identidad fiscal, así que sin esto no hay documento de cobro que emitir.
+   * Se guarda para no volver a pedírselo al dueño en cada pago.
+   */
+  @Column({
+    name: 'payer_identification',
+    type: 'varchar',
+    length: 30,
+    nullable: true,
+  })
+  payerIdentification: string | null;
+
+  /**
+   * El documento de cobro contra el que se está pagando. null si el reporte se
+   * hizo sin pasar por Cobrix (integración apagada, o método que no cubre).
+   */
+  @Column({ name: 'invoice_id', type: 'int', nullable: true })
+  invoiceId: number | null;
 }

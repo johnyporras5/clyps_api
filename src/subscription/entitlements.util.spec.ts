@@ -1,4 +1,9 @@
-import { resolveAccess, type AccessInput } from './entitlements.util';
+import {
+  effectiveLimits,
+  effectivePlanId,
+  resolveAccess,
+  type AccessInput,
+} from './entitlements.util';
 
 const NOW = new Date('2026-08-31T12:00:00.000Z');
 
@@ -181,5 +186,63 @@ describe('estado guardado vs. estado real', () => {
         graceEndsAt: null,
       }),
     ).toMatchObject({ status: 'active', canOperate: true });
+  });
+});
+
+describe('los límites efectivos', () => {
+  it('en prueba el plan vigente es el Full, aunque no haya elegido', () => {
+    expect(effectivePlanId('basico', 'trialing')).toBe('full');
+    expect(effectivePlanId('basico', 'active')).toBe('basico');
+    expect(effectivePlanId('basico', 'grace')).toBe('basico');
+    expect(effectivePlanId('basico', 'blocked')).toBe('basico');
+  });
+
+  it('en prueba: todo abierto y sin tope, aunque el plan sea Básico', () => {
+    expect(effectiveLimits('basico', 'trialing')).toEqual({
+      maxWorkers: null,
+      payroll: true,
+      analytics: true,
+      aiSuggestions: true,
+      workerApp: true,
+      clientApp: true,
+      prioritySupport: true,
+    });
+  });
+
+  it('fuera de la prueba mandan los del plan', () => {
+    expect(effectiveLimits('basico', 'active')).toMatchObject({
+      maxWorkers: 2,
+      payroll: false,
+      aiSuggestions: false,
+    });
+    expect(effectiveLimits('basico', 'grace')).toMatchObject({
+      maxWorkers: 2,
+      aiSuggestions: false,
+    });
+    expect(effectiveLimits('full', 'active')).toMatchObject({
+      maxWorkers: 20,
+      aiSuggestions: true,
+    });
+  });
+});
+
+describe('el exento de cobro', () => {
+  it('no vence ni entra en gracia, por vieja que sea la fecha', () => {
+    expect(
+      access({
+        planId: 'full',
+        status: 'blocked',
+        trialEndsAt: days(-400),
+        currentPeriodEnd: days(-400),
+        graceEndsAt: days(-395),
+        billingExempt: true,
+      }),
+    ).toEqual({
+      status: 'active',
+      canOperate: true,
+      graceCause: null,
+      accessEndsAt: null,
+      graceEndsAt: null,
+    });
   });
 });

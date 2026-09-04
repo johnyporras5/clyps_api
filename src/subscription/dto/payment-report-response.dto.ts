@@ -1,5 +1,9 @@
 import type { PlanId } from '../config/plans.config';
-import type { PaymentMethod, PaymentReportStatus } from '../subscription.enums';
+import type {
+  AutoCheckStatus,
+  PaymentMethod,
+  PaymentReportStatus,
+} from '../subscription.enums';
 
 /**
  * Respuesta de POST /subscription/payments/report.
@@ -25,6 +29,13 @@ export interface PaymentReportResponse {
   /** URL del comprobante ya subido, si el dueño mandó la foto. */
   proofUrl: string | null;
   reportedAt: string;
+  /**
+   * En qué va la conciliación automática (SUB-10). `pending` es el "validando"
+   * que muestra la app mientras Cobrix responde; `null` significa que este
+   * pago lo revisa una persona y nada más. Ninguno de los dos quita el acceso:
+   * un reporte pendiente no bloquea.
+   */
+  autoCheckStatus: AutoCheckStatus | null;
   /** Los recordatorios de cobro quedan en pausa mientras esté por verificar. */
   remindersPaused: boolean;
 }

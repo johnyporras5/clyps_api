@@ -13,6 +13,11 @@ import type { SubscriptionStatus } from '../subscription.enums';
  * upgrade; si es `false`, la app entera va a la pantalla de pago.
  */
 export interface AccessResponse {
+  /**
+   * El plan que el tenant USA ahora. Durante la prueba es el Full aunque no
+   * haya elegido nada: es lo que se le está mostrando esos 15 días. El plan
+   * guardado sigue sin fijarse hasta que pague.
+   */
   planId: PlanId;
   planName: string;
   status: SubscriptionStatus;
@@ -25,9 +30,15 @@ export interface AccessResponse {
   graceEndsAt: string | null;
   /** Hay un pago esperando verificación: no se le debe insistir que pague. */
   hasPendingReport: boolean;
+  /**
+   * Exento de cobro: no se le pide pagar nunca. El front le esconde la pantalla
+   * de pago y el aviso de vencimiento; su plan se sigue respetando.
+   */
+  billingExempt: boolean;
   features: Record<PlanFeature, boolean>;
   limits: {
-    maxWorkers: number;
+    /** null = sin tope: durante la prueba no se aplica el límite del plan. */
+    maxWorkers: number | null;
     workersInUse: number;
     canAddWorker: boolean;
   };

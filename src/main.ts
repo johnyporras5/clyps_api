@@ -145,6 +145,10 @@ async function bootstrap() {
       {
         logger: ['error', 'warn', 'log'],
         abortOnError: false, // Critical: Don't abort on TypeORM connection errors
+        // Conserva los bytes exactos del cuerpo en `req.rawBody`. Lo necesita
+        // el webhook de Cobrix (SUB-10): su firma HMAC se calcula sobre el
+        // cuerpo CRUDO, y volver a serializar el JSON la invalida.
+        rawBody: true,
       },
     );
 
@@ -193,6 +197,8 @@ async function bootstrap() {
         app = await NestFactory.create<NestExpressApplication>(AppModule, {
           logger: ['error', 'warn'],
           abortOnError: false,
+          // Igual que arriba: sin esto el webhook de Cobrix no verifica firma.
+          rawBody: true,
         });
 
         app.enableCors(corsOptions);

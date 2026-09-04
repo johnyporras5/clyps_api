@@ -3,6 +3,7 @@ import type { PlanId } from './config/plans.config';
 import type { ReportPaymentDto } from './dto/report-payment.dto';
 import { CURRENCY_USD, CURRENCY_VES } from './subscription-money.util';
 import type { FrozenQuote } from './subscription-quote.util';
+import type { AutoCheckStatus } from './subscription.enums';
 
 /**
  * Armado del reporte de pago (SUB-3 / CLYP-335).
@@ -18,6 +19,19 @@ export interface ReportContext {
   subscriptionId: number;
   planId: PlanId;
   reportedAt: Date;
+  /**
+   * Con qué marca de conciliación automática nace el reporte (SUB-10):
+   * `pending` si hay un cobro emitido en Cobrix esperando este pago,
+   * `unsupported` si no lo hay o el método no se concilia, `null` si la
+   * integración está apagada. Lo decide el servicio, que es quien lee la
+   * configuración.
+   */
+  autoCheckStatus?: AutoCheckStatus | null;
+  autoCheckReason?: string | null;
+  /** La factura de Cobrix contra la que se está pagando. */
+  invoiceId?: number | null;
+  /** Cédula o RIF con el que se emitió esa factura. */
+  payerIdentification?: string | null;
 }
 
 /** La fila lista para insertar en `payment_report`. */
@@ -40,6 +54,11 @@ export interface PaymentReportDraft {
   note: string | null;
   reportedAt: Date;
   status: 'reported';
+  autoCheckStatus: AutoCheckStatus | null;
+  autoCheckAt: Date | null;
+  autoCheckReason: string | null;
+  invoiceId: number | null;
+  payerIdentification: string | null;
   verificationMethod: null;
 }
 
@@ -116,6 +135,13 @@ export function buildPaymentReportDraft(
     reportedAt: context.reportedAt,
     // Reportar NO da acceso: el reporte nace como un reclamo por verificar.
     status: 'reported',
+    // Nace esperando a Cobrix (SUB-10) sin dejar de ser un reclamo: quien lo
+    // resuelva —el webhook o el admin— es otra historia.
+    autoCheckStatus: context.autoCheckStatus ?? null,
+    autoCheckAt: context.autoCheckStatus ? context.reportedAt : null,
+    autoCheckReason: context.autoCheckReason ?? null,
+    invoiceId: context.invoiceId ?? null,
+    payerIdentification: context.payerIdentification ?? null,
     verificationMethod: null,
   };
 }

@@ -66,3 +66,38 @@ export const REMINDER_CHANNELS: ReminderChannel[] = [
   'email',
   'whatsapp',
 ];
+
+/**
+ * Resultado de la conciliación automática con Cobrix (SUB-10).
+ *
+ * Es una dimensión APARTE de `PaymentReportStatus`: dice qué contestó el
+ * conciliador, no si el pago está cobrado. Un `rejected` de Cobrix NO rechaza
+ * el reporte — lo deja en `reported` con esta marca para que el admin lo cierre
+ * a mano (SUB-4).
+ *
+ * - `pending`: enviado/esperando el webhook de Cobrix.
+ * - `approved`: Cobrix confirmó el pago; el reporte quedó `verified`/`auto`.
+ * - `rejected`: Cobrix no lo dio por bueno → revisión manual.
+ * - `unsupported`: método que Cobrix no concilia (Binance/PayPal) → manual.
+ * - `expired`: se agotó la espera del webhook → manual.
+ */
+export type AutoCheckStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'unsupported'
+  | 'expired';
+export const AUTO_CHECK_STATUSES: AutoCheckStatus[] = [
+  'pending',
+  'approved',
+  'rejected',
+  'unsupported',
+  'expired',
+];
+
+/** Los estados de `auto_check_status` que caen en la cola manual (SUB-4). */
+export const AUTO_CHECK_NEEDS_REVIEW: AutoCheckStatus[] = [
+  'rejected',
+  'unsupported',
+  'expired',
+];

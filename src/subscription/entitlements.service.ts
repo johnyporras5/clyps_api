@@ -12,7 +12,13 @@ import {
 } from './config/plans.config';
 import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
-import { resolveAccess, type AccessState } from './entitlements.util';
+import {
+  effectiveLimits,
+  effectivePlanId,
+  resolveAccess,
+  type AccessState,
+  type EffectiveLimits,
+} from './entitlements.util';
 import type { AccessResponse } from './dto/access-response.dto';
 
 /**
@@ -36,10 +42,23 @@ export function isPlanFeature(value: unknown): value is PlanFeature {
   );
 }
 
-/** Plan vigente + estado de acceso, resueltos de una sola pasada. */
+/** Plan vigente + estado de acceso + límites, resueltos de una sola pasada. */
 interface EntitlementContext {
+  /**
+   * El plan que el tenant USA ahora. En la prueba es el Full aunque no haya
+   * elegido nada; fuera de ella, el que compró. El plan GUARDADO no se toca:
+   * eso es lo que se le cotiza cuando la prueba termina.
+   */
   planId: PlanId;
   access: AccessState;
+  /**
+   * Lo que puede usar AHORA. Normalmente son los límites de su plan, pero en
+   * `trialing` están todos abiertos y sin tope: la prueba enseña el producto
+   * entero aunque el tenant todavía no haya elegido plan.
+   */
+  limits: EffectiveLimits;
+  /** No se le cobra: el front debe esconderle la pantalla de pago. */
+  billingExempt: boolean;
 }
 
 /**
@@ -101,13 +120,18 @@ export class EntitlementsService {
     });
     const hasPendingReport = await this.hasPendingReport(companyId);
 
+    const storedPlanId = subscription?.planId ?? 'basico';
+    const access = resolveAccess({
+      subscription,
+      hasPendingReport,
+      graceDays: this.graceDays,
+    });
+
     return {
-      planId: subscription?.planId ?? 'basico',
-      access: resolveAccess({
-        subscription,
-        hasPendingReport,
-        graceDays: this.graceDays,
-      }),
+      planId: effectivePlanId(storedPlanId, access.status),
+      access,
+      limits: effectiveLimits(storedPlanId, access.status),
+      billingExempt: Boolean(subscription?.billingExempt),
     };
   }
 
@@ -133,11 +157,12 @@ export class EntitlementsService {
    * ¿Puede este tenant usar esta función AHORA?
    *
    * Un Básico al día no ve la IA (falla el eje del plan); un Full bloqueado
-   * tampoco (falla el eje del estado).
+   * tampoco (falla el eje del estado). En prueba pasan todas: esos 15 días
+   * enseñan el producto entero.
    */
   async can(companyId: number, feature: PlanFeature): Promise<boolean> {
-    const { planId, access } = await this.context(companyId);
-    return access.canOperate && getPlan(planId).limits[feature];
+    const { access, limits } = await this.context(companyId);
+    return access.canOperate && limits[feature];
   }
 
   /** ¿Puede ejecutar acciones de operación (crear cita, cobrar, etc.)? */
@@ -177,9 +202,9 @@ export class EntitlementsService {
     companyId: number,
     feature: PlanFeature,
   ): Promise<void> {
-    const { planId } = await this.assertCanOperate(companyId);
+    const { planId, limits } = await this.assertCanOperate(companyId);
     const plan = getPlan(planId);
-    if (!plan.limits[feature]) {
+    if (!limits[feature]) {
       throw new ForbiddenException({
         message: `Tu plan ${plan.name} no incluye esta función. Sube al plan Full para activarla.`,
         reason: 'plan_upgrade_required',
@@ -190,23 +215,27 @@ export class EntitlementsService {
   }
 
   /**
-   * Tope de trabajadores del plan (SUB-1: Básico 2, Full 20).
+   * Tope de trabajadores (SUB-1: Básico 2, Full 20; en prueba, sin tope).
    *
    * Se evalúa al CREAR: los trabajadores que ya existen no se tocan si un Full
-   * baja a Básico — bajar de plan no destruye datos, solo impide crecer.
+   * baja a Básico — bajar de plan no destruye datos, solo impide crecer. Lo
+   * mismo vale al salir de la prueba: los que sumó sin tope se quedan.
    */
   async assertCanAddWorker(companyId: number): Promise<void> {
-    const { planId } = await this.assertCanOperate(companyId);
+    const { planId, limits } = await this.assertCanOperate(companyId);
+    const max = limits.maxWorkers;
+    if (max === null) return;
+
     const plan = getPlan(planId);
     const current = await this.workers.countBy({ companyId, isActive: 1 });
 
-    if (current >= plan.limits.maxWorkers) {
+    if (current >= max) {
       throw new ForbiddenException({
-        message: `Tu plan ${plan.name} permite hasta ${plan.limits.maxWorkers} trabajadores. Sube a Full para agregar más.`,
+        message: `Tu plan ${plan.name} permite hasta ${max} trabajadores. Sube a Full para agregar más.`,
         reason: 'plan_limit_reached',
         feature: 'maxWorkers',
         planId,
-        limit: plan.limits.maxWorkers,
+        limit: max,
         current,
       });
     }
@@ -221,7 +250,8 @@ export class EntitlementsService {
    * está bloqueado por plan (para el CTA de upgrade) y cuánto le queda.
    */
   async getAccessResponse(companyId: number): Promise<AccessResponse> {
-    const { planId, access } = await this.context(companyId);
+    const { planId, access, limits, billingExempt } =
+      await this.context(companyId);
     const plan = getPlan(planId);
     const workersInUse = await this.workers.countBy({
       companyId,
@@ -230,8 +260,9 @@ export class EntitlementsService {
 
     const features = PLAN_FEATURES.reduce(
       (acc, feature) => {
-        // El eje del plan sigue aplicando dentro de los estados con acceso.
-        acc[feature] = access.canOperate && plan.limits[feature];
+        // El eje del plan sigue aplicando dentro de los estados con acceso
+        // (salvo en la prueba, donde los límites vienen todos abiertos).
+        acc[feature] = access.canOperate && limits[feature];
         return acc;
       },
       {} as Record<PlanFeature, boolean>,
@@ -246,12 +277,14 @@ export class EntitlementsService {
       accessEndsAt: access.accessEndsAt?.toISOString() ?? null,
       graceEndsAt: access.graceEndsAt?.toISOString() ?? null,
       hasPendingReport: access.graceCause === 'pending_report',
+      billingExempt,
       features,
       limits: {
-        maxWorkers: plan.limits.maxWorkers,
+        maxWorkers: limits.maxWorkers,
         workersInUse,
         canAddWorker:
-          access.canOperate && workersInUse < plan.limits.maxWorkers,
+          access.canOperate &&
+          (limits.maxWorkers === null || workersInUse < limits.maxWorkers),
       },
     };
   }
@@ -267,12 +300,11 @@ export class EntitlementsService {
     aiSuggestions: boolean;
     clientApp: boolean;
   }> {
-    const { planId, access } = await this.context(companyId);
-    const plan = getPlan(planId);
+    const { access, limits } = await this.context(companyId);
     return {
       companyId,
-      aiSuggestions: access.canOperate && plan.limits.aiSuggestions,
-      clientApp: access.canOperate && plan.limits.clientApp,
+      aiSuggestions: access.canOperate && limits.aiSuggestions,
+      clientApp: access.canOperate && limits.clientApp,
     };
   }
 }
