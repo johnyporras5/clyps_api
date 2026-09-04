@@ -43,6 +43,7 @@ import { SiteCategoryService } from '../site_category/site_category.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { EntitlementsService } from '../subscription/entitlements.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 import type { AuthenticatedUser } from './types/authenticated-request';
 
@@ -70,6 +71,7 @@ export class AuthService {
     private readonly realtime: RealtimeService,
     private readonly onboardingService: OnboardingService,
     private readonly entitlements: EntitlementsService,
+    private readonly subscriptions: SubscriptionService,
   ) {}
 
   /**
@@ -212,7 +214,19 @@ export class AuthService {
       location: registerDto.location,
     };
 
-    await this.companyService.create(companyData);
+    const company = await this.companyService.create(companyData);
+
+    // SUB-1: el salón nace con 15 días de prueba. No bloquea el registro si
+    // falla —la cuenta ya está creada y sin fila el acceso es permisivo, no
+    // restrictivo— pero queda el error en el log para poder repararlo.
+    try {
+      await this.subscriptions.startTrial(company.id);
+    } catch (error) {
+      console.error(
+        `❌ No se pudo iniciar la prueba de la company ${company.id}:`,
+        error,
+      );
+    }
 
     if (registerDto.categories && registerDto.categories.length > 0) {
       for (const categoryName of registerDto.categories) {

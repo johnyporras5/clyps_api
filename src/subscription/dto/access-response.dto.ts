@@ -30,6 +30,11 @@ export interface AccessResponse {
   graceEndsAt: string | null;
   /** Hay un pago esperando verificación: no se le debe insistir que pague. */
   hasPendingReport: boolean;
+  /**
+   * Exento de cobro: no se le pide pagar nunca. El front le esconde la pantalla
+   * de pago y el aviso de vencimiento; su plan se sigue respetando.
+   */
+  billingExempt: boolean;
   features: Record<PlanFeature, boolean>;
   limits: {
     /** null = sin tope: durante la prueba no se aplica el límite del plan. */

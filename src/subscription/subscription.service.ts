@@ -61,6 +61,62 @@ export class SubscriptionService {
   }
 
   /**
+   * Arranca la prueba de 15 días del salón (SUB-1).
+   *
+   * Se llama al registrar el salón. Sin esta fila el tenant cae en la rama de
+   * "sin suscripción" de `resolveAccess`, que concede acceso completo SIN fecha
+   * de fin: una prueba perpetua. La fila es lo que le pone reloj.
+   *
+   * El plan nace `basico` porque todavía no eligió: durante la prueba usa el
+   * Full igual —el eje del plan no aplica ahí— y al vencer se le cotiza el que
+   * escoja, no el caro por descarte.
+   *
+   * IDEMPOTENTE: si el salón ya tiene suscripción se devuelve la que hay, sin
+   * regalar una prueba nueva.
+   */
+  async startTrial(
+    companyId: number,
+    now: Date = new Date(),
+  ): Promise<Subscription> {
+    const existing = await this.subscriptions.findOne({ where: { companyId } });
+    if (existing) return existing;
+
+    const trialEndsAt = new Date(
+      now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000,
+    );
+
+    try {
+      const created = await this.subscriptions.save(
+        this.subscriptions.create({
+          companyId,
+          planId: 'basico',
+          status: 'trialing',
+          trialEndsAt,
+          currentPeriodEnd: null,
+          graceEndsAt: null,
+        }),
+      );
+      this.logger.log(
+        `Prueba iniciada para la company ${companyId}: hasta ${trialEndsAt.toISOString()}`,
+      );
+      return created;
+    } catch (error) {
+      // Dos altas simultáneas de la misma company: el único de company_id deja
+      // pasar una sola, y la que perdió se queda con la que quedó.
+      if (
+        error instanceof QueryFailedError &&
+        error.message.includes('UQ_subscription_company')
+      ) {
+        const fresh = await this.subscriptions.findOne({
+          where: { companyId },
+        });
+        if (fresh) return fresh;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Extiende el acceso del tenant por el pago verificado.
    *
    * Es lo ÚNICO que da acceso: ni cotizar ni reportar tocan este estado. El mes

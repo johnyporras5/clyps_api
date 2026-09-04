@@ -225,3 +225,24 @@ describe('los límites efectivos', () => {
     });
   });
 });
+
+describe('el exento de cobro', () => {
+  it('no vence ni entra en gracia, por vieja que sea la fecha', () => {
+    expect(
+      access({
+        planId: 'full',
+        status: 'blocked',
+        trialEndsAt: days(-400),
+        currentPeriodEnd: days(-400),
+        graceEndsAt: days(-395),
+        billingExempt: true,
+      }),
+    ).toEqual({
+      status: 'active',
+      canOperate: true,
+      graceCause: null,
+      accessEndsAt: null,
+      graceEndsAt: null,
+    });
+  });
+});

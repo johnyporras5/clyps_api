@@ -55,6 +55,16 @@ export class Subscription {
   @Column({ name: 'grace_ends_at', type: 'datetime', nullable: true })
   graceEndsAt: Date | null;
 
+  /**
+   * Exento de cobro: cortesía, socios, el salón demo.
+   *
+   * Acceso permanente CON SU PLAN —no es barra libre: un exento en Básico sigue
+   * sin IA—, sin vencimiento, sin gracia y sin bloqueo. Es lo que distingue al
+   * que no paga porque no le toca del que no paga porque no pagó.
+   */
+  @Column({ name: 'billing_exempt', type: 'tinyint', default: 0 })
+  billingExempt: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
