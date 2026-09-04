@@ -45,6 +45,21 @@ export class SessionPaymentLineDto {
   method?: string | null;
 }
 
+// Pago mixto: tasa por moneda de los ítems (servicios/productos). En el mixto
+// solo se mandan las líneas de efectivo ($) y resto (VES), así que la tasa de
+// otras monedas (p. ej. servicios en €) viaja aquí para poder convertir sus
+// comisiones a Bs; sin esto se perderían al no tener tasa.
+export class SessionPaymentRateDto {
+  @IsString()
+  @Length(2, 10)
+  currency: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  exchangeRate: number;
+}
+
 export class SessionPaymentTipDto {
   @Type(() => Number)
   @IsNumber()
@@ -146,6 +161,13 @@ export class RegisterSessionPaymentDto {
   @ValidateNested({ each: true })
   @Type(() => PaymentProductDto)
   products?: PaymentProductDto[];
+
+  // Tasas por moneda de los ítems (para convertir comisiones a Bs en pago mixto).
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SessionPaymentRateDto)
+  rates?: SessionPaymentRateDto[];
 
   // CLYP-318: atribuciones de comisión/propina. Si vienen, mandan ellas y NO se
   // auto-genera desde el split del servicio (compatibilidad: sin atribuciones =
