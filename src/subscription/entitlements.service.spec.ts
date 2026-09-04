@@ -263,7 +263,13 @@ describe('la prueba de 15 días', () => {
 
     const response = await service.getAccessResponse(7);
 
-    expect(response).toMatchObject({ status: 'trialing', canOperate: true });
+    // El panel muestra el plan que está USANDO, no la columna todavía sin elegir.
+    expect(response).toMatchObject({
+      status: 'trialing',
+      canOperate: true,
+      planId: 'full',
+      planName: 'Full',
+    });
     expect(Object.values(response.features).every((v) => v === true)).toBe(
       true,
     );
@@ -293,6 +299,7 @@ describe('la prueba de 15 días', () => {
     expect(await service.can(7, 'aiSuggestions')).toBe(false);
     // Los 5 que sumó en la prueba se quedan; solo no puede sumar más.
     const response = await service.getAccessResponse(7);
+    expect(response).toMatchObject({ planId: 'basico', planName: 'Básico' });
     expect(response.limits).toMatchObject({
       maxWorkers: 2,
       workersInUse: 5,

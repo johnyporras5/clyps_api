@@ -14,6 +14,7 @@ import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
 import {
   effectiveLimits,
+  effectivePlanId,
   resolveAccess,
   type AccessState,
   type EffectiveLimits,
@@ -43,6 +44,11 @@ export function isPlanFeature(value: unknown): value is PlanFeature {
 
 /** Plan vigente + estado de acceso + límites, resueltos de una sola pasada. */
 interface EntitlementContext {
+  /**
+   * El plan que el tenant USA ahora. En la prueba es el Full aunque no haya
+   * elegido nada; fuera de ella, el que compró. El plan GUARDADO no se toca:
+   * eso es lo que se le cotiza cuando la prueba termina.
+   */
   planId: PlanId;
   access: AccessState;
   /**
@@ -112,14 +118,18 @@ export class EntitlementsService {
     });
     const hasPendingReport = await this.hasPendingReport(companyId);
 
-    const planId = subscription?.planId ?? 'basico';
+    const storedPlanId = subscription?.planId ?? 'basico';
     const access = resolveAccess({
       subscription,
       hasPendingReport,
       graceDays: this.graceDays,
     });
 
-    return { planId, access, limits: effectiveLimits(planId, access.status) };
+    return {
+      planId: effectivePlanId(storedPlanId, access.status),
+      access,
+      limits: effectiveLimits(storedPlanId, access.status),
+    };
   }
 
   /** Estado de acceso efectivo (la matriz del ticket). */

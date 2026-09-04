@@ -13,6 +13,11 @@ import type { SubscriptionStatus } from '../subscription.enums';
  * upgrade; si es `false`, la app entera va a la pantalla de pago.
  */
 export interface AccessResponse {
+  /**
+   * El plan que el tenant USA ahora. Durante la prueba es el Full aunque no
+   * haya elegido nada: es lo que se le está mostrando esos 15 días. El plan
+   * guardado sigue sin fijarse hasta que pague.
+   */
   planId: PlanId;
   planName: string;
   status: SubscriptionStatus;
