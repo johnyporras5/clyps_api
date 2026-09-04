@@ -17,7 +17,6 @@ import {
   effectivePlanId,
   resolveAccess,
   type AccessState,
-  type EffectiveLimits,
 } from './entitlements.util';
 import type { AccessResponse } from './dto/access-response.dto';
 
@@ -56,7 +55,7 @@ interface EntitlementContext {
    * `trialing` están todos abiertos y sin tope: la prueba enseña el producto
    * entero aunque el tenant todavía no haya elegido plan.
    */
-  limits: EffectiveLimits;
+  limits: PlanLimits;
   /** No se le cobra: el front debe esconderle la pantalla de pago. */
   billingExempt: boolean;
 }
@@ -215,17 +214,15 @@ export class EntitlementsService {
   }
 
   /**
-   * Tope de trabajadores (SUB-1: Básico 2, Full 20; en prueba, sin tope).
+   * Tope de trabajadores del plan vigente (SUB-1: Básico 2, Full 20; en
+   * prueba, el del Full).
    *
    * Se evalúa al CREAR: los trabajadores que ya existen no se tocan si un Full
-   * baja a Básico — bajar de plan no destruye datos, solo impide crecer. Lo
-   * mismo vale al salir de la prueba: los que sumó sin tope se quedan.
+   * baja a Básico — bajar de plan no destruye datos, solo impide crecer.
    */
   async assertCanAddWorker(companyId: number): Promise<void> {
     const { planId, limits } = await this.assertCanOperate(companyId);
     const max = limits.maxWorkers;
-    if (max === null) return;
-
     const plan = getPlan(planId);
     const current = await this.workers.countBy({ companyId, isActive: 1 });
 
@@ -282,9 +279,7 @@ export class EntitlementsService {
       limits: {
         maxWorkers: limits.maxWorkers,
         workersInUse,
-        canAddWorker:
-          access.canOperate &&
-          (limits.maxWorkers === null || workersInUse < limits.maxWorkers),
+        canAddWorker: access.canOperate && workersInUse < limits.maxWorkers,
       },
     };
   }

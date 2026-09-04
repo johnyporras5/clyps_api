@@ -197,9 +197,9 @@ describe('los límites efectivos', () => {
     expect(effectivePlanId('basico', 'blocked')).toBe('basico');
   });
 
-  it('en prueba: todo abierto y sin tope, aunque el plan sea Básico', () => {
+  it('en prueba rigen los límites del Full, tope incluido', () => {
     expect(effectiveLimits('basico', 'trialing')).toEqual({
-      maxWorkers: null,
+      maxWorkers: 20,
       payroll: true,
       analytics: true,
       aiSuggestions: true,

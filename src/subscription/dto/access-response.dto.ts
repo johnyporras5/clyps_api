@@ -37,8 +37,8 @@ export interface AccessResponse {
   billingExempt: boolean;
   features: Record<PlanFeature, boolean>;
   limits: {
-    /** null = sin tope: durante la prueba no se aplica el límite del plan. */
-    maxWorkers: number | null;
+    /** Tope del plan vigente. En la prueba, el del Full. */
+    maxWorkers: number;
     workersInUse: number;
     canAddWorker: boolean;
   };

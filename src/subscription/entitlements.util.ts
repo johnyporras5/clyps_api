@@ -161,16 +161,6 @@ export function resolveAccess(input: AccessInput): AccessState {
 }
 
 /**
- * Límites vigentes AHORA para el tenant.
- *
- * Igual que `PlanLimits`, salvo que `maxWorkers` admite `null` = sin tope.
- */
-export interface EffectiveLimits extends Omit<PlanLimits, 'maxWorkers'> {
-  /** null = sin tope (solo durante la prueba). */
-  maxWorkers: number | null;
-}
-
-/**
  * El plan que el tenant USA durante la prueba: el Full.
  *
  * No se guarda en `subscription.plan_id` a propósito — ahí sigue sin haber plan
@@ -178,12 +168,6 @@ export interface EffectiveLimits extends Omit<PlanLimits, 'maxWorkers'> {
  * escoja y no el caro por descarte.
  */
 export const TRIAL_PLAN_ID: PlanId = 'full';
-
-/** Todo lo del Full y además sin tope de trabajadores. */
-const TRIAL_LIMITS: EffectiveLimits = {
-  ...getPlan(TRIAL_PLAN_ID).limits,
-  maxWorkers: null,
-};
 
 /**
  * El plan vigente de cara al tenant: en la prueba, el Full; si no, el suyo.
@@ -199,18 +183,16 @@ export function effectivePlanId(
 }
 
 /**
- * Límites efectivos según el estado.
+ * Los límites que rigen AHORA: los del plan que está usando.
  *
- * Durante `trialing` NO se aplica el eje del plan: los 15 días muestran el
- * producto completo (nómina, IA, análisis, app del trabajador y sin tope de
- * trabajadores) aunque el tenant todavía no haya elegido plan — es el
- * escaparate que engancha, y restringirlo a Básico por defecto sería enseñarle
- * menos de lo que se le quiere vender. El eje del plan vuelve a mandar en
- * `active` y `grace`.
+ * Durante la prueba son los del Full completos —incluido su tope de
+ * trabajadores—: la prueba es el Full, no una barra libre. Así lo que el dueño
+ * ve en esos 15 días es exactamente lo que va a tener si lo paga, sin sorpresas
+ * al vencer.
  */
 export function effectiveLimits(
   planId: PlanId,
   status: SubscriptionStatus,
-): EffectiveLimits {
-  return status === 'trialing' ? TRIAL_LIMITS : getPlan(planId).limits;
+): PlanLimits {
+  return getPlan(effectivePlanId(planId, status)).limits;
 }

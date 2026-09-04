@@ -255,9 +255,14 @@ describe('la prueba de 15 días', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('no tiene tope de trabajadores', async () => {
+  it('usa el tope del Full: admite el #10 y corta pasados los 20', async () => {
     const service = buildService({ planId: 'basico', ...trial, workers: 9 });
     await expect(service.assertCanAddWorker(7)).resolves.toBeUndefined();
+
+    const lleno = buildService({ planId: 'basico', ...trial, workers: 20 });
+    await expect(lleno.assertCanAddWorker(7)).rejects.toThrow(
+      /permite hasta 20 trabajadores/,
+    );
   });
 
   it('el panel lo pinta todo disponible y sin tope', async () => {
@@ -276,7 +281,7 @@ describe('la prueba de 15 días', () => {
       true,
     );
     expect(response.limits).toMatchObject({
-      maxWorkers: null,
+      maxWorkers: 20,
       workersInUse: 3,
       canAddWorker: true,
     });
