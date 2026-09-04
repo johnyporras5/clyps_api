@@ -26,6 +26,7 @@ function buildService(options: {
   pendingReports?: number;
   workers?: number;
   noSubscription?: boolean;
+  billingExempt?: boolean;
 }): EntitlementsService {
   const subscription = options.noSubscription
     ? null
@@ -42,6 +43,7 @@ function buildService(options: {
             ? (options.currentPeriodEnd ?? null)
             : days(10),
         graceEndsAt: options.graceEndsAt ?? null,
+        billingExempt: options.billingExempt ?? false,
       } as Subscription);
 
   const subscriptions = { findOne: jest.fn().mockResolvedValue(subscription) };
@@ -308,5 +310,47 @@ describe('la prueba de 15 días', () => {
     await expect(service.assertCanAddWorker(7)).rejects.toThrow(
       /permite hasta 2 trabajadores/,
     );
+  });
+});
+
+describe('los salones exentos de cobro', () => {
+  /** Cortesía: se le perdona pagar, no se le regalan funciones. */
+  const exento = { billingExempt: true, currentPeriodEnd: days(-400) };
+
+  it('opera aunque su período venciera hace un año', async () => {
+    const service = buildService({ planId: 'full', ...exento });
+
+    expect(await service.canOperate(7)).toBe(true);
+    expect(await service.can(7, 'payroll')).toBe(true);
+    await expect(service.assertCanOperate(7)).resolves.toBeDefined();
+  });
+
+  it('conserva SU plan: un exento en Básico sigue sin IA ni tope ampliado', async () => {
+    const service = buildService({ planId: 'basico', ...exento, workers: 2 });
+
+    expect(await service.canOperate(7)).toBe(true);
+    expect(await service.can(7, 'aiSuggestions')).toBe(false);
+    await expect(service.assertCanAddWorker(7)).rejects.toThrow(
+      /permite hasta 2 trabajadores/,
+    );
+  });
+
+  it('el front sabe que no debe pedirle pagar', async () => {
+    const service = buildService({ planId: 'full', ...exento });
+
+    const response = await service.getAccessResponse(7);
+
+    expect(response).toMatchObject({
+      status: 'active',
+      canOperate: true,
+      billingExempt: true,
+      accessEndsAt: null,
+      graceEndsAt: null,
+    });
+  });
+
+  it('quien sí paga no viene marcado como exento', async () => {
+    const service = buildService({ planId: 'full' });
+    expect((await service.getAccessResponse(7)).billingExempt).toBe(false);
   });
 });

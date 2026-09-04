@@ -57,6 +57,8 @@ interface EntitlementContext {
    * entero aunque el tenant todavía no haya elegido plan.
    */
   limits: EffectiveLimits;
+  /** No se le cobra: el front debe esconderle la pantalla de pago. */
+  billingExempt: boolean;
 }
 
 /**
@@ -129,6 +131,7 @@ export class EntitlementsService {
       planId: effectivePlanId(storedPlanId, access.status),
       access,
       limits: effectiveLimits(storedPlanId, access.status),
+      billingExempt: Boolean(subscription?.billingExempt),
     };
   }
 
@@ -247,7 +250,8 @@ export class EntitlementsService {
    * está bloqueado por plan (para el CTA de upgrade) y cuánto le queda.
    */
   async getAccessResponse(companyId: number): Promise<AccessResponse> {
-    const { planId, access, limits } = await this.context(companyId);
+    const { planId, access, limits, billingExempt } =
+      await this.context(companyId);
     const plan = getPlan(planId);
     const workersInUse = await this.workers.countBy({
       companyId,
@@ -273,6 +277,7 @@ export class EntitlementsService {
       accessEndsAt: access.accessEndsAt?.toISOString() ?? null,
       graceEndsAt: access.graceEndsAt?.toISOString() ?? null,
       hasPendingReport: access.graceCause === 'pending_report',
+      billingExempt,
       features,
       limits: {
         maxWorkers: limits.maxWorkers,

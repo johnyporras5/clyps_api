@@ -33,6 +33,8 @@ export interface AccessInput {
     trialEndsAt: Date | null;
     currentPeriodEnd: Date | null;
     graceEndsAt: Date | null;
+    /** No se le cobra: acceso permanente con su plan. */
+    billingExempt?: boolean;
   } | null;
   /** Hay un PaymentReport en `reported` esperando verificación. */
   hasPendingReport: boolean;
@@ -84,6 +86,19 @@ export function resolveAccess(input: AccessInput): AccessState {
   if (!subscription) {
     return {
       status: 'trialing',
+      canOperate: true,
+      graceCause: null,
+      accessEndsAt: null,
+      graceEndsAt: null,
+    };
+  }
+
+  // Exento: no se le cobra, así que no hay vencimiento que evaluar. Va antes
+  // que cualquier fecha a propósito — el que no paga porque no le toca no
+  // atraviesa gracia ni bloqueo, ni siquiera con el período vencido.
+  if (subscription.billingExempt) {
+    return {
+      status: 'active',
       canOperate: true,
       graceCause: null,
       accessEndsAt: null,
