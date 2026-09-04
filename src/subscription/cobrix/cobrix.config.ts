@@ -179,4 +179,54 @@ export class CobrixConfig {
   get waitHours(): number {
     return this.num('COBRIX_WEBHOOK_WAIT_HOURS', COBRIX_DEFAULTS.waitHours);
   }
+
+  // ---------------------------------------------------------------------------
+  // ⚠️ ANDAMIO DE PRUEBAS
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Monto fijo con el que se factura en vez del precio del plan, en unidades
+   * MAYORES de la moneda de la cuenta (`COBRIX_TEST_AMOUNT=1` factura 1 Bs).
+   *
+   * Sirve para recorrer el circuito completo —enlace, pago real, conciliación,
+   * webhook, activación— sin cobrarle a nadie el precio del plan. Es la única
+   * forma de probarlo de verdad: el pago tiene que ocurrir en el banco.
+   *
+   * ⚠️ NO se apaga solo en producción, y es a propósito: probar contra Cobrix
+   * exige la cuenta real. Lo que lo hace seguro es `COBRIX_TEST_COMPANY_IDS` y
+   * que cada factura así emitida deje un WARN en el log.
+   */
+  get testAmount(): number | null {
+    const raw = Number(this.config.get<string>('COBRIX_TEST_AMOUNT'));
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  }
+
+  /**
+   * A qué salones se les aplica el monto de prueba. Vacío = A TODOS, que es lo
+   * que no quieres en producción: pon aquí el id de tu salón de pruebas y los
+   * tenants reales seguirán pagando el precio del plan aunque te olvides de
+   * quitar la variable.
+   */
+  get testCompanyIds(): number[] {
+    const raw = this.str('COBRIX_TEST_COMPANY_IDS');
+    if (!raw) return [];
+    return raw
+      .split(',')
+      .map((id) => Number(id.trim()))
+      .filter((id) => Number.isInteger(id) && id > 0);
+  }
+
+  /**
+   * El monto de prueba en unidades mínimas para este salón, o `null` si le toca
+   * pagar el precio de verdad.
+   */
+  testAmountMinorFor(companyId: number): number | null {
+    const amount = this.testAmount;
+    if (amount === null) return null;
+
+    const ids = this.testCompanyIds;
+    if (ids.length && !ids.includes(companyId)) return null;
+
+    return Math.round(amount * 100);
+  }
 }
