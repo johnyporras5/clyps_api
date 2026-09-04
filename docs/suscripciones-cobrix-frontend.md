@@ -15,6 +15,27 @@ POST /subscription/payments/checkout → emite el cobro y devuelve el enlace
 GET /subscription/access           → confirmar que ya quedó activo
 ```
 
+```mermaid
+sequenceDiagram
+  participant D as Dueño
+  participant F as App
+  participant B as Backend
+  participant C as Cobrix
+  D->>F: "quiero pagar"
+  F->>B: GET /subscription/quote?planId=…
+  B-->>F: monto en Bs + tasa
+  F->>B: POST /payments/checkout {planId}
+  B->>C: emite la factura
+  C-->>B: paymentLink
+  B-->>F: paymentLink + providerReference
+  F->>D: abre el enlace
+  D->>C: paga (Pago Móvil)
+  C-->>B: webhook invoice.paid
+  B->>B: verifica el pago y extiende el período
+  F->>B: GET /subscription/access (al volver / cada tanto)
+  B-->>F: status active, un mes más
+```
+
 **El orden importa:** la factura tiene que existir **antes** de pagar. Cobrix concilia movimientos
 bancarios contra documentos abiertos; un pago sin factura emitida no se puede casar solo y termina
 en verificación manual.
