@@ -4238,6 +4238,16 @@ export class SessionService {
           l.exchangeRate ?? null,
         ]),
       );
+      // Pago mixto: solo llegan las líneas de efectivo ($) y resto (VES), así que
+      // las tasas de otras monedas de los ítems (p. ej. servicios en €) vienen en
+      // `rates`. Se rellenan sin pisar una tasa ya presente en las líneas.
+      for (const r of dto.rates ?? []) {
+        const cur = r.currency.toUpperCase();
+        const existing = rateByCurrency.get(cur);
+        if (r.exchangeRate != null && (existing == null || existing <= 0)) {
+          rateByCurrency.set(cur, r.exchangeRate);
+        }
+      }
       const serviceIds = [
         ...new Set(sessionDetails.map((d) => d.serviceId).filter(Boolean)),
       ];
@@ -4325,30 +4335,75 @@ export class SessionService {
           })
           .filter((x): x is NonNullable<typeof x> => x !== null);
 
-        // --- Pago mixto (B): repartir el EFECTIVO 50/50 entre el ejecutor y la
-        // company. La comisión del ejecutor se parte en 2 conceptos (efectivo +
-        // Bs); la porción de la company se guarda en el cobro para el reporte.
+        // --- Pago MIXTO (parte efectivo + parte Bs): el EFECTIVO se aplica SOLO
+        // a los SERVICIOS y se reparte proporcional entre sus participantes
+        // (ejecutor, roles y la company), todos al mismo %. Los PRODUCTOS NO
+        // llevan efectivo en el mixto: comisión del vendedor y ganancia de la
+        // company van 100% a Bs (a tasa $ BCV, porque el producto cuesta $).
+        // En pago 100% efectivo, en cambio, todo queda en efectivo (los ítems de
+        // producto caen al default keepForeign=isCash, sin split). El % se saca
+        // por Bs para poder mezclar € (servicios) con $ (productos).
         const r2 = (n: number) => parseFloat(n.toFixed(2));
         let finalAttrItems = attrItems;
         let companyCashMinor = 0;
         let companyCashCurrency: string | null = null;
-        const cashLineB = (dto.lines ?? []).find(
-          (l) => l.method === 'cash' && l.currency.toUpperCase() !== 'VES',
+
+        // Cobro 100% efectivo (método = cash): NO se parte nada. Todo cae al
+        // default keepForeign=isCash → queda en efectivo en su moneda (servicios
+        // Y productos). El split de abajo es SOLO para el mixto (efectivo + Bs),
+        // que se detecta porque el método del "resto" no es efectivo.
+        const isFullCash = (dto.method ?? '').toLowerCase() === 'cash';
+        const cashLineB = isFullCash
+          ? undefined
+          : (dto.lines ?? []).find((l) => l.method === 'cash');
+        const totalLinesBs = (dto.lines ?? []).reduce(
+          (s, l) => s + Number(l.subtotalBs ?? 0),
+          0,
         );
-        const hasRestB = (dto.lines ?? []).some((l) => l.method !== 'cash');
-        if (cashLineB && hasRestB && Number(cashLineB.subtotal) > 0) {
-          companyCashCurrency = cashLineB.currency.toUpperCase();
-          const activeForCash = sessionDetails.filter(
-            (d) => d.status !== 5 && !d.isCourtesy && Number(d.cost || 0) > 0,
-          );
-          const totalCostMajor = activeForCash.reduce(
-            (s, d) => s + Number(d.cost || 0),
-            0,
-          );
-          const totalCashMajor = Number(cashLineB.subtotal);
-          // Comisiones por detalle (moneda del servicio, mayor) y comisión del
-          // EJECUTOR, para repartir el efectivo sobre la parte REAL de cada uno
-          // (no la base), ya con descuento y roles aplicados.
+        const cashBs = cashLineB ? Number(cashLineB.subtotalBs ?? 0) : 0;
+        // Valor en Bs de los PRODUCTOS (se descuenta: el efectivo no los toca).
+        const productsBs = savedProducts.reduce((s, sp) => {
+          const cur = (sp.currency || 'USD').toUpperCase();
+          const rate = cur === 'VES' ? 1 : (rateByCurrency.get(cur) ?? null);
+          const amtMajor = (Number(sp.unitPriceMinor) * sp.quantity) / 100;
+          return rate != null ? s + amtMajor * rate : s;
+        }, 0);
+        // Base del %efectivo = SOLO servicios (total del cobro menos productos).
+        const servicesBs = Math.max(0, totalLinesBs - productsBs);
+        // %efectivo de los servicios: cuánto de los servicios (en Bs) fue efectivo.
+        const cashRatio =
+          servicesBs > 0 && cashBs > 0 ? Math.min(1, cashBs / servicesBs) : 0;
+
+        if (cashRatio > 0) {
+          // 1) Partir cada comisión de SERVICIO por el %efectivo, en su moneda.
+          //    Los productos (product_sale) quedan fuera: van completos a Bs.
+          finalAttrItems = attrItems.flatMap((it) => {
+            if (it.kind !== 'commission' || it.sourceType === 'product_sale') {
+              return [it]; // propinas y productos: sin split de efectivo
+            }
+            const cashMinor = Math.round(it.amountItemMinor * cashRatio);
+            if (cashMinor <= 0) return [it]; // sin efectivo → normal (según método)
+            if (cashMinor >= it.amountItemMinor) {
+              return [{ ...it, keepForeignOverride: true }]; // todo en efectivo
+            }
+            return [
+              {
+                ...it,
+                amountItemMinor: cashMinor,
+                keepForeignOverride: true,
+                label: `${it.label} (efectivo)`,
+              },
+              {
+                ...it,
+                amountItemMinor: it.amountItemMinor - cashMinor,
+                keepForeignOverride: false,
+                label: `${it.label} (Bs)`,
+              },
+            ];
+          });
+
+          // 2) company_cash = total_company REAL (servicios, ya con descuento y
+          //    roles) × %efectivo, en la moneda del servicio.
           const allCommMajorByDetail = new Map<number, number>();
           const execCommMajorByDetail = new Map<number, number>();
           for (const it of attrItems) {
@@ -4370,18 +4425,12 @@ export class SessionService {
               );
             }
           }
-          // detailId → efectivo (minor, moneda del servicio) que le toca al barbero.
-          const barberCashByDetail = new Map<number, number>();
-          for (const d of activeForCash) {
+          let companyActualTotal = 0;
+          for (const d of sessionDetails) {
+            if (d.status === 5 || d.isCourtesy || Number(d.cost || 0) <= 0) {
+              continue;
+            }
             const detailCost = Number(d.cost || 0);
-            const cashForDetail =
-              totalCostMajor > 0
-                ? r2(totalCashMajor * (detailCost / totalCostMajor))
-                : 0;
-            if (cashForDetail <= 0) continue;
-            // Parte REAL del ejecutor = su comisión; de la company = total_company
-            // final (costo − TODAS las comisiones − parte del descuento del salón).
-            const barberActual = execCommMajorByDetail.get(d.id) ?? 0;
             const allComm = allCommMajorByDetail.get(d.id) ?? 0;
             const disc = discountByDetail.get(d.id);
             let companyActual: number;
@@ -4392,54 +4441,21 @@ export class SessionService {
                   : r2(detailCost - disc.amountMajor);
               companyActual = Math.max(0, r2(companyBase - allComm));
             } else {
-              const extra = r2(allComm - barberActual); // comisiones NO ejecutor
+              const execComm = execCommMajorByDetail.get(d.id) ?? 0;
+              const extra = r2(allComm - execComm); // comisiones NO ejecutor
               companyActual = Math.max(
                 0,
                 r2(detailCost - Number(d.totalWorker || 0) - extra),
               );
             }
-            // 50/50 con tope (Opción 1) sobre la parte real: la company hasta su
-            // parte; el sobrante al barbero; y si el barbero se pasa, vuelve a la
-            // company.
-            let cCompany = Math.min(cashForDetail / 2, companyActual);
-            let cBarber = r2(cashForDetail - cCompany);
-            if (cBarber > barberActual) {
-              const over = r2(cBarber - barberActual);
-              cBarber = barberActual;
-              cCompany = Math.min(companyActual, r2(cCompany + over));
+            companyActualTotal += companyActual;
+            if (!companyCashCurrency) {
+              companyCashCurrency = (
+                svcById.get(d.serviceId)?.currency || 'USD'
+              ).toUpperCase();
             }
-            companyCashMinor += toMinor(r2(cCompany));
-            barberCashByDetail.set(d.id, toMinor(r2(cBarber)));
           }
-          // Partir la comisión del EJECUTOR (no los roles) de cada detalle.
-          finalAttrItems = attrItems.flatMap((it) => {
-            const execCash =
-              it.kind === 'commission' &&
-              it.sourceType === 'appointment' &&
-              detailById.get(it.sourceId)?.companyWorkerId ===
-                it.companyWorkerId
-                ? (barberCashByDetail.get(it.sourceId) ?? 0)
-                : 0;
-            if (execCash <= 0) return [it];
-            if (execCash >= it.amountItemMinor) {
-              // El efectivo cubre toda su comisión → todo en efectivo.
-              return [{ ...it, keepForeignOverride: true }];
-            }
-            return [
-              {
-                ...it,
-                amountItemMinor: execCash,
-                keepForeignOverride: true,
-                label: `${it.label} (efectivo)`,
-              },
-              {
-                ...it,
-                amountItemMinor: it.amountItemMinor - execCash,
-                keepForeignOverride: false,
-                label: `${it.label} (Bs)`,
-              },
-            ];
-          });
+          companyCashMinor = toMinor(r2(companyActualTotal * cashRatio));
         }
 
         await this.payrollEarningsService.recordAttributionConcepts(
