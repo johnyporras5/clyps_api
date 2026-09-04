@@ -27,7 +27,8 @@ export interface AccessResponse {
   hasPendingReport: boolean;
   features: Record<PlanFeature, boolean>;
   limits: {
-    maxWorkers: number;
+    /** null = sin tope: durante la prueba no se aplica el límite del plan. */
+    maxWorkers: number | null;
     workersInUse: number;
     canAddWorker: boolean;
   };
