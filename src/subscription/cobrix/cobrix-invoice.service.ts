@@ -173,9 +173,22 @@ export class CobrixInvoiceService {
     // Cobrix lo interpreta en la moneda de la cuenta. Si la cuenta está en
     // bolívares y se le mandan los dólares del plan, factura "VES 20,25".
     const isVes = this.config.currency === CURRENCY_VES;
-    const amountMinor = isVes
+    const listPriceMinor = isVes
       ? quoteAmountVesMinor(plan.id, fetched.rate)
       : plan.priceUsdMinor;
+
+    // ⚠️ Andamio de pruebas: factura un monto simbólico en vez del precio del
+    // plan. Cada uso deja rastro en el log a propósito — es la única red que
+    // hay si la variable se queda puesta.
+    const testMinor = this.config.testAmountMinorFor(companyId);
+    const amountMinor = testMinor ?? listPriceMinor;
+    if (testMinor !== null) {
+      this.logger.warn(
+        `⚠️ [cobrix] ANDAMIO DE PRUEBAS ACTIVO: se factura ${testMinor / 100} ` +
+          `${this.config.currency} en vez de ${listPriceMinor / 100} (company ${companyId}). ` +
+          'Quita COBRIX_TEST_AMOUNT para cobrar el precio del plan.',
+      );
+    }
 
     const expiresAt = new Date(
       Date.now() + this.config.invoiceTtlHours * 60 * 60 * 1000,

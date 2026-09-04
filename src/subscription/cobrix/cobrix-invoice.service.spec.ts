@@ -53,6 +53,8 @@ function buildService(
     subscription?: Partial<Subscription> | null;
     lastIdentification?: string | null;
     configured?: boolean;
+    testAmount?: string;
+    testCompanyIds?: string;
   } = {},
 ) {
   // `findOne` sirve a dos consultas distintas y el orden importa: primero la
@@ -127,6 +129,8 @@ function buildService(
       if (key === 'COBRIX_API_KEY') return 'cbx_live_prueba';
       if (key === 'COBRIX_WEBHOOK_SECRET') return 'whsec_prueba';
       if (key === 'COBRIX_PROVIDER') return 'clyps';
+      if (key === 'COBRIX_TEST_AMOUNT') return options.testAmount;
+      if (key === 'COBRIX_TEST_COMPANY_IDS') return options.testCompanyIds;
       return undefined;
     },
   } as unknown as ConfigService);
@@ -227,6 +231,29 @@ describe('emisión del documento de cobro', () => {
     await expect(
       service.startCheckout(7, { identification: 'J401234567' }),
     ).rejects.toThrow(BadRequestException);
+  });
+
+  it('el andamio de pruebas factura el monto simbólico, no el del plan', async () => {
+    const { service, client } = buildService({ testAmount: '1' });
+
+    await service.startCheckout(7, { identification: 'J401234567' });
+
+    // 1 Bs, no los ~22.000 que vale el plan.
+    expect(firstArg<{ amount: number }>(client.createInvoice).amount).toBe(1);
+  });
+
+  it('el andamio solo aplica a los salones indicados', async () => {
+    // La red que protege a los tenants reales si la variable se queda puesta.
+    const { service, client } = buildService({
+      testAmount: '1',
+      testCompanyIds: '99',
+    });
+
+    await service.startCheckout(7, { identification: 'J401234567' });
+
+    expect(
+      firstArg<{ amount: number }>(client.createInvoice).amount,
+    ).toBeGreaterThan(1);
   });
 
   it('sin Cobrix configurado no emite nada y lo dice', async () => {
