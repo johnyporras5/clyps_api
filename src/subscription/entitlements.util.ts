@@ -1,4 +1,9 @@
-import { GRACE_DAYS, type PlanId } from './config/plans.config';
+import {
+  GRACE_DAYS,
+  getPlan,
+  type PlanId,
+  type PlanLimits,
+} from './config/plans.config';
 import type { SubscriptionStatus } from './subscription.enums';
 
 /**
@@ -138,4 +143,42 @@ export function resolveAccess(input: AccessInput): AccessState {
     accessEndsAt,
     graceEndsAt,
   };
+}
+
+/**
+ * Límites vigentes AHORA para el tenant.
+ *
+ * Igual que `PlanLimits`, salvo que `maxWorkers` admite `null` = sin tope.
+ */
+export interface EffectiveLimits extends Omit<PlanLimits, 'maxWorkers'> {
+  /** null = sin tope (solo durante la prueba). */
+  maxWorkers: number | null;
+}
+
+/** Todo abierto y sin tope: lo que ve un tenant en prueba. */
+const TRIAL_LIMITS: EffectiveLimits = {
+  maxWorkers: null,
+  payroll: true,
+  analytics: true,
+  aiSuggestions: true,
+  workerApp: true,
+  clientApp: true,
+  prioritySupport: true,
+};
+
+/**
+ * Límites efectivos según el estado.
+ *
+ * Durante `trialing` NO se aplica el eje del plan: los 15 días muestran el
+ * producto completo (nómina, IA, análisis, app del trabajador y sin tope de
+ * trabajadores) aunque el tenant todavía no haya elegido plan — es el
+ * escaparate que engancha, y restringirlo a Básico por defecto sería enseñarle
+ * menos de lo que se le quiere vender. El eje del plan vuelve a mandar en
+ * `active` y `grace`.
+ */
+export function effectiveLimits(
+  planId: PlanId,
+  status: SubscriptionStatus,
+): EffectiveLimits {
+  return status === 'trialing' ? TRIAL_LIMITS : getPlan(planId).limits;
 }

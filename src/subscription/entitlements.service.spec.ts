@@ -35,7 +35,12 @@ function buildService(options: {
         planId: options.planId ?? 'basico',
         status: 'active',
         trialEndsAt: options.trialEndsAt ?? null,
-        currentPeriodEnd: options.currentPeriodEnd ?? days(10),
+        // `in` y no `??`: un `currentPeriodEnd: null` explícito es el tenant en
+        // prueba, que todavía no tiene período pagado.
+        currentPeriodEnd:
+          'currentPeriodEnd' in options
+            ? (options.currentPeriodEnd ?? null)
+            : days(10),
         graceEndsAt: options.graceEndsAt ?? null,
       } as Subscription);
 
@@ -221,5 +226,80 @@ describe('la app del cliente final', () => {
       aiSuggestions: false,
       clientApp: true,
     });
+  });
+});
+
+describe('la prueba de 15 días', () => {
+  /** Trial: sin período pagado todavía, la prueba corriendo. */
+  const trial = { currentPeriodEnd: null, trialEndsAt: days(10) };
+
+  it('accede a todo aunque no haya elegido plan', async () => {
+    const service = buildService({ noSubscription: true });
+
+    expect(await service.canOperate(7)).toBe(true);
+    expect(await service.can(7, 'aiSuggestions')).toBe(true);
+    expect(await service.can(7, 'payroll')).toBe(true);
+    expect(await service.can(7, 'analytics')).toBe(true);
+    expect(await service.can(7, 'workerApp')).toBe(true);
+  });
+
+  it('accede a todo aunque el plan elegido sea Básico', async () => {
+    const service = buildService({ planId: 'basico', ...trial });
+
+    expect(await service.can(7, 'aiSuggestions')).toBe(true);
+    expect(await service.can(7, 'payroll')).toBe(true);
+    await expect(
+      service.assertCanUseFeature(7, 'payroll'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('no tiene tope de trabajadores', async () => {
+    const service = buildService({ planId: 'basico', ...trial, workers: 9 });
+    await expect(service.assertCanAddWorker(7)).resolves.toBeUndefined();
+  });
+
+  it('el panel lo pinta todo disponible y sin tope', async () => {
+    const service = buildService({ planId: 'basico', ...trial, workers: 3 });
+
+    const response = await service.getAccessResponse(7);
+
+    expect(response).toMatchObject({ status: 'trialing', canOperate: true });
+    expect(Object.values(response.features).every((v) => v === true)).toBe(
+      true,
+    );
+    expect(response.limits).toMatchObject({
+      maxWorkers: null,
+      workersInUse: 3,
+      canAddWorker: true,
+    });
+  });
+
+  it('la app del cliente muestra la IA de un salón en prueba', async () => {
+    const service = buildService({ planId: 'basico', ...trial });
+    expect(await service.getPublicFeatures(7)).toMatchObject({
+      aiSuggestions: true,
+      clientApp: true,
+    });
+  });
+
+  it('al terminar la prueba, el Básico vuelve a sus límites', async () => {
+    const service = buildService({
+      planId: 'basico',
+      trialEndsAt: days(-1),
+      currentPeriodEnd: days(20),
+      workers: 5,
+    });
+
+    expect(await service.can(7, 'aiSuggestions')).toBe(false);
+    // Los 5 que sumó en la prueba se quedan; solo no puede sumar más.
+    const response = await service.getAccessResponse(7);
+    expect(response.limits).toMatchObject({
+      maxWorkers: 2,
+      workersInUse: 5,
+      canAddWorker: false,
+    });
+    await expect(service.assertCanAddWorker(7)).rejects.toThrow(
+      /permite hasta 2 trabajadores/,
+    );
   });
 });
