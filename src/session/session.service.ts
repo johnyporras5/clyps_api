@@ -4458,6 +4458,15 @@ export class SessionService {
           companyCashMinor = toMinor(r2(companyActualTotal * cashRatio));
         }
 
+        // La comisión de PRODUCTO es un incentivo al vendedor: SIEMPRE se paga en
+        // Bs (a la tasa de su moneda), aunque el producto —o todo el cobro— se
+        // pague en efectivo. Se fuerza la conversión a Bs en todos los casos.
+        finalAttrItems = finalAttrItems.map((it) =>
+          it.kind === 'commission' && it.sourceType === 'product_sale'
+            ? { ...it, keepForeignOverride: false }
+            : it,
+        );
+
         await this.payrollEarningsService.recordAttributionConcepts(
           adminCompany.id,
           paidAt,
