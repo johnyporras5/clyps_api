@@ -14,6 +14,11 @@ import { CobrixWebhookService } from './cobrix/cobrix-webhook.service';
 import { CobrixWebhookController } from './cobrix/cobrix-webhook.controller';
 import { CobrixReconciliationService } from './cobrix/cobrix-reconciliation.service';
 import { CobrixReconciliationTask } from './cobrix/cobrix-reconciliation.task';
+import { RemindersService } from './reminders/reminders.service';
+import { RemindersTask } from './reminders/reminders.task';
+import { InAppReminderChannel } from './reminders/in-app-reminder.channel';
+import { EmailReminderChannel } from './reminders/email-reminder.channel';
+import { REMINDER_CHANNELS } from './reminders/reminder-delivery';
 import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
 import { SubscriptionEvent } from './entities/subscription-event.entity';
@@ -21,7 +26,9 @@ import { PaymentGatewayEvent } from './entities/payment-gateway-event.entity';
 import { SubscriptionInvoice } from './entities/subscription-invoice.entity';
 import { Company } from '../company/entities/company.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+import { ReminderLog } from './entities/reminder-log.entity';
 import { CommonModule } from '../common/common.module';
+import { EmailModule } from '../email/email.module';
 
 /**
  * Suscripciones: SUB-1 a SUB-6 (CLYP-333 … CLYP-338).
@@ -46,9 +53,14 @@ import { CommonModule } from '../common/common.module';
       Company,
       // Solo para contar trabajadores contra el tope del plan (SUB-5).
       CompanyWorker,
+      // Bitácora de recordatorios de cobro: su idempotencia (SUB-8).
+      ReminderLog,
     ]),
     // Sube la foto del comprobante a Spaces (SUB-3).
     CommonModule,
+    // Canal de correo de los recordatorios (SUB-8). No depende de nadie más,
+    // así que no hay ciclo posible.
+    EmailModule,
   ],
   providers: [
     SubscriptionService,
@@ -65,6 +77,20 @@ import { CommonModule } from '../common/common.module';
     CobrixWebhookService,
     CobrixReconciliationService,
     CobrixReconciliationTask,
+    // SUB-8: recordatorios de cobro. Los canales se registran en una lista, así
+    // que sumar WhatsApp mañana es agregar una clase aquí y nada más.
+    RemindersService,
+    RemindersTask,
+    InAppReminderChannel,
+    EmailReminderChannel,
+    {
+      provide: REMINDER_CHANNELS,
+      useFactory: (
+        inApp: InAppReminderChannel,
+        email: EmailReminderChannel,
+      ) => [inApp, email],
+      inject: [InAppReminderChannel, EmailReminderChannel],
+    },
   ],
   controllers: [
     SubscriptionController,
@@ -78,6 +104,7 @@ import { CommonModule } from '../common/common.module';
     ExchangeRateService,
     SubscriptionAccessGuard,
     CobrixInvoiceService,
+    RemindersService,
   ],
 })
 export class SubscriptionModule {}

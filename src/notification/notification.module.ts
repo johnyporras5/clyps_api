@@ -10,6 +10,7 @@ import { NotificationController } from './notification.controller';
 import { FcmTokenController } from './fcm-token.controller';
 import { NotificationRealtimeEmitter } from './notification-realtime.emitter';
 import { FirebaseService } from './firebase.service';
+import { SubscriptionReminderListener } from './subscription-reminder.listener';
 
 @Module({
   imports: [
@@ -23,6 +24,8 @@ import { FirebaseService } from './firebase.service';
     NotificationService,
     NotificationRealtimeEmitter,
     FirebaseService,
+    // Entrega in-app de los recordatorios de cobro (SUB-8).
+    SubscriptionReminderListener,
   ],
   controllers: [NotificationController, FcmTokenController],
   // NotificationService se exportará para que createNotification (§4) lo use
