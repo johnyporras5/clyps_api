@@ -1,5 +1,6 @@
 import {
   effectiveLimits,
+  effectivePlanId,
   resolveAccess,
   type AccessInput,
 } from './entitlements.util';
@@ -189,6 +190,13 @@ describe('estado guardado vs. estado real', () => {
 });
 
 describe('los límites efectivos', () => {
+  it('en prueba el plan vigente es el Full, aunque no haya elegido', () => {
+    expect(effectivePlanId('basico', 'trialing')).toBe('full');
+    expect(effectivePlanId('basico', 'active')).toBe('basico');
+    expect(effectivePlanId('basico', 'grace')).toBe('basico');
+    expect(effectivePlanId('basico', 'blocked')).toBe('basico');
+  });
+
   it('en prueba: todo abierto y sin tope, aunque el plan sea Básico', () => {
     expect(effectiveLimits('basico', 'trialing')).toEqual({
       maxWorkers: null,

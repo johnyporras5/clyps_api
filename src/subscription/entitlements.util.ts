@@ -155,16 +155,33 @@ export interface EffectiveLimits extends Omit<PlanLimits, 'maxWorkers'> {
   maxWorkers: number | null;
 }
 
-/** Todo abierto y sin tope: lo que ve un tenant en prueba. */
+/**
+ * El plan que el tenant USA durante la prueba: el Full.
+ *
+ * No se guarda en `subscription.plan_id` a propósito — ahí sigue sin haber plan
+ * elegido, que es lo que hace que al vencer la prueba se le cotice el plan que
+ * escoja y no el caro por descarte.
+ */
+export const TRIAL_PLAN_ID: PlanId = 'full';
+
+/** Todo lo del Full y además sin tope de trabajadores. */
 const TRIAL_LIMITS: EffectiveLimits = {
+  ...getPlan(TRIAL_PLAN_ID).limits,
   maxWorkers: null,
-  payroll: true,
-  analytics: true,
-  aiSuggestions: true,
-  workerApp: true,
-  clientApp: true,
-  prioritySupport: true,
 };
+
+/**
+ * El plan vigente de cara al tenant: en la prueba, el Full; si no, el suyo.
+ *
+ * Es lo que el panel debe mostrar — durante los 15 días está usando el Full,
+ * aunque la columna diga otra cosa porque todavía no eligió.
+ */
+export function effectivePlanId(
+  planId: PlanId,
+  status: SubscriptionStatus,
+): PlanId {
+  return status === 'trialing' ? TRIAL_PLAN_ID : planId;
+}
 
 /**
  * Límites efectivos según el estado.
