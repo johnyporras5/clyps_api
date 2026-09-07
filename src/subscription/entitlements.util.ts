@@ -28,7 +28,8 @@ export type GraceCause =
 export interface AccessInput {
   /** null = el tenant todavía no tiene suscripción creada. */
   subscription: {
-    planId: PlanId;
+    /** null = todavía no eligió plan: no cambia el acceso, solo el precio. */
+    planId: PlanId | null;
     status: SubscriptionStatus;
     trialEndsAt: Date | null;
     currentPeriodEnd: Date | null;
@@ -168,6 +169,18 @@ export function resolveAccess(input: AccessInput): AccessState {
  * escoja y no el caro por descarte.
  */
 export const TRIAL_PLAN_ID: PlanId = 'full';
+
+/**
+ * El plan que se le COBRA cuando hay que ponerle precio a algo: el suyo si ya
+ * eligió, y el de la prueba mientras no. Es el mismo que está usando esos 15
+ * días, así que cotizarle otro sería cobrarle por algo que no vio.
+ *
+ * Se usa solo en los caminos de dinero (cotizar, reportar, facturar, recordar).
+ * Para pintar la pantalla va `effectivePlanId`.
+ */
+export function billablePlanId(planId: PlanId | null): PlanId {
+  return planId ?? TRIAL_PLAN_ID;
+}
 
 /**
  * El plan vigente de cara al tenant: en la prueba, el Full; si no, el suyo.
