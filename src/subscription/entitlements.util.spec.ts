@@ -78,7 +78,9 @@ describe('matriz de acceso por estado', () => {
     ).toMatchObject({ status: 'blocked', canOperate: false });
   });
 
-  it('la prueba vencida también entra en gracia y luego bloquea', () => {
+  it('la prueba vencida BLOQUEA de una vez: la gracia es de quien ya pagó', () => {
+    // Sin `currentPeriodEnd` nunca hubo pago. Darle cortesía aquí sería
+    // regalarle 15 días de prueba + 5 más.
     expect(
       access({
         planId: 'basico',
@@ -87,17 +89,37 @@ describe('matriz de acceso por estado', () => {
         currentPeriodEnd: null,
         graceEndsAt: null,
       }),
-    ).toMatchObject({ status: 'grace', graceCause: 'expired' });
+    ).toMatchObject({ status: 'blocked', canOperate: false });
+  });
 
+  it('a la prueba vencida se le puede dar cortesía a mano', () => {
+    // La gracia guardada en la fila sigue mandando: es cómo se le concede una
+    // excepción a un salón puntual sin tocar la regla.
     expect(
       access({
         planId: 'basico',
         status: 'trialing',
-        trialEndsAt: days(-30),
+        trialEndsAt: days(-1),
         currentPeriodEnd: null,
-        graceEndsAt: null,
+        graceEndsAt: days(3),
       }),
-    ).toMatchObject({ status: 'blocked', canOperate: false });
+    ).toMatchObject({ status: 'grace', graceCause: 'expired' });
+  });
+
+  it('un pago reportado sostiene el acceso aunque la prueba haya vencido', () => {
+    // La invariante de SUB-5 no cambia: mientras verificamos, el tenant opera.
+    expect(
+      access(
+        {
+          planId: 'basico',
+          status: 'trialing',
+          trialEndsAt: days(-1),
+          currentPeriodEnd: null,
+          graceEndsAt: null,
+        },
+        true,
+      ),
+    ).toMatchObject({ canOperate: true, graceCause: 'pending_report' });
   });
 
   it('respeta la gracia ya guardada en la fila, no la recalcula', () => {

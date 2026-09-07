@@ -83,9 +83,16 @@ export function dueReminder(input: ReminderScheduleInput): DueReminder | null {
   const periodEnd = periodEndOf(input);
   if (!periodEnd) return null;
 
+  // La gracia es solo de quien ya pagó alguna vez: al que se le acaba la prueba
+  // se le bloquea al vencer, no se le suman los días de cortesía. Misma regla
+  // que `resolveAccess`, y tiene que serlo: el aviso no puede prometer una
+  // cortesía que el acceso no le va a dar.
+  const everPaid = input.currentPeriodEnd !== null;
   const graceEndsAt =
     input.graceEndsAt ??
-    new Date(periodEnd.getTime() + input.graceDays * DAY_MS);
+    (everPaid
+      ? new Date(periodEnd.getTime() + input.graceDays * DAY_MS)
+      : periodEnd);
 
   const daysLeft = daysUntil(periodEnd, now);
 

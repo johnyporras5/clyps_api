@@ -66,6 +66,30 @@ describe('el escalado de recordatorios', () => {
     expect(reminder?.periodEnd.getTime()).toBe(inDays(3).getTime());
   });
 
+  it('la prueba vencida avisa BLOQUEADO, no cortesía', () => {
+    // Sin pago previo no hay gracia que prometer: el aviso tiene que decir lo
+    // mismo que hace el acceso, o se contradicen.
+    const reminder = dueReminder({
+      trialEndsAt: inDays(-1),
+      currentPeriodEnd: null,
+      graceEndsAt: null,
+      graceDays: 5,
+      now: NOW,
+    });
+    expect(reminder?.tier).toBe('blocked');
+  });
+
+  it('el período pagado vencido sí pasa por la cortesía', () => {
+    const reminder = dueReminder({
+      trialEndsAt: inDays(-40),
+      currentPeriodEnd: inDays(-1),
+      graceEndsAt: null,
+      graceDays: 5,
+      now: NOW,
+    });
+    expect(reminder?.tier).toBe('grace');
+  });
+
   it('cuenta días de calendario, no horas: la hora del cron no mueve el aviso', () => {
     // Fechas locales a propósito: los días se cuentan en la zona del servidor.
     const target = new Date(2026, 8, 8, 23, 30);

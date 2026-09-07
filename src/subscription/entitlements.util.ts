@@ -127,11 +127,21 @@ export function resolveAccess(input: AccessInput): AccessState {
     };
   }
 
-  // Ya venció. La gracia guardada manda; si no hay, se calcula desde el corte.
+  // Ya venció.
+  //
+  // La gracia es SOLO de quien ya pagó alguna vez: se le vence un mes comprado
+  // y se le dan unos días para renovar sin quedarse fuera. Al que se le acaba
+  // la PRUEBA no se le regalan días extra —serían 15 + 5 gratis—: se bloquea al
+  // vencer. Lo delata `currentPeriodEnd`: si es null, nunca hubo pago.
+  //
+  // Una gracia guardada a mano sigue mandando sobre todo esto: es la forma de
+  // darle cortesía a un caso puntual sin tocar la regla.
+  const everPaid = subscription.currentPeriodEnd !== null;
   const graceEndsAt =
-    subscription.graceEndsAt ?? addDays(accessEndsAt, graceDays);
+    subscription.graceEndsAt ??
+    (everPaid ? addDays(accessEndsAt, graceDays) : null);
 
-  if (graceEndsAt.getTime() > now.getTime()) {
+  if (graceEndsAt && graceEndsAt.getTime() > now.getTime()) {
     return {
       status: 'grace',
       canOperate: true,
