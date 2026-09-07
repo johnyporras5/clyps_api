@@ -230,6 +230,33 @@ describe('verificar un pago', () => {
     expect(savedSubscription(manager.save).planId).toBe('basico');
   });
 
+  it('paga en la prueba: no pierde los días que le quedaban', async () => {
+    // Día 3 de la prueba: le faltan 12 días para vencer.
+    const trialEndsAt = new Date(Date.now() + 12 * 24 * 60 * 60 * 1000);
+    const { service, manager } = buildService({
+      report: reportFixture(),
+      subscription: subscriptionFixture({
+        status: 'trialing',
+        trialEndsAt,
+        currentPeriodEnd: null,
+      }),
+    });
+
+    await service.verifyPayment(1, 42);
+
+    // El mes pagado arranca al vencer la prueba, no hoy.
+    const saved = savedSubscription(manager.save);
+    expect(saved.currentPeriodEnd!.getTime()).toBeGreaterThan(
+      trialEndsAt.getTime(),
+    );
+    const days =
+      (saved.currentPeriodEnd!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+    // Los doce días de prueba MÁS el mes comprado.
+    expect(days).toBeGreaterThan(39);
+    // Y la fecha de la prueba se conserva: no se le recorta.
+    expect(saved.trialEndsAt).toEqual(trialEndsAt);
+  });
+
   it('encadena el mes al período vigente: pagar antes no regala días', async () => {
     const vigente = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
     const { service, manager } = buildService({

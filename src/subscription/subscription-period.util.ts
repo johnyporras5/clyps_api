@@ -27,18 +27,26 @@ export function addMonths(date: Date, months: number): Date {
 /**
  * Hasta cuándo llega el acceso después de verificar un pago.
  *
- * Si el período vigente todavía no vence, el mes nuevo se ENCADENA a partir de
- * esa fecha: pagar antes de tiempo no regala ni quita días. Si ya venció (o
- * nunca hubo), el mes corre desde ahora.
+ * El mes se ENCADENA a lo que el tenant ya tenía: pagar antes de tiempo no
+ * regala ni quita días. Ese "ya tenía" son dos fechas, y manda la más lejana:
+ *
+ * - `currentPeriodEnd`: el período pagado vigente (renovación).
+ * - `trialEndsAt`: los días de prueba que le queden. En el PRIMER pago no hay
+ *   período previo, así que sin mirar esta fecha el mes arrancaría hoy y se
+ *   comería la prueba: quien paga el día 3 de 15 perdía los 12 restantes.
+ *
+ * Si ambas ya vencieron (o no existen), el mes corre desde ahora.
  */
 export function nextPeriodEnd(
   now: Date,
   currentPeriodEnd: Date | null,
+  trialEndsAt: Date | null = null,
   months: number = BILLING_PERIOD_MONTHS,
 ): Date {
-  const base =
-    currentPeriodEnd && currentPeriodEnd.getTime() > now.getTime()
-      ? currentPeriodEnd
-      : now;
+  const base = [currentPeriodEnd, trialEndsAt].reduce<Date>(
+    (latest, candidate) =>
+      candidate && candidate.getTime() > latest.getTime() ? candidate : latest,
+    now,
+  );
   return addMonths(base, months);
 }
