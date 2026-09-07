@@ -10,6 +10,7 @@ import { ReminderLog } from '../entities/reminder-log.entity';
 import { ExchangeRateService } from '../rate/exchange-rate.service';
 import { formatVesMinor, CURRENCY_VES } from '../subscription-money.util';
 import { quoteAmountVesMinor } from '../subscription-quote.util';
+import { billablePlanId } from '../entitlements.util';
 import {
   REMINDER_CHANNELS,
   type ReminderChannelAdapter,
@@ -247,7 +248,7 @@ export class RemindersService {
     recipient: ReminderRecipient,
     rate: number | null,
   ): Promise<boolean> {
-    const plan = getPlan(subscription.planId);
+    const plan = getPlan(billablePlanId(subscription.planId));
     const amountFormatted =
       rate === null ? null : formatVesMinor(quoteAmountVesMinor(plan.id, rate));
 

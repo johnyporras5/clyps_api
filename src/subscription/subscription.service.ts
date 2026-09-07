@@ -8,7 +8,6 @@ import { nextPeriodEnd } from './subscription-period.util';
 import { Subscription } from './entities/subscription.entity';
 import { SubscriptionEvent } from './entities/subscription-event.entity';
 import type { PaymentReport } from './entities/payment-report.entity';
-import { TRIAL_PLAN_ID } from './entitlements.util';
 import type { PlansResponse } from './dto/plans-response.dto';
 
 /** Lo que viaja al activarse una suscripción. Lo consume SUB-9. */
@@ -68,9 +67,10 @@ export class SubscriptionService {
    * "sin suscripción" de `resolveAccess`, que concede acceso completo SIN fecha
    * de fin: una prueba perpetua. La fila es lo que le pone reloj.
    *
-   * Nace en el plan de la prueba (el Full): durante los 15 días usa el producto
-   * completo, y la fila dice lo mismo que ve el dueño en su panel. El plan
-   * definitivo lo fija el primer pago verificado — pague el que pague.
+   * Nace SIN plan (`planId` en null): el registro no pide elegir ni pagar, así
+   * que la fila no puede afirmar que escogió uno. Durante los 15 días usa el
+   * Full igual —eso lo resuelve `effectivePlanId` mirando el estado— y el plan
+   * definitivo lo fija el primer pago verificado, pague el que pague.
    *
    * IDEMPOTENTE: si el salón ya tiene suscripción se devuelve la que hay, sin
    * regalar una prueba nueva.
@@ -90,7 +90,7 @@ export class SubscriptionService {
       const created = await this.subscriptions.save(
         this.subscriptions.create({
           companyId,
-          planId: TRIAL_PLAN_ID,
+          planId: null,
           status: 'trialing',
           trialEndsAt,
           currentPeriodEnd: null,

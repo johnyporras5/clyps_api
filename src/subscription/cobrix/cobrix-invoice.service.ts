@@ -13,6 +13,7 @@ import { SubscriptionInvoice } from '../entities/subscription-invoice.entity';
 import { ExchangeRateService } from '../rate/exchange-rate.service';
 import { getPlan, type PlanId } from '../config/plans.config';
 import { quoteAmountVesMinor } from '../subscription-quote.util';
+import { billablePlanId } from '../entitlements.util';
 import { CURRENCY_VES, formatVesMinor } from '../subscription-money.util';
 import { CobrixConfig } from './cobrix.config';
 import { CobrixClient } from './cobrix.client';
@@ -81,7 +82,7 @@ export class CobrixInvoiceService {
         'No hay una suscripción para esta compañía: no se puede emitir el cobro.',
       );
 
-    const planId = input.planId ?? subscription.planId;
+    const planId = input.planId ?? billablePlanId(subscription.planId);
     const company = await this.companies.findOne({
       where: { id: companyId },
       select: { id: true, name: true, email: true },

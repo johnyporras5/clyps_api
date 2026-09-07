@@ -46,6 +46,7 @@ import type {
 import type { ReportPaymentDto } from './dto/report-payment.dto';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type { AutoCheckStatus, PaymentMethod } from './subscription.enums';
+import { billablePlanId } from './entitlements.util';
 
 /**
  * Pagos de la suscripción: cotizar (SUB-2 / CLYP-334) y reportar (SUB-3 /
@@ -182,7 +183,7 @@ export class PaymentsService {
 
     if (dto.method === 'pago_movil') {
       await this.assertFrozenQuoteAcceptable(
-        frozenQuoteOf(dto, subscription.planId),
+        frozenQuoteOf(dto, billablePlanId(subscription.planId)),
       );
     }
 
@@ -212,7 +213,7 @@ export class PaymentsService {
       {
         companyId,
         subscriptionId: subscription.id,
-        planId: subscription.planId,
+        planId: billablePlanId(subscription.planId),
         reportedAt: new Date(),
         autoCheckStatus: autoCheck.status,
         autoCheckReason: autoCheck.reason,
@@ -640,7 +641,13 @@ export class PaymentsService {
     };
   }
 
-  /** Plan de la suscripción vigente de la company. */
+  /**
+   * Plan a cotizar cuando la petición no trae uno.
+   *
+   * En la prueba todavía no eligió (`plan_id` en null) y se cotiza el Full, que
+   * es justo lo que está usando esos 15 días. Para cotizar otro, el front manda
+   * `planId` — es lo que hace la pantalla de elección de plan.
+   */
   private async currentPlanId(companyId: number): Promise<PlanId> {
     const subscription = await this.subscriptions.findOne({
       where: { companyId },
@@ -650,6 +657,6 @@ export class PaymentsService {
       throw new BadRequestException(
         'No hay una suscripción para esta compañía: indica el plan a cotizar.',
       );
-    return subscription.planId;
+    return billablePlanId(subscription.planId);
   }
 }

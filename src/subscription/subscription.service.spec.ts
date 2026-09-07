@@ -28,7 +28,7 @@ function buildService(existing: Partial<Subscription> | null) {
 }
 
 describe('el alta de la prueba', () => {
-  it('nace en prueba, con 15 días y en el plan Full', async () => {
+  it('nace en prueba, con 15 días y SIN plan elegido', async () => {
     const { service, subscriptions } = buildService(null);
     const now = new Date('2026-09-01T12:00:00.000Z');
 
@@ -38,8 +38,8 @@ describe('el alta de la prueba', () => {
     expect(created).toMatchObject({
       companyId: 7,
       status: 'trialing',
-      // La prueba ES el Full: la fila dice lo mismo que ve el dueño.
-      planId: 'full',
+      // El registro no pide elegir: la fila no puede decir que eligió.
+      planId: null,
       currentPeriodEnd: null,
       graceEndsAt: null,
     });

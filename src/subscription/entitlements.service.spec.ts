@@ -2,6 +2,7 @@ import { ForbiddenException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { Repository } from 'typeorm';
 import { EntitlementsService } from './entitlements.service';
+import type { SubscriptionService } from './subscription.service';
 import type { Company } from '../company/entities/company.entity';
 import type { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import type { PaymentReport } from './entities/payment-report.entity';
@@ -26,6 +27,8 @@ function buildService(options: {
   pendingReports?: number;
   workers?: number;
   noSubscription?: boolean;
+  /** La creación de la prueba de rescate falla (base caída). */
+  startTrialFails?: boolean;
   billingExempt?: boolean;
 }): EntitlementsService {
   const subscription = options.noSubscription
@@ -55,12 +58,31 @@ function buildService(options: {
   };
   const companies = { findOne: jest.fn().mockResolvedValue({ id: 7 }) };
 
+  // La red de seguridad de CLYP-332: sin fila, el acceso se lee abriendo la
+  // prueba en ese momento. `startTrialFails` simula que ni eso se puede.
+  const trials = {
+    startTrial: jest.fn().mockImplementation(() => {
+      if (options.startTrialFails) return Promise.reject(new Error('BD caída'));
+      return Promise.resolve({
+        id: 9,
+        companyId: 7,
+        planId: null,
+        status: 'trialing',
+        trialEndsAt: days(15),
+        currentPeriodEnd: null,
+        graceEndsAt: null,
+        billingExempt: false,
+      } as Subscription);
+    }),
+  };
+
   return new EntitlementsService(
     subscriptions as unknown as Repository<Subscription>,
     reports as unknown as Repository<PaymentReport>,
     workers as unknown as Repository<CompanyWorker>,
     companies as unknown as Repository<Company>,
     { get: () => undefined } as unknown as ConfigService,
+    trials as unknown as SubscriptionService,
   );
 }
 
@@ -243,6 +265,30 @@ describe('la prueba de 15 días', () => {
     expect(await service.can(7, 'payroll')).toBe(true);
     expect(await service.can(7, 'analytics')).toBe(true);
     expect(await service.can(7, 'workerApp')).toBe(true);
+  });
+
+  it('sin fila, se le abre la prueba en el momento en vez de dejarlo gratis para siempre', async () => {
+    const service = buildService({ noSubscription: true });
+
+    const access = await service.getAccessResponse(7);
+
+    // Antes esta rama devolvía acceso completo SIN fecha: prueba perpetua.
+    expect(access.status).toBe('trialing');
+    expect(access.accessEndsAt).not.toBeNull();
+    expect(access.canOperate).toBe(true);
+  });
+
+  it('si ni la prueba de rescate se puede crear, el dueño igual entra', async () => {
+    const service = buildService({
+      noSubscription: true,
+      startTrialFails: true,
+    });
+
+    const access = await service.getAccessResponse(7);
+
+    // Un problema NUESTRO no lo deja fuera de su salón.
+    expect(access.canOperate).toBe(true);
+    expect(access.accessEndsAt).toBeNull();
   });
 
   it('accede a todo aunque el plan elegido sea Básico', async () => {

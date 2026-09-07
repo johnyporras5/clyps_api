@@ -216,9 +216,11 @@ export class AuthService {
 
     const company = await this.companyService.create(companyData);
 
-    // SUB-1: el salón nace con 15 días de prueba. No bloquea el registro si
-    // falla —la cuenta ya está creada y sin fila el acceso es permisivo, no
-    // restrictivo— pero queda el error en el log para poder repararlo.
+    // SUB-1 / CLYP-332: el salón nace con 15 días de prueba, sin elegir plan ni
+    // poner tarjeta. No bloquea el registro si falla —la cuenta ya está creada y
+    // un problema de base no puede dejar al dueño sin poder registrarse—: queda
+    // el error en el log y `EntitlementsService` le abre la prueba la primera vez
+    // que consulte su acceso, así nadie se queda sin reloj.
     try {
       await this.subscriptions.startTrial(company.id);
     } catch (error) {
