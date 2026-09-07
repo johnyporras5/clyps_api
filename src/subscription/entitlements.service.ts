@@ -6,6 +6,7 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { Company } from '../company/entities/company.entity';
 import {
   GRACE_DAYS,
+  TRIAL_DAYS,
   getPlan,
   type PlanId,
   type PlanLimits,
@@ -59,6 +60,11 @@ interface EntitlementContext {
   limits: PlanLimits;
   /** No se le cobra: el front debe esconderle la pantalla de pago. */
   billingExempt: boolean;
+  /**
+   * Alguna vez pagó. Distingue "se te acabó la prueba" de "se te venció el mes":
+   * son dos situaciones distintas y merecen dos mensajes distintos.
+   */
+  everPaid: boolean;
 }
 
 /**
@@ -133,6 +139,7 @@ export class EntitlementsService {
       access,
       limits: effectiveLimits(storedPlanId, access.status),
       billingExempt: Boolean(subscription?.billingExempt),
+      everPaid: subscription?.currentPeriodEnd != null,
     };
   }
 
@@ -219,10 +226,17 @@ export class EntitlementsService {
   async assertCanOperate(companyId: number): Promise<EntitlementContext> {
     const context = await this.context(companyId);
     if (!context.access.canOperate) {
+      // Dos situaciones distintas, dos mensajes distintos. A quien se le acabó
+      // la prueba nunca tuvo una suscripción que "venciera", y decirle que
+      // "reactive" algo que jamás activó lo deja buscando un botón que no hay.
       throw new ForbiddenException({
-        message:
-          'Tu suscripción está vencida. Reporta tu pago para reactivar el acceso.',
+        message: context.everPaid
+          ? 'Tu suscripción venció. Reporta tu pago para reactivar el acceso.'
+          : `Se acabaron tus ${TRIAL_DAYS} días de prueba. Elige tu plan y reporta tu pago para seguir usando Clyps.`,
         reason: 'subscription_blocked',
+        // El front lo usa para llevarlo a elegir plan o a renovar, que son dos
+        // pantallas distintas.
+        trialExpired: !context.everPaid,
         status: context.access.status,
         accessEndsAt: context.access.accessEndsAt,
       });

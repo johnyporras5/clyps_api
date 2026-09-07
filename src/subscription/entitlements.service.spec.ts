@@ -405,3 +405,41 @@ describe('los salones exentos de cobro', () => {
     expect((await service.getAccessResponse(7)).billingExempt).toBe(false);
   });
 });
+
+/** El cuerpo del 403, tipado: es lo que el front lee para decidir a dónde llevarlo. */
+async function blockedBody(
+  service: EntitlementsService,
+): Promise<{ message: string; reason: string; trialExpired: boolean }> {
+  try {
+    await service.assertCanOperate(7);
+    throw new Error('se esperaba que bloqueara y no lo hizo');
+  } catch (error) {
+    return (error as ForbiddenException).getResponse() as {
+      message: string;
+      reason: string;
+      trialExpired: boolean;
+    };
+  }
+}
+
+describe('el mensaje del bloqueo', () => {
+  it('a quien se le acabó la PRUEBA no se le habla de renovar', async () => {
+    const body = await blockedBody(
+      buildService({ currentPeriodEnd: null, trialEndsAt: days(-1) }),
+    );
+
+    expect(body.message).toContain('días de prueba');
+    expect(body.message).not.toContain('reactivar');
+    expect(body.reason).toBe('subscription_blocked');
+    expect(body.trialExpired).toBe(true);
+  });
+
+  it('a quien se le venció el mes PAGADO sí, y se le pide reportar', async () => {
+    const body = await blockedBody(
+      buildService({ currentPeriodEnd: days(-30), graceEndsAt: days(-20) }),
+    );
+
+    expect(body.message).toContain('Tu suscripción venció');
+    expect(body.trialExpired).toBe(false);
+  });
+});
