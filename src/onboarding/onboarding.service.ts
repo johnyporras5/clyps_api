@@ -1,4 +1,9 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
 import { OnboardingState } from './entities/onboarding_state.entity';
@@ -180,7 +185,7 @@ export class OnboardingService {
     }
   }
 
-  /** POST /onboarding/recompute — recalcula los 5 pasos. Idempotente. */
+  /** POST /onboarding/recompute — recalcula los 6 pasos. Idempotente. */
   async recomputeAll(
     companyId: number,
     manager?: EntityManager,
@@ -247,7 +252,13 @@ export class OnboardingService {
 
       // Un paso NUNCA retrocede desde `completed` (borrar el único trabajador no
       // debe castigar al dueño). Sí puede avanzar pending → incomplete → completed.
-      if (current.status === 'completed') continue;
+      // Excepción (CLYP-372): `configure_payroll` SÍ puede retroceder — al
+      // revertir la nómina (borrar config + período) el paso vuelve a pendiente.
+      // Solo se revierte sin pagos (tenant no completado), así que esto nunca
+      // reabre un onboarding ya `completed`.
+      if (current.status === 'completed' && key !== 'configure_payroll') {
+        continue;
+      }
 
       const next: OnboardingStepState = {
         status: evaluation.status,
@@ -305,6 +316,33 @@ export class OnboardingService {
     return { globalStatus: 'skipped' };
   }
 
+  /**
+   * CLYP-372: la nómina es obligatoria antes de la PRIMERA cita, pero SOLO en el
+   * flujo de onboarding. Lanza 409 si la company está `in_progress`, aún no tiene
+   * su primera cita y no ha configurado la nómina. No toca a tenants operativos
+   * (completed/skipped) ni a los que ya tienen citas.
+   */
+  async assertPayrollBeforeFirstAppointment(
+    companyId: number,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const state = await this.getOrCreateState(companyId, manager);
+    // Solo el onboarding en curso; completed/skipped nunca se bloquean.
+    if (state.globalStatus !== 'in_progress') return;
+    const steps = this.normalizeSteps(state.steps);
+    // Ya tiene citas → no es la primera; no se bloquea (tenant operativo).
+    if (steps.first_appointment.status === 'completed') return;
+    // Chequeo fresco de la nómina (config o período), no el status cacheado.
+    const payroll = await this.evaluateConfigurePayroll(
+      companyId,
+      this.manager(manager),
+    );
+    if (payroll.status === 'completed') return;
+    throw new ConflictException(
+      'Configura tu nómina antes de agendar tu primera cita.',
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Lectura del estado real del sistema (una consulta por paso)
   // ---------------------------------------------------------------------------
@@ -321,6 +359,8 @@ export class OnboardingService {
         return this.evaluateAddTeam(companyId, em);
       case 'confirm_services':
         return this.evaluateConfirmServices(companyId, em);
+      case 'configure_payroll':
+        return this.evaluateConfigurePayroll(companyId, em);
       case 'first_appointment':
         return this.evaluateFirstAppointment(companyId, em);
       case 'first_charge':
@@ -409,6 +449,28 @@ export class OnboardingService {
       total: Number(row?.total ?? 0),
       prices: Number(row?.prices ?? 0),
       commissions: Number(row?.commissions ?? 0),
+    };
+  }
+
+  /**
+   * CLYP-370/372: config de nómina. Completo cuando el dueño ya configuró su
+   * nómina: existe una fila `payroll_config` (guardada por PAY-9/ONBPAY-2) O ya
+   * tiene un `payroll_period` (tenant que ya operaba antes de la feature → se
+   * considera satisfecho). Evento real, no autorreporte.
+   */
+  private async evaluateConfigurePayroll(
+    companyId: number,
+    em: EntityManager,
+  ): Promise<StepEvaluation> {
+    const rows: Array<{ total: number }> = await em.query(
+      `SELECT (
+         EXISTS(SELECT 1 FROM payroll_config WHERE company_id = ?)
+         OR EXISTS(SELECT 1 FROM payroll_period WHERE company_id = ?)
+       ) AS total`,
+      [companyId, companyId],
+    );
+    return {
+      status: Number(rows[0]?.total ?? 0) > 0 ? 'completed' : 'pending',
     };
   }
 
