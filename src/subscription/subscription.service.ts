@@ -121,9 +121,10 @@ export class SubscriptionService {
    * Extiende el acceso del tenant por el pago verificado.
    *
    * Es lo ÚNICO que da acceso: ni cotizar ni reportar tocan este estado. El mes
-   * se cuenta desde el MAYOR entre hoy y el período vigente (pagar antes no
-   * regala ni quita días), la gracia se limpia y el plan pasa a ser el que se
-   * pagó.
+   * se cuenta desde el MAYOR entre hoy, el período vigente y el fin de la
+   * prueba: pagar antes no regala ni quita días, y el primer pago hecho durante
+   * la prueba NO se come los días que quedaban (arranca al vencer el trial).
+   * La gracia se limpia y el plan pasa a ser el que se pagó.
    *
    * IDEMPOTENTE por reporte: el mismo pago no compra dos meses. La suscripción
    * y su bitácora se guardan en la MISMA transacción, así que o queda el avance
@@ -136,7 +137,11 @@ export class SubscriptionService {
   ): Promise<Subscription> {
     const previousPeriodEnd = subscription.currentPeriodEnd;
     const previousStatus = subscription.status;
-    const newPeriodEnd = nextPeriodEnd(now, previousPeriodEnd);
+    const newPeriodEnd = nextPeriodEnd(
+      now,
+      previousPeriodEnd,
+      subscription.trialEndsAt,
+    );
 
     try {
       const advanced = await this.dataSource.transaction(async (manager) => {
