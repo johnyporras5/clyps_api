@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -19,6 +19,7 @@ import {
   type AccessState,
 } from './entitlements.util';
 import type { AccessResponse } from './dto/access-response.dto';
+import { SubscriptionService } from './subscription.service';
 
 /**
  * Funciones de sí/no que dependen del PLAN (SUB-1). Son las llaves booleanas de
@@ -83,7 +84,10 @@ export class EntitlementsService {
     @InjectRepository(Company)
     private readonly companies: Repository<Company>,
     private readonly config: ConfigService,
+    private readonly trials: SubscriptionService,
   ) {}
+
+  private readonly logger = new Logger(EntitlementsService.name);
 
   /** Ventana de gracia en días. Configurable, 5 por defecto. */
   get graceDays(): number {
@@ -114,9 +118,7 @@ export class EntitlementsService {
    * puede depender de que un job haya corrido a tiempo.
    */
   private async context(companyId: number): Promise<EntitlementContext> {
-    const subscription = await this.subscriptions.findOne({
-      where: { companyId },
-    });
+    const subscription = await this.loadSubscription(companyId);
     const hasPendingReport = await this.hasPendingReport(companyId);
 
     const storedPlanId = subscription?.planId ?? 'basico';
@@ -132,6 +134,42 @@ export class EntitlementsService {
       limits: effectiveLimits(storedPlanId, access.status),
       billingExempt: Boolean(subscription?.billingExempt),
     };
+  }
+
+  /**
+   * La suscripción del tenant, abriéndole la prueba si todavía no tiene una.
+   *
+   * Red de seguridad de CLYP-332: el alta vive en el registro, y si ese paso
+   * falló la company quedaba SIN fila. Sin fila, `resolveAccess` concede acceso
+   * completo y sin fecha de fin: gratis para siempre, en silencio. Aquí se
+   * repara la primera vez que alguien pregunta por el acceso.
+   *
+   * Es idempotente (lo garantiza `startTrial` con el único de company_id), así
+   * que dos peticiones a la vez no abren dos pruebas.
+   *
+   * Si la creación falla —base caída, company borrada— NO se rompe la lectura:
+   * se sigue con `null`, el comportamiento permisivo de siempre. Dejar al dueño
+   * sin entrar por no poder abrirle una prueba sería peor que abrirla tarde.
+   */
+  private async loadSubscription(
+    companyId: number,
+  ): Promise<Subscription | null> {
+    const existing = await this.subscriptions.findOne({ where: { companyId } });
+    if (existing) return existing;
+
+    try {
+      const created = await this.trials.startTrial(companyId);
+      this.logger.warn(
+        `La company ${companyId} no tenía suscripción: se le abrió la prueba ahora.`,
+      );
+      return created;
+    } catch (error) {
+      this.logger.error(
+        `No se pudo abrir la prueba de la company ${companyId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return null;
+    }
   }
 
   /** Estado de acceso efectivo (la matriz del ticket). */
