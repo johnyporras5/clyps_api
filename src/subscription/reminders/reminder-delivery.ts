@@ -1,12 +1,16 @@
 import type { ReminderChannel } from '../subscription.enums';
-import type { ReminderMessage } from './reminder-message.util';
+import type { DeliverableMessage } from './reminder-message.util';
 
 /**
- * La capa de entrega de los recordatorios (SUB-8 / CLYP-339).
+ * La capa de entrega de los avisos de suscripción (SUB-8 / CLYP-339).
  *
- * El servicio de agenda decide A QUIÉN y QUÉ decirle; los adaptadores deciden
- * POR DÓNDE. Agregar WhatsApp mañana es una clase nueva que implementa esta
- * interfaz y se registra en el módulo: la lógica de cuándo avisar no se toca.
+ * Quien avisa decide A QUIÉN y QUÉ decirle; los adaptadores deciden POR DÓNDE.
+ * Agregar WhatsApp mañana es una clase nueva que implementa esta interfaz y se
+ * registra en el módulo: la lógica de cuándo avisar no se toca.
+ *
+ * La usan los recordatorios de cobro (SUB-8) y el resultado de verificar un
+ * pago (SUB-9). Por eso el mensaje que recibe es un `DeliverableMessage` pelado
+ * y no un recordatorio: el canal no tiene por qué saber de dónde viene.
  */
 
 export interface ReminderRecipient {
@@ -24,7 +28,7 @@ export interface ReminderChannelAdapter {
   /** `true` si se entregó. Un `false` no corta el resto de los canales. */
   deliver(
     recipient: ReminderRecipient,
-    message: ReminderMessage,
+    message: DeliverableMessage,
   ): Promise<boolean>;
 }
 

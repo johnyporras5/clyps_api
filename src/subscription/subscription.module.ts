@@ -20,6 +20,7 @@ import { InAppReminderChannel } from './reminders/in-app-reminder.channel';
 import { EmailReminderChannel } from './reminders/email-reminder.channel';
 import { REMINDER_CHANNELS } from './reminders/reminder-delivery';
 import { AdminRemindersController } from './reminders/admin-reminders.controller';
+import { PaymentOutcomeService } from './notifications/payment-outcome.service';
 import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
 import { SubscriptionEvent } from './entities/subscription-event.entity';
@@ -82,6 +83,9 @@ import { EmailModule } from '../email/email.module';
     // que sumar WhatsApp mañana es agregar una clase aquí y nada más.
     RemindersService,
     RemindersTask,
+    // SUB-9: le avisa al dueño si su pago se verificó o se rechazó, por los
+    // mismos canales de SUB-8.
+    PaymentOutcomeService,
     InAppReminderChannel,
     EmailReminderChannel,
     {

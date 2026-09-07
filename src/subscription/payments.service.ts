@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { Company } from '../company/entities/company.entity';
@@ -47,6 +48,10 @@ import type { ReportPaymentDto } from './dto/report-payment.dto';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type { AutoCheckStatus, PaymentMethod } from './subscription.enums';
 import { billablePlanId } from './entitlements.util';
+import {
+  SUBSCRIPTION_PAYMENT_REJECTED,
+  type SubscriptionPaymentRejectedEvent,
+} from './notifications/payment-outcome.events';
 
 /**
  * Pagos de la suscripción: cotizar (SUB-2 / CLYP-334) y reportar (SUB-3 /
@@ -71,6 +76,7 @@ export class PaymentsService {
     private readonly config: ConfigService,
     private readonly cobrix: CobrixConfig,
     private readonly cobrixInvoices: CobrixInvoiceService,
+    private readonly events: EventEmitter2,
   ) {}
 
   private num(key: string, fallback: number): number {
@@ -421,6 +427,16 @@ export class PaymentsService {
     report.verifiedAt = new Date();
     report.rejectionReason = dto.rejectionReason;
     await this.saveDecision(report);
+
+    // SUB-9: el dueño tiene que enterarse de que su pago no pasó y de por qué.
+    // Va por evento para que un canal caído no tumbe el rechazo, que ya está
+    // guardado.
+    this.events.emit(SUBSCRIPTION_PAYMENT_REJECTED, {
+      companyId: report.companyId,
+      paymentReportId: report.id,
+      reason: dto.rejectionReason,
+      reference: report.reference ?? null,
+    } satisfies SubscriptionPaymentRejectedEvent);
 
     const subscription = await this.subscriptions.findOne({
       where: { companyId: report.companyId },

@@ -40,8 +40,14 @@ export interface ReminderContext {
   instructions: PaymentInstructions;
 }
 
-export interface ReminderMessage {
-  tier: ReminderTier;
+/**
+ * Lo mínimo que la capa de entrega necesita para repartir un aviso.
+ *
+ * Se separa de `ReminderMessage` para que los avisos que NO son recordatorios
+ * —el resultado de verificar un pago (SUB-9), por ejemplo— viajen por los
+ * mismos canales sin inventarse un `tier` que no les corresponde.
+ */
+export interface DeliverableMessage {
   title: string;
   /** Texto plano: sirve igual para in-app, WhatsApp o el cuerpo del correo. */
   body: string;
@@ -49,6 +55,10 @@ export interface ReminderMessage {
   html: string;
   /** A dónde lleva el toque. */
   actionUrl: string | null;
+}
+
+export interface ReminderMessage extends DeliverableMessage {
+  tier: ReminderTier;
 }
 
 /** `dd/mm/aaaa`. Sin `toLocaleDateString` para no depender del ICU del server. */

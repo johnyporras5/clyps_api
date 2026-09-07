@@ -180,6 +180,9 @@ function buildService(options: {
     {
       findLive: jest.fn().mockResolvedValue(null),
     } as unknown as CobrixInvoiceService,
+    // El mismo emisor que la suscripción: así una prueba puede mirar tanto la
+    // activación (SUB-9) como el rechazo en `events.emit`.
+    events as unknown as EventEmitter2,
   );
 
   return { service, reports, subscriptions, manager, events };
@@ -398,7 +401,15 @@ describe('rechazar un pago', () => {
     expect(result.rejectionReason).toBe('No aparece el pago en la cuenta');
     // Lo único que se guardó fue el reporte: la suscripción quedó como estaba.
     expect(manager.save).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    // SUB-9: sale el aviso del rechazo, y SOLO ese. Nada de activación.
+    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(events.emit).toHaveBeenCalledWith(
+      'subscription.payment.rejected',
+      expect.objectContaining({
+        companyId: 7,
+        reason: 'No aparece el pago en la cuenta',
+      }),
+    );
     expect(subscription.status).toBe('grace');
     expect(subscription.currentPeriodEnd).toBeNull();
   });
