@@ -180,7 +180,7 @@ export class OnboardingService {
     }
   }
 
-  /** POST /onboarding/recompute — recalcula los 5 pasos. Idempotente. */
+  /** POST /onboarding/recompute — recalcula los 6 pasos. Idempotente. */
   async recomputeAll(
     companyId: number,
     manager?: EntityManager,
@@ -321,6 +321,8 @@ export class OnboardingService {
         return this.evaluateAddTeam(companyId, em);
       case 'confirm_services':
         return this.evaluateConfirmServices(companyId, em);
+      case 'configure_payroll':
+        return this.evaluateConfigurePayroll(companyId, em);
       case 'first_appointment':
         return this.evaluateFirstAppointment(companyId, em);
       case 'first_charge':
@@ -409,6 +411,24 @@ export class OnboardingService {
       total: Number(row?.total ?? 0),
       prices: Number(row?.prices ?? 0),
       commissions: Number(row?.commissions ?? 0),
+    };
+  }
+
+  /**
+   * CLYP-370: config de nómina. Completo cuando el dueño guardó su configuración
+   * (existe una fila `payroll_config` de la company, creada por PAY-9/ONBPAY-2 al
+   * fijar la frecuencia). Evento real, no autorreporte.
+   */
+  private async evaluateConfigurePayroll(
+    companyId: number,
+    em: EntityManager,
+  ): Promise<StepEvaluation> {
+    const rows: Array<{ total: number }> = await em.query(
+      `SELECT COUNT(*) AS total FROM payroll_config WHERE company_id = ?`,
+      [companyId],
+    );
+    return {
+      status: Number(rows[0]?.total ?? 0) > 0 ? 'completed' : 'pending',
     };
   }
 

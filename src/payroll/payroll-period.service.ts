@@ -19,6 +19,7 @@ import {
   periodLabel,
 } from './payroll-calendar.util';
 import { businessDateOf } from '../common/utils/business-time.util';
+import { OnboardingService } from '../onboarding/onboarding.service';
 
 const isDupEntry = (e: unknown): boolean =>
   (e as { code?: string; driverError?: { code?: string } })?.code ===
@@ -37,6 +38,7 @@ export class PayrollPeriodService {
     private readonly configRepo: Repository<PayrollConfig>,
     @InjectRepository(Company)
     private readonly companyRepo: Repository<Company>,
+    private readonly onboardingService: OnboardingService,
   ) {}
 
   /** Frecuencia configurada de la empresa (default quincenal si no hay config). */
@@ -166,6 +168,13 @@ export class PayrollPeriodService {
         this.configRepo.create({ companyId, frequency }),
       );
     }
+
+    // CLYP-370 (ONBPAY-2): guardar la config de nómina completa el paso
+    // `configure_payroll` del onboarding. Best-effort: no rompe la config.
+    await this.onboardingService.safeRecomputeStep(
+      companyId,
+      'configure_payroll',
+    );
 
     // ¿Es el primer arranque? Solo entonces vale la fecha elegida.
     const hasPeriod = await this.periodRepo.findOne({

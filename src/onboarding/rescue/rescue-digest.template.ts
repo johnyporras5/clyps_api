@@ -7,6 +7,7 @@ export const STEP_LABELS: Record<OnboardingStepKey, string> = {
   create_profile: 'Completar el perfil',
   add_team: 'Agregar el equipo',
   confirm_services: 'Confirmar los servicios',
+  configure_payroll: 'Configurar la nómina',
   first_appointment: 'Agendar la primera cita',
   first_charge: 'Cobrar la primera cita',
 };

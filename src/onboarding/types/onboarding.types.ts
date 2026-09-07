@@ -1,7 +1,7 @@
 /**
  * ONB-1: tipado del estado de onboarding por company (tenant).
  *
- * Los 5 pasos viven en una columna `json` (flexible para agregar pasos luego).
+ * Los 6 pasos viven en una columna `json` (flexible para agregar pasos luego).
  * Ningún paso se marca por autorreporte del usuario: siempre se recalcula
  * leyendo el estado real del sistema (ver OnboardingService.recomputeStep).
  */
@@ -11,8 +11,9 @@ export const ONBOARDING_STEP_KEYS = [
   'create_profile', // 1. crear cuenta y perfil
   'add_team', // 2. agregar equipo (antes de servicios, para poder asignarlos)
   'confirm_services', // 3. confirmar servicios precargados + precio/comisión
-  'first_appointment', // 4. agendar primera cita
-  'first_charge', // 5. cobrar primera cita (el "ajá")
+  'configure_payroll', // 4. configurar la nómina (frecuencia de pago) — CLYP-370
+  'first_appointment', // 5. agendar primera cita
+  'first_charge', // 6. cobrar primera cita (el "ajá")
 ] as const;
 
 export type OnboardingStepKey = (typeof ONBOARDING_STEP_KEYS)[number];
@@ -36,7 +37,7 @@ export interface OnboardingStepState {
 
 export type OnboardingSteps = Record<OnboardingStepKey, OnboardingStepState>;
 
-/** Estado inicial: los 5 pasos en `pending`. */
+/** Estado inicial: los 6 pasos en `pending`. */
 export function buildInitialSteps(now: string): OnboardingSteps {
   return ONBOARDING_STEP_KEYS.reduce((acc, key) => {
     acc[key] = { status: 'pending', updatedAt: now };
