@@ -1,6 +1,7 @@
 import type { ConfigService } from '@nestjs/config';
 import type { Repository } from 'typeorm';
 import type { Company } from '../../company/entities/company.entity';
+import type { Subscription } from '../entities/subscription.entity';
 import type {
   ReminderChannelAdapter,
   ReminderRecipient,
@@ -27,6 +28,8 @@ function buildService(options: {
   inAppThrows?: boolean;
   /** El canal de correo está apagado por configuración. */
   emailDisabled?: boolean;
+  /** El salón no paga: no debe recibir avisos de cobro. */
+  billingExempt?: boolean;
   /** Cómo queda el acceso al rechazar el pago. */
   accessAfterReject?: {
     status: string;
@@ -89,8 +92,16 @@ function buildService(options: {
     ),
   };
 
+  // La marca de exento: al salón que no paga no se le habla de cobros.
+  const subscriptions = {
+    findOne: jest
+      .fn()
+      .mockResolvedValue({ billingExempt: options.billingExempt ?? false }),
+  };
+
   const service = new PaymentOutcomeService(
     companies as unknown as Repository<Company>,
+    subscriptions as unknown as Repository<Subscription>,
     config as unknown as ConfigService,
     entitlements as unknown as EntitlementsService,
     [inApp, email],
@@ -214,5 +225,33 @@ describe('el acceso después del rechazo', () => {
     await service.onRejected(rejected);
 
     expect(entitlements.getAccessState).toHaveBeenCalledWith(7);
+  });
+});
+
+describe('salón exento de cobro', () => {
+  it('no recibe el aviso de activación', async () => {
+    const { service, inAppSent, emailSent } = buildService({
+      billingExempt: true,
+    });
+
+    await service.onActivated(activated);
+
+    // Misma regla que el barrido de SUB-8: a quien no se le cobra, no se le
+    // habla de cobros. Ni para bien.
+    expect(inAppSent).toHaveLength(0);
+    expect(emailSent).toHaveLength(0);
+  });
+
+  it('no recibe el aviso de rechazo', async () => {
+    const { service, inAppSent, emailSent, entitlements } = buildService({
+      billingExempt: true,
+    });
+
+    await service.onRejected(rejected);
+
+    expect(inAppSent).toHaveLength(0);
+    expect(emailSent).toHaveLength(0);
+    // Ni siquiera se molesta en calcular el acceso: no hay nada que decirle.
+    expect(entitlements.getAccessState).not.toHaveBeenCalled();
   });
 });

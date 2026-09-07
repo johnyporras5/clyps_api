@@ -4,6 +4,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
+import { Subscription } from '../entities/subscription.entity';
 import { getPlan } from '../config/plans.config';
 import { billablePlanId } from '../entitlements.util';
 import { EntitlementsService } from '../entitlements.service';
@@ -51,11 +52,28 @@ export class PaymentOutcomeService {
   constructor(
     @InjectRepository(Company)
     private readonly companies: Repository<Company>,
+    @InjectRepository(Subscription)
+    private readonly subscriptions: Repository<Subscription>,
     private readonly config: ConfigService,
     private readonly entitlements: EntitlementsService,
     @Inject(REMINDER_CHANNELS)
     private readonly channels: ReminderChannelAdapter[],
   ) {}
+
+  /**
+   * Al salón exento no se le habla de cobros, ni para bien.
+   *
+   * Es la misma regla que ya aplica el barrido de SUB-8, que los excluye desde
+   * la consulta: a quien no se le cobra no se le recuerda pagar, y tampoco se
+   * le confirma ni se le rechaza un pago que no le tocaba hacer.
+   */
+  private async isExempt(companyId: number): Promise<boolean> {
+    const subscription = await this.subscriptions.findOne({
+      where: { companyId },
+      select: { billingExempt: true },
+    });
+    return Boolean(subscription?.billingExempt);
+  }
 
   /** A dónde paga el dueño. La misma configuración que usa SUB-8. */
   private get instructions(): PaymentInstructions {
@@ -72,6 +90,8 @@ export class PaymentOutcomeService {
 
   @OnEvent(SUBSCRIPTION_ACTIVATED)
   async onActivated(event: SubscriptionActivatedEvent): Promise<void> {
+    if (await this.isExempt(event.companyId)) return;
+
     const recipient = await this.recipient(event.companyId);
     if (!recipient) return;
 
@@ -90,6 +110,8 @@ export class PaymentOutcomeService {
 
   @OnEvent(SUBSCRIPTION_PAYMENT_REJECTED)
   async onRejected(event: SubscriptionPaymentRejectedEvent): Promise<void> {
+    if (await this.isExempt(event.companyId)) return;
+
     const recipient = await this.recipient(event.companyId);
     if (!recipient) return;
 
