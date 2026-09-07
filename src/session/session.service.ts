@@ -927,6 +927,10 @@ export class SessionService {
     const companyId = adminCompany.id;
     const companyName = adminCompany.name;
 
+    // CLYP-372: en onboarding, la nómina es obligatoria antes de la primera cita.
+    // Lanza 409 si aún no está configurada; no afecta a tenants operativos.
+    await this.onboardingService.assertPayrollBeforeFirstAppointment(companyId);
+
     // CLYP-306: un trabajador solo puede agendar citas asignadas a SÍ MISMO.
     // Cualquier detail con otro companyWorkerId (o sin trabajador) → 403.
     if (isWorker) {

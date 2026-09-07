@@ -135,6 +135,12 @@ export class PayrollPeriodService {
         companyId,
       ]);
     });
+    // CLYP-372: sin nómina, el paso `configure_payroll` del onboarding vuelve a
+    // pendiente (y la primera cita se bloquea de nuevo). Best-effort.
+    await this.onboardingService.safeRecomputeStep(
+      companyId,
+      'configure_payroll',
+    );
     this.logger.log(
       `Nómina de company ${companyId} revertida a "sin configurar" por admin ${adminId}`,
     );
