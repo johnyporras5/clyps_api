@@ -14,6 +14,7 @@ import { ExchangeRateService } from '../rate/exchange-rate.service';
 import { getPlan, type PlanId } from '../config/plans.config';
 import { quoteAmountVesMinor } from '../subscription-quote.util';
 import { billablePlanId } from '../entitlements.util';
+import { SubscriptionService } from '../subscription.service';
 import { CURRENCY_VES, formatVesMinor } from '../subscription-money.util';
 import { CobrixConfig } from './cobrix.config';
 import { CobrixClient } from './cobrix.client';
@@ -50,6 +51,7 @@ export class CobrixInvoiceService {
     private readonly rates: ExchangeRateService,
     private readonly client: CobrixClient,
     private readonly config: CobrixConfig,
+    private readonly trials: SubscriptionService,
   ) {}
 
   /**
@@ -73,14 +75,9 @@ export class CobrixInvoiceService {
       });
     }
 
-    const subscription = await this.subscriptions.findOne({
-      where: { companyId },
-      select: { id: true, planId: true },
-    });
-    if (!subscription)
-      throw new BadRequestException(
-        'No hay una suscripción para esta compañía: no se puede emitir el cobro.',
-      );
+    // Si el registro no alcanzó a crear la suscripción, se abre la prueba aquí:
+    // el dueño está intentando PAGAR, negarle el cobro sería el peor momento.
+    const subscription = await this.trials.ensureSubscription(companyId);
 
     const planId = input.planId ?? billablePlanId(subscription.planId);
     const company = await this.companies.findOne({

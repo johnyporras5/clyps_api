@@ -82,6 +82,8 @@ function subscriptionFixture(
 interface Harness {
   service: PaymentsService;
   reports: { findOne: jest.Mock; save: jest.Mock };
+  /** El repositorio de suscripciones: por aquí se abre la prueba de rescate. */
+  subscriptions: { findOne: jest.Mock; save: jest.Mock; create: jest.Mock };
   /** El manager de la transacción: por aquí pasan la suscripción y su evento. */
   manager: { findOne: jest.Mock; save: jest.Mock; create: jest.Mock };
   events: { emit: jest.Mock };
@@ -123,6 +125,10 @@ function buildService(options: {
   const subscriptions = {
     findOne: jest.fn().mockResolvedValue(options.subscription ?? null),
     save: jest.fn().mockImplementation((entity: Subscription) => entity),
+    // `ensureSubscription` crea la prueba cuando no hay fila (CLYP-332).
+    create: jest
+      .fn()
+      .mockImplementation((draft: Partial<Subscription>) => draft),
   };
 
   const companies = {
@@ -176,7 +182,7 @@ function buildService(options: {
     } as unknown as CobrixInvoiceService,
   );
 
-  return { service, reports, manager, events };
+  return { service, reports, subscriptions, manager, events };
 }
 
 /** La suscripción que se mandó a guardar dentro de la transacción. */
@@ -342,6 +348,35 @@ describe('verificar un pago', () => {
 
     expect(manager.save).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+describe('reportar sin suscripción', () => {
+  it('le abre la prueba en vez de negarle el pago', async () => {
+    const { service, subscriptions, reports } = buildService({
+      subscription: null,
+    });
+
+    const result = await service.reportPayment(7, {
+      method: 'binance',
+      amountUsdMinor: 2800,
+      txId: '0xSINSUSCRIPCION',
+    } as ReportPaymentDto);
+
+    // Antes esto era un 400: el dueño quería pagar y el sistema le decía que no
+    // tenía suscripción — justo lo que estaba intentando arreglar.
+    expect(subscriptions.save).toHaveBeenCalledTimes(1);
+    expect(subscriptions.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        companyId: 7,
+        status: 'trialing',
+        planId: null,
+      }),
+    );
+    expect(result.status).toBe('reported');
+    // Sin plan elegido se cobra el de la prueba, que es el que está usando.
+    expect(result.planId).toBe('full');
+    expect(reports.save).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -158,7 +158,7 @@ export class EntitlementsService {
     if (existing) return existing;
 
     try {
-      const created = await this.trials.startTrial(companyId);
+      const created = await this.trials.ensureSubscription(companyId);
       this.logger.warn(
         `La company ${companyId} no tenía suscripción: se le abrió la prueba ahora.`,
       );

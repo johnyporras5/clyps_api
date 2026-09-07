@@ -118,6 +118,21 @@ export class SubscriptionService {
   }
 
   /**
+   * La suscripción del salón, abriéndole la prueba si todavía no tiene ninguna.
+   *
+   * Es la puerta para todo el que NECESITA la fila (cotizar, reportar un pago,
+   * emitir el cobro, leer el acceso): antes cada uno respondía "no hay
+   * suscripción" y dejaba al dueño sin poder pagar, cuando lo que faltaba era
+   * una fila que el registro debió crear.
+   *
+   * Idempotente y a prueba de carreras: es `startTrial`, que devuelve la que ya
+   * existe en vez de regalar una prueba nueva.
+   */
+  async ensureSubscription(companyId: number): Promise<Subscription> {
+    return this.startTrial(companyId);
+  }
+
+  /**
    * Extiende el acceso del tenant por el pago verificado.
    *
    * Es lo ÚNICO que da acceso: ni cotizar ni reportar tocan este estado. El mes

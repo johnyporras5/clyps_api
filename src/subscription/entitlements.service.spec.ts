@@ -61,7 +61,7 @@ function buildService(options: {
   // La red de seguridad de CLYP-332: sin fila, el acceso se lee abriendo la
   // prueba en ese momento. `startTrialFails` simula que ni eso se puede.
   const trials = {
-    startTrial: jest.fn().mockImplementation(() => {
+    ensureSubscription: jest.fn().mockImplementation(() => {
       if (options.startTrialFails) return Promise.reject(new Error('BD caída'));
       return Promise.resolve({
         id: 9,

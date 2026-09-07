@@ -169,14 +169,10 @@ export class PaymentsService {
     dto: ReportPaymentDto,
     proof?: Express.Multer.File,
   ): Promise<PaymentReportResponse> {
-    const subscription = await this.subscriptions.findOne({
-      where: { companyId },
-      select: { id: true, planId: true },
-    });
-    if (!subscription)
-      throw new BadRequestException(
-        'No hay una suscripción para esta compañía: no se puede reportar un pago.',
-      );
+    // Sin fila no se puede colgar el reporte de ninguna parte. Si el registro
+    // no llegó a crearla, se abre aquí la prueba en vez de negarle el pago.
+    const subscription =
+      await this.subscriptionService.ensureSubscription(companyId);
 
     const reference = paymentReference(dto);
     await this.assertReferenceIsNew(companyId, reference);
@@ -649,14 +645,8 @@ export class PaymentsService {
    * `planId` — es lo que hace la pantalla de elección de plan.
    */
   private async currentPlanId(companyId: number): Promise<PlanId> {
-    const subscription = await this.subscriptions.findOne({
-      where: { companyId },
-      select: { planId: true },
-    });
-    if (!subscription)
-      throw new BadRequestException(
-        'No hay una suscripción para esta compañía: indica el plan a cotizar.',
-      );
+    const subscription =
+      await this.subscriptionService.ensureSubscription(companyId);
     return billablePlanId(subscription.planId);
   }
 }

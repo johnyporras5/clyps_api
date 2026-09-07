@@ -12,6 +12,7 @@ import type { ExchangeRateService } from '../rate/exchange-rate.service';
 import type { CobrixClient } from './cobrix.client';
 import { CobrixConfig } from './cobrix.config';
 import { CobrixInvoiceService } from './cobrix-invoice.service';
+import type { SubscriptionService } from '../subscription.service';
 
 /**
  * La emisión del documento de cobro (SUB-10).
@@ -143,6 +144,15 @@ function buildService(
     rates as unknown as ExchangeRateService,
     client as unknown as CobrixClient,
     config,
+    // La suscripción se pide por aquí: si el salón no tiene, se le abre la
+    // prueba en vez de negarle el cobro (CLYP-332).
+    {
+      ensureSubscription: jest
+        .fn()
+        .mockImplementation(
+          () => subscriptions.findOne() as Promise<Subscription>,
+        ),
+    } as unknown as SubscriptionService,
   );
 
   return { service, invoices, client, rates };
