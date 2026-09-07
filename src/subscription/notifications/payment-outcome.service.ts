@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
 import { getPlan } from '../config/plans.config';
 import { billablePlanId } from '../entitlements.util';
+import { EntitlementsService } from '../entitlements.service';
 import {
   REMINDER_CHANNELS,
   type ReminderChannelAdapter,
@@ -51,6 +52,7 @@ export class PaymentOutcomeService {
     @InjectRepository(Company)
     private readonly companies: Repository<Company>,
     private readonly config: ConfigService,
+    private readonly entitlements: EntitlementsService,
     @Inject(REMINDER_CHANNELS)
     private readonly channels: ReminderChannelAdapter[],
   ) {}
@@ -91,12 +93,23 @@ export class PaymentOutcomeService {
     const recipient = await this.recipient(event.companyId);
     if (!recipient) return;
 
+    // El acceso se consulta AHORA, con el reporte ya rechazado: mientras estaba
+    // en revisión ese reclamo pendiente era lo que lo sostenía (SUB-5), y al
+    // caerse puede haber quedado bloqueado en este mismo instante. Avisarle que
+    // "nada cambió" sería enterarlo cuando intente cobrar una cita.
+    const access = await this.entitlements.getAccessState(event.companyId);
+
     await this.deliver(
       recipient,
       buildPaymentRejectedMessage({
         companyName: recipient.companyName,
         reason: event.reason,
         reference: event.reference,
+        access: {
+          canOperate: access.canOperate,
+          accessEndsAt: access.accessEndsAt,
+          graceEndsAt: access.graceEndsAt,
+        },
         instructions: this.instructions,
       }),
       `rechazo del reporte ${event.paymentReportId}`,

@@ -9,6 +9,7 @@ import type { DeliverableMessage } from '../reminders/reminder-message.util';
 import { PaymentOutcomeService } from './payment-outcome.service';
 import type { SubscriptionActivatedEvent } from '../subscription.service';
 import type { SubscriptionPaymentRejectedEvent } from './payment-outcome.events';
+import type { EntitlementsService } from '../entitlements.service';
 
 /**
  * SUB-9: el aviso sale por la capa de entrega de SUB-8, y ningún fallo de
@@ -26,6 +27,14 @@ function buildService(options: {
   inAppThrows?: boolean;
   /** El canal de correo está apagado por configuración. */
   emailDisabled?: boolean;
+  /** Cómo queda el acceso al rechazar el pago. */
+  accessAfterReject?: {
+    status: string;
+    canOperate: boolean;
+    graceCause: string | null;
+    accessEndsAt: Date | null;
+    graceEndsAt: Date | null;
+  };
 }) {
   const inAppSent: Sent[] = [];
   const emailSent: Sent[] = [];
@@ -66,13 +75,28 @@ function buildService(options: {
         : undefined,
   };
 
+  // El acceso DESPUÉS del rechazo: es lo que decide si el mensaje anuncia
+  // bloqueo o no. Por defecto, un salón que sigue operando.
+  const entitlements = {
+    getAccessState: jest.fn().mockResolvedValue(
+      options.accessAfterReject ?? {
+        status: 'grace',
+        canOperate: true,
+        graceCause: 'expired',
+        accessEndsAt: new Date('2026-09-01T00:00:00.000Z'),
+        graceEndsAt: new Date('2026-09-06T00:00:00.000Z'),
+      },
+    ),
+  };
+
   const service = new PaymentOutcomeService(
     companies as unknown as Repository<Company>,
     config as unknown as ConfigService,
+    entitlements as unknown as EntitlementsService,
     [inApp, email],
   );
 
-  return { service, inAppSent, emailSent, companies };
+  return { service, inAppSent, emailSent, companies, entitlements };
 }
 
 const activated: SubscriptionActivatedEvent = {
@@ -161,5 +185,34 @@ describe('cuando la entrega falla', () => {
     await expect(service.onRejected(rejected)).resolves.toBeUndefined();
     expect(inAppSent).toHaveLength(0);
     expect(emailSent).toHaveLength(0);
+  });
+});
+
+describe('el acceso después del rechazo', () => {
+  it('si la gracia ya venció, el aviso dice que quedó bloqueado', async () => {
+    // Mientras el reporte estaba en revisión seguía operando pese a la gracia
+    // agotada (invariante de SUB-5). Al rechazarlo se le cae el acceso.
+    const { service, inAppSent } = buildService({
+      accessAfterReject: {
+        status: 'blocked',
+        canOperate: false,
+        graceCause: null,
+        accessEndsAt: new Date('2026-08-20T00:00:00.000Z'),
+        graceEndsAt: new Date('2026-08-25T00:00:00.000Z'),
+      },
+    });
+
+    await service.onRejected(rejected);
+
+    expect(inAppSent[0].message.title).toContain('tu acceso quedó bloqueado');
+    expect(inAppSent[0].message.body).toContain('Tu acceso quedó BLOQUEADO');
+  });
+
+  it('el estado se consulta al avisar, no se asume', async () => {
+    const { service, entitlements } = buildService({});
+
+    await service.onRejected(rejected);
+
+    expect(entitlements.getAccessState).toHaveBeenCalledWith(7);
   });
 });

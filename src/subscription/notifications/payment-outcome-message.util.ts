@@ -29,12 +29,32 @@ export interface PaymentVerifiedContext {
   link: string | null;
 }
 
+/**
+ * Cómo quedó el acceso DESPUÉS del rechazo.
+ *
+ * Se calcula al momento de avisar, no antes: mientras el reporte estaba en
+ * revisión, ese reclamo pendiente era lo que sostenía el acceso —la invariante
+ * de SUB-5: un pago reportado siempre concede acceso, aunque la gracia ya se
+ * haya agotado—. Al rechazarlo ese sostén desaparece, y si la gracia venció el
+ * salón queda bloqueado en ese mismo instante.
+ */
+export interface RejectedAccessState {
+  /** false = quedó bloqueado: solo puede entrar a pagar. */
+  canOperate: boolean;
+  /** Hasta cuándo le llega el acceso, si todavía le llega. */
+  accessEndsAt: Date | null;
+  /** Fin de la cortesía, cuando está dentro de ella. */
+  graceEndsAt: Date | null;
+}
+
 export interface PaymentRejectedContext {
   companyName: string;
   /** El motivo que escribió quien revisó. Es obligatorio al rechazar. */
   reason: string;
   /** Referencia del pago, para que el dueño identifique cuál fue. */
   reference: string | null;
+  /** Cómo le quedó el acceso al rechazar. */
+  access: RejectedAccessState;
   instructions: PaymentInstructions;
 }
 
@@ -70,6 +90,32 @@ export function buildPaymentVerifiedMessage(
   };
 }
 
+/**
+ * Qué le pasó al acceso con el rechazo. Es la parte que NO se puede maquillar.
+ *
+ * Decirle "tu acceso no cambió" a alguien que acaba de quedar bloqueado es
+ * mentirle en el peor momento: se entera cuando intenta cobrar una cita.
+ */
+function accessLineOf(access: RejectedAccessState): string {
+  if (!access.canOperate) {
+    return (
+      'Tu acceso quedó BLOQUEADO: mientras revisábamos este pago seguías ' +
+      'operando, y al no poder confirmarlo se acabó esa cortesía. Reporta un ' +
+      'pago válido para reactivarlo de inmediato.'
+    );
+  }
+  if (access.graceEndsAt) {
+    return (
+      `Tu plan está vencido y te quedan días de cortesía hasta el ` +
+      `${formatDate(access.graceEndsAt)}. Después de esa fecha el acceso se bloquea.`
+    );
+  }
+  if (access.accessEndsAt) {
+    return `Tu acceso sigue vigente hasta el ${formatDate(access.accessEndsAt)}.`;
+  }
+  return 'Tu acceso sigue vigente.';
+}
+
 /** "No pudimos confirmarlo": el motivo y cómo volver a intentarlo. */
 export function buildPaymentRejectedMessage(
   context: PaymentRejectedContext,
@@ -97,10 +143,12 @@ export function buildPaymentRejectedMessage(
     );
   }
 
-  lines.push('Tu acceso no cambió: sigues con el plan que tenías.');
+  lines.push(accessLineOf(context.access));
 
   return {
-    title: 'No pudimos confirmar tu pago',
+    title: context.access.canOperate
+      ? 'No pudimos confirmar tu pago'
+      : 'No pudimos confirmar tu pago: tu acceso quedó bloqueado',
     body: lines.join('\n\n'),
     html: paragraphs(lines),
     actionUrl: instructions.link,

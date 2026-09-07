@@ -43,11 +43,21 @@ describe('pago verificado', () => {
   });
 });
 
+/** Sigue operando, con su período todavía vigente. */
+const accesoVigente = {
+  canOperate: true,
+  // Construidas en hora LOCAL a propósito: `formatDate` formatea en local, y
+  // una fecha en UTC a medianoche cae el día anterior en Venezuela.
+  accessEndsAt: new Date(2026, 9, 19),
+  graceEndsAt: null,
+};
+
 describe('pago rechazado', () => {
   const message = buildPaymentRejectedMessage({
     companyName: 'Salón Bella',
     reason: 'No aparece el pago en la cuenta',
     reference: '0XREFERENCIA01',
+    access: accesoVigente,
     instructions,
   });
 
@@ -66,8 +76,47 @@ describe('pago rechazado', () => {
     expect(message.body).toContain('Banesco');
   });
 
-  it('aclara que no perdió el acceso que tenía', () => {
-    expect(message.body).toContain('Tu acceso no cambió');
+  it('con el período vigente, dice hasta cuándo le llega el acceso', () => {
+    expect(message.body).toContain(
+      'Tu acceso sigue vigente hasta el 19/10/2026',
+    );
+    expect(message.title).toBe('No pudimos confirmar tu pago');
+  });
+
+  it('BLOQUEADO: lo dice en el título y explica por qué se acabó la cortesía', () => {
+    // El caso que importa: mientras el reporte estaba en revisión seguía
+    // operando aunque su gracia ya hubiera vencido. Al rechazarlo, se cae.
+    const bloqueado = buildPaymentRejectedMessage({
+      companyName: 'Salón Bella',
+      reason: 'El comprobante no corresponde',
+      reference: '004512',
+      access: { canOperate: false, accessEndsAt: null, graceEndsAt: null },
+      instructions,
+    });
+
+    expect(bloqueado.title).toBe(
+      'No pudimos confirmar tu pago: tu acceso quedó bloqueado',
+    );
+    expect(bloqueado.body).toContain('Tu acceso quedó BLOQUEADO');
+    expect(bloqueado.body).toContain('reactivarlo');
+    expect(bloqueado.body).not.toContain('sigue vigente');
+  });
+
+  it('en gracia: dice hasta cuándo le queda cortesía y qué pasa después', () => {
+    const enGracia = buildPaymentRejectedMessage({
+      companyName: 'Salón Bella',
+      reason: 'El monto no coincide',
+      reference: '004512',
+      access: {
+        canOperate: true,
+        accessEndsAt: new Date(2026, 8, 1),
+        graceEndsAt: new Date(2026, 8, 6),
+      },
+      instructions,
+    });
+
+    expect(enGracia.body).toContain('cortesía hasta el 06/09/2026');
+    expect(enGracia.body).toContain('el acceso se bloquea');
   });
 
   it('escapa el motivo en el HTML: lo escribe una persona', () => {
@@ -75,6 +124,7 @@ describe('pago rechazado', () => {
       companyName: 'Salón Bella',
       reason: '<script>alert(1)</script>',
       reference: null,
+      access: accesoVigente,
       instructions,
     });
 
@@ -87,6 +137,7 @@ describe('pago rechazado', () => {
       companyName: 'Salón Bella',
       reason: 'El monto no coincide',
       reference: null,
+      access: accesoVigente,
       instructions,
     });
 
