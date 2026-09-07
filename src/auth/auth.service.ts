@@ -478,6 +478,16 @@ export class AuthService {
         throw new NotFoundException('No se encontró el perfil del trabajador');
       }
 
+      const provided = registerDto.calendar as
+        | { days?: unknown }
+        | null
+        | undefined;
+      const hasOwnSchedule =
+        !!provided && Array.isArray(provided.days) && provided.days.length > 0;
+      const calendar = hasOwnSchedule
+        ? registerDto.calendar
+        : await this.companyService.getWorkerInheritedCalendar(company.id);
+
       // Crear registro en company_worker con el campo calendar
       const companyWorker = this.companyWorkerRepository.create({
         workerId: worker.id,
@@ -486,7 +496,7 @@ export class AuthService {
         isActive: 1,
         startDate: new Date(),
         servicesDetail: {},
-        calendar: registerDto.calendar || {},
+        calendar,
       });
 
       await this.companyWorkerRepository.save(companyWorker);

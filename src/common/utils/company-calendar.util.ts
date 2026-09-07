@@ -41,6 +41,56 @@ export interface NormalizedCalendarDetail {
   [key: string]: any;
 }
 
+/** Días laborables por defecto del local: Lunes a Sábado. */
+export const DEFAULT_BUSINESS_DAYS = [
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+];
+
+/**
+ * Horario por defecto del local
+ */
+export function buildDefaultCompanyCalendarDetail(): NormalizedCalendarDetail {
+  return {
+    schedule: {
+      days: [...DEFAULT_BUSINESS_DAYS],
+      morning: {
+        start: { hour: 9, minute: 0, period: 'AM' },
+        end: { hour: 12, minute: 0, period: 'PM' },
+      },
+      afternoon: {
+        start: { hour: 12, minute: 0, period: 'PM' },
+        end: { hour: 6, minute: 0, period: 'PM' },
+      },
+    },
+    exceptions: [],
+  };
+}
+
+export function companyScheduleToWorkerCalendar(
+  calendarDetail: unknown,
+): Record<string, any> | null {
+  const normalized = normalizeCompanyCalendarDetail(calendarDetail);
+  const schedule = normalized?.schedule;
+  if (
+    !schedule ||
+    !Array.isArray(schedule.days) ||
+    schedule.days.length === 0
+  ) {
+    return null;
+  }
+  return {
+    days: [...schedule.days],
+    ...(schedule.morning ? { morning: schedule.morning } : {}),
+    ...(schedule.afternoon ? { afternoon: schedule.afternoon } : {}),
+    exceptions: [],
+  };
+}
+
 /** Una excepción está en formato plano (Forma B) si trae las horas sueltas. */
 function isFlatException(exception: Record<string, any>): boolean {
   return (
