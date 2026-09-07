@@ -11,10 +11,12 @@ import { PayrollPeriodService } from './payroll-period.service';
 import { PayrollEarningsService } from './payroll-earnings.service';
 import { PayrollController } from './payroll.controller';
 import { CommonModule } from '../common/common.module';
+import { OnboardingModule } from '../onboarding/onboarding.module';
 
 @Module({
   imports: [
     CommonModule,
+    OnboardingModule,
     TypeOrmModule.forFeature([
       PayrollConfig,
       PayrollPeriod,
