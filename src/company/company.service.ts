@@ -19,7 +19,11 @@ import {
   PaginationResult,
 } from '../common/utils/pagination.util';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
-import { normalizeCompanyCalendarDetail } from '../common/utils/company-calendar.util';
+import {
+  normalizeCompanyCalendarDetail,
+  buildDefaultCompanyCalendarDetail,
+  companyScheduleToWorkerCalendar,
+} from '../common/utils/company-calendar.util';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Client } from '../client/entities/client.entity';
 import { resolveVisibleCompanyIds } from '../client/client-activation.util';
@@ -376,7 +380,40 @@ export class CompanyService {
 
   async create(createCompanyDto: CreateCompanyDto): Promise<Company> {
     const company = this.companyRepository.create(createCompanyDto);
-    return await this.companyRepository.save(company);
+    const savedCompany = await this.companyRepository.save(company);
+
+    try {
+      const existing = await this.calendarCompanyRepository.findOne({
+        where: { companyId: savedCompany.id },
+      });
+      if (!existing) {
+        const defaultCalendar = this.calendarCompanyRepository.create({
+          companyId: savedCompany.id,
+          calendarDetail: buildDefaultCompanyCalendarDetail(),
+        });
+        await this.calendarCompanyRepository.save(defaultCalendar);
+      }
+    } catch (error) {
+      console.error(
+        ' Error al sembrar el horario por defecto del local:',
+        error,
+      );
+    }
+
+    return savedCompany;
+  }
+
+  async getWorkerInheritedCalendar(
+    companyId: number,
+  ): Promise<Record<string, any>> {
+    const calendar = await this.calendarCompanyRepository.findOne({
+      where: { companyId },
+    });
+    return (
+      companyScheduleToWorkerCalendar(calendar?.calendarDetail) ??
+      companyScheduleToWorkerCalendar(buildDefaultCompanyCalendarDetail()) ??
+      {}
+    );
   }
 
   async update(
