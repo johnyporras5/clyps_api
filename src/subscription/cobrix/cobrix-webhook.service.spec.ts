@@ -399,10 +399,61 @@ describe('webhook del canal general', () => {
       data: { documents: [{ invoiceNumber: 'clyps:clyps-7-1788372343' }] },
     });
 
-    expect(ack.outcome).toBe('ignored');
+    // Ya había un reporte abierto contra esa factura: no se abre otro.
+    expect(ack.outcome).toBe('already_resolved');
     expect(invoices.findOne).toHaveBeenCalledWith({
       where: { providerReference: 'clyps-7-1788372343' },
     });
+  });
+
+  /**
+   * Lo que destapó la prueba manual del 2026-09-08: el dueño pagó por el enlace,
+   * Cobrix mandó `checkout.session.completed` con el pago en `pending` y de este
+   * lado no pasaba NADA. El salón seguía bloqueado, sin "validando tu pago" y
+   * recibiendo recordatorios de cobro por algo que ya había pagado.
+   */
+  it('el dueño pagó por el enlace: se le abre el reporte aunque falte conciliar', async () => {
+    const { deliverGeneral, reports } = buildService({ report: null });
+
+    const ack = await deliverGeneral({
+      id: 'evt_general_pending',
+      event: 'checkout.session.completed',
+      data: {
+        status: 'pending',
+        documents: [{ invoiceNumber: 'clyps:clyps-7-1788372343' }],
+        payment: { status: 'pending', paymentReference: '007167172055' },
+      },
+    });
+
+    expect(ack.outcome).toBe('manual_review');
+    const saved = firstSaved<PaymentReport>(reports.save);
+    // Reportado y pendiente: es lo que le devuelve el acceso y calla los avisos.
+    expect(saved.status).toBe('reported');
+    expect(saved.autoCheckStatus).toBe('pending');
+    // Con la referencia que el dueño ve en su banco, para poder buscarla.
+    expect(saved.reference).toBe('007167172055');
+    expect(saved.invoiceId).toBe(5);
+  });
+
+  it('el pago rechazado suelta la factura y va a revisión manual', async () => {
+    const { deliverGeneral, payments, invoices } = buildService();
+
+    const ack = await deliverGeneral({
+      id: 'evt_general_rejected',
+      event: 'checkout.session.completed',
+      data: {
+        status: 'rejected',
+        documents: [{ invoiceNumber: 'clyps:clyps-7-1788372343' }],
+        payment: { status: 'rejected' },
+      },
+    });
+
+    expect(ack.outcome).toBe('manual_review');
+    // No se rechaza solo: que Cobrix no lo concilie no prueba que no pagó.
+    expect(manualReason(payments.flagForManualReview)).toContain('rejected');
+    // Y la factura se suelta: si no, "Pagar ahora" devuelve al enlace muerto.
+    const saved = firstSaved<SubscriptionInvoice>(invoices.save);
+    expect(saved.status).toBe('expired');
   });
 
   it('no confirma cobros: eso solo lo hace invoice.paid', async () => {

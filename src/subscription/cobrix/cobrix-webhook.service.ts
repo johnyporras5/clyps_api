@@ -29,6 +29,8 @@ import {
   eventNameOf,
   findProviderReference,
   parseCobrixInvoiceEvent,
+  paymentReferenceOf,
+  paymentStatusOf,
   type CobrixInvoiceEvent,
 } from './cobrix-event.util';
 
@@ -49,6 +51,33 @@ const PROVIDER = 'cobrix';
 const CHECKOUT_COMPLETED_EVENTS = new Set([
   'checkout.session.completed',
   'checkout.collection_document_session.completed',
+]);
+
+/**
+ * Eventos por los que Cobrix dice que el pago NO va a entrar.
+ *
+ * Los nombres son una apuesta razonable —su documentación no los fija y en el
+ * rechazo medido no llegó ninguno—, así que el corte real no es esta lista sino
+ * el ESTADO que viaja en el cuerpo: ver `paymentStatusOf`. La lista solo ataja
+ * el caso en que el nombre venga y el estado no.
+ */
+const CHECKOUT_FAILED_EVENTS = new Set([
+  'checkout.session.expired',
+  'checkout.session.failed',
+  'payment.rejected',
+  'payment.failed',
+  'invoice.canceled',
+  'invoice.cancelled',
+]);
+
+/** Estados de Cobrix que significan "este pago no entró". */
+const FAILED_STATUSES = new Set([
+  'rejected',
+  'failed',
+  'canceled',
+  'cancelled',
+  'expired',
+  'declined',
 ]);
 
 /**
@@ -279,7 +308,12 @@ export class CobrixWebhookService {
     );
     if (!row) return { received: true, outcome: 'duplicate' };
 
-    if (!CHECKOUT_COMPLETED_EVENTS.has(eventType))
+    const paymentStatus = paymentStatusOf(payload);
+    const failed =
+      CHECKOUT_FAILED_EVENTS.has(eventType) ||
+      (paymentStatus !== null && FAILED_STATUSES.has(paymentStatus));
+
+    if (!CHECKOUT_COMPLETED_EVENTS.has(eventType) && !failed)
       return this.finish(
         row,
         'ignored',
@@ -304,13 +338,88 @@ export class CobrixWebhookService {
       );
 
     row.invoiceId = invoice.id;
+
+    // El pago no va a entrar: se suelta la factura para que el dueño pueda
+    // pedir un cobro nuevo —si no, "Pagar ahora" lo devuelve al mismo enlace
+    // muerto— y su reporte se manda a revisión manual con el motivo. NO se
+    // rechaza solo: que Cobrix no lo concilie no prueba que no pagó.
+    if (failed) {
+      const motivo = `Cobrix reportó el pago como ${paymentStatus ?? eventType}.`;
+      const abierto = await this.findReport(invoice);
+      if (abierto)
+        await this.payments.flagForManualReview(abierto, 'rejected', motivo);
+      if (invoice.status === 'open') {
+        invoice.status = 'expired';
+        await this.invoices.save(invoice);
+      }
+      this.logger.warn(`[cobrix] ${providerReference}: ${motivo}`);
+      return this.finish(row, 'manual_review', motivo, abierto?.id);
+    }
+
+    // El dueño terminó de pagar y Cobrix todavía lo está conciliando. Se le
+    // abre el reporte YA: mientras un pago está pendiente el tenant conserva el
+    // acceso y se le callan los avisos de cobro. Sin esto, quien pagaba por el
+    // enlace seguía bloqueado y recibiendo recordatorios hasta que llegara el
+    // `invoice.paid` —o para siempre, si nunca llegaba—.
+    const existente = await this.findReport(invoice);
+    if (existente)
+      return this.finish(
+        row,
+        'already_resolved',
+        `El pago de ${providerReference} ya estaba reportado.`,
+        existente.id,
+      );
+
+    const reporte = await this.createPendingReport(invoice, payload);
     this.logger.log(
-      `[cobrix] ${providerReference}: el dueño reportó su pago, esperando conciliación`,
+      `[cobrix] ${providerReference}: el dueño pagó por el enlace, reporte ${reporte.id} esperando conciliación`,
     );
     return this.finish(
       row,
-      'ignored',
+      'manual_review',
       'El dueño terminó el checkout; falta la conciliación.',
+      reporte.id,
+    );
+  }
+
+  /**
+   * Abre el reporte de un pago que el dueño hizo por el enlace y que Cobrix
+   * todavía no concilió.
+   *
+   * Nace igual que cualquier otro: `reported` + `autoCheckStatus: 'pending'`.
+   * Así lo recoge el mismo `invoice.paid` cuando llegue, y si no llega nunca lo
+   * escala a la cola manual el conciliador de respaldo.
+   */
+  private async createPendingReport(
+    invoice: SubscriptionInvoice,
+    payload: unknown,
+    at: Date = new Date(),
+  ): Promise<PaymentReport> {
+    const isVes = invoice.currency === CURRENCY_VES;
+    return this.reports.save(
+      this.reports.create({
+        companyId: invoice.companyId,
+        subscriptionId: invoice.subscriptionId,
+        planId: invoice.planId,
+        method: 'pago_movil',
+        amountVesMinor: isVes ? invoice.amountMinor : null,
+        amountUsdMinor: isVes ? null : invoice.amountMinor,
+        currency: invoice.currency,
+        frozenRate: invoice.frozenRate,
+        quotedAt: invoice.quotedAt,
+        // La referencia que el dueño escribió en el checkout de Cobrix. Sin
+        // ella, la de la factura: el único por company exige que haya una.
+        reference: (paymentReferenceOf(payload) ?? invoice.providerReference)
+          .toUpperCase()
+          .slice(0, 64),
+        note: 'Pagado por el enlace de Cobrix, esperando conciliación',
+        reportedAt: at,
+        status: 'reported',
+        autoCheckStatus: 'pending',
+        autoCheckAt: at,
+        invoiceId: invoice.id,
+        payerIdentification: invoice.payerIdentification,
+      }),
     );
   }
 

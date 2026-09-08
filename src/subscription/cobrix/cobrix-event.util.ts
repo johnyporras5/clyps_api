@@ -112,6 +112,39 @@ export function eventIdOf(payload: unknown): string | null {
 }
 
 /**
+ * En qué quedó el pago, en minúsculas: `pending`, `approved`, `rejected`…
+ *
+ * Es lo que distingue "pagó y falta conciliar" de "esto no va a entrar", y el
+ * nombre del evento no lo dice: el rechazo medido llegó como un
+ * `checkout.session.completed` con el pago en otro estado. Por eso se mira el
+ * ESTADO y no solo el tipo.
+ */
+export function paymentStatusOf(payload: unknown): string | null {
+  const raw = asRecord(payload);
+  const status =
+    asString(pick(raw, ['data', 'payment', 'status'])) ??
+    asString(pick(raw, ['data', 'status'])) ??
+    asString(pick(raw, ['invoice', 'payment', 'status'])) ??
+    asString(pick(raw, ['invoice', 'status']));
+  return status ? status.toLowerCase() : null;
+}
+
+/**
+ * La referencia bancaria que el dueño escribió en el checkout de Cobrix.
+ *
+ * Es la que él ve en su banco, así que es la que sirve para buscar el pago si
+ * hay que revisarlo a mano.
+ */
+export function paymentReferenceOf(payload: unknown): string | null {
+  const raw = asRecord(payload);
+  return (
+    asString(pick(raw, ['data', 'payment', 'paymentReference'])) ??
+    asString(pick(raw, ['data', 'paymentReference'])) ??
+    asString(pick(raw, ['data', 'payment', 'id']))
+  );
+}
+
+/**
  * Busca nuestra referencia (`clyps-7-1788367908`) en CUALQUIER parte del cuerpo.
  *
  * Es para el canal GENERAL, donde la referencia viaja INCRUSTADA dentro de otro
