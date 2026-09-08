@@ -52,6 +52,8 @@ function buildService(
     live?: SubscriptionInvoice | null;
     company?: Partial<Company> | null;
     subscription?: Partial<Subscription> | null;
+    /** Un pago suyo esperando verificación. */
+    pendingReport?: PaymentReport | null;
     lastIdentification?: string | null;
     configured?: boolean;
     testAmount?: string;
@@ -95,7 +97,9 @@ function buildService(
           : options.subscription,
       ),
   };
-  const reports = { findOne: jest.fn().mockResolvedValue(null) };
+  const reports = {
+    findOne: jest.fn().mockResolvedValue(options.pendingReport ?? null),
+  };
   const companies = {
     findOne: jest
       .fn()
@@ -157,6 +161,55 @@ function buildService(
 
   return { service, invoices, client, rates };
 }
+
+/**
+ * Ya pagó: no se le vuelve a abrir el cobro (CLYP-343).
+ *
+ * Reabrirle el enlace a quien ya pagó es invitarlo a pagar dos veces lo mismo,
+ * y el segundo pago no le compra nada: el período se extiende una sola vez por
+ * reporte. Un pago RECHAZADO sí lo deja pagar otra vez — ese es justo el caso.
+ */
+describe('el candado del que ya pagó', () => {
+  it('con un pago esperando verificación no se emite otro cobro', async () => {
+    const { service, client } = buildService({
+      pendingReport: { id: 4, status: 'reported' } as PaymentReport,
+    });
+
+    await expect(service.startCheckout(7)).rejects.toThrow(
+      /pago tuyo en revisión/,
+    );
+    // Y no se molesta a Cobrix: la factura ni se intenta.
+    expect(client.createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('con el mes ya pagado tampoco: no hay nada que cobrar todavía', async () => {
+    const { service, client } = buildService({
+      subscription: {
+        id: 3,
+        planId: 'basico',
+        currentPeriodEnd: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000),
+      } as Subscription,
+    });
+
+    await expect(service.startCheckout(7)).rejects.toThrow(/está al día/);
+    expect(client.createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('con el mes vencido sí se le emite: es su renovación', async () => {
+    const { service } = buildService({
+      subscription: {
+        id: 3,
+        planId: 'basico',
+        currentPeriodEnd: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      } as Subscription,
+      lastIdentification: 'J401234567',
+    });
+
+    await expect(service.startCheckout(7)).resolves.toMatchObject({
+      reused: false,
+    });
+  });
+});
 
 /** El primer argumento con el que se llamó al mock. */
 function firstArg<T>(mock: jest.Mock): T {

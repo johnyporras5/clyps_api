@@ -1,11 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThanOrEqual, Repository } from 'typeorm';
+import { In, LessThanOrEqual, Not, Repository } from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
 import { Subscription } from '../entities/subscription.entity';
 import { PaymentReport } from '../entities/payment-report.entity';
@@ -78,6 +79,8 @@ export class CobrixInvoiceService {
     // Si el registro no alcanzó a crear la suscripción, se abre la prueba aquí:
     // el dueño está intentando PAGAR, negarle el cobro sería el peor momento.
     const subscription = await this.trials.ensureSubscription(companyId);
+
+    await this.assertNothingPaidYet(subscription);
 
     const planId = input.planId ?? billablePlanId(subscription.planId);
     const company = await this.companies.findOne({
@@ -241,6 +244,56 @@ export class CobrixInvoiceService {
       order: { id: 'DESC' },
     });
     return open && open.expiresAt.getTime() > Date.now() ? open : null;
+  }
+
+  /**
+   * Corta el cobro cuando el salón YA pagó.
+   *
+   * Dos formas de haber pagado, y las dos tienen que frenar el botón:
+   *
+   * 1. Hay un pago esperando verificación. Volver a abrirle el enlace es
+   *    invitarlo a pagar dos veces lo mismo, y el segundo pago no le compra
+   *    nada: el período se extiende una sola vez por reporte (SUB-6).
+   * 2. Tiene un mes pagado corriendo. Ahí no hay nada que cobrar hasta que se
+   *    acerque el vencimiento — la misma regla con la que `choosePlan` no deja
+   *    cambiar de plan con un período vivo.
+   *
+   * Un pago RECHAZADO no frena nada: ese es justo el caso en que hay que
+   * dejarlo pagar de nuevo. Por eso se miran los reportes que siguen
+   * `reported` y NO están marcados como fallidos por la pasarela.
+   */
+  private async assertNothingPaidYet(
+    subscription: Subscription,
+    now: Date = new Date(),
+  ): Promise<void> {
+    const pendiente = await this.reports.findOne({
+      where: {
+        companyId: subscription.companyId,
+        status: 'reported',
+        autoCheckStatus: Not(In(['rejected', 'expired'])),
+      },
+      select: { id: true, reportedAt: true },
+      order: { id: 'DESC' },
+    });
+
+    if (pendiente)
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'PAYMENT_ALREADY_REPORTED',
+        message:
+          'Ya tenemos un pago tuyo en revisión. Te avisamos en cuanto quede activo; no hace falta que pagues otra vez.',
+      });
+
+    // `!= null` a propósito: la fecha puede llegar sin definir, no solo en null.
+    const finDelMes = subscription.currentPeriodEnd;
+    if (finDelMes != null && finDelMes.getTime() > now.getTime())
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'SUBSCRIPTION_ALREADY_PAID',
+        message: `Tu plan está al día hasta el ${finDelMes.toLocaleDateString(
+          'es-VE',
+        )}. Podrás pagar tu renovación cuando se acerque esa fecha.`,
+      });
   }
 
   /**
