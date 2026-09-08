@@ -1,8 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
-import { GRACE_DAYS, PLAN_IDS, PLANS, TRIAL_DAYS } from './config/plans.config';
+import {
+  GRACE_DAYS,
+  PLAN_IDS,
+  PLANS,
+  TRIAL_DAYS,
+  type PlanId,
+} from './config/plans.config';
 import { CURRENCY_USD } from './subscription-money.util';
 import { nextPeriodEnd } from './subscription-period.util';
 import { Subscription } from './entities/subscription.entity';
@@ -130,6 +136,45 @@ export class SubscriptionService {
    */
   async ensureSubscription(companyId: number): Promise<Subscription> {
     return this.startTrial(companyId);
+  }
+
+  /**
+   * Fija el plan que el dueño eligió (SUB-11 / CLYP-367).
+   *
+   * Se puede elegir CUALQUIER día: el primero, el catorce, o ya en gracia. No
+   * cobra, no activa y no toca ninguna fecha — solo deja escrito qué plan
+   * quiere, que es lo que después se le cotiza y se le factura.
+   *
+   * Elegir NO cambia lo que puede usar hoy: durante la prueba sigue con el Full
+   * completo aunque escoja el Básico —lo resuelve `effectivePlanId` mirando el
+   * estado— y los límites del plan elegido empiezan a regir recién cuando un
+   * pago verificado lo active.
+   *
+   * Con un período PAGADO corriendo no se deja cambiar: sería subir de plan sin
+   * pagar la diferencia, o bajar y perder lo comprado. Ese cambio pertenece a la
+   * renovación, no a esta pantalla.
+   */
+  async choosePlan(companyId: number, planId: PlanId): Promise<Subscription> {
+    const subscription = await this.ensureSubscription(companyId);
+
+    if (subscription.planId === planId) return subscription;
+
+    const now = new Date();
+    const paidPeriodRunning =
+      subscription.currentPeriodEnd !== null &&
+      subscription.currentPeriodEnd.getTime() > now.getTime();
+
+    if (paidPeriodRunning)
+      throw new BadRequestException(
+        'Ya tienes un plan pagado en curso. Podrás cambiarlo en tu próxima renovación.',
+      );
+
+    subscription.planId = planId;
+    const saved = await this.subscriptions.save(subscription);
+    this.logger.log(
+      `La company ${companyId} eligió el plan ${planId} (estado ${saved.status}).`,
+    );
+    return saved;
   }
 
   /**

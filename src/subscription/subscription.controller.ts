@@ -9,6 +9,7 @@ import {
   HttpStatus,
   MaxFileSizeValidator,
   ParseFilePipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -29,6 +30,7 @@ import type { QuoteResponse } from './dto/quote-response.dto';
 import { QueryQuoteDto } from './dto/query-quote.dto';
 import { ReportPaymentDto } from './dto/report-payment.dto';
 import { StartCheckoutDto } from './dto/start-checkout.dto';
+import { ChoosePlanDto } from './dto/choose-plan.dto';
 import { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type { AccessResponse } from './dto/access-response.dto';
@@ -100,6 +102,30 @@ export class SubscriptionController {
       req.user.sub,
     );
     return this.paymentsService.computeQuote(companyId, query.planId);
+  }
+
+  /**
+   * SUB-11: el dueño fija el plan que quiere, cualquier día de la prueba o de
+   * la gracia.
+   *
+   * No cobra ni activa nada: solo deja escrito qué plan eligió, que es lo que
+   * después se le cotiza y se le factura. Devuelve el acceso completo para que
+   * la pantalla se repinte de una sola llamada.
+   *
+   * Durante la prueba SIGUE con el Full aunque elija el Básico: los límites del
+   * plan elegido rigen recién cuando su pago se verifique.
+   */
+  @Roles('adm')
+  @Patch('plan')
+  async choosePlan(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: ChoosePlanDto,
+  ): Promise<AccessResponse> {
+    const companyId = await this.entitlements.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    await this.subscriptionService.choosePlan(companyId, dto.planId);
+    return this.entitlements.getAccessResponse(companyId);
   }
 
   /**
