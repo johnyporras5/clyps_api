@@ -34,6 +34,7 @@ import { ChoosePlanDto } from './dto/choose-plan.dto';
 import { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type { AccessResponse } from './dto/access-response.dto';
+import type { PaymentInstructionsResponse } from './dto/payment-instructions-response.dto';
 import type { CheckoutResponse } from './dto/checkout-response.dto';
 
 /**
@@ -102,6 +103,19 @@ export class SubscriptionController {
       req.user.sub,
     );
     return this.paymentsService.computeQuote(companyId, query.planId);
+  }
+
+  /**
+   * SUB-FE-1: a dónde paga. Lo consume la pantalla de reportar pago, que sin
+   * esto tendría que llevar nuestros datos bancarios escritos a mano.
+   *
+   * No depende del tenant —son nuestras cuentas de cobro—, pero va detrás del
+   * token igual: no hay razón para publicar dónde cobramos.
+   */
+  @Roles('adm')
+  @Get('payment-instructions')
+  getPaymentInstructions(): PaymentInstructionsResponse {
+    return this.paymentsService.getPaymentInstructions();
   }
 
   /**

@@ -48,6 +48,7 @@ import type { ReportPaymentDto } from './dto/report-payment.dto';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type { AutoCheckStatus, PaymentMethod } from './subscription.enums';
 import { billablePlanId } from './entitlements.util';
+import type { PaymentInstructionsResponse } from './dto/payment-instructions-response.dto';
 import {
   SUBSCRIPTION_PAYMENT_REJECTED,
   type SubscriptionPaymentRejectedEvent,
@@ -95,6 +96,49 @@ export class PaymentsService {
         'SUBSCRIPTION_QUOTE_RATE_TOLERANCE_BPS',
         RATE_DEFAULTS.rateToleranceBps,
       ),
+    };
+  }
+
+  /** Valor de entorno ya limpio, o null si no está cargado. */
+  private str(key: string): string | null {
+    return this.config.get<string>(key)?.trim() || null;
+  }
+
+  /**
+   * A dónde paga el dueño (SUB-FE-1 / CLYP-343).
+   *
+   * Un método SIN datos cargados se devuelve en `null` y la pantalla no lo
+   * ofrece: enseñar "Binance" sin wallet es invitar a que el dinero salga hacia
+   * ninguna parte. Encender un método es cargar sus variables, no tocar código.
+   */
+  getPaymentInstructions(): PaymentInstructionsResponse {
+    const phone = this.str('SUBSCRIPTION_PAY_PHONE');
+    const wallet = this.str('SUBSCRIPTION_PAY_BINANCE_WALLET');
+    const paypalEmail = this.str('SUBSCRIPTION_PAY_PAYPAL_EMAIL');
+
+    return {
+      pagoMovil: phone
+        ? {
+            phone,
+            bank: this.str('SUBSCRIPTION_PAY_BANK'),
+            identification: this.str('SUBSCRIPTION_PAY_ID'),
+            holder: this.str('SUBSCRIPTION_PAY_HOLDER'),
+          }
+        : null,
+      binance: wallet
+        ? {
+            wallet,
+            network: this.str('SUBSCRIPTION_PAY_BINANCE_NETWORK'),
+            payId: this.str('SUBSCRIPTION_PAY_BINANCE_PAY_ID'),
+          }
+        : null,
+      paypal: paypalEmail
+        ? {
+            email: paypalEmail,
+            link: this.str('SUBSCRIPTION_PAY_PAYPAL_LINK'),
+          }
+        : null,
+      cobrixEnabled: this.cobrix.enabled,
     };
   }
 

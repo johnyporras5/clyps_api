@@ -515,3 +515,68 @@ describe('monto fuera de tolerancia', () => {
     expect(savedSubscription(manager.save).status).toBe('active');
   });
 });
+
+/**
+ * SUB-FE-1 (CLYP-343): la pantalla de pago pregunta a dónde pagar.
+ *
+ * Lo que importa es que un método SIN datos no se ofrezca: mostrarle "Binance"
+ * a alguien sin decirle a qué wallet mandar es perder su dinero y su confianza.
+ */
+describe('a dónde paga el dueño', () => {
+  const withEnv = (env: Record<string, string>): PaymentsService => {
+    const config = {
+      get: (key: string) => env[key],
+    } as unknown as ConfigService;
+    return new PaymentsService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      config,
+      new CobrixConfig(config),
+      {} as never,
+      {} as never,
+    );
+  };
+
+  it('solo ofrece los métodos que tienen datos cargados', () => {
+    const result = withEnv({
+      SUBSCRIPTION_PAY_PHONE: '0414-1234567',
+      SUBSCRIPTION_PAY_BANK: '0102 - Banco de Venezuela',
+      SUBSCRIPTION_PAY_ID: 'J-401234567',
+      SUBSCRIPTION_PAY_HOLDER: 'Clyps, C.A.',
+    }).getPaymentInstructions();
+
+    expect(result.pagoMovil).toEqual({
+      phone: '0414-1234567',
+      bank: '0102 - Banco de Venezuela',
+      identification: 'J-401234567',
+      holder: 'Clyps, C.A.',
+    });
+    // Sin wallet ni correo, esos dos métodos no se pintan.
+    expect(result.binance).toBeNull();
+    expect(result.paypal).toBeNull();
+  });
+
+  it('un valor en blanco cuenta como no cargado', () => {
+    const result = withEnv({
+      SUBSCRIPTION_PAY_PHONE: '   ',
+      SUBSCRIPTION_PAY_BINANCE_WALLET: '0xabc123',
+    }).getPaymentInstructions();
+
+    expect(result.pagoMovil).toBeNull();
+    expect(result.binance).toMatchObject({ wallet: '0xabc123', network: null });
+  });
+
+  it('avisa si Cobrix está disponible', () => {
+    expect(withEnv({}).getPaymentInstructions().cobrixEnabled).toBe(false);
+    expect(
+      withEnv({
+        COBRIX_API_KEY: 'k',
+        COBRIX_WEBHOOK_SECRET: 's',
+      }).getPaymentInstructions().cobrixEnabled,
+    ).toBe(true);
+  });
+});
