@@ -16,6 +16,19 @@
 /** El evento que confirma el cobro. Es el único que activa algo. */
 export const COBRIX_EVENT_INVOICE_PAID = 'invoice.paid';
 
+/**
+ * La factura se anuló en Cobrix.
+ *
+ * Es el ÚNICO aviso de "esto no se va a cobrar" que manda el canal de
+ * documentos: sus eventos automáticos son solo tres —creada, pagada y anulada—
+ * y no hay ninguno de pago rechazado. Se acepta la grafía con doble ele porque
+ * su API mezcla las dos.
+ */
+export const COBRIX_EVENT_INVOICE_CANCELED = new Set([
+  'invoice.canceled',
+  'invoice.cancelled',
+]);
+
 /** Un evento del canal de documentos (`cobrix_invoice_v1`), ya normalizado. */
 export interface CobrixInvoiceEvent {
   /** `invoice.paid`, `invoice.created`, `invoice.canceled`. */

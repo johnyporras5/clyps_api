@@ -24,6 +24,7 @@ import {
   type SignatureHeaders,
 } from './cobrix-signature.util';
 import {
+  COBRIX_EVENT_INVOICE_CANCELED,
   COBRIX_EVENT_INVOICE_PAID,
   eventIdOf,
   eventNameOf,
@@ -177,9 +178,10 @@ export class CobrixWebhookService {
     event: CobrixInvoiceEvent,
     row: PaymentGatewayEvent,
   ): Promise<CobrixAck> {
-    // `invoice.created` lo provocamos nosotros y `invoice.canceled` lo resuelve
-    // el vencimiento de la factura: ninguno de los dos activa nada.
-    if (event.eventType !== COBRIX_EVENT_INVOICE_PAID)
+    const anulada = COBRIX_EVENT_INVOICE_CANCELED.has(event.eventType);
+
+    // `invoice.created` lo provocamos nosotros: no activa nada.
+    if (event.eventType !== COBRIX_EVENT_INVOICE_PAID && !anulada)
       return this.finish(
         row,
         'ignored',
@@ -203,6 +205,23 @@ export class CobrixWebhookService {
         `No hay factura con la referencia ${event.providerReference}.`,
       );
     row.invoiceId = invoice.id;
+
+    // Anulada en Cobrix: de ese cobro ya no va a entrar nada. Se suelta la
+    // factura —si no, "Pagar ahora" devuelve al dueño al mismo enlace muerto— y
+    // el pago que estuviera esperando se manda a revisión manual. NO se rechaza
+    // solo: que anulen el documento no prueba que el dueño no haya pagado.
+    if (anulada) {
+      const motivo = `Cobrix anuló la factura ${invoice.providerReference}.`;
+      const abierto = await this.findReport(invoice);
+      if (abierto)
+        await this.payments.flagForManualReview(abierto, 'rejected', motivo);
+      if (invoice.status === 'open') {
+        invoice.status = 'expired';
+        await this.invoices.save(invoice);
+      }
+      this.logger.warn(`[cobrix] ${motivo}`);
+      return this.finish(row, 'manual_review', motivo, abierto?.id);
+    }
 
     if (invoice.status === 'paid')
       return this.finish(

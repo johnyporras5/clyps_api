@@ -376,6 +376,26 @@ describe('webhook de documentos (invoice.paid)', () => {
     expect(payments.verifyFromGateway).not.toHaveBeenCalled();
   });
 
+  /**
+   * El canal de documentos solo manda tres eventos —creada, pagada y anulada—,
+   * así que la anulación es el ÚNICO aviso de "esto no se cobra" que existe ahí.
+   * Ignorarla dejaba la factura viva y al dueño volviendo a un enlace muerto.
+   */
+  it('la factura anulada suelta el cobro y manda el pago a revisión', async () => {
+    const { deliver, payments, invoices } = buildService();
+
+    const ack = await deliver(invoicePaid({ type: 'invoice.canceled' }));
+
+    expect(ack.outcome).toBe('manual_review');
+    expect(manualReason(payments.flagForManualReview)).toContain('anuló');
+    // No se activa nada, faltaría más.
+    expect(payments.verifyFromGateway).not.toHaveBeenCalled();
+    // Y la factura queda libre para emitir una nueva.
+    expect(firstSaved<SubscriptionInvoice>(invoices.save).status).toBe(
+      'expired',
+    );
+  });
+
   it('sin suscripción del tenant no hay nada que activar: va a manual', async () => {
     const { deliver, payments } = buildService({ subscription: null });
 
