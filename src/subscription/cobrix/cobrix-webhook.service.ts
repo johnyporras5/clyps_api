@@ -358,19 +358,21 @@ export class CobrixWebhookService {
 
     row.invoiceId = invoice.id;
 
-    // El pago no va a entrar: se suelta la factura para que el dueño pueda
-    // pedir un cobro nuevo —si no, "Pagar ahora" lo devuelve al mismo enlace
-    // muerto— y su reporte se manda a revisión manual con el motivo. NO se
-    // rechaza solo: que Cobrix no lo concilie no prueba que no pagó.
+    // El pago no entró. Su reporte se manda a revisión manual con el motivo —y
+    // eso avisa al dueño—, pero NO se rechaza solo: que la pasarela no lo
+    // concilie no prueba que no pagó.
+    //
+    // La factura se queda ABIERTA a propósito. Rechazar un pago no anula el
+    // documento: la deuda sigue viva y en Cobrix ese cobro sigue en pie, así
+    // que el dueño tiene que poder pagarlo por el MISMO enlace. Soltarla haría
+    // que el siguiente "Pagar ahora" emitiera un segundo documento por el mismo
+    // mes, y el salón terminaría viendo dos deudas donde hay una. Anular sí la
+    // suelta, y eso llega por su propio evento (`invoice.canceled`).
     if (failed) {
       const motivo = `Cobrix reportó el pago como ${paymentStatus ?? eventType}.`;
       const abierto = await this.findReport(invoice);
       if (abierto)
         await this.payments.flagForManualReview(abierto, 'rejected', motivo);
-      if (invoice.status === 'open') {
-        invoice.status = 'expired';
-        await this.invoices.save(invoice);
-      }
       this.logger.warn(`[cobrix] ${providerReference}: ${motivo}`);
       return this.finish(row, 'manual_review', motivo, abierto?.id);
     }

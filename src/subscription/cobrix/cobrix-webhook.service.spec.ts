@@ -455,7 +455,7 @@ describe('webhook del canal general', () => {
     expect(saved.invoiceId).toBe(5);
   });
 
-  it('el pago rechazado suelta la factura y va a revisión manual', async () => {
+  it('el pago rechazado va a revisión manual y DEJA la factura abierta', async () => {
     const { deliverGeneral, payments, invoices } = buildService();
 
     const ack = await deliverGeneral({
@@ -471,9 +471,10 @@ describe('webhook del canal general', () => {
     expect(ack.outcome).toBe('manual_review');
     // No se rechaza solo: que Cobrix no lo concilie no prueba que no pagó.
     expect(manualReason(payments.flagForManualReview)).toContain('rejected');
-    // Y la factura se suelta: si no, "Pagar ahora" devuelve al enlace muerto.
-    const saved = firstSaved<SubscriptionInvoice>(invoices.save);
-    expect(saved.status).toBe('expired');
+    // La factura NO se toca: rechazar un pago no anula el documento, la deuda
+    // sigue viva y el dueño debe poder pagarla por el mismo enlace. Soltarla
+    // haría que el siguiente intento emitiera un segundo cobro por el mismo mes.
+    expect(invoices.save).not.toHaveBeenCalled();
   });
 
   it('no confirma cobros: eso solo lo hace invoice.paid', async () => {
