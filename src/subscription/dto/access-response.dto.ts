@@ -20,6 +20,23 @@ export interface AccessResponse {
    */
   planId: PlanId;
   planName: string;
+  /**
+   * El plan que COMPRÓ. `null` = todavía no eligió ninguno.
+   *
+   * Mientras la prueba corre NO coincide con `planId`: quien pagó el Básico el
+   * día 1 usa el Full hasta que ella termine. La pantalla necesita los dos para
+   * no decirle "tu plan es Full" a quien pagó $15 — el suyo es este.
+   */
+  purchasedPlanId: PlanId | null;
+  purchasedPlanName: string | null;
+  /**
+   * La prueba sigue corriendo. Sigue en `true` aunque ya haya pagado: pagar no
+   * la termina. Es lo que sostiene el distintivo de "te quedan N días", que
+   * antes desaparecía en cuanto el pago se verificaba.
+   */
+  onTrial: boolean;
+  /** Cuándo termina la prueba y empieza a regir el plan comprado. */
+  trialEndsAt: string | null;
   status: SubscriptionStatus;
   /** false = solo rutas de pago/historial. */
   canOperate: boolean;

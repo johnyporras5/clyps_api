@@ -480,6 +480,46 @@ describe('pagar el Básico durante la prueba', () => {
     await expect(service.assertCanAddWorker(7)).resolves.toBeUndefined();
   });
 
+  it('la respuesta dice a la vez qué usa y qué compró', async () => {
+    const response = await buildService({
+      ...paidOnTrial,
+      currentPeriodEnd: days(42),
+    }).getAccessResponse(7);
+
+    // Lo que usa hoy: el Full de la prueba.
+    expect(response.planId).toBe('full');
+    expect(response.planName).toBe('Full');
+    // Lo que compró y empieza a regir el día 12: el Básico.
+    expect(response.purchasedPlanId).toBe('basico');
+    expect(response.purchasedPlanName).toBe('Básico');
+    // Y la prueba sigue viva, aunque el estado ya sea `active` por el pago.
+    expect(response.onTrial).toBe(true);
+    expect(response.status).toBe('active');
+    expect(response.trialEndsAt).toBe(paidOnTrial.trialEndsAt.toISOString());
+  });
+
+  it('sin plan elegido, lo comprado viaja en null', async () => {
+    const response = await buildService({
+      noSubscription: true,
+    }).getAccessResponse(7);
+
+    expect(response.purchasedPlanId).toBeNull();
+    expect(response.purchasedPlanName).toBeNull();
+    expect(response.onTrial).toBe(true);
+  });
+
+  it('terminada la prueba, onTrial se apaga', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      trialEndsAt: days(-1),
+      currentPeriodEnd: days(29),
+    }).getAccessResponse(7);
+
+    expect(response.onTrial).toBe(false);
+    expect(response.planId).toBe('basico');
+    expect(response.purchasedPlanId).toBe('basico');
+  });
+
   it('al terminar la prueba pasa al Básico que compró', async () => {
     const response = await buildService({
       planId: 'basico',

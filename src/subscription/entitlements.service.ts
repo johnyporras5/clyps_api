@@ -17,6 +17,7 @@ import {
   effectiveLimits,
   effectivePlanId,
   resolveAccess,
+  trialStillRunning,
   type AccessState,
 } from './entitlements.util';
 import type { AccessResponse } from './dto/access-response.dto';
@@ -65,6 +66,17 @@ interface EntitlementContext {
    * son dos situaciones distintas y merecen dos mensajes distintos.
    */
   everPaid: boolean;
+  /**
+   * El plan que COMPRÓ, tal cual está guardado (null = todavía no eligió).
+   *
+   * Va aparte de `planId` porque no son lo mismo mientras corre la prueba:
+   * pagar el Básico el día 1 deja `planId` en Full —es lo que está usando— y
+   * esto en Básico. Sin los dos, la pantalla le dice "Full" a quien pagó $15.
+   */
+  purchasedPlanId: PlanId | null;
+  /** La prueba todavía corre, haya pagado o no. */
+  onTrial: boolean;
+  trialEndsAt: Date | null;
 }
 
 /**
@@ -145,6 +157,9 @@ export class EntitlementsService {
       limits: effectiveLimits(storedPlanId, access.status, trialEndsAt, now),
       billingExempt: Boolean(subscription?.billingExempt),
       everPaid: subscription?.currentPeriodEnd != null,
+      purchasedPlanId: subscription?.planId ?? null,
+      onTrial: trialStillRunning(trialEndsAt, now),
+      trialEndsAt,
     };
   }
 
@@ -304,8 +319,15 @@ export class EntitlementsService {
    * está bloqueado por plan (para el CTA de upgrade) y cuánto le queda.
    */
   async getAccessResponse(companyId: number): Promise<AccessResponse> {
-    const { planId, access, limits, billingExempt } =
-      await this.context(companyId);
+    const {
+      planId,
+      access,
+      limits,
+      billingExempt,
+      purchasedPlanId,
+      onTrial,
+      trialEndsAt,
+    } = await this.context(companyId);
     const plan = getPlan(planId);
     const workersInUse = await this.workers.countBy({
       companyId,
@@ -325,6 +347,10 @@ export class EntitlementsService {
     return {
       planId,
       planName: plan.name,
+      purchasedPlanId,
+      purchasedPlanName: purchasedPlanId ? getPlan(purchasedPlanId).name : null,
+      onTrial,
+      trialEndsAt: trialEndsAt?.toISOString() ?? null,
       status: access.status,
       canOperate: access.canOperate,
       graceCause: access.graceCause,
