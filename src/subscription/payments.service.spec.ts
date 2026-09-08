@@ -580,3 +580,47 @@ describe('a dónde paga el dueño', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * Cuando la pasarela dice que el pago no entró, el dueño se entera (CLYP-343).
+ *
+ * Medido el 2026-09-08: Cobrix rechazó el pago, el reporte quedó marcado y al
+ * dueño no le llegó nada. Se enteraba el día que se le bloqueaba el acceso.
+ */
+describe('el aviso del pago que la pasarela rechazó', () => {
+  it('avisa al dueño con el motivo, sin rechazarle el reporte', async () => {
+    const report = reportFixture({ status: 'reported' });
+    const { service, events } = buildService({ report });
+
+    const saved = await service.flagForManualReview(
+      report,
+      'rejected',
+      'Cobrix anuló la factura clyps-7-1788372343.',
+    );
+
+    // El reporte NO se cierra: eso lo decide una persona (SUB-4).
+    expect(saved.status).toBe('reported');
+    expect(saved.autoCheckStatus).toBe('rejected');
+
+    const [nombre, evento] = events.emit.mock.calls[0] as [
+      string,
+      { reason: string; paymentReportId: number },
+    ];
+    expect(nombre).toBe('subscription.payment.rejected');
+    expect(evento.reason).toContain('anuló');
+  });
+
+  it('lo que solo va a revisión manual no lo alarma', async () => {
+    const report = reportFixture({ status: 'reported' });
+    const { service, events } = buildService({ report });
+
+    await service.flagForManualReview(
+      report,
+      'expired',
+      'Cobrix no respondió.',
+    );
+
+    // "Todavía lo estamos revisando" no es una mala noticia que contarle.
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});

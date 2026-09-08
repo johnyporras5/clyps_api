@@ -576,7 +576,23 @@ export class PaymentsService {
     report.autoCheckReason = reason ? reason.slice(0, 255) : null;
     if (options.gatewayPaymentId)
       report.gatewayPaymentId = options.gatewayPaymentId;
-    return this.reports.save(report);
+    const saved = await this.reports.save(report);
+
+    // La pasarela dijo que ese pago no entró: el dueño tiene que enterarse
+    // AHORA, no cuando alguien revise la cola. Callarlo lo deja creyendo que
+    // pagó, y descubriéndolo el día que se le bloquea el acceso.
+    //
+    // El reporte NO se rechaza —eso lo decide una persona (SUB-4)—, pero el
+    // aviso sí sale: son dos cosas distintas.
+    if (status === 'rejected')
+      this.events.emit(SUBSCRIPTION_PAYMENT_REJECTED, {
+        companyId: saved.companyId,
+        paymentReportId: saved.id,
+        reason: reason ?? 'La pasarela no pudo confirmar tu pago.',
+        reference: saved.reference ?? null,
+      } satisfies SubscriptionPaymentRejectedEvent);
+
+    return saved;
   }
 
   /**

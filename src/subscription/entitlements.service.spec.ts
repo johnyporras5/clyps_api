@@ -532,3 +532,47 @@ describe('pagar el Básico durante la prueba', () => {
     expect(response.limits.maxWorkers).toBe(2);
   });
 });
+
+/**
+ * Un pago que la PASARELA rechazó deja de dar acceso (CLYP-343).
+ *
+ * Medido el 2026-09-08: el dueño pagó, Cobrix rechazó el pago y el salón siguió
+ * operando en gracia como si nada. El reporte se queda en `reported` a
+ * propósito —rechazarlo lo decide una persona— pero conceder acceso por él es
+ * regalarle el mes a quien no pagó.
+ */
+describe('el pago que la pasarela rechazó', () => {
+  const vencido = {
+    planId: 'basico' as PlanId,
+    currentPeriodEnd: days(-30),
+    graceEndsAt: days(-20),
+  };
+
+  it('ya no concede acceso: el salón queda bloqueado', async () => {
+    const service = buildService({ ...vencido, pendingReports: 1 });
+    // El mock cuenta los reportes que la consulta encuentre; con el rechazado
+    // fuera del filtro, la cuenta es cero.
+    const access = await buildService({
+      ...vencido,
+      pendingReports: 0,
+    }).getAccessResponse(7);
+
+    expect(access.canOperate).toBe(false);
+    expect(access.status).toBe('blocked');
+    // Y con uno pendiente de verdad, sí opera.
+    expect((await service.getAccessResponse(7)).canOperate).toBe(true);
+  });
+
+  it('la consulta excluye los rechazados y respeta los reportes manuales', async () => {
+    const service = buildService({ ...vencido, pendingReports: 1 });
+    await service.getAccessResponse(7);
+
+    const [where] = (
+      (service as unknown as { reports: { countBy: jest.Mock } }).reports
+        .countBy.mock.calls as unknown[][]
+    )[0] as [unknown];
+    // Dos ramas en OR: sin pasarela (null) o con una que no sea 'rejected'.
+    expect(Array.isArray(where)).toBe(true);
+    expect(where).toHaveLength(2);
+  });
+});

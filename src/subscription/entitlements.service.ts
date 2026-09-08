@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Company } from '../company/entities/company.entity';
 import {
@@ -204,12 +204,23 @@ export class EntitlementsService {
     return (await this.context(companyId)).access;
   }
 
-  /** ¿Hay un pago reportado esperando verificación? */
+  /**
+   * ¿Hay un pago reportado esperando verificación?
+   *
+   * Un pago que la PASARELA rechazó ya no cuenta: seguía concediendo acceso a
+   * quien no pagó, y encima le tapaba los avisos de cobro. Los que están en
+   * `pending` o `expired` sí cuentan —ahí el que todavía no respondió es
+   * nuestro conciliador, y esa demora no la paga el dueño—.
+   *
+   * El `null` se escribe aparte porque en SQL `NULL <> 'rejected'` no es cierto:
+   * sin esta rama los reportes manuales, que no pasan por la pasarela, dejarían
+   * de conceder acceso.
+   */
   async hasPendingReport(companyId: number): Promise<boolean> {
-    const pending = await this.reports.countBy({
-      companyId,
-      status: 'reported',
-    });
+    const pending = await this.reports.countBy([
+      { companyId, status: 'reported', autoCheckStatus: IsNull() },
+      { companyId, status: 'reported', autoCheckStatus: Not('rejected') },
+    ]);
     return pending > 0;
   }
 

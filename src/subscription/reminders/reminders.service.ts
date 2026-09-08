@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThanOrEqual, Repository } from 'typeorm';
+import { IsNull, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
 import { GRACE_DAYS, getPlan } from '../config/plans.config';
 import { Subscription } from '../entities/subscription.entity';
@@ -210,10 +210,12 @@ export class RemindersService {
     companyId: number,
     periodEnd: Date,
   ): Promise<boolean> {
-    const pending = await this.reports.countBy({
-      companyId,
-      status: 'reported',
-    });
+    // Un pago que la pasarela rechazó no calla nada: al dueño hay que seguir
+    // diciéndole que su plan vence, justamente porque ese pago no entró.
+    const pending = await this.reports.countBy([
+      { companyId, status: 'reported', autoCheckStatus: IsNull() },
+      { companyId, status: 'reported', autoCheckStatus: Not('rejected') },
+    ]);
     if (pending > 0) return true;
 
     const covered = await this.reports.count({
