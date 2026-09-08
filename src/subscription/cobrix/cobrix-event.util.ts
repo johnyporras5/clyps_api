@@ -143,6 +143,23 @@ export function paymentStatusOf(payload: unknown): string | null {
 }
 
 /**
+ * Por qué la pasarela rechazó el pago, con sus palabras.
+ *
+ * Su documentación manda mostrárselo al dueño: sin el motivo, "no pudimos
+ * confirmar tu pago" no le dice qué corregir para volver a intentarlo.
+ */
+export function failureReasonOf(payload: unknown): string | null {
+  const raw = asRecord(payload);
+  return (
+    asString(pick(raw, ['data', 'reason'])) ??
+    asString(pick(raw, ['data', 'payment', 'reason'])) ??
+    asString(pick(raw, ['data', 'failureReason'])) ??
+    asString(pick(raw, ['data', 'payment', 'failureReason'])) ??
+    asString(pick(raw, ['reason']))
+  );
+}
+
+/**
  * La referencia bancaria que el dueño escribió en el checkout de Cobrix.
  *
  * Es la que él ve en su banco, así que es la que sirve para buscar el pago si

@@ -28,6 +28,7 @@ import {
   COBRIX_EVENT_INVOICE_PAID,
   eventIdOf,
   eventNameOf,
+  failureReasonOf,
   findProviderReference,
   parseCobrixInvoiceEvent,
   paymentReferenceOf,
@@ -369,7 +370,11 @@ export class CobrixWebhookService {
     // mes, y el salón terminaría viendo dos deudas donde hay una. Anular sí la
     // suelta, y eso llega por su propio evento (`invoice.canceled`).
     if (failed) {
-      const motivo = `Cobrix reportó el pago como ${paymentStatus ?? eventType}.`;
+      // El motivo que manda Cobrix va tal cual: es lo que le dice al dueño qué
+      // corregir. Solo cuando no viene se cae al genérico.
+      const motivo =
+        failureReasonOf(payload) ??
+        `Cobrix reportó el pago como ${paymentStatus ?? eventType}.`;
       const abierto = await this.findReport(invoice);
       if (abierto)
         await this.payments.flagForManualReview(abierto, 'rejected', motivo);

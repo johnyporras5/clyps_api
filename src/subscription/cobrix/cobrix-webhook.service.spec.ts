@@ -455,6 +455,30 @@ describe('webhook del canal general', () => {
     expect(saved.invoiceId).toBe(5);
   });
 
+  /**
+   * El evento que Cobrix manda de verdad al rechazar, con el nombre y la forma
+   * de su documentación: `payment.failed` con su `reason`.
+   */
+  it('payment.failed avisa al dueño con el motivo que dio Cobrix', async () => {
+    const { deliverGeneral, payments } = buildService();
+
+    const ack = await deliverGeneral({
+      id: 'evt_payment_failed',
+      event: 'payment.failed',
+      data: {
+        reason: 'La referencia no coincide con ningún movimiento del banco.',
+        documents: [{ invoiceNumber: 'clyps:clyps-7-1788372343' }],
+        payment: { status: 'failed' },
+      },
+    });
+
+    expect(ack.outcome).toBe('manual_review');
+    // El motivo viaja tal cual: es lo que le dice qué corregir.
+    expect(manualReason(payments.flagForManualReview)).toBe(
+      'La referencia no coincide con ningún movimiento del banco.',
+    );
+  });
+
   it('el pago rechazado va a revisión manual y DEJA la factura abierta', async () => {
     const { deliverGeneral, payments, invoices } = buildService();
 
