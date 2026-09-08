@@ -147,8 +147,8 @@ export class SubscriptionService {
    *
    * Elegir NO cambia lo que puede usar hoy: durante la prueba sigue con el Full
    * completo aunque escoja el Básico —lo resuelve `effectivePlanId` mirando el
-   * estado— y los límites del plan elegido empiezan a regir recién cuando un
-   * pago verificado lo active.
+   * estado y la fecha de la prueba— y los límites del plan elegido empiezan a
+   * regir recién cuando la prueba termina, ni siquiera si paga antes.
    *
    * Con un período PAGADO corriendo no se deja cambiar: sería subir de plan sin
    * pagar la diferencia, o bajar y perder lo comprado. Ese cambio pertenece a la

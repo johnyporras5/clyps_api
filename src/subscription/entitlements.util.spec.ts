@@ -248,6 +248,47 @@ describe('los límites efectivos', () => {
   });
 });
 
+/**
+ * Pagar durante la prueba no la apaga.
+ *
+ * Al verificarse el pago el estado pasa a `active` con días de prueba todavía
+ * por delante. Quien compró el Básico el día 1 seguía teniendo derecho al Full
+ * hasta el día 15 —lo compró al registrarse, no al no pagar— y antes lo perdía
+ * en el acto.
+ */
+describe('la prueba manda aunque ya haya pagado', () => {
+  const trialAlive = days(9);
+  const trialOver = days(-1);
+
+  it('pagó el Básico y le quedan días: sigue con el Full', () => {
+    expect(effectivePlanId('basico', 'active', trialAlive, NOW)).toBe('full');
+    expect(effectiveLimits('basico', 'active', trialAlive, NOW)).toMatchObject({
+      maxWorkers: 20,
+      payroll: true,
+      aiSuggestions: true,
+    });
+  });
+
+  it('terminada la prueba rige el plan que compró', () => {
+    expect(effectivePlanId('basico', 'active', trialOver, NOW)).toBe('basico');
+    expect(effectiveLimits('basico', 'active', trialOver, NOW)).toMatchObject({
+      maxWorkers: 2,
+      payroll: false,
+    });
+  });
+
+  it('sin fecha de prueba se comporta como antes', () => {
+    expect(effectivePlanId('basico', 'active', null, NOW)).toBe('basico');
+    expect(effectivePlanId('basico', 'trialing', null, NOW)).toBe('full');
+  });
+
+  it('la prueba no rescata al bloqueado ni al que está en gracia', () => {
+    // Con la prueba vencida el estado manda: aquí no hay Full que devolver.
+    expect(effectivePlanId('basico', 'blocked', trialOver, NOW)).toBe('basico');
+    expect(effectivePlanId('basico', 'grace', trialOver, NOW)).toBe('basico');
+  });
+});
+
 describe('el exento de cobro', () => {
   it('no vence ni entra en gracia, por vieja que sea la fecha', () => {
     expect(

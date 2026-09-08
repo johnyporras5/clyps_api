@@ -193,16 +193,40 @@ export function billablePlanId(planId: PlanId | null): PlanId {
 }
 
 /**
- * El plan vigente de cara al tenant: en la prueba, el Full; si no, el suyo.
+ * ¿La prueba sigue corriendo? Se mira la FECHA, no el estado.
+ *
+ * Al verificarse un pago el estado pasa a `active` aunque queden días de
+ * prueba: sin esta función, pagar el día 1 apagaba en el acto el Full que el
+ * dueño tenía hasta el día 15.
+ */
+export function trialStillRunning(
+  trialEndsAt: Date | null,
+  now: Date = new Date(),
+): boolean {
+  return trialEndsAt !== null && trialEndsAt.getTime() > now.getTime();
+}
+
+/**
+ * El plan vigente de cara al tenant: mientras la prueba corra, el Full; si no,
+ * el suyo.
  *
  * Es lo que el panel debe mostrar — durante los 15 días está usando el Full,
  * aunque la columna diga otra cosa porque todavía no eligió.
+ *
+ * La prueba manda AUNQUE YA HAYA PAGADO: los 15 días de Full son suyos por
+ * haberse registrado, no por no haber pagado todavía. Quien compra el Básico el
+ * día 1 no pierde el Full que le quedaba —igual que no pierde los días
+ * (CLYP-337)—: su plan empieza a regir cuando la prueba termina.
  */
 export function effectivePlanId(
   planId: PlanId,
   status: SubscriptionStatus,
+  trialEndsAt: Date | null = null,
+  now: Date = new Date(),
 ): PlanId {
-  return status === 'trialing' ? TRIAL_PLAN_ID : planId;
+  if (status === 'trialing' || trialStillRunning(trialEndsAt, now))
+    return TRIAL_PLAN_ID;
+  return planId;
 }
 
 /**
@@ -216,6 +240,8 @@ export function effectivePlanId(
 export function effectiveLimits(
   planId: PlanId,
   status: SubscriptionStatus,
+  trialEndsAt: Date | null = null,
+  now: Date = new Date(),
 ): PlanLimits {
-  return getPlan(effectivePlanId(planId, status)).limits;
+  return getPlan(effectivePlanId(planId, status, trialEndsAt, now)).limits;
 }

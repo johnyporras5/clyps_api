@@ -128,16 +128,21 @@ export class EntitlementsService {
     const hasPendingReport = await this.hasPendingReport(companyId);
 
     const storedPlanId = subscription?.planId ?? 'basico';
+    // Un solo instante para todo el cálculo: el estado y el plan vigente no
+    // pueden leerse en dos "ahora" distintos y contradecirse en el borde.
+    const now = new Date();
+    const trialEndsAt = subscription?.trialEndsAt ?? null;
     const access = resolveAccess({
       subscription,
       hasPendingReport,
       graceDays: this.graceDays,
+      now,
     });
 
     return {
-      planId: effectivePlanId(storedPlanId, access.status),
+      planId: effectivePlanId(storedPlanId, access.status, trialEndsAt, now),
       access,
-      limits: effectiveLimits(storedPlanId, access.status),
+      limits: effectiveLimits(storedPlanId, access.status, trialEndsAt, now),
       billingExempt: Boolean(subscription?.billingExempt),
       everPaid: subscription?.currentPeriodEnd != null,
     };

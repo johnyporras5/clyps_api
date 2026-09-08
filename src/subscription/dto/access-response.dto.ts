@@ -14,9 +14,9 @@ import type { SubscriptionStatus } from '../subscription.enums';
  */
 export interface AccessResponse {
   /**
-   * El plan que el tenant USA ahora. Durante la prueba es el Full aunque no
-   * haya elegido nada: es lo que se le está mostrando esos 15 días. El plan
-   * guardado sigue sin fijarse hasta que pague.
+   * El plan que el tenant USA ahora. Mientras la prueba corra es el Full aunque
+   * no haya elegido nada —y aunque ya haya pagado otro—: es lo que se le está
+   * mostrando esos 15 días. El plan comprado empieza a regir al terminar ella.
    */
   planId: PlanId;
   planName: string;

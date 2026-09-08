@@ -36,7 +36,8 @@ export class Subscription {
    * Plan elegido. NULL hasta que un pago verificado lo fije: el registro no
    * pide plan ni tarjeta (CLYP-332), y los 15 días de prueba usan el Full sin
    * que el dueño lo haya elegido. Lo que el tenant USA se resuelve con
-   * `effectivePlanId`, que mira el estado; esta columna guarda lo que COMPRÓ.
+   * `effectivePlanId`, que mira el estado y la fecha de la prueba; esta columna
+   * guarda lo que COMPRÓ.
    */
   @Column({ name: 'plan_id', type: 'varchar', length: 20, nullable: true })
   planId: PlanId | null;

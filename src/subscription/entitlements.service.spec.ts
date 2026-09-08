@@ -443,3 +443,52 @@ describe('el mensaje del bloqueo', () => {
     expect(body.trialExpired).toBe(false);
   });
 });
+
+/**
+ * Pagar durante la prueba no la apaga.
+ *
+ * Es el caso real que lo destapó: se registró, eligió el Básico y lo pagó el
+ * mismo día. Los días se le respetaron —el mes arranca al terminar la prueba—
+ * pero las funciones del Full se le apagaban en el acto: quedaba castigado por
+ * pagar temprano.
+ */
+describe('pagar el Básico durante la prueba', () => {
+  // Pagó el día 3: le quedan 12 de prueba y su mes llega hasta 12 + 30.
+  const paidOnTrial = { planId: 'basico' as PlanId, trialEndsAt: days(12) };
+
+  it('conserva el Full mientras la prueba corra', async () => {
+    const response = await buildService({
+      ...paidOnTrial,
+      currentPeriodEnd: days(42),
+    }).getAccessResponse(7);
+
+    expect(response.status).toBe('active');
+    expect(response.planId).toBe('full');
+    expect(response.features.payroll).toBe(true);
+    expect(response.features.aiSuggestions).toBe(true);
+    expect(response.limits.maxWorkers).toBe(20);
+  });
+
+  it('puede seguir agregando trabajadores hasta el tope del Full', async () => {
+    const service = buildService({
+      ...paidOnTrial,
+      currentPeriodEnd: days(42),
+      workers: 5,
+    });
+
+    // Con el Básico ya rigiendo, el trabajador #3 se rechazaba.
+    await expect(service.assertCanAddWorker(7)).resolves.toBeUndefined();
+  });
+
+  it('al terminar la prueba pasa al Básico que compró', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      trialEndsAt: days(-1),
+      currentPeriodEnd: days(29),
+    }).getAccessResponse(7);
+
+    expect(response.planId).toBe('basico');
+    expect(response.features.payroll).toBe(false);
+    expect(response.limits.maxWorkers).toBe(2);
+  });
+});
