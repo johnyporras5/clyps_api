@@ -297,6 +297,61 @@ export class CobrixInvoiceService {
   }
 
   /**
+   * Suelta el documento de cobro: se anula en Cobrix y se cierra del lado
+   * nuestro, para que el próximo "Pagar ahora" emita uno NUEVO.
+   *
+   * Las dos mitades importan y en este orden. Cerrarlo solo aquí dejaría el
+   * documento vivo en el panel de Cobrix: el dueño vería dos deudas del mismo
+   * mes y podría pagar la muerta, cuyo cobro ya no concilia con nada.
+   *
+   * Si la anulación falla NO se aborta: nuestra factura se cierra igual —el
+   * dueño tiene que poder pagar— y queda un ERROR en el log pidiendo cerrarla a
+   * mano. Devuelve si Cobrix confirmó la anulación.
+   */
+  async release(
+    invoice: SubscriptionInvoice,
+    reason: string,
+  ): Promise<boolean> {
+    if (invoice.status !== 'open') return true;
+
+    const canceled = invoice.providerInvoiceId
+      ? await this.client.cancelInvoice(invoice.providerInvoiceId)
+      : false;
+
+    invoice.status = 'expired';
+    await this.invoices.save(invoice);
+
+    if (canceled)
+      this.logger.log(
+        `[cobrix] Factura ${invoice.providerReference} anulada y cerrada: ${reason}`,
+      );
+    else
+      this.logger.error(
+        `[cobrix] Factura ${invoice.providerReference} cerrada de nuestro lado, pero PUEDE SEGUIR VIVA en Cobrix: anúlala a mano. (${reason})`,
+      );
+
+    return canceled;
+  }
+
+  /**
+   * Suelta la factura contra la que se hizo un reporte, si la hubo.
+   *
+   * Es el atajo para quien tiene el reporte en la mano y no el documento: el
+   * rechazo manual del admin (SUB-4). Un reporte sin `invoiceId` —pago fuera de
+   * Cobrix, o integración apagada— no tiene nada que soltar y se ignora.
+   */
+  async releaseForReport(
+    report: Pick<PaymentReport, 'invoiceId'>,
+    reason: string,
+  ): Promise<void> {
+    if (!report.invoiceId) return;
+    const invoice = await this.invoices.findOne({
+      where: { id: report.invoiceId },
+    });
+    if (invoice) await this.release(invoice, reason);
+  }
+
+  /**
    * Cierra las facturas que vencieron sin pagarse.
    *
    * No es una decisión sobre el dinero: si el pago entra tarde, el webhook la

@@ -56,6 +56,8 @@ function buildService(
     pendingReport?: PaymentReport | null;
     lastIdentification?: string | null;
     configured?: boolean;
+    /** Qué contesta Cobrix al anular. `false` = la factura sigue viva allá. */
+    cancelOk?: boolean;
     testAmount?: string;
     testCompanyIds?: string;
   } = {},
@@ -126,6 +128,8 @@ function buildService(
       paymentLink: 'https://pay.cobrix.co/nueva',
       raw: {},
     }),
+    // Devuelve si Cobrix confirmó la anulación. `false` = quedó viva allá.
+    cancelInvoice: jest.fn().mockResolvedValue(options.cancelOk ?? true),
   };
 
   const config = new CobrixConfig({
@@ -326,5 +330,62 @@ describe('emisión del documento de cobro', () => {
       service.startCheckout(7, { identification: 'J401234567' }),
     ).rejects.toThrow(ServiceUnavailableException);
     expect(client.createInvoice).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Soltar el documento de cobro cuando el pago se rechaza (CLYP-342).
+ *
+ * Las dos mitades importan: cerrar la factura aquí es lo que deja emitir otra,
+ * y anularla en Cobrix es lo que evita que el dueño vea dos deudas del mismo
+ * mes y pague la muerta.
+ */
+describe('soltar la factura', () => {
+  it('la anula en Cobrix y la cierra de nuestro lado', async () => {
+    const { service, client, invoices } = buildService();
+    const invoice = invoiceFixture({ providerInvoiceId: 'inv_abc' });
+
+    const canceled = await service.release(invoice, 'El pago no entró.');
+
+    expect(canceled).toBe(true);
+    expect(client.cancelInvoice).toHaveBeenCalledWith('inv_abc');
+    // Cerrada: `findLive` deja de devolverla y el próximo checkout emite otra.
+    expect(invoice.status).toBe('expired');
+    expect(invoices.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('si Cobrix no anula, la cierra igual: el dueño tiene que poder pagar', async () => {
+    const { service, invoices } = buildService({ cancelOk: false });
+    const invoice = invoiceFixture({ providerInvoiceId: 'inv_abc' });
+
+    const canceled = await service.release(invoice, 'El pago no entró.');
+
+    // Devuelve false para que quede el aviso, pero NO aborta: dejarla abierta
+    // de nuestro lado trabaría al dueño en un enlace muerto.
+    expect(canceled).toBe(false);
+    expect(invoice.status).toBe('expired');
+    expect(invoices.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('sin id de Cobrix no llama a su API, pero cierra la nuestra', async () => {
+    const { service, client } = buildService();
+    const invoice = invoiceFixture({ providerInvoiceId: null });
+
+    const canceled = await service.release(invoice, 'El pago no entró.');
+
+    expect(client.cancelInvoice).not.toHaveBeenCalled();
+    expect(canceled).toBe(false);
+    expect(invoice.status).toBe('expired');
+  });
+
+  it('una factura ya cobrada no se toca', async () => {
+    const { service, client, invoices } = buildService();
+    const invoice = invoiceFixture({ status: 'paid' });
+
+    await service.release(invoice, 'El pago no entró.');
+
+    expect(client.cancelInvoice).not.toHaveBeenCalled();
+    expect(invoices.save).not.toHaveBeenCalled();
+    expect(invoice.status).toBe('paid');
   });
 });
