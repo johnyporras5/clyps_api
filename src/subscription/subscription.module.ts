@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { SubscriptionService } from './subscription.service';
 import { PaymentsService } from './payments.service';
 import { EntitlementsService } from './entitlements.service';
+import { BillingHistoryService } from './billing-history.service';
 import { ExchangeRateService } from './rate/exchange-rate.service';
 import { SubscriptionAccessGuard } from './guards/subscription-access.guard';
 import { SubscriptionController } from './subscription.controller';
@@ -68,6 +69,8 @@ import { EmailModule } from '../email/email.module';
     SubscriptionService,
     PaymentsService,
     EntitlementsService,
+    // SUB-13: el historial de facturación del dueño. Solo lectura.
+    BillingHistoryService,
     ExchangeRateService,
     SubscriptionAccessGuard,
     // SUB-10. El job de conciliación vive aquí y no en `src/tasks` para que el

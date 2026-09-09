@@ -19,6 +19,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { SubscriptionService } from './subscription.service';
+import { BillingHistoryService } from './billing-history.service';
 import { PaymentsService } from './payments.service';
 import { EntitlementsService } from './entitlements.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -36,6 +37,11 @@ import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type { AccessResponse } from './dto/access-response.dto';
 import type { PaymentInstructionsResponse } from './dto/payment-instructions-response.dto';
 import type { CheckoutResponse } from './dto/checkout-response.dto';
+import { PaginationDto } from '../common/dto/pagination.dto';
+import type {
+  BillingHistoryDetail,
+  BillingHistoryResponse,
+} from './dto/billing-history-response.dto';
 
 /**
  * SUB-1 / SUB-2 (CLYP-333 / CLYP-334). Todo va detrás del token: quien elige
@@ -52,6 +58,7 @@ export class SubscriptionController {
     private readonly paymentsService: PaymentsService,
     private readonly entitlements: EntitlementsService,
     private readonly checkout: CobrixInvoiceService,
+    private readonly billingHistory: BillingHistoryService,
   ) {}
 
   /** Planes disponibles con sus límites, más los días de prueba y gracia. */
@@ -198,5 +205,46 @@ export class SubscriptionController {
       req.user.sub,
     );
     return this.paymentsService.reportPayment(companyId, dto, proof);
+  }
+
+  /**
+   * SUB-13: todo lo que el dueño ha pagado, del más reciente al más viejo.
+   *
+   * Vienen los tres estados —verificado, rechazado y por verificar— con el
+   * ciclo de facturación que cubrió cada uno, más la cabecera de su
+   * suscripción para que la pantalla se pinte de una sola llamada.
+   *
+   * Solo sus pagos: la consulta va atada al `companyId` que sale del token, no
+   * a ningún parámetro. No hay forma de pedir el historial de otro salón.
+   */
+  @Roles('adm')
+  @Get('billing-history')
+  async getBillingHistory(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: PaginationDto,
+  ): Promise<BillingHistoryResponse> {
+    const companyId = await this.entitlements.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.billingHistory.list(companyId, query);
+  }
+
+  /**
+   * SUB-13: el detalle de UNO de sus pagos, con los datos del método y el
+   * comprobante.
+   *
+   * El id de otro tenant devuelve 404, no 403: un 403 confirmaría que ese pago
+   * existe, y eso ya es información de otro salón.
+   */
+  @Roles('adm')
+  @Get('billing-history/:reportId')
+  async getBillingHistoryDetail(
+    @Req() req: AuthenticatedRequest,
+    @Param('reportId', ParseIntPipe) reportId: number,
+  ): Promise<BillingHistoryDetail> {
+    const companyId = await this.entitlements.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.billingHistory.detail(companyId, reportId);
   }
 }
