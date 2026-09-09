@@ -10,10 +10,10 @@ import {
   type PlanId,
 } from './config/plans.config';
 import { CURRENCY_USD } from './subscription-money.util';
-import { nextPeriodEnd } from './subscription-period.util';
+import { periodCoverage } from './subscription-period.util';
 import { Subscription } from './entities/subscription.entity';
 import { SubscriptionEvent } from './entities/subscription-event.entity';
-import type { PaymentReport } from './entities/payment-report.entity';
+import { PaymentReport } from './entities/payment-report.entity';
 import type { PlansResponse } from './dto/plans-response.dto';
 
 /** Lo que viaja al activarse una suscripción. Lo consume SUB-9. */
@@ -197,11 +197,15 @@ export class SubscriptionService {
   ): Promise<Subscription> {
     const previousPeriodEnd = subscription.currentPeriodEnd;
     const previousStatus = subscription.status;
-    const newPeriodEnd = nextPeriodEnd(
+    // El ciclo COMPLETO, no solo su fecha de fin: el inicio es lo que el
+    // historial (SUB-13) necesita para decir "te cubrió del 5/10 al 5/11", y
+    // después de un segundo pago ya no habría forma de reconstruirlo.
+    const covered = periodCoverage(
       now,
       previousPeriodEnd,
       subscription.trialEndsAt,
     );
+    const newPeriodEnd = covered.to;
 
     try {
       const advanced = await this.dataSource.transaction(async (manager) => {
@@ -231,6 +235,13 @@ export class SubscriptionService {
             newPeriodEnd,
           }),
         );
+
+        // SUB-13: el ciclo que compró este pago se congela en el reporte,
+        // dentro de la MISMA transacción que lo otorga. Fuera de ella podría
+        // quedar el mes concedido y el historial sin decir de qué mes habla.
+        report.coveredFrom = covered.from;
+        report.coveredTo = covered.to;
+        await manager.save(PaymentReport, report);
 
         return saved;
       });

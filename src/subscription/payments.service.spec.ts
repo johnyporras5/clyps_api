@@ -624,3 +624,86 @@ describe('el aviso del pago que la pasarela rechazó', () => {
     expect(events.emit).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * SUB-13 (CLYP-342): verificar CONGELA en el reporte el ciclo que ese pago
+ * compró. Sin esto, el historial no puede decir "te cubrió de octubre a
+ * noviembre": la suscripción solo guarda la foto de hoy y el segundo pago borra
+ * el rastro del primero.
+ */
+function savedReport(save: jest.Mock): PaymentReport | undefined {
+  const calls = save.mock.calls as unknown as unknown[][];
+  const call = calls.find((args) => args[1] instanceof PaymentReport);
+  return call?.[1] as PaymentReport | undefined;
+}
+
+describe('el ciclo que cubrió el pago', () => {
+  it('lo congela en el reporte al verificarlo', async () => {
+    const currentPeriodEnd = new Date('2026-10-05T16:00:00.000Z');
+    const report = reportFixture();
+    const { service, manager } = buildService({
+      report,
+      subscription: subscriptionFixture({
+        status: 'active',
+        trialEndsAt: null,
+        currentPeriodEnd,
+      }),
+    });
+
+    await service.verifyPayment(1, 42);
+
+    const stored = savedReport(manager.save);
+    // Arranca donde terminaba lo pagado y compra un mes calendario.
+    expect(stored?.coveredFrom?.toISOString()).toBe(
+      currentPeriodEnd.toISOString(),
+    );
+    expect(stored?.coveredTo?.toISOString()).toBe('2026-11-05T16:00:00.000Z');
+  });
+
+  it('el primer pago dentro de la prueba cubre desde que ella termina', async () => {
+    const trialEndsAt = new Date(Date.now() + 12 * 24 * 60 * 60 * 1000);
+    const report = reportFixture();
+    const { service, manager } = buildService({
+      report,
+      subscription: subscriptionFixture({
+        status: 'trialing',
+        trialEndsAt,
+        currentPeriodEnd: null,
+      }),
+    });
+
+    await service.verifyPayment(1, 42);
+
+    const stored = savedReport(manager.save);
+    // No se come los días de prueba: el mes arranca al vencer ella.
+    expect(stored?.coveredFrom?.toISOString()).toBe(trialEndsAt.toISOString());
+  });
+
+  it('el ciclo guardado coincide con el período que quedó vigente', async () => {
+    const report = reportFixture();
+    const { service, manager } = buildService({
+      report,
+      subscription: subscriptionFixture({ status: 'grace', trialEndsAt: null }),
+    });
+
+    await service.verifyPayment(1, 42);
+
+    expect(savedReport(manager.save)?.coveredTo?.toISOString()).toBe(
+      savedSubscription(manager.save).currentPeriodEnd?.toISOString(),
+    );
+  });
+
+  it('un reporte que ya había avanzado no reescribe su ciclo', async () => {
+    const report = reportFixture();
+    const { service, manager } = buildService({
+      report,
+      subscription: subscriptionFixture(),
+      // Ese pago ya extendió el período: la transacción sale sin tocar nada.
+      existingEvent: { id: 1, paymentReportId: 1 },
+    });
+
+    await service.verifyPayment(1, 42);
+
+    expect(savedReport(manager.save)).toBeUndefined();
+  });
+});
