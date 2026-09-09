@@ -77,6 +77,16 @@ interface EntitlementContext {
   /** La prueba todavía corre, haya pagado o no. */
   onTrial: boolean;
   trialEndsAt: Date | null;
+  /**
+   * Tiene un pago esperando verificación, SIN importar de dónde venga su
+   * acceso.
+   *
+   * No es lo mismo que `graceCause === 'pending_report'`: eso solo es cierto
+   * cuando ese pago es lo ÚNICO que lo mantiene adentro. Quien paga estando en
+   * prueba o al día tiene su pago esperando igual, y la pantalla necesita
+   * saberlo para decir "validando tu pago" en vez de pedirle que pague otra vez.
+   */
+  hasPendingReport: boolean;
 }
 
 /**
@@ -160,6 +170,7 @@ export class EntitlementsService {
       purchasedPlanId: subscription?.planId ?? null,
       onTrial: trialStillRunning(trialEndsAt, now),
       trialEndsAt,
+      hasPendingReport,
     };
   }
 
@@ -338,6 +349,7 @@ export class EntitlementsService {
       purchasedPlanId,
       onTrial,
       trialEndsAt,
+      hasPendingReport,
     } = await this.context(companyId);
     const plan = getPlan(planId);
     const workersInUse = await this.workers.countBy({
@@ -367,7 +379,7 @@ export class EntitlementsService {
       graceCause: access.graceCause,
       accessEndsAt: access.accessEndsAt?.toISOString() ?? null,
       graceEndsAt: access.graceEndsAt?.toISOString() ?? null,
-      hasPendingReport: access.graceCause === 'pending_report',
+      hasPendingReport,
       billingExempt,
       features,
       limits: {

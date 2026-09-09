@@ -576,3 +576,49 @@ describe('el pago que la pasarela rechazó', () => {
     expect(where).toHaveLength(2);
   });
 });
+
+/**
+ * "Tengo un pago esperando" no depende de por dónde le venga el acceso.
+ *
+ * Medido el 2026-09-09: el dueño pagó estando en PRUEBA, el reporte quedó
+ * guardado, y la respuesta decía `hasPendingReport: false` porque el campo se
+ * calculaba desde `graceCause`, que solo apunta al pago cuando ese pago es lo
+ * único que lo sostiene. La pantalla de pago se guía por ese campo, así que no
+ * le mostraba "validando tu pago" y le seguía pidiendo pagar.
+ */
+describe('el pago que está esperando verificación', () => {
+  it('se avisa aunque el acceso venga de la prueba', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      trialEndsAt: days(10),
+      currentPeriodEnd: null,
+      pendingReports: 1,
+    }).getAccessResponse(7);
+
+    expect(response.hasPendingReport).toBe(true);
+    // Su acceso sigue viniendo de la prueba, no del pago.
+    expect(response.status).toBe('trialing');
+    expect(response.graceCause).toBeNull();
+  });
+
+  it('y también cuando su mes está al día', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      currentPeriodEnd: days(20),
+      pendingReports: 1,
+    }).getAccessResponse(7);
+
+    expect(response.hasPendingReport).toBe(true);
+    expect(response.status).toBe('active');
+  });
+
+  it('sin pagos esperando, es false', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      trialEndsAt: days(10),
+      currentPeriodEnd: null,
+    }).getAccessResponse(7);
+
+    expect(response.hasPendingReport).toBe(false);
+  });
+});
