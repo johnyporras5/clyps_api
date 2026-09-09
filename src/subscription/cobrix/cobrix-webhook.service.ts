@@ -15,6 +15,7 @@ import {
   type GatewayEventOutcome,
 } from '../entities/payment-gateway-event.entity';
 import { PaymentsService } from '../payments.service';
+import { CobrixInvoiceService } from './cobrix-invoice.service';
 import { CURRENCY_VES } from '../subscription-money.util';
 import { CobrixConfig } from './cobrix.config';
 import {
@@ -108,10 +109,14 @@ const FAILED_STATUSES = new Set([
  * 2. IDEMPOTENCIA POR EVENTO. Cobrix reparte at-least-once y reintenta cuatro
  *    veces; el candado único de `payment_gateway_event` hace que la segunda
  *    entrega no compre otro mes.
- * 3. LO QUE NO CUADRA VA A MANUAL, NO SE RECHAZA. Un monto distinto o una
- *    factura que no aparece deja el reporte en `reported` para que lo mire una
- *    persona (SUB-4). Rechazar de verdad tiene consecuencias para el tenant y
- *    lo firma un humano.
+ * 3. LO QUE NO CUADRA VA A MANUAL. Un monto distinto o una factura que no
+ *    aparece deja el reporte en `reported` para que lo mire una persona
+ *    (SUB-4): ahí Cobrix está OPINANDO sobre algo que no vio entero.
+ *
+ *    La excepción es `payment.failed` sobre un cobro suyo: ese sí cierra el
+ *    reporte en `rejected` y suelta la factura. Cobrix no está opinando, está
+ *    diciendo que el movimiento bancario que él concilia no entró — y dejarlo
+ *    "en revisión" trababa al dueño, que no podía volver a pagar.
  */
 @Injectable()
 export class CobrixWebhookService {
@@ -126,6 +131,9 @@ export class CobrixWebhookService {
     private readonly events: Repository<PaymentGatewayEvent>,
     private readonly payments: PaymentsService,
     private readonly cobrix: CobrixConfig,
+    // Suelta el documento de cobro cuando el pago se rechaza: anularlo en
+    // Cobrix es lo que evita que queden dos deudas del mismo mes.
+    private readonly invoiceService: CobrixInvoiceService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -359,16 +367,16 @@ export class CobrixWebhookService {
 
     row.invoiceId = invoice.id;
 
-    // El pago no entró. Su reporte se manda a revisión manual con el motivo —y
-    // eso avisa al dueño—, pero NO se rechaza solo: que la pasarela no lo
-    // concilie no prueba que no pagó.
+    // El pago no entró. Se CIERRA el reporte como rechazado y se suelta el
+    // documento de cobro, que es lo que deja al dueño volver a pagar de cero:
     //
-    // La factura se queda ABIERTA a propósito. Rechazar un pago no anula el
-    // documento: la deuda sigue viva y en Cobrix ese cobro sigue en pie, así
-    // que el dueño tiene que poder pagarlo por el MISMO enlace. Soltarla haría
-    // que el siguiente "Pagar ahora" emitiera un segundo documento por el mismo
-    // mes, y el salón terminaría viendo dos deudas donde hay una. Anular sí la
-    // suelta, y eso llega por su propio evento (`invoice.canceled`).
+    // - El reporte en `rejected` libera su referencia bancaria —el índice único
+    //   ignora los rechazados—, deja de conceder acceso y destapa los avisos de
+    //   cobro. Dejarlo "en revisión" lo trababa: no podía reportar la misma
+    //   referencia corregida y el salón parecía al día sin estarlo.
+    // - La factura se anula en Cobrix y se cierra aquí, así el siguiente
+    //   "Pagar ahora" emite un documento NUEVO. Anularla allá es lo que impide
+    //   que el dueño termine viendo dos deudas del mismo mes.
     if (failed) {
       // El motivo que manda Cobrix va tal cual: es lo que le dice al dueño qué
       // corregir. Solo cuando no viene se cae al genérico.
@@ -376,10 +384,10 @@ export class CobrixWebhookService {
         failureReasonOf(payload) ??
         `Cobrix reportó el pago como ${paymentStatus ?? eventType}.`;
       const abierto = await this.findReport(invoice);
-      if (abierto)
-        await this.payments.flagForManualReview(abierto, 'rejected', motivo);
+      if (abierto) await this.payments.rejectFromGateway(abierto, motivo);
+      await this.invoiceService.release(invoice, motivo);
       this.logger.warn(`[cobrix] ${providerReference}: ${motivo}`);
-      return this.finish(row, 'manual_review', motivo, abierto?.id);
+      return this.finish(row, 'rejected', motivo, abierto?.id);
     }
 
     // El dueño terminó de pagar y Cobrix todavía lo está conciliando. Se le

@@ -6,6 +6,7 @@ import { SubscriptionInvoice } from '../entities/subscription-invoice.entity';
 import type { PaymentGatewayEvent } from '../entities/payment-gateway-event.entity';
 import { Subscription } from '../entities/subscription.entity';
 import type { PaymentsService } from '../payments.service';
+import type { CobrixInvoiceService } from './cobrix-invoice.service';
 import { CobrixConfig } from './cobrix.config';
 import { CobrixWebhookService } from './cobrix-webhook.service';
 import {
@@ -124,7 +125,10 @@ interface Harness {
     amountToleranceBps: number;
     verifyFromGateway: jest.Mock;
     flagForManualReview: jest.Mock;
+    rejectFromGateway: jest.Mock;
   };
+  /** El servicio de facturas: por aquí se suelta el documento de cobro. */
+  invoiceService: { release: jest.Mock };
   reports: { findOne: jest.Mock; save: jest.Mock; create: jest.Mock };
   invoices: { findOne: jest.Mock; save: jest.Mock };
   events: { create: jest.Mock; save: jest.Mock };
@@ -194,7 +198,15 @@ function buildService(
     flagForManualReview: jest
       .fn()
       .mockImplementation((report: PaymentReport) => report),
+    rejectFromGateway: jest
+      .fn()
+      .mockImplementation((report: PaymentReport) =>
+        Object.assign(report, { status: 'rejected' }),
+      ),
   };
+
+  // Anula en Cobrix y cierra la factura. Devuelve si la anulación se confirmó.
+  const invoiceService = { release: jest.fn().mockResolvedValue(true) };
 
   const config = new CobrixConfig({
     get: (key: string) => {
@@ -211,6 +223,7 @@ function buildService(
     events as unknown as Repository<PaymentGatewayEvent>,
     payments as unknown as PaymentsService,
     config,
+    invoiceService as unknown as CobrixInvoiceService,
   );
 
   const deliver = (payload: unknown) => {
@@ -235,6 +248,7 @@ function buildService(
   return {
     service,
     payments,
+    invoiceService,
     reports,
     invoices,
     events,
@@ -472,15 +486,19 @@ describe('webhook del canal general', () => {
       },
     });
 
-    expect(ack.outcome).toBe('manual_review');
+    expect(ack.outcome).toBe('rejected');
     // El motivo viaja tal cual: es lo que le dice qué corregir.
-    expect(manualReason(payments.flagForManualReview)).toBe(
+    const [, motivo] = payments.rejectFromGateway.mock.calls[0] as [
+      PaymentReport,
+      string,
+    ];
+    expect(motivo).toBe(
       'La referencia no coincide con ningún movimiento del banco.',
     );
   });
 
-  it('el pago rechazado va a revisión manual y DEJA la factura abierta', async () => {
-    const { deliverGeneral, payments, invoices } = buildService();
+  it('el pago rechazado cierra el reporte y suelta el documento de cobro', async () => {
+    const { deliverGeneral, payments, invoiceService } = buildService();
 
     const ack = await deliverGeneral({
       id: 'evt_general_rejected',
@@ -492,13 +510,14 @@ describe('webhook del canal general', () => {
       },
     });
 
-    expect(ack.outcome).toBe('manual_review');
-    // No se rechaza solo: que Cobrix no lo concilie no prueba que no pagó.
-    expect(manualReason(payments.flagForManualReview)).toContain('rejected');
-    // La factura NO se toca: rechazar un pago no anula el documento, la deuda
-    // sigue viva y el dueño debe poder pagarla por el mismo enlace. Soltarla
-    // haría que el siguiente intento emitiera un segundo cobro por el mismo mes.
-    expect(invoices.save).not.toHaveBeenCalled();
+    expect(ack.outcome).toBe('rejected');
+    // El reporte se CIERRA: así libera su referencia, deja de dar acceso y el
+    // dueño puede reportar de nuevo. Antes quedaba trabado "en revisión".
+    expect(payments.rejectFromGateway).toHaveBeenCalledTimes(1);
+    expect(payments.flagForManualReview).not.toHaveBeenCalled();
+    // Y la factura se suelta —anulándola en Cobrix— para que el próximo
+    // "Pagar ahora" emita un documento nuevo en vez del enlace muerto.
+    expect(invoiceService.release).toHaveBeenCalledTimes(1);
   });
 
   it('no confirma cobros: eso solo lo hace invoice.paid', async () => {

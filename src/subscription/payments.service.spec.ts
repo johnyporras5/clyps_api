@@ -81,6 +81,8 @@ function subscriptionFixture(
 
 interface Harness {
   service: PaymentsService;
+  /** El servicio de facturas: por aquí se suelta el documento de cobro. */
+  cobrixInvoices: { findLive: jest.Mock; releaseForReport: jest.Mock };
   reports: { findOne: jest.Mock; save: jest.Mock };
   /** El repositorio de suscripciones: por aquí se abre la prueba de rescate. */
   subscriptions: { findOne: jest.Mock; save: jest.Mock; create: jest.Mock };
@@ -95,6 +97,8 @@ function buildService(options: {
   queueRows?: PaymentReport[];
   /** Evento ya registrado para ese reporte: simula un avance previo. */
   existingEvent?: Partial<SubscriptionEvent>;
+  /** Enciende la integración con Cobrix (por defecto va apagada). */
+  cobrixEnabled?: boolean;
 }): Harness {
   const builder = {
     where: jest.fn().mockReturnThis(),
@@ -157,6 +161,13 @@ function buildService(options: {
   };
   const events = { emit: jest.fn() };
 
+  // El servicio de facturas: aquí solo interesa que se suelte el cobro viejo
+  // cuando un pago se rechaza.
+  const cobrixInvoices = {
+    findLive: jest.fn().mockResolvedValue(null),
+    releaseForReport: jest.fn().mockResolvedValue(undefined),
+  };
+
   // El servicio de suscripciones va REAL: avanzar el período es justo lo que
   // se está probando.
   const subscriptionService = new SubscriptionService(
@@ -175,17 +186,22 @@ function buildService(options: {
     { get: () => undefined } as unknown as ConfigService,
     // Sin `COBRIX_API_KEY` ni `COBRIX_WEBHOOK_SECRET`: aquí se prueba el camino
     // manual de SUB-4, que es el que sigue vigente con la conciliación
-    // automática apagada.
-    new CobrixConfig({ get: () => undefined } as unknown as ConfigService),
-    {
-      findLive: jest.fn().mockResolvedValue(null),
-    } as unknown as CobrixInvoiceService,
+    // automática apagada. `cobrixEnabled` la enciende para las pruebas que
+    // necesitan que exista un documento de cobro.
+    new CobrixConfig({
+      get: (key: string) =>
+        options.cobrixEnabled &&
+        (key === 'COBRIX_API_KEY' || key === 'COBRIX_WEBHOOK_SECRET')
+          ? 'prueba'
+          : undefined,
+    } as unknown as ConfigService),
+    cobrixInvoices as unknown as CobrixInvoiceService,
     // El mismo emisor que la suscripción: así una prueba puede mirar tanto la
     // activación (SUB-9) como el rechazo en `events.emit`.
     events as unknown as EventEmitter2,
   );
 
-  return { service, reports, subscriptions, manager, events };
+  return { service, reports, subscriptions, manager, events, cobrixInvoices };
 }
 
 /** La suscripción que se mandó a guardar dentro de la transacción. */
@@ -705,5 +721,126 @@ describe('el ciclo que cubrió el pago', () => {
     await service.verifyPayment(1, 42);
 
     expect(savedReport(manager.save)).toBeUndefined();
+  });
+});
+
+/**
+ * El rechazo firmado por la PASARELA (CLYP-342).
+ *
+ * Es lo que distingue `rejectFromGateway` de `flagForManualReview`: cuando
+ * Cobrix dice `payment.failed` sobre un cobro suyo, el reporte se CIERRA. Antes
+ * quedaba "en revisión" y el dueño no podía volver a pagar.
+ */
+describe('el rechazo que firma la pasarela', () => {
+  it('cierra el reporte como rechazado, sin humano que lo firme', async () => {
+    const report = reportFixture({ status: 'reported' });
+    const { service } = buildService({ report });
+
+    const saved = await service.rejectFromGateway(
+      report,
+      'La referencia no coincide con ningún movimiento del banco.',
+      { gatewayPaymentId: 'pay_842f' },
+    );
+
+    expect(saved.status).toBe('rejected');
+    // 'auto' y sin usuario: no hubo persona que responda por esta decisión.
+    expect(saved.verificationMethod).toBe('auto');
+    expect(saved.verifiedByUserId).toBeNull();
+    expect(saved.rejectionReason).toContain('no coincide');
+    expect(saved.autoCheckStatus).toBe('rejected');
+    expect(saved.gatewayPaymentId).toBe('pay_842f');
+  });
+
+  it('le avisa al dueño con el motivo textual de Cobrix', async () => {
+    const report = reportFixture({ status: 'reported' });
+    const { service, events } = buildService({ report });
+
+    await service.rejectFromGateway(report, 'Fondos insuficientes.');
+
+    const [nombre, evento] = events.emit.mock.calls[0] as [
+      string,
+      { reason: string; reference: string },
+    ];
+    expect(nombre).toBe('subscription.payment.rejected');
+    expect(evento.reason).toBe('Fondos insuficientes.');
+    expect(evento.reference).toBe('004512');
+  });
+
+  it('no toca la suscripción: el tenant sigue como estaba', async () => {
+    const report = reportFixture({ status: 'reported' });
+    const { service, subscriptions } = buildService({
+      report,
+      subscription: subscriptionFixture({ status: 'grace' }),
+    });
+
+    await service.rejectFromGateway(report, 'El pago no entró.');
+
+    expect(subscriptions.save).not.toHaveBeenCalled();
+  });
+
+  it('recorta el motivo a lo que cabe en la columna', async () => {
+    const report = reportFixture({ status: 'reported' });
+    const { service } = buildService({ report });
+
+    const saved = await service.rejectFromGateway(report, 'x'.repeat(400));
+
+    expect(saved.rejectionReason).toHaveLength(255);
+    expect(saved.autoCheckReason).toHaveLength(255);
+  });
+});
+
+describe('rechazar suelta el cobro viejo', () => {
+  it('el rechazo manual libera la factura para que se emita otra', async () => {
+    // Con Cobrix APAGADO no hay factura que soltar, así que el harness por
+    // defecto no sirve: se prueba el camino con la integración encendida.
+    const report = reportFixture({ status: 'reported', invoiceId: 5 });
+    const { service, cobrixInvoices } = buildService({
+      report,
+      subscription: subscriptionFixture(),
+      cobrixEnabled: true,
+    });
+
+    await service.rejectPayment(1, { rejectionReason: 'No aparece.' }, 42);
+
+    expect(cobrixInvoices.releaseForReport).toHaveBeenCalledTimes(1);
+    const [pasado, motivo] = cobrixInvoices.releaseForReport.mock.calls[0] as [
+      { invoiceId: number },
+      string,
+    ];
+    expect(pasado.invoiceId).toBe(5);
+    expect(motivo).toBe('No aparece.');
+  });
+
+  it('si soltar la factura falla, el rechazo queda igual', async () => {
+    const report = reportFixture({ status: 'reported', invoiceId: 5 });
+    const { service, cobrixInvoices } = buildService({
+      report,
+      subscription: subscriptionFixture(),
+      cobrixEnabled: true,
+    });
+    cobrixInvoices.releaseForReport.mockRejectedValue(
+      new Error('Cobrix caído'),
+    );
+
+    // Que su API no conteste no puede deshacer lo que el admin ya decidió.
+    const decision = await service.rejectPayment(
+      1,
+      { rejectionReason: 'No aparece.' },
+      42,
+    );
+
+    expect(decision.status).toBe('rejected');
+  });
+
+  it('sin Cobrix configurado no se llama a su API', async () => {
+    const report = reportFixture({ status: 'reported', invoiceId: 5 });
+    const { service, cobrixInvoices } = buildService({
+      report,
+      subscription: subscriptionFixture(),
+    });
+
+    await service.rejectPayment(1, { rejectionReason: 'No aparece.' }, 42);
+
+    expect(cobrixInvoices.releaseForReport).not.toHaveBeenCalled();
   });
 });

@@ -457,6 +457,10 @@ export class PaymentsService {
    *
    * NO toca la suscripción — el tenant sigue como estaba (en gracia, bloqueado o
    * en prueba). El motivo viaja al dueño para que sepa qué corregir (SUB-9).
+   *
+   * Sí suelta el documento de cobro, igual que el rechazo de la pasarela: si el
+   * pago no valió, el dueño tiene que poder empezar de cero con un cobro nuevo
+   * en vez de volver a un enlace que ya no lleva a ninguna parte.
    */
   async rejectPayment(
     reportId: number,
@@ -481,6 +485,14 @@ export class PaymentsService {
       reason: dto.rejectionReason,
       reference: report.reference ?? null,
     } satisfies SubscriptionPaymentRejectedEvent);
+
+    // El cobro viejo se anula y se cierra para que el próximo "Pagar ahora"
+    // emita otro. Va DESPUÉS de guardar el rechazo y sin poder tumbarlo: que
+    // Cobrix no conteste no puede deshacer una decisión que el admin ya tomó.
+    if (this.cobrix.enabled)
+      await this.cobrixInvoices
+        .releaseForReport(report, dto.rejectionReason)
+        .catch(() => undefined);
 
     const subscription = await this.subscriptions.findOne({
       where: { companyId: report.companyId },
@@ -554,6 +566,54 @@ export class PaymentsService {
     await this.reports.save(report);
 
     return this.subscriptionService.advanceSubscription(subscription, report);
+  }
+
+  /**
+   * Rechazo firmado por la PASARELA: Cobrix dijo que ese pago no entró.
+   *
+   * A diferencia de `flagForManualReview`, esto SÍ cierra el reporte. El
+   * criterio: cuando Cobrix contesta `payment.failed` sobre un cobro suyo, está
+   * hablando del movimiento bancario que él mismo concilia — no es una opinión
+   * sobre un comprobante que no vio.
+   *
+   * Cerrarlo en `rejected` es lo que le devuelve al dueño la posibilidad de
+   * pagar otra vez: la referencia se libera (el índice único ignora los
+   * rechazados) y el reporte deja de conceder acceso y de callar los avisos.
+   *
+   * NO toca la suscripción: el tenant sigue como estaba.
+   */
+  async rejectFromGateway(
+    report: PaymentReport,
+    reason: string,
+    options: { gatewayPaymentId?: string | null; at?: Date } = {},
+  ): Promise<PaymentReport> {
+    const at = options.at ?? new Date();
+    // La columna son 255 caracteres y el motivo de Cobrix es texto libre.
+    const motivo = reason.slice(0, 255);
+
+    report.status = 'rejected';
+    // 'auto' y sin usuario: no hubo humano que responda por esta decisión.
+    report.verificationMethod = 'auto';
+    report.verifiedByUserId = null;
+    report.verifiedAt = at;
+    report.rejectionReason = motivo;
+    report.autoCheckStatus = 'rejected';
+    report.autoCheckAt = at;
+    report.autoCheckReason = motivo;
+    if (options.gatewayPaymentId)
+      report.gatewayPaymentId = options.gatewayPaymentId;
+    const saved = await this.reports.save(report);
+
+    // SUB-9: el dueño se entera AHORA y con el motivo de Cobrix, no cuando
+    // alguien revise una cola.
+    this.events.emit(SUBSCRIPTION_PAYMENT_REJECTED, {
+      companyId: saved.companyId,
+      paymentReportId: saved.id,
+      reason: motivo,
+      reference: saved.reference ?? null,
+    } satisfies SubscriptionPaymentRejectedEvent);
+
+    return saved;
   }
 
   /**
