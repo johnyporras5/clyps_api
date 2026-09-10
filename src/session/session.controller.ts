@@ -36,9 +36,12 @@ import { GetAvailabilityDto } from './dto/get-availability.dto';
 import { ConfirmAttendanceDto } from './dto/confirm-attendance.dto';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
 import { SessionNotificationEmitter } from './session-notification.emitter';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('sessions')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+@RequiresOperationalSubscription()
 export class SessionController {
   constructor(
     private readonly sessionService: SessionService,

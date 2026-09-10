@@ -60,3 +60,19 @@ export interface AccessResponse {
     canAddWorker: boolean;
   };
 }
+
+/**
+ * La foto MÍNIMA del acceso, para quien no es el dueño (SUB-12).
+ *
+ * Existe porque `GET /subscription/access` es solo del dueño y el trabajador
+ * necesitaba saber si el salón está bloqueado sin estrellarse contra un 403 en
+ * cada toque. Va sin plan, sin precios, sin fechas y sin límites: el trabajador
+ * no tiene por qué ver la facturación del salón donde trabaja.
+ */
+export interface SubscriptionStatusResponse {
+  canOperate: boolean;
+  /** A quién le habla el mensaje: define qué pantalla pinta el front. */
+  blockedFor: 'adm' | 'wrk' | null;
+  /** Qué decirle a ESTE rol. `null` cuando no hay bloqueo. */
+  message: string | null;
+}

@@ -5,7 +5,7 @@ import { PaymentReport } from './entities/payment-report.entity';
 import { SubscriptionService } from './subscription.service';
 import { EntitlementsService } from './entitlements.service';
 import { getPlan } from './config/plans.config';
-import { effectivePlanId } from './entitlements.util';
+import { effectivePlanId, trialStillRunning } from './entitlements.util';
 import {
   cycleContextOf,
   toHistoryDetail,
@@ -106,6 +106,12 @@ export class BillingHistoryService {
    * El estado sale de `EntitlementsService`, que lo RECALCULA con las fechas.
    * Leer la columna `status` a secas mostraría "activo" a quien venció ayer si
    * el cron todavía no pasó — justo en la pantalla donde va a decidir si paga.
+   *
+   * Viajan el estado COMPLETO, no solo las fechas: `trialEndsAt` y
+   * `currentPeriodEnd` no se borran al vencer, así que una pantalla que solo
+   * mire fechas le dice "estás en tu prueba hasta el 8" a quien lleva dos días
+   * bloqueado. `onTrial`, `graceCause` y `hasPendingReport` son lo que permite
+   * redactar la frase que de verdad le toca.
    */
   private async header(
     companyId: number,
@@ -114,6 +120,8 @@ export class BillingHistoryService {
     >,
   ): Promise<BillingHistorySubscription> {
     const access = await this.entitlements.getAccessState(companyId);
+    const hasPendingReport =
+      await this.entitlements.hasPendingReport(companyId);
     const planId = effectivePlanId(
       subscription.planId ?? 'basico',
       access.status,
@@ -135,6 +143,12 @@ export class BillingHistoryService {
         ? subscription.trialEndsAt.toISOString()
         : null,
       graceEndsAt: access.graceEndsAt ? access.graceEndsAt.toISOString() : null,
+      accessEndsAt: access.accessEndsAt
+        ? access.accessEndsAt.toISOString()
+        : null,
+      onTrial: trialStillRunning(subscription.trialEndsAt),
+      graceCause: access.graceCause,
+      hasPendingReport,
       billingExempt: Boolean(subscription.billingExempt),
     };
   }

@@ -21,10 +21,13 @@ import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('products')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
 @Roles('adm')
+@RequiresOperationalSubscription()
 export class ProductController {
   constructor(private readonly productService: ProductService) {}
 

@@ -15,6 +15,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AppointmentBeforeAfterService } from './appointment-before-after.service';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 /**
  * Recurso "Antes y después" de una sesión (cita).
@@ -25,7 +27,8 @@ import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
  *    (validado a nivel de servicio vía `validateSessionAccess(..., true)`).
  */
 @Controller('sessions/:sessionId/before-after')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+@RequiresOperationalSubscription()
 export class AppointmentBeforeAfterController {
   constructor(private readonly service: AppointmentBeforeAfterService) {}
 

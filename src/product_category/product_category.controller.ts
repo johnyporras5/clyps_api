@@ -20,10 +20,13 @@ import { UpdateProductCategoryDto } from './dto/update-product-category.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('product-categories')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
 @Roles('adm')
+@RequiresOperationalSubscription()
 export class ProductCategoryController {
   constructor(
     private readonly productCategoryService: ProductCategoryService,

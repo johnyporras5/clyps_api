@@ -21,6 +21,8 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { ClientNote } from './entities/client_note.entity';
 import { CreateClientNoteDto } from './dto/create-client_note.dto';
 import { UpdateClientNoteDto } from './dto/update-client_note.dto';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 /**
  * Notas (calificación de texto) que los admin escriben sobre los clientes.
@@ -28,7 +30,8 @@ import { UpdateClientNoteDto } from './dto/update-client_note.dto';
  * modificar/eliminar las que él creó. Endpoints exclusivos de rol admin.
  */
 @Controller('client-notes')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+@RequiresOperationalSubscription()
 export class ClientNoteController {
   constructor(private readonly clientNoteService: ClientNoteService) {}
 

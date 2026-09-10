@@ -17,9 +17,12 @@ import { CompanyIncomeTimelineQueryDto } from './dto/company-income-timeline-que
 import { ClientsReportQueryDto } from './dto/clients-report-query.dto';
 import { ClientsListQueryDto } from './dto/clients-list-query.dto';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('reports')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+@RequiresOperationalSubscription()
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 

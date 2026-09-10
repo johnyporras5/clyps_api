@@ -622,3 +622,167 @@ describe('el pago que está esperando verificación', () => {
     expect(response.hasPendingReport).toBe(false);
   });
 });
+
+/**
+ * SUB-12: el bloqueo ya corta endpoints, y no le habla igual a todos. El dueño
+ * es el único que puede pagar; al trabajador se le corta el acceso pero no se
+ * le manda a una pantalla de pago que no le sirve.
+ */
+describe('a quién le habla el bloqueo', () => {
+  /** El cuerpo del 403, ya desempaquetado. Falla la prueba si NO bloqueó. */
+  async function cuerpoDel403(
+    run: Promise<unknown>,
+  ): Promise<Record<string, unknown>> {
+    try {
+      await run;
+    } catch (error) {
+      return (error as ForbiddenException).getResponse() as Record<
+        string,
+        unknown
+      >;
+    }
+    throw new Error('se esperaba un bloqueo y no hubo ninguno');
+  }
+
+  /** Prueba agotada y nunca pagó: bloqueado. */
+  const bloqueadoSinPagarNunca = () =>
+    buildService({
+      trialEndsAt: days(-1),
+      currentPeriodEnd: null,
+      graceEndsAt: null,
+    });
+
+  it('al dueño le dice que elija plan y pague, y marca blockedFor adm', async () => {
+    const service = bloqueadoSinPagarNunca();
+
+    await expect(service.assertCanOperate(7, 'adm')).rejects.toThrow(
+      ForbiddenException,
+    );
+
+    const body = await cuerpoDel403(service.assertCanOperate(7, 'adm'));
+    expect(body.reason).toBe('subscription_blocked');
+    expect(body.blockedFor).toBe('adm');
+    expect(body.trialExpired).toBe(true);
+    expect(String(body.message)).toContain('Elige tu plan');
+  });
+
+  it('al trabajador NO le pide pagar ni le enseña el estado de cobro', async () => {
+    const service = bloqueadoSinPagarNunca();
+
+    const body = await cuerpoDel403(service.assertCanOperate(7, 'wrk'));
+
+    expect(body.reason).toBe('subscription_blocked');
+    expect(body.blockedFor).toBe('wrk');
+    // Nada de facturación del salón donde trabaja.
+    expect(body).not.toHaveProperty('trialExpired');
+    expect(body).not.toHaveProperty('status');
+    expect(body).not.toHaveProperty('accessEndsAt');
+    const message = String(body.message).toLowerCase();
+    expect(message).toContain('administrador');
+    expect(message).not.toContain('pag');
+    expect(message).not.toContain('plan');
+  });
+
+  it('sin rol se asume el dueño: los llamadores viejos no cambian de mensaje', async () => {
+    const service = bloqueadoSinPagarNunca();
+
+    const body = await cuerpoDel403(service.assertCanOperate(7));
+    expect(body.blockedFor).toBe('adm');
+  });
+
+  it('el estado flaco del trabajador trae el cartel, no la factura', async () => {
+    const service = bloqueadoSinPagarNunca();
+
+    expect(await service.getStatusResponse(7, 'wrk')).toEqual({
+      canOperate: false,
+      blockedFor: 'wrk',
+      message: expect.stringContaining('administrador') as string,
+    });
+  });
+
+  it('sin bloqueo, el estado no trae mensaje que pintar', async () => {
+    const service = buildService({ planId: 'full' });
+
+    expect(await service.getStatusResponse(7, 'wrk')).toEqual({
+      canOperate: true,
+      blockedFor: null,
+      message: null,
+    });
+  });
+});
+
+/**
+ * SUB-12: con el guard colgado de una docena de controladores, la misma
+ * pregunta se repite muchas veces por pantalla. La caché es de segundos —el
+ * estado se recalcula con la hora de ahora— y se tira a mano cuando un pago
+ * cambia el acceso.
+ */
+describe('la caché del acceso', () => {
+  function buildWithSpy(ttl?: string) {
+    const subscriptions = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 1,
+        companyId: 7,
+        planId: 'full',
+        status: 'active',
+        trialEndsAt: null,
+        currentPeriodEnd: days(10),
+        graceEndsAt: null,
+        billingExempt: false,
+      } as Subscription),
+    };
+    const reports = { countBy: jest.fn().mockResolvedValue(0) };
+    const workers = { countBy: jest.fn().mockResolvedValue(0) };
+    const companies = { findOne: jest.fn().mockResolvedValue({ id: 7 }) };
+    const service = new EntitlementsService(
+      subscriptions as unknown as Repository<Subscription>,
+      reports as unknown as Repository<PaymentReport>,
+      workers as unknown as Repository<CompanyWorker>,
+      companies as unknown as Repository<Company>,
+      {
+        get: (key: string) =>
+          key === 'SUBSCRIPTION_ACCESS_CACHE_MS' ? ttl : undefined,
+      } as unknown as ConfigService,
+      {} as unknown as SubscriptionService,
+    );
+    return { service, subscriptions };
+  }
+
+  it('no vuelve a consultar la base dentro de la ventana', async () => {
+    const { service, subscriptions } = buildWithSpy();
+
+    await service.canOperate(7);
+    await service.canOperate(7);
+    await service.canOperate(7);
+
+    expect(subscriptions.findOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('cada salón tiene la suya: no se contagian', async () => {
+    const { service, subscriptions } = buildWithSpy();
+
+    await service.canOperate(7);
+    await service.canOperate(8);
+
+    expect(subscriptions.findOne).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidate obliga a recalcular: el pago verificado abre el salón ya', async () => {
+    const { service, subscriptions } = buildWithSpy();
+
+    await service.canOperate(7);
+    service.invalidate(7);
+    await service.canOperate(7);
+
+    expect(subscriptions.findOne).toHaveBeenCalledTimes(2);
+  });
+
+  it('con TTL en 0 queda apagada', async () => {
+    const { service, subscriptions } = buildWithSpy('0');
+
+    await service.canOperate(7);
+    await service.canOperate(7);
+
+    expect(subscriptions.findOne).toHaveBeenCalledTimes(2);
+  });
+});

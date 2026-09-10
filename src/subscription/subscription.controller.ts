@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   FileTypeValidator,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -34,7 +35,10 @@ import { StartCheckoutDto } from './dto/start-checkout.dto';
 import { ChoosePlanDto } from './dto/choose-plan.dto';
 import { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
-import type { AccessResponse } from './dto/access-response.dto';
+import type {
+  AccessResponse,
+  SubscriptionStatusResponse,
+} from './dto/access-response.dto';
 import type { PaymentInstructionsResponse } from './dto/payment-instructions-response.dto';
 import type { CheckoutResponse } from './dto/checkout-response.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
@@ -82,6 +86,34 @@ export class SubscriptionController {
       req.user.sub,
     );
     return this.entitlements.getAccessResponse(companyId);
+  }
+
+  /**
+   * SUB-12: ¿puede trabajarse en este salón ahora? Para el DUEÑO y el
+   * TRABAJADOR.
+   *
+   * `/access` es solo del dueño —lleva plan, precios y fechas— y el trabajador
+   * se quedaba sin forma de distinguir "el salón está bloqueado" de "el
+   * servidor falló": ambas se veían como un 403. Esto devuelve lo justo para
+   * pintar el cartel correcto, y el mensaje ya viene redactado para quien
+   * pregunta: al trabajador no se le pide pagar.
+   *
+   * Siempre permitido, también con el tenant bloqueado.
+   */
+  @Roles('adm', 'wrk')
+  @Get('status')
+  async getStatus(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<SubscriptionStatusResponse> {
+    const role = req.user.userType === 'wrk' ? 'wrk' : 'adm';
+    // El trabajador SOLO se resuelve por el claim del token: buscarlo como
+    // dueño devolvería "no tienes una compañía asignada", que no es su caso.
+    if (role === 'wrk' && req.user.companyId == null)
+      throw new ForbiddenException('No tienes un salón asignado');
+    const companyId =
+      req.user.companyId ??
+      (await this.entitlements.resolveCompanyIdForAdmin(req.user.sub));
+    return this.entitlements.getStatusResponse(companyId, role);
   }
 
   /**

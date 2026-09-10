@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SubscriptionService } from './subscription.service';
 import { PaymentsService } from './payments.service';
@@ -42,7 +42,15 @@ import { EmailModule } from '../email/email.module';
  *
  * Este módulo no importa ningún módulo de negocio —solo entidades— para que
  * cualquiera pueda importarlo sin ciclos.
+ *
+ * Es `@Global` desde SUB-12: el guard del bloqueo se cuelga de una docena de
+ * controladores de otros módulos, y la alternativa era agregar
+ * `imports: [SubscriptionModule]` en cada uno de ellos —doce archivos que no
+ * cambian por ninguna otra razón y que se olvidan al sumar el trece—. La
+ * condición que lo hace seguro es la de arriba: este módulo no depende de
+ * ninguno de negocio, así que no puede formar un ciclo.
  */
+@Global()
 @Module({
   imports: [
     TypeOrmModule.forFeature([

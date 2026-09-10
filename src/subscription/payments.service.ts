@@ -48,6 +48,7 @@ import type { ReportPaymentDto } from './dto/report-payment.dto';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type { AutoCheckStatus, PaymentMethod } from './subscription.enums';
 import { billablePlanId } from './entitlements.util';
+import { EntitlementsService } from './entitlements.service';
 import type { PaymentInstructionsResponse } from './dto/payment-instructions-response.dto';
 import {
   SUBSCRIPTION_PAYMENT_REJECTED,
@@ -78,6 +79,7 @@ export class PaymentsService {
     private readonly cobrix: CobrixConfig,
     private readonly cobrixInvoices: CobrixInvoiceService,
     private readonly events: EventEmitter2,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   private num(key: string, fallback: number): number {
@@ -345,7 +347,12 @@ export class PaymentsService {
     draft: ReturnType<typeof buildPaymentReportDraft>,
   ): Promise<PaymentReport> {
     try {
-      return await this.reports.save(this.reports.create(draft));
+      const saved = await this.reports.save(this.reports.create(draft));
+      // Un reporte nuevo CONCEDE acceso (la gracia por pago pendiente): si la
+      // caché del acceso guardara el "bloqueado" de hace un segundo, el dueño
+      // seguiría sin poder entrar justo después de reportar su pago.
+      this.entitlements.invalidate(saved.companyId);
+      return saved;
     } catch (error) {
       if (
         error instanceof QueryFailedError &&
@@ -662,7 +669,11 @@ export class PaymentsService {
    */
   private async saveDecision(report: PaymentReport): Promise<PaymentReport> {
     try {
-      return await this.reports.save(report);
+      const saved = await this.reports.save(report);
+      // Verificar abre el salón y rechazar puede cerrarlo: en los dos casos la
+      // foto cacheada quedó vieja y hay que tirarla ya, no en 10 segundos.
+      this.entitlements.invalidate(saved.companyId);
+      return saved;
     } catch (error) {
       if (
         error instanceof QueryFailedError &&

@@ -26,6 +26,7 @@ import { SessionProduct } from '../product/entities/session_product.entity';
 import { toMinor, pct, fromMinor } from '../payroll/payroll-money.util';
 import { FeedbacksService } from '../feedbacks/feedbacks.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { EntitlementsService } from '../subscription/entitlements.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import {
   CreateSessionWithDetailDto,
@@ -126,6 +127,7 @@ export class SessionService {
     private sessionProductService: SessionProductService,
     private feedbacksService: FeedbacksService,
     private readonly onboardingService: OnboardingService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   async create(
@@ -7763,6 +7765,18 @@ export class SessionService {
       throw new ForbiddenException(
         `${companyName} no está disponible para agendar en este momento.`,
       );
+    }
+
+    // 3.c El salón está bloqueado por falta de pago (SUB-12). Al CLIENTE no se
+    // le corta nada más —sigue viendo sus citas, cancelando y confirmando—,
+    // pero no se le deja crear una nueva: sería una cita que en el salón nadie
+    // puede atender ni cobrar. El mensaje es neutro a propósito: la deuda del
+    // salón no es asunto del cliente y decírsela solo le hace daño al salón.
+    if (!(await this.entitlements.canOperate(companyId))) {
+      throw new ForbiddenException({
+        message: `${companyName} no está recibiendo reservas en este momento. Intenta más tarde.`,
+        reason: 'company_not_bookable',
+      });
     }
 
     // 4. Verificar si el cliente ya tiene una cita en la misma fecha y hora

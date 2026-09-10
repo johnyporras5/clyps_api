@@ -9,6 +9,7 @@ import {
 } from './subscription.service';
 import type { ExchangeRateService } from './rate/exchange-rate.service';
 import { CobrixConfig } from './cobrix/cobrix.config';
+import type { EntitlementsService } from './entitlements.service';
 import type { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
 import type { FileUploadService } from '../common/services/file_upload.service';
 import type { Company } from '../company/entities/company.entity';
@@ -199,6 +200,9 @@ function buildService(options: {
     // El mismo emisor que la suscripción: así una prueba puede mirar tanto la
     // activación (SUB-9) como el rechazo en `events.emit`.
     events as unknown as EventEmitter2,
+    // Solo se le pide olvidar la caché del acceso cuando un pago cambia de
+    // estado (SUB-12); aquí no se prueba eso, así que basta con el espía.
+    { invalidate: jest.fn() } as unknown as EntitlementsService,
   );
 
   return { service, reports, subscriptions, manager, events, cobrixInvoices };
@@ -552,6 +556,7 @@ describe('a dónde paga el dueño', () => {
       {} as never,
       config,
       new CobrixConfig(config),
+      {} as never,
       {} as never,
       {} as never,
     );

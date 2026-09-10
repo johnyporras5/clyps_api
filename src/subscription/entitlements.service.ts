@@ -20,7 +20,11 @@ import {
   trialStillRunning,
   type AccessState,
 } from './entitlements.util';
-import type { AccessResponse } from './dto/access-response.dto';
+import type {
+  AccessResponse,
+  SubscriptionStatusResponse,
+} from './dto/access-response.dto';
+import type { TenantRole } from '../auth/types/authenticated-request';
 import { SubscriptionService } from './subscription.service';
 
 /**
@@ -123,6 +127,39 @@ export class EntitlementsService {
     return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : GRACE_DAYS;
   }
 
+  /**
+   * Caché muy corta del contexto, por company (SUB-12).
+   *
+   * Sin ella, cada endpoint marcado paga 2-4 consultas EXTRA solo para volver a
+   * preguntar lo mismo: una pantalla que hace 6 llamadas repetía el cálculo 6
+   * veces. Con TTL de segundos —y no de minutos— un pago recién verificado abre
+   * el salón casi al instante aunque nadie invalide nada; `invalidate()` lo
+   * hace inmediato en los puntos que sí lo saben (verificar, rechazar,
+   * reportar).
+   *
+   * Es por proceso: con varias instancias cada una tiene la suya, y con un TTL
+   * así de corto eso no genera contradicciones que duren.
+   */
+  private readonly cache = new Map<
+    number,
+    { expiresAt: number; context: EntitlementContext }
+  >();
+
+  /** Vida de la caché en milisegundos. 0 la apaga. */
+  get cacheTtlMs(): number {
+    const raw = Number(this.config.get<string>('SUBSCRIPTION_ACCESS_CACHE_MS'));
+    return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 10_000;
+  }
+
+  /**
+   * Olvida lo cacheado de un tenant. Se llama donde el acceso CAMBIA (verificar
+   * o rechazar un pago, reportar uno nuevo) para que el efecto sea inmediato y
+   * no dependa del TTL.
+   */
+  invalidate(companyId: number): void {
+    this.cache.delete(companyId);
+  }
+
   /** Company del admin dueño (mismo criterio que el resto del API). */
   async resolveCompanyIdForAdmin(adminUserId: number): Promise<number> {
     const company = await this.companies.findOne({
@@ -146,6 +183,22 @@ export class EntitlementsService {
    * puede depender de que un job haya corrido a tiempo.
    */
   private async context(companyId: number): Promise<EntitlementContext> {
+    const ttl = this.cacheTtlMs;
+    if (ttl > 0) {
+      const hit = this.cache.get(companyId);
+      // El estado se recalcula con la hora de AHORA, así que una entrada vieja
+      // no solo ahorra consultas: también congela el borde de un vencimiento.
+      // De ahí que el TTL sea de segundos y no de minutos.
+      if (hit && hit.expiresAt > Date.now()) return hit.context;
+    }
+
+    const context = await this.computeContext(companyId);
+    if (ttl > 0)
+      this.cache.set(companyId, { expiresAt: Date.now() + ttl, context });
+    return context;
+  }
+
+  private async computeContext(companyId: number): Promise<EntitlementContext> {
     const subscription = await this.loadSubscription(companyId);
     const hasPendingReport = await this.hasPendingReport(companyId);
 
@@ -265,25 +318,56 @@ export class EntitlementsService {
    * `reason: 'subscription_blocked'` para que el front lo mande a la pantalla de
    * pago (SUB-12) en vez de mostrar un error genérico.
    */
-  async assertCanOperate(companyId: number): Promise<EntitlementContext> {
+  async assertCanOperate(
+    companyId: number,
+    role: TenantRole = 'adm',
+  ): Promise<EntitlementContext> {
     const context = await this.context(companyId);
     if (!context.access.canOperate) {
-      // Dos situaciones distintas, dos mensajes distintos. A quien se le acabó
-      // la prueba nunca tuvo una suscripción que "venciera", y decirle que
-      // "reactive" algo que jamás activó lo deja buscando un botón que no hay.
-      throw new ForbiddenException({
-        message: context.everPaid
-          ? 'Tu suscripción venció. Reporta tu pago para reactivar el acceso.'
-          : `Se acabaron tus ${TRIAL_DAYS} días de prueba. Elige tu plan y reporta tu pago para seguir usando Clyps.`,
-        reason: 'subscription_blocked',
-        // El front lo usa para llevarlo a elegir plan o a renovar, que son dos
-        // pantallas distintas.
-        trialExpired: !context.everPaid,
-        status: context.access.status,
-        accessEndsAt: context.access.accessEndsAt,
-      });
+      throw new ForbiddenException(this.blockedBody(context, role));
     }
     return context;
+  }
+
+  /**
+   * El cuerpo del 403 según QUIÉN se topó con el bloqueo (SUB-12).
+   *
+   * Al dueño se le habla de su suscripción: es su cuenta y el único que puede
+   * pagarla. Al trabajador NO: la deuda no es suya, no tiene con qué
+   * resolverla, y mandarlo a una pantalla de pago solo lo deja mirando un botón
+   * que no le sirve. Por eso su cuerpo va sin `trialExpired`, sin estado y sin
+   * fechas: son datos de facturación del salón donde trabaja.
+   *
+   * `blockedFor` es lo que el front mira para elegir pantalla.
+   */
+  private blockedBody(
+    context: EntitlementContext,
+    role: TenantRole,
+  ): Record<string, unknown> {
+    if (role === 'wrk') {
+      return {
+        message:
+          'El salón no tiene el acceso activo en este momento. Comunícate con el administrador del salón para reactivarlo.',
+        reason: 'subscription_blocked',
+        blockedFor: 'wrk',
+      };
+    }
+
+    // Dos situaciones distintas, dos mensajes distintos. A quien se le acabó
+    // la prueba nunca tuvo una suscripción que "venciera", y decirle que
+    // "reactive" algo que jamás activó lo deja buscando un botón que no hay.
+    return {
+      message: context.everPaid
+        ? 'Tu suscripción venció. Reporta tu pago para reactivar el acceso.'
+        : `Se acabaron tus ${TRIAL_DAYS} días de prueba. Elige tu plan y reporta tu pago para seguir usando Clyps.`,
+      reason: 'subscription_blocked',
+      blockedFor: 'adm',
+      // El front lo usa para llevarlo a elegir plan o a renovar, que son dos
+      // pantallas distintas.
+      trialExpired: !context.everPaid,
+      status: context.access.status,
+      accessEndsAt: context.access.accessEndsAt,
+    };
   }
 
   /**
@@ -294,8 +378,9 @@ export class EntitlementsService {
   async assertCanUseFeature(
     companyId: number,
     feature: PlanFeature,
+    role: TenantRole = 'adm',
   ): Promise<void> {
-    const { planId, limits } = await this.assertCanOperate(companyId);
+    const { planId, limits } = await this.assertCanOperate(companyId, role);
     const plan = getPlan(planId);
     if (!limits[feature]) {
       throw new ForbiddenException({
@@ -387,6 +472,30 @@ export class EntitlementsService {
         workersInUse,
         canAddWorker: access.canOperate && workersInUse < limits.maxWorkers,
       },
+    };
+  }
+
+  /**
+   * La foto mínima del acceso para el rol que pregunta (SUB-12).
+   *
+   * El dueño ya tiene `GET /subscription/access` con todo; esto es para el
+   * trabajador, que necesita saber si el salón está bloqueado ANTES de tocar
+   * una cita y recibir un 403 seco. Reutiliza `blockedBody` para que el
+   * mensaje del cartel y el del error nunca se separen.
+   */
+  async getStatusResponse(
+    companyId: number,
+    role: TenantRole,
+  ): Promise<SubscriptionStatusResponse> {
+    const context = await this.context(companyId);
+    if (context.access.canOperate)
+      return { canOperate: true, blockedFor: null, message: null };
+
+    const body = this.blockedBody(context, role);
+    return {
+      canOperate: false,
+      blockedFor: body.blockedFor as 'adm' | 'wrk',
+      message: body.message as string,
     };
   }
 

@@ -1,4 +1,5 @@
 import type { PlanId } from '../config/plans.config';
+import type { GraceCause } from '../entitlements.util';
 import type { PaginationResult } from '../../common/dto/pagination.dto';
 import type {
   AutoCheckStatus,
@@ -42,6 +43,23 @@ export interface BillingHistorySubscription {
   currentPeriodEnd: string | null;
   trialEndsAt: string | null;
   graceEndsAt: string | null;
+  /**
+   * Hasta cuándo llega el acceso: la más lejana de las dos fechas de arriba.
+   *
+   * Va servida y no calculada en la pantalla porque `trialEndsAt` y
+   * `currentPeriodEnd` NO se borran al vencer: quedarse con una suelta es cómo
+   * se termina anunciando una prueba que acabó hace dos días.
+   */
+  accessEndsAt: string | null;
+  /**
+   * La prueba TODAVÍA corre. Es lo único que distingue "estás en tu prueba" de
+   * "tu prueba terminó": la fecha por sí sola dice las dos cosas.
+   */
+  onTrial: boolean;
+  /** Por qué está en gracia: se le venció, o pagó y falta verificar. */
+  graceCause: GraceCause;
+  /** Tiene un pago esperando verificación: no se le debe insistir que pague. */
+  hasPendingReport: boolean;
   /** No se le cobra: su historial puede estar vacío para siempre. */
   billingExempt: boolean;
 }

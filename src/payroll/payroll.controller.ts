@@ -25,9 +25,12 @@ import { CreatePayoutDto } from './dto/create-payout.dto';
 import { ReverseConceptDto } from './dto/reverse-concept.dto';
 import { CreateProductPurchaseDto } from './dto/create-product-purchase.dto';
 import { ListPeriodsDto } from './dto/list-periods.dto';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('payroll')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+@RequiresOperationalSubscription('wrk')
 export class PayrollController {
   constructor(
     private readonly periodService: PayrollPeriodService,

@@ -77,6 +77,7 @@ function buildService(options: {
   found?: PaymentReport | null;
   subscription?: Subscription;
   access?: Partial<AccessState>;
+  hasPendingReport?: boolean;
 }) {
   const rows = options.rows ?? [];
   const reports = {
@@ -98,6 +99,9 @@ function buildService(options: {
       graceEndsAt: null,
       ...options.access,
     } as AccessState),
+    hasPendingReport: jest
+      .fn()
+      .mockResolvedValue(options.hasPendingReport ?? false),
   };
 
   const service = new BillingHistoryService(
@@ -238,6 +242,104 @@ describe('el listado del historial', () => {
 
     expect(subscription.planId).toBe('full');
     expect(subscription.purchasedPlanId).toBe('basico');
+  });
+});
+
+/**
+ * El caso que se vio en dev: la prueba de Prueba1 terminó el 8 de septiembre y
+ * la pantalla seguía diciendo "estás en tu prueba, que llega hasta el 8". La
+ * fecha no se borra al vencer, así que la cabecera tiene que decir aparte si
+ * esa prueba sigue viva — y en qué situación está el que ya no la tiene.
+ */
+describe('la cabecera describe la situación, no solo las fechas', () => {
+  /** Prueba vencida y nunca pagó: bloqueado, sin gracia que ofrecerle. */
+  const pruebaVencida = subscriptionFixture({
+    planId: 'full',
+    // La columna quedó en `trialing`: el cron todavía no la barrió.
+    status: 'trialing',
+    trialEndsAt: new Date('2026-09-09T00:36:42.000Z'),
+    currentPeriodEnd: null,
+  });
+
+  it('una prueba TERMINADA no se anuncia como prueba', async () => {
+    const { service } = buildService({
+      rows: [],
+      subscription: pruebaVencida,
+      access: {
+        status: 'blocked',
+        canOperate: false,
+        accessEndsAt: pruebaVencida.trialEndsAt,
+        graceEndsAt: null,
+      },
+    });
+
+    const { subscription } = await service.list(7, { page: 1, limit: 10 });
+
+    expect(subscription).toMatchObject({
+      status: 'blocked',
+      // La fecha viaja igual —hace falta para decir CUÁNDO terminó—, pero con
+      // esto la pantalla ya no puede confundirla con una prueba corriendo.
+      onTrial: false,
+      trialEndsAt: '2026-09-09T00:36:42.000Z',
+      accessEndsAt: '2026-09-09T00:36:42.000Z',
+      // Nunca pagó: no hubo mes comprado ni gracia que darle.
+      currentPeriodEnd: null,
+      graceEndsAt: null,
+      graceCause: null,
+      hasPendingReport: false,
+    });
+  });
+
+  it('una prueba que sigue corriendo sí lo dice', async () => {
+    const enCurso = subscriptionFixture({
+      status: 'trialing',
+      trialEndsAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+      currentPeriodEnd: null,
+    });
+    const { service } = buildService({
+      rows: [],
+      subscription: enCurso,
+      access: { status: 'trialing', accessEndsAt: enCurso.trialEndsAt },
+    });
+
+    const { subscription } = await service.list(7, { page: 1, limit: 10 });
+
+    expect(subscription.onTrial).toBe(true);
+  });
+
+  it('distingue la gracia por vencimiento de la del pago esperando', async () => {
+    const { service } = buildService({
+      rows: [],
+      access: {
+        status: 'grace',
+        graceCause: 'pending_report',
+        graceEndsAt: new Date('2026-10-10T16:00:00.000Z'),
+      },
+      hasPendingReport: true,
+    });
+
+    const { subscription } = await service.list(7, { page: 1, limit: 10 });
+
+    // Con esto la pantalla dice "estamos verificando tu pago" en vez de
+    // pedirle otra vez que pague.
+    expect(subscription).toMatchObject({
+      status: 'grace',
+      graceCause: 'pending_report',
+      hasPendingReport: true,
+    });
+  });
+
+  it('quien está al día y ya pagó el mes siguiente tiene su pago esperando', async () => {
+    const { service } = buildService({ rows: [], hasPendingReport: true });
+
+    const { subscription } = await service.list(7, { page: 1, limit: 10 });
+
+    // Al día, pero con un pago en cola: no es gracia y aun así hay que avisarlo.
+    expect(subscription).toMatchObject({
+      status: 'active',
+      graceCause: null,
+      hasPendingReport: true,
+    });
   });
 });
 
