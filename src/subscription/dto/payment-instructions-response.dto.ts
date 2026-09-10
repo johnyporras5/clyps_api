@@ -55,4 +55,13 @@ export interface PaymentInstructionsResponse {
    * `null` = nunca facturó y hay que preguntársela.
    */
   payerIdentification: string | null;
+  /**
+   * Hay un documento de cobro VIVO, todavía sin pagar ni vencer.
+   *
+   * La pantalla lo necesita para no ofrecerle corregir la cédula: cambiarla
+   * obliga a anular ese documento en Cobrix y emitir otro, y nadie sabe si el
+   * dueño ya lo pagó —la confirmación puede tardar—. Estaríamos cancelando la
+   * factura a la que le acaba de entrar la plata.
+   */
+  hasOpenCheckout: boolean;
 }

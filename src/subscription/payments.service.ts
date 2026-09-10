@@ -146,6 +146,7 @@ export class PaymentsService {
       // Lo que ya sabemos de ÉL, para no volver a preguntárselo.
       payerIdentification:
         await this.cobrixInvoices.savedIdentification(companyId),
+      hasOpenCheckout: (await this.cobrixInvoices.findLive(companyId)) !== null,
     };
   }
 

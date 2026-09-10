@@ -546,6 +546,7 @@ describe('a dónde paga el dueño', () => {
   const withEnv = (
     env: Record<string, string>,
     savedIdentification: string | null = null,
+    openInvoice: unknown = null,
   ): PaymentsService => {
     const config = {
       get: (key: string) => env[key],
@@ -559,9 +560,11 @@ describe('a dónde paga el dueño', () => {
       {} as never,
       config,
       new CobrixConfig(config),
-      // Lo único que se le pide al servicio de facturas: qué cédula ya guardamos.
+      // Lo único que se le pide al servicio de facturas: qué cédula ya
+      // guardamos y si hay un cobro vivo.
       {
         savedIdentification: () => Promise.resolve(savedIdentification),
+        findLive: () => Promise.resolve(openInvoice),
       } as never,
       {} as never,
       {} as never,
@@ -624,6 +627,21 @@ describe('a dónde paga el dueño', () => {
   it('sin haber facturado nunca, la cédula viaja en null', async () => {
     const result = await withEnv({}).getPaymentInstructions(41);
     expect(result.payerIdentification).toBeNull();
+  });
+
+  /**
+   * Con un cobro vivo la pantalla no puede ofrecer cambiar la cédula: hacerlo
+   * anula ese documento en Cobrix, y puede estar ya pagado.
+   */
+  it('avisa si hay un cobro abierto', async () => {
+    expect(
+      (await withEnv({}, 'V1234567', { id: 19 }).getPaymentInstructions(41))
+        .hasOpenCheckout,
+    ).toBe(true);
+    expect(
+      (await withEnv({}, 'V1234567').getPaymentInstructions(41))
+        .hasOpenCheckout,
+    ).toBe(false);
   });
 });
 
