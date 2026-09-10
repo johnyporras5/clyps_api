@@ -370,6 +370,16 @@ export class SessionController {
     return this.sessionService.removeSessionWithDetails(+id);
   }
 
+  /**
+   * SUB-12: sigue abierta para el TRABAJADOR con el salón bloqueado.
+   *
+   * La deuda es del dueño. Lo que el trabajador mira aquí es su propio trabajo
+   * —lo que hizo y lo que ganó—, no la operación del salón: cerrárselo sería
+   * cobrarle a él una cuenta que no es suya y que no puede pagar.
+   *
+   * Al DUEÑO se le sigue cortando: el decorador del handler pisa al de la clase.
+   */
+  @RequiresOperationalSubscription('wrk')
   @Get('worker/my-sessions')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('wrk')
@@ -575,6 +585,16 @@ export class SessionController {
    * - Worker: ve los suyos (workerId se ignora).
    * - Admin: debe pasar ?workerId=<id>.
    */
+  /**
+   * SUB-12: sigue abierta para el TRABAJADOR con el salón bloqueado.
+   *
+   * La deuda es del dueño. Lo que el trabajador mira aquí es su propio trabajo
+   * —lo que hizo y lo que ganó—, no la operación del salón: cerrárselo sería
+   * cobrarle a él una cuenta que no es suya y que no puede pagar.
+   *
+   * Al DUEÑO se le sigue cortando: el decorador del handler pisa al de la clase.
+   */
+  @RequiresOperationalSubscription('wrk')
   @Get('worker/my-services')
   @Roles('wrk', 'adm')
   async getMyAssignedServices(
@@ -631,6 +651,16 @@ export class SessionController {
    * - Worker: ve los suyos.
    * - Admin: debe pasar ?workerId=<id>.
    */
+  /**
+   * SUB-12: sigue abierta para el TRABAJADOR con el salón bloqueado.
+   *
+   * La deuda es del dueño. Lo que el trabajador mira aquí es su propio trabajo
+   * —lo que hizo y lo que ganó—, no la operación del salón: cerrárselo sería
+   * cobrarle a él una cuenta que no es suya y que no puede pagar.
+   *
+   * Al DUEÑO se le sigue cortando: el decorador del handler pisa al de la clase.
+   */
+  @RequiresOperationalSubscription('wrk')
   @Get('worker/my-history')
   @Roles('wrk', 'adm')
   async getMyHistoryAsWorker(
@@ -654,6 +684,16 @@ export class SessionController {
    * - Admin: debe pasar ?workerId=<id>.
    * Filtros opcionales: startDate, endDate (ISO).
    */
+  /**
+   * SUB-12: sigue abierta para el TRABAJADOR con el salón bloqueado.
+   *
+   * La deuda es del dueño. Lo que el trabajador mira aquí es su propio trabajo
+   * —lo que hizo y lo que ganó—, no la operación del salón: cerrárselo sería
+   * cobrarle a él una cuenta que no es suya y que no puede pagar.
+   *
+   * Al DUEÑO se le sigue cortando: el decorador del handler pisa al de la clase.
+   */
+  @RequiresOperationalSubscription('wrk')
   @Get('worker/income-report')
   @Roles('wrk', 'adm')
   async getMyIncomeReport(
