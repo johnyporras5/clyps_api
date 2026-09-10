@@ -371,15 +371,14 @@ export class SessionController {
   }
 
   /**
-   * SUB-12: sigue abierta para el TRABAJADOR con el salón bloqueado.
+   * SUB-12: su AGENDA sí se corta, aunque el historial no.
    *
-   * La deuda es del dueño. Lo que el trabajador mira aquí es su propio trabajo
-   * —lo que hizo y lo que ganó—, no la operación del salón: cerrárselo sería
-   * cobrarle a él una cuenta que no es suya y que no puede pagar.
-   *
-   * Al DUEÑO se le sigue cortando: el decorador del handler pisa al de la clase.
+   * La línea está en el tiempo: lo que ya trabajó es suyo y se lo mostramos
+   * —historial, servicios, ganancia—, pero lo que está por venir es operación
+   * del salón, y con el salón bloqueado esas citas no se van a poder atender ni
+   * cobrar. Enseñarle una agenda que no va a poder trabajar es peor que no
+   * enseñársela.
    */
-  @RequiresOperationalSubscription('wrk')
   @Get('worker/my-sessions')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('wrk')

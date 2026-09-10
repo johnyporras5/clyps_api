@@ -43,7 +43,6 @@ describe('el trabajador con el salón bloqueado', () => {
     ['su historial de citas', proto.getMyHistoryAsWorker],
     ['sus servicios asignados', proto.getMyAssignedServices],
     ['lo que ganó', proto.getMyIncomeReport],
-    ['sus citas', proto.getMySessions],
   ])('sigue viendo %s', (_caso, handler) => {
     expect(exentosDe(handler)).toContain('wrk');
   });
@@ -52,8 +51,12 @@ describe('el trabajador con el salón bloqueado', () => {
    * La lista de clientes es del SALÓN, no del trabajador: es el activo que el
    * dueño está dejando de pagar. Y agendar es operar — una cita nueva en un
    * salón bloqueado es una cita que nadie va a poder cobrar.
+   *
+   * Su AGENDA cae del mismo lado: lo que ya trabajó se le muestra, lo que está
+   * por venir no, porque con el salón bloqueado no se va a poder trabajar.
    */
   it.each([
+    ['su agenda', proto.getMySessions],
     ['la lista de clientes', proto.getMyClientsAsWorker],
     ['agendar una cita', proto.createSessionWithDetail],
     ['reagendar una cita', proto.reschedule],
