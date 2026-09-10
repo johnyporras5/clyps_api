@@ -36,6 +36,28 @@ const exentosDe = (handler: unknown): string[] => {
   return rule?.allowWhenBlocked ?? [];
 };
 
+describe('el dueño con el salón bloqueado', () => {
+  const proto = SessionController.prototype;
+
+  /**
+   * "Análisis de datos": mirar lo que ya pasó. El dueño bloqueado lo sigue
+   * viendo — son sus números, y los necesita para decidir si paga.
+   */
+  it.each([
+    ['el histórico de citas', proto.findAll],
+    ['los servicios por cobrar', proto.getPendingCollections],
+  ])('sigue viendo %s', (_caso, handler) => {
+    expect(exentosDe(handler)).toContain('adm');
+  });
+
+  it.each([
+    ['agendar una cita', proto.createSessionWithDetail],
+    ['cobrar una cita', proto.registerSessionPayment],
+  ])('NO puede: %s', (_caso, handler) => {
+    expect(exentosDe(handler)).not.toContain('adm');
+  });
+});
+
 describe('el trabajador con el salón bloqueado', () => {
   const proto = SessionController.prototype;
 

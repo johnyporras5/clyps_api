@@ -107,6 +107,15 @@ export class SessionController {
   // Feature B: clientes con cobros en deuda (se le pagó al worker, el cliente
   // aún no pagó a la company). Para la pantalla "pendientes por pago".
   //   ?status=pending (default) | collected (historial) | all
+  /**
+   * SUB-12: sigue abierta para el DUEÑO con el salón bloqueado.
+   *
+   * Es "Análisis de datos": mirar lo que ya pasó. No es operar —no crea citas,
+   * no cobra, no toca nada—, y son SUS números: el salón bloqueado no puede
+   * seguir trabajando, pero tiene que poder ver cuánto facturó y a quién le
+   * deben, que es justo lo que necesita para decidir si paga.
+   */
+  @RequiresOperationalSubscription('adm')
   @Get('payments/pending-collection')
   @Roles('adm')
   async getPendingCollections(
@@ -151,6 +160,15 @@ export class SessionController {
     );
   }
 
+  /**
+   * SUB-12: sigue abierta para el DUEÑO con el salón bloqueado.
+   *
+   * Es "Análisis de datos": mirar lo que ya pasó. No es operar —no crea citas,
+   * no cobra, no toca nada—, y son SUS números: el salón bloqueado no puede
+   * seguir trabajando, pero tiene que poder ver cuánto facturó y a quién le
+   * deben, que es justo lo que necesita para decidir si paga.
+   */
+  @RequiresOperationalSubscription('adm')
   @Get()
   @Roles('adm')
   async findAll(

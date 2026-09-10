@@ -12,7 +12,9 @@ import { RequiresOperationalSubscription } from '../subscription/guards/requires
 @Controller('finances')
 @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
 @Roles('adm')
-@RequiresOperationalSubscription()
+// SUB-12: "Rentabilidad" es análisis de datos, no operación. El dueño
+// bloqueado la sigue viendo, igual que el resto de ese menú.
+@RequiresOperationalSubscription('adm')
 export class CashProfitabilityController {
   constructor(
     private readonly cashProfitabilityService: CashProfitabilityService,

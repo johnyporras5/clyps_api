@@ -22,7 +22,15 @@ import { RequiresOperationalSubscription } from '../subscription/guards/requires
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
-@RequiresOperationalSubscription()
+/**
+ * SUB-12: el DUEÑO bloqueado sigue entrando aquí.
+ *
+ * Todo lo de este controlador es de lectura —ingresos, clientes, empleados— y
+ * es "Análisis de datos" en el menú. Mirar sus propios números no es operar el
+ * salón, y esconderle cuánto factura justo cuando tiene que decidir si paga la
+ * suscripción es el peor momento para hacerlo.
+ */
+@RequiresOperationalSubscription('adm')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
