@@ -80,7 +80,7 @@ export class CobrixInvoiceService {
     // el dueño está intentando PAGAR, negarle el cobro sería el peor momento.
     const subscription = await this.trials.ensureSubscription(companyId);
 
-    await this.assertNothingPaidYet(subscription);
+    await this.assertNothingPending(subscription);
 
     const planId = input.planId ?? billablePlanId(subscription.planId);
     const company = await this.companies.findOne({
@@ -247,24 +247,32 @@ export class CobrixInvoiceService {
   }
 
   /**
-   * Corta el cobro cuando el salón YA pagó.
+   * Corta el cobro cuando el salón tiene un pago ESPERANDO VERIFICACIÓN.
    *
-   * Dos formas de haber pagado, y las dos tienen que frenar el botón:
+   * Es el único caso que frena el botón, y frena por una razón concreta: la
+   * factura de ese pago sigue `open` hasta que llega `invoice.paid`, así que
+   * un segundo "Pagar ahora" devolvería EL MISMO documento y el mismo enlace.
+   * El dueño pagaría dos veces el mismo cobro y el segundo pago no quedaría ni
+   * registrado — el webhook encuentra que esa factura ya tiene reporte y lo
+   * descarta. Plata que entra y no compra nada.
    *
-   * 1. Hay un pago esperando verificación. Volver a abrirle el enlace es
-   *    invitarlo a pagar dos veces lo mismo, y el segundo pago no le compra
-   *    nada: el período se extiende una sola vez por reporte (SUB-6).
-   * 2. Tiene un mes pagado corriendo. Ahí no hay nada que cobrar hasta que se
-   *    acerque el vencimiento — la misma regla con la que `choosePlan` no deja
-   *    cambiar de plan con un período vivo.
+   * Tener un mes pagado corriendo YA NO frena nada: pagar por adelantado es
+   * legítimo y no cuesta un día. Un pago verificado encadena su mes a partir de
+   * la fecha más lejana que el salón tenga —su período vigente o su prueba—, no
+   * desde hoy (`periodCoverage`), así que el mes comprado el 20 de octubre con
+   * cobertura hasta el 24 arranca el 24. El dueño previsor no tiene por qué
+   * esperar a quedarse sin acceso para poder pagar.
+   *
+   * Lo que sí sigue atado a un período vivo es CAMBIAR DE PLAN (`choosePlan`):
+   * eso es otra cosa —implica prorratear lo ya pagado— y no se toca aquí. Quien
+   * paga por adelantado renueva el plan que ya tiene.
    *
    * Un pago RECHAZADO no frena nada: ese es justo el caso en que hay que
    * dejarlo pagar de nuevo. Por eso se miran los reportes que siguen
    * `reported` y NO están marcados como fallidos por la pasarela.
    */
-  private async assertNothingPaidYet(
+  private async assertNothingPending(
     subscription: Subscription,
-    now: Date = new Date(),
   ): Promise<void> {
     const pendiente = await this.reports.findOne({
       where: {
@@ -282,17 +290,6 @@ export class CobrixInvoiceService {
         code: 'PAYMENT_ALREADY_REPORTED',
         message:
           'Ya tenemos un pago tuyo en revisión. Te avisamos en cuanto quede activo; no hace falta que pagues otra vez.',
-      });
-
-    // `!= null` a propósito: la fecha puede llegar sin definir, no solo en null.
-    const finDelMes = subscription.currentPeriodEnd;
-    if (finDelMes != null && finDelMes.getTime() > now.getTime())
-      throw new ConflictException({
-        statusCode: 409,
-        code: 'SUBSCRIPTION_ALREADY_PAID',
-        message: `Tu plan está al día hasta el ${finDelMes.toLocaleDateString(
-          'es-VE',
-        )}. Podrás pagar tu renovación cuando se acerque esa fecha.`,
       });
   }
 

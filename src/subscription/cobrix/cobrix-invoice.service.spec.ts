@@ -169,9 +169,13 @@ function buildService(
 /**
  * Ya pagó: no se le vuelve a abrir el cobro (CLYP-343).
  *
- * Reabrirle el enlace a quien ya pagó es invitarlo a pagar dos veces lo mismo,
- * y el segundo pago no le compra nada: el período se extiende una sola vez por
- * reporte. Un pago RECHAZADO sí lo deja pagar otra vez — ese es justo el caso.
+ * Frena UNA sola cosa: un pago esperando verificación. Su factura sigue abierta,
+ * así que el segundo "Pagar ahora" devolvería el mismo documento y el mismo
+ * enlace — pagaría dos veces lo mismo y el segundo pago no quedaría registrado.
+ *
+ * Tener un mes pagado corriendo NO frena: pagar por adelantado es legítimo y el
+ * mes se encadena al que ya tiene. Un pago RECHAZADO tampoco frena — ese es
+ * justo el caso en que hay que dejarlo pagar otra vez.
  */
 describe('el candado del que ya pagó', () => {
   it('con un pago esperando verificación no se emite otro cobro', async () => {
@@ -186,16 +190,34 @@ describe('el candado del que ya pagó', () => {
     expect(client.createInvoice).not.toHaveBeenCalled();
   });
 
-  it('con el mes ya pagado tampoco: no hay nada que cobrar todavía', async () => {
+  it('con el mes pagado corriendo SÍ se le emite: paga por adelantado', async () => {
+    const { service } = buildService({
+      subscription: {
+        id: 3,
+        planId: 'basico',
+        currentPeriodEnd: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000),
+      } as Subscription,
+      lastIdentification: 'J401234567',
+    });
+
+    await expect(service.startCheckout(7)).resolves.toMatchObject({
+      reused: false,
+    });
+  });
+
+  it('adelantarse con un pago en revisión sigue frenado, aunque el mes esté vivo', async () => {
     const { service, client } = buildService({
       subscription: {
         id: 3,
         planId: 'basico',
         currentPeriodEnd: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000),
       } as Subscription,
+      pendingReport: { id: 9, status: 'reported' } as PaymentReport,
     });
 
-    await expect(service.startCheckout(7)).rejects.toThrow(/está al día/);
+    await expect(service.startCheckout(7)).rejects.toThrow(
+      /pago tuyo en revisión/,
+    );
     expect(client.createInvoice).not.toHaveBeenCalled();
   });
 
