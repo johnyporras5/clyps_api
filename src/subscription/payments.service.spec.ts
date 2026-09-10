@@ -543,7 +543,10 @@ describe('monto fuera de tolerancia', () => {
  * a alguien sin decirle a qué wallet mandar es perder su dinero y su confianza.
  */
 describe('a dónde paga el dueño', () => {
-  const withEnv = (env: Record<string, string>): PaymentsService => {
+  const withEnv = (
+    env: Record<string, string>,
+    savedIdentification: string | null = null,
+  ): PaymentsService => {
     const config = {
       get: (key: string) => env[key],
     } as unknown as ConfigService;
@@ -556,19 +559,22 @@ describe('a dónde paga el dueño', () => {
       {} as never,
       config,
       new CobrixConfig(config),
-      {} as never,
+      // Lo único que se le pide al servicio de facturas: qué cédula ya guardamos.
+      {
+        savedIdentification: () => Promise.resolve(savedIdentification),
+      } as never,
       {} as never,
       {} as never,
     );
   };
 
-  it('solo ofrece los métodos que tienen datos cargados', () => {
-    const result = withEnv({
+  it('solo ofrece los métodos que tienen datos cargados', async () => {
+    const result = await withEnv({
       SUBSCRIPTION_PAY_PHONE: '0414-1234567',
       SUBSCRIPTION_PAY_BANK: '0102 - Banco de Venezuela',
       SUBSCRIPTION_PAY_ID: 'J-401234567',
       SUBSCRIPTION_PAY_HOLDER: 'Clyps, C.A.',
-    }).getPaymentInstructions();
+    }).getPaymentInstructions(41);
 
     expect(result.pagoMovil).toEqual({
       phone: '0414-1234567',
@@ -581,24 +587,43 @@ describe('a dónde paga el dueño', () => {
     expect(result.paypal).toBeNull();
   });
 
-  it('un valor en blanco cuenta como no cargado', () => {
-    const result = withEnv({
+  it('un valor en blanco cuenta como no cargado', async () => {
+    const result = await withEnv({
       SUBSCRIPTION_PAY_PHONE: '   ',
       SUBSCRIPTION_PAY_BINANCE_WALLET: '0xabc123',
-    }).getPaymentInstructions();
+    }).getPaymentInstructions(41);
 
     expect(result.pagoMovil).toBeNull();
     expect(result.binance).toMatchObject({ wallet: '0xabc123', network: null });
   });
 
-  it('avisa si Cobrix está disponible', () => {
-    expect(withEnv({}).getPaymentInstructions().cobrixEnabled).toBe(false);
+  it('avisa si Cobrix está disponible', async () => {
+    expect((await withEnv({}).getPaymentInstructions(41)).cobrixEnabled).toBe(
+      false,
+    );
     expect(
-      withEnv({
-        COBRIX_API_KEY: 'k',
-        COBRIX_WEBHOOK_SECRET: 's',
-      }).getPaymentInstructions().cobrixEnabled,
+      (
+        await withEnv({
+          COBRIX_API_KEY: 'k',
+          COBRIX_WEBHOOK_SECRET: 's',
+        }).getPaymentInstructions(41)
+      ).cobrixEnabled,
     ).toBe(true);
+  });
+
+  /**
+   * CLYP-343: la pantalla dibujaba siempre la caja "tu cédula (solo la primera
+   * vez)", incluso para quien ya había facturado. El dueño no tenía cómo saber
+   * si hacía falta escribirla otra vez, ni cómo corregirla si se equivocó.
+   */
+  it('devuelve la cédula ya guardada para no volver a pedirla', async () => {
+    const result = await withEnv({}, 'V1234567').getPaymentInstructions(41);
+    expect(result.payerIdentification).toBe('V1234567');
+  });
+
+  it('sin haber facturado nunca, la cédula viaja en null', async () => {
+    const result = await withEnv({}).getPaymentInstructions(41);
+    expect(result.payerIdentification).toBeNull();
   });
 });
 

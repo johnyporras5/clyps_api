@@ -105,7 +105,7 @@ export class CobrixInvoiceService {
     // manda la nueva — puede estar corrigiéndola.
     const identification =
       input.identification?.trim().toUpperCase() ||
-      (await this.lastIdentification(companyId));
+      (await this.savedIdentification(companyId));
     if (!identification)
       throw new BadRequestException({
         statusCode: 400,
@@ -377,8 +377,12 @@ export class CobrixInvoiceService {
    * vez hay que preguntárselo. A partir de ahí queda guardado y no se le vuelve
    * a pedir. Se toma el más reciente: si alguna vez lo corrigió, el bueno es el
    * último.
+   *
+   * Es PÚBLICA porque la pantalla de pago necesita saber si ya la tenemos: sin
+   * eso dibuja una caja vacía que dice "solo la primera vez" a alguien que ya
+   * la escribió, y el dueño no puede distinguir eso de que se haya perdido.
    */
-  private async lastIdentification(companyId: number): Promise<string | null> {
+  async savedIdentification(companyId: number): Promise<string | null> {
     const invoice = await this.invoices.findOne({
       where: { companyId },
       order: { id: 'DESC' },

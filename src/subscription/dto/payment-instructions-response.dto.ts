@@ -44,4 +44,15 @@ export interface PaymentInstructionsResponse {
    * solo, en vez de que reporte a mano.
    */
   cobrixEnabled: boolean;
+  /**
+   * La cédula/RIF con la que ya se le facturó, si existe (CLYP-343).
+   *
+   * Es el ÚNICO campo de este DTO que depende del tenant: el resto son nuestras
+   * cuentas de cobro. Viaja aquí y no en un endpoint aparte porque lo consume
+   * la misma pantalla y en el mismo momento — pedirlo por separado sería una
+   * llamada más para un solo string.
+   *
+   * `null` = nunca facturó y hay que preguntársela.
+   */
+  payerIdentification: string | null;
 }

@@ -153,8 +153,13 @@ export class SubscriptionController {
    */
   @Roles('adm')
   @Get('payment-instructions')
-  getPaymentInstructions(): PaymentInstructionsResponse {
-    return this.paymentsService.getPaymentInstructions();
+  async getPaymentInstructions(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<PaymentInstructionsResponse> {
+    const companyId = await this.paymentsService.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.paymentsService.getPaymentInstructions(companyId);
   }
 
   /**

@@ -113,7 +113,9 @@ export class PaymentsService {
    * ofrece: enseñar "Binance" sin wallet es invitar a que el dinero salga hacia
    * ninguna parte. Encender un método es cargar sus variables, no tocar código.
    */
-  getPaymentInstructions(): PaymentInstructionsResponse {
+  async getPaymentInstructions(
+    companyId: number,
+  ): Promise<PaymentInstructionsResponse> {
     const phone = this.str('SUBSCRIPTION_PAY_PHONE');
     const wallet = this.str('SUBSCRIPTION_PAY_BINANCE_WALLET');
     const paypalEmail = this.str('SUBSCRIPTION_PAY_PAYPAL_EMAIL');
@@ -141,6 +143,9 @@ export class PaymentsService {
           }
         : null,
       cobrixEnabled: this.cobrix.enabled,
+      // Lo que ya sabemos de ÉL, para no volver a preguntárselo.
+      payerIdentification:
+        await this.cobrixInvoices.savedIdentification(companyId),
     };
   }
 
