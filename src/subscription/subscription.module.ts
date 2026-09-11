@@ -8,6 +8,7 @@ import { ExchangeRateService } from './rate/exchange-rate.service';
 import { SubscriptionAccessGuard } from './guards/subscription-access.guard';
 import { SubscriptionController } from './subscription.controller';
 import { AdminPaymentsController } from './admin-payments.controller';
+import { AdminSubscriptionController } from './admin-subscription.controller';
 import { CobrixConfig } from './cobrix/cobrix.config';
 import { CobrixClient } from './cobrix/cobrix.client';
 import { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
@@ -111,6 +112,8 @@ import { EmailModule } from '../email/email.module';
   controllers: [
     SubscriptionController,
     AdminPaymentsController,
+    // Consulta de suscripcion por usuario, para el panel de plataforma.
+    AdminSubscriptionController,
     CobrixWebhookController,
     AdminRemindersController,
   ],
