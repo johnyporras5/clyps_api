@@ -37,9 +37,19 @@ describe('pago verificado', () => {
   });
 
   it('lleva la versión HTML para el canal de correo', () => {
-    expect(message.html).toContain('<p>');
     expect(message.html).toContain('19/10/2026');
     expect(message.actionUrl).toBe('https://app.clyps.co/suscripcion');
+  });
+
+  /**
+   * El correo de dinero es el que más se parece a un fraude si llega pelado.
+   * Tiene que verse como los demás del producto: encabezado, logo y pie.
+   */
+  it('usa el armazón de los demás correos', () => {
+    expect(message.html).toContain('<!DOCTYPE html>');
+    expect(message.html).toContain('CLYPS');
+    expect(message.html).toContain('Gestión Profesional de Citas');
+    expect(message.html).toContain('Todos los derechos reservados');
   });
 });
 

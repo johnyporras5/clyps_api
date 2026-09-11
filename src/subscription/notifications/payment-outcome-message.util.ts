@@ -3,6 +3,7 @@ import {
   type DeliverableMessage,
   type PaymentInstructions,
 } from '../reminders/reminder-message.util';
+import { renderSubscriptionEmail } from './subscription-email.template';
 
 /**
  * El texto del aviso de resultado de un pago (SUB-9 / CLYP-340).
@@ -58,19 +59,6 @@ export interface PaymentRejectedContext {
   instructions: PaymentInstructions;
 }
 
-/** Escapa lo que va dentro del HTML: el motivo lo escribe una persona. */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function paragraphs(lines: string[]): string {
-  return lines.map((line) => `<p>${escapeHtml(line)}</p>`).join('');
-}
-
 /** "Plan activado hasta {fecha}": el pago se verificó y el acceso ya corre. */
 export function buildPaymentVerifiedMessage(
   context: PaymentVerifiedContext,
@@ -87,7 +75,21 @@ export function buildPaymentVerifiedMessage(
     body: lines.join('\n\n'),
     // Ya pagó: no hay nada que cobrarle ni a dónde mandarlo a pagar.
     paymentLines: [],
-    html: paragraphs(lines),
+    html: renderSubscriptionEmail({
+      title: `Plan ${context.planName} activado`,
+      greeting: context.companyName,
+      intro: [
+        `Confirmamos tu pago: tu plan ${context.planName} queda activo hasta el ${until}.`,
+      ],
+      notice: {
+        tone: 'ok',
+        icon: '✅',
+        text: 'No tienes que hacer nada más.',
+      },
+      cta: context.link
+        ? { label: 'Ver mi suscripción', url: context.link }
+        : undefined,
+    }),
     actionUrl: context.link,
   };
 }
@@ -155,8 +157,27 @@ export function buildPaymentRejectedMessage(
       : 'No pudimos confirmar tu pago: tu acceso quedó bloqueado',
     body: lines.join('\n\n'),
     paymentLines,
-    // El correo sí los lleva dentro del texto: se lee fuera de la app.
-    html: paragraphs([...lines, ...paymentLines]),
+    // El correo SÍ lleva los datos de cobro: se lee fuera de la app, así que la
+    // regla de las tiendas no aplica —lo que no puede mostrarlos es la
+    // notificación dentro del teléfono—.
+    html: renderSubscriptionEmail({
+      title: 'No pudimos confirmar tu pago',
+      greeting: context.companyName,
+      intro: [
+        context.reference
+          ? `No pudimos confirmar el pago con referencia ${context.reference}.`
+          : 'No pudimos confirmar tu pago.',
+        'Revisa el comprobante y repórtalo de nuevo con los datos corregidos: el monto y la referencia deben coincidir con lo que muestra tu banco.',
+      ],
+      notice: { tone: 'warn', icon: '⚠️', text: `Motivo: ${context.reason}` },
+      payment: paymentLines.length
+        ? { title: 'Datos para pagar', lines: paymentLines }
+        : undefined,
+      cta: instructions.link
+        ? { label: 'Reportar mi pago', url: instructions.link }
+        : undefined,
+      footerNote: accessLineOf(context.access),
+    }),
     actionUrl: instructions.link,
   };
 }

@@ -1,4 +1,8 @@
 import type { ReminderTier } from '../subscription.enums';
+import {
+  renderSubscriptionEmail,
+  type SubscriptionEmailNotice,
+} from '../notifications/subscription-email.template';
 
 /**
  * El texto del recordatorio (SUB-8 / CLYP-339).
@@ -134,6 +138,31 @@ function instructionLines(context: ReminderContext): string[] {
   return lines;
 }
 
+/**
+ * La tarjeta de color de cada tramo. Sube de tono como sube la insistencia: los
+ * avisos lejanos son informativos, y el del bloqueo tiene que verse distinto de
+ * un vistazo, sin leerlo entero.
+ */
+const NOTICE_POR_TIER: Record<
+  ReminderTier,
+  SubscriptionEmailNotice | undefined
+> = {
+  'd-7': undefined,
+  'd-3': undefined,
+  'd-1': { tone: 'warn', icon: '⏰', text: 'Tu plan vence mañana.' },
+  d0: { tone: 'warn', icon: '⏰', text: 'Tu plan vence hoy.' },
+  grace: {
+    tone: 'warn',
+    icon: '🕒',
+    text: 'Sigues trabajando durante los días de cortesía. Después el acceso se pausa.',
+  },
+  blocked: {
+    tone: 'warn',
+    icon: '🔒',
+    text: 'Tu acceso está pausado. Tus datos están intactos y vuelven en cuanto se verifique el pago.',
+  },
+};
+
 export function buildReminderMessage(
   context: ReminderContext,
 ): ReminderMessage {
@@ -148,21 +177,21 @@ export function buildReminderMessage(
   if (context.instructions.link)
     paymentLines.push(`Reporta tu pago aquí: ${context.instructions.link}`);
 
-  const html = [
-    `<h2>${title}</h2>`,
-    `<p>Hola ${context.companyName},</p>`,
-    `<p>${leadOf(context)}</p>`,
-    instructionLines(context).length
-      ? `<ul>${instructionLines(context)
-          .map((line) => `<li>${line}</li>`)
-          .join('')}</ul>`
-      : '',
-    context.instructions.link
-      ? `<p><a href="${context.instructions.link}">Reportar mi pago</a></p>`
-      : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  // El correo usa el mismo armazón que el resto del producto. Antes salía como
+  // una tira de <p> sueltos: al lado de la confirmación de una cita parecía de
+  // otra empresa, y en un correo de dinero eso se lee como fraude.
+  const html = renderSubscriptionEmail({
+    title,
+    greeting: context.companyName,
+    intro: [leadOf(context)],
+    notice: NOTICE_POR_TIER[context.tier],
+    payment: paymentLines.length
+      ? { title: 'Datos para pagar', lines: instructionLines(context) }
+      : undefined,
+    cta: context.instructions.link
+      ? { label: 'Reportar mi pago', url: context.instructions.link }
+      : undefined,
+  });
 
   return {
     tier: context.tier,
