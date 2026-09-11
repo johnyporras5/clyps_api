@@ -1,3 +1,4 @@
+import { PAY_URL } from '../config/app-links.config';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
@@ -84,7 +85,9 @@ export class PaymentOutcomeService {
       bank: str('SUBSCRIPTION_PAY_BANK'),
       identification: str('SUBSCRIPTION_PAY_ID'),
       holder: str('SUBSCRIPTION_PAY_HOLDER'),
-      link: str('SUBSCRIPTION_PAY_LINK'),
+      // El dominio del producto es el que manda; la variable solo sirve para
+      // apuntar a otro sitio en pruebas.
+      link: str('SUBSCRIPTION_PAY_LINK') ?? PAY_URL,
     };
   }
 
