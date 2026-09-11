@@ -71,9 +71,22 @@ describe('pago rechazado', () => {
     expect(message.actionUrl).toBe('https://app.clyps.co/suscripcion');
   });
 
-  it('repite los datos de pago: corregir no debe mandarlo a otra pantalla', () => {
-    expect(message.body).toContain('0414-1234567');
-    expect(message.body).toContain('Banesco');
+  /**
+   * Los datos siguen ahí —corregir un pago no debería mandarlo a otra
+   * pantalla—, pero APARTE del cuerpo: dentro de la app del teléfono no se
+   * pueden mostrar cuentas, y el cuerpo es lo único que se pinta ahí.
+   */
+  it('repite los datos de pago, pero fuera del cuerpo', () => {
+    const datos = message.paymentLines.join(' ');
+    expect(datos).toContain('0414-1234567');
+    expect(datos).toContain('Banesco');
+
+    expect(message.body).not.toContain('0414-1234567');
+    expect(message.body).not.toContain('Banesco');
+  });
+
+  it('el correo sí los lleva dentro del texto: se lee fuera de la app', () => {
+    expect(message.html).toContain('0414-1234567');
   });
 
   it('con el período vigente, dice hasta cuándo le llega el acceso', () => {

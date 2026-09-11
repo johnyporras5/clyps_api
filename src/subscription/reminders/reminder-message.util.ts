@@ -49,8 +49,24 @@ export interface ReminderContext {
  */
 export interface DeliverableMessage {
   title: string;
-  /** Texto plano: sirve igual para in-app, WhatsApp o el cuerpo del correo. */
+  /**
+   * Texto plano y CORTO: qué pasa y qué hacer, sin datos de cobro.
+   *
+   * Es lo único que se muestra dentro de la app del teléfono, así que no puede
+   * llevar montos, cuentas ni enlaces de pago: Apple y Google prohíben empujar
+   * a pagar fuera de su sistema de compras, y una notificación con el número de
+   * Pago Móvil es exactamente eso.
+   */
   body: string;
+  /**
+   * Los datos para pagar —monto, Pago Móvil, banco, cédula, titular, enlace—,
+   * una línea cada uno.
+   *
+   * Van aparte para que cada canal decida: el correo y la campana de la WEB los
+   * muestran; el teléfono los ignora y se queda con el `body`. Vacío = no hay
+   * nada configurado, o el aviso no es de cobro.
+   */
+  paymentLines: string[];
   /** El mismo mensaje en HTML, para el canal de correo. */
   html: string;
   /** A dónde lleva el toque. */
@@ -122,12 +138,15 @@ export function buildReminderMessage(
   context: ReminderContext,
 ): ReminderMessage {
   const title = titleOf(context);
-  const lines = [leadOf(context), '', ...instructionLines(context)];
+
+  // El cuerpo se queda con lo que se puede leer en cualquier parte. Los datos
+  // de cobro salen de ahí y viajan aparte: dentro de la app del teléfono no se
+  // muestran, y en la campana de la web igual se cortaban a dos líneas.
+  const body = leadOf(context);
+  const paymentLines = [...instructionLines(context)];
 
   if (context.instructions.link)
-    lines.push('', `Reporta tu pago aquí: ${context.instructions.link}`);
-
-  const body = lines.filter((line, i, all) => line || all[i - 1]).join('\n');
+    paymentLines.push(`Reporta tu pago aquí: ${context.instructions.link}`);
 
   const html = [
     `<h2>${title}</h2>`,
@@ -149,6 +168,7 @@ export function buildReminderMessage(
     tier: context.tier,
     title,
     body,
+    paymentLines,
     html,
     actionUrl: context.instructions.link,
   };

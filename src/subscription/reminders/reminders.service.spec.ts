@@ -108,12 +108,19 @@ describe('el barrido de recordatorios', () => {
 
     const [recipient, message] = channel.deliver.mock.calls[0] as [
       { companyId: number; userId: number },
-      { tier: string; title: string; body: string },
+      {
+        tier: string;
+        title: string;
+        body: string;
+        paymentLines: string[];
+      },
     ];
     expect(recipient).toMatchObject({ companyId: 7, userId: 42 });
     expect(message.tier).toBe('d-3');
-    // Accionable de un toque: el monto en Bs viaja en el cuerpo.
-    expect(message.body).toContain('11.924,88');
+    // El monto viaja APARTE del cuerpo: dentro de la app del teléfono no se
+    // muestran montos ni cuentas, y el cuerpo es lo único que se pinta ahí.
+    expect(message.paymentLines.join(' ')).toContain('11.924,88');
+    expect(message.body).not.toContain('11.924,88');
 
     expect(logs.save).toHaveBeenCalledTimes(1);
     expect(logs.create).toHaveBeenCalledWith(

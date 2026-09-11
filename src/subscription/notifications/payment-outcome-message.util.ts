@@ -85,6 +85,8 @@ export function buildPaymentVerifiedMessage(
   return {
     title: `Plan ${context.planName} activado hasta el ${until}`,
     body: lines.join('\n\n'),
+    // Ya pagó: no hay nada que cobrarle ni a dónde mandarlo a pagar.
+    paymentLines: [],
     html: paragraphs(lines),
     actionUrl: context.link,
   };
@@ -131,10 +133,14 @@ export function buildPaymentRejectedMessage(
     'Revisa el comprobante y repórtalo de nuevo con los datos corregidos: el monto y la referencia deben coincidir con lo que muestra tu banco.',
   ];
 
-  // Los datos de pago se repiten aquí a propósito: quien tiene que corregir un
-  // pago rechazado no debería salir a buscarlos a otra pantalla.
+  lines.push(accessLineOf(context.access));
+
+  // Los datos de pago se repiten a propósito: quien tiene que corregir un pago
+  // rechazado no debería salir a buscarlos a otra pantalla. Pero van APARTE del
+  // cuerpo, porque dentro de la app del teléfono no se pueden mostrar.
+  const paymentLines: string[] = [];
   if (instructions.phone && instructions.bank) {
-    lines.push(
+    paymentLines.push(
       `Pago Móvil: ${instructions.phone} · ${instructions.bank}` +
         (instructions.identification
           ? ` · ${instructions.identification}`
@@ -143,14 +149,14 @@ export function buildPaymentRejectedMessage(
     );
   }
 
-  lines.push(accessLineOf(context.access));
-
   return {
     title: context.access.canOperate
       ? 'No pudimos confirmar tu pago'
       : 'No pudimos confirmar tu pago: tu acceso quedó bloqueado',
     body: lines.join('\n\n'),
-    html: paragraphs(lines),
+    paymentLines,
+    // El correo sí los lleva dentro del texto: se lee fuera de la app.
+    html: paragraphs([...lines, ...paymentLines]),
     actionUrl: instructions.link,
   };
 }

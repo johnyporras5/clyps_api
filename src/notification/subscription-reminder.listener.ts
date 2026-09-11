@@ -30,6 +30,12 @@ export class SubscriptionReminderListener {
         data: {
           type: 'reminder',
           companyId: event.companyId,
+          // Aparte del cuerpo a propósito: la campana de la WEB las pinta y la
+          // del teléfono las ignora, que es lo que exige la regla de las
+          // tiendas —dentro de la app no se muestran cuentas ni montos—.
+          ...(event.paymentLines?.length
+            ? { paymentLines: event.paymentLines }
+            : {}),
           ...(event.actionUrl ? { actionUrl: event.actionUrl } : {}),
         },
       });

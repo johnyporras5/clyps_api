@@ -38,6 +38,7 @@ export class InAppReminderChannel implements ReminderChannelAdapter {
       companyId: recipient.companyId,
       title: message.title,
       body: message.body,
+      paymentLines: message.paymentLines,
       actionUrl: message.actionUrl,
     } satisfies SubscriptionReminderInAppEvent);
 

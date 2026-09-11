@@ -51,5 +51,10 @@ export interface SubscriptionReminderInAppEvent {
   companyId: number;
   title: string;
   body: string;
+  /**
+   * Los datos de cobro, aparte del cuerpo. Quien pinta la notificación decide
+   * si los muestra: la web sí, el teléfono no (regla de las tiendas).
+   */
+  paymentLines: string[];
   actionUrl: string | null;
 }
