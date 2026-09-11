@@ -29,6 +29,16 @@ export class SubscriptionReminderListener {
         body: event.body,
         data: {
           type: 'reminder',
+          /**
+           * Marca el aviso como de SUSCRIPCIÓN.
+           *
+           * `type: 'reminder'` lo comparte con los recordatorios de cita, y el
+           * front los enruta a todos al detalle de la cita: sin esta marca, el
+           * dueño tocaba "tu plan vence en 3 días" y aterrizaba en su agenda.
+           * El tipo no se puede cambiar —la app ya mapea los cinco que hay—,
+           * así que la distinción viaja aquí.
+           */
+          subtype: 'subscription',
           companyId: event.companyId,
           // Aparte del cuerpo a propósito: la campana de la WEB las pinta y la
           // del teléfono las ignora, que es lo que exige la regla de las
