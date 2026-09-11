@@ -85,9 +85,19 @@ export class PaymentOutcomeService {
       bank: str('SUBSCRIPTION_PAY_BANK'),
       identification: str('SUBSCRIPTION_PAY_ID'),
       holder: str('SUBSCRIPTION_PAY_HOLDER'),
-      // El dominio del producto es el que manda; la variable solo sirve para
-      // apuntar a otro sitio en pruebas.
-      link: str('SUBSCRIPTION_PAY_LINK') ?? PAY_URL,
+      /*
+       * El enlace NO sale de una variable de entorno (CLYP-339).
+       *
+       * Salía de `SUBSCRIPTION_PAY_LINK`, y esa variable se quedó cargada en
+       * producción con un dominio que ya no existe —`app.clyps.com`—, así que
+       * cada aviso de cobro mandaba al dueño a una página muerta y nadie se
+       * enteraba: el código estaba bien, el valor no.
+       *
+       * El dominio del producto no cambia por ambiente, así que se decide acá.
+       * Para apuntar a otro sitio se cambia la constante, que además queda en el
+       * historial de cambios en vez de en un panel que nadie mira.
+       */
+      link: PAY_URL,
     };
   }
 

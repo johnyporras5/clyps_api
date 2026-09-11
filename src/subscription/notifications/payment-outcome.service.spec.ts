@@ -1,3 +1,4 @@
+import { PAY_URL } from '../config/app-links.config';
 import type { ConfigService } from '@nestjs/config';
 import type { Repository } from 'typeorm';
 import type { Company } from '../../company/entities/company.entity';
@@ -71,12 +72,9 @@ function buildService(options: {
       ),
   };
 
-  const config = {
-    get: (key: string) =>
-      key === 'SUBSCRIPTION_PAY_LINK'
-        ? 'https://app.clyps.co/suscripcion'
-        : undefined,
-  };
+  // Ya no hay variable para el enlace: el aviso siempre apunta al dominio del
+  // producto. Se deja el config vacío justamente para probarlo.
+  const config = { get: () => undefined };
 
   // El acceso DESPUÉS del rechazo: es lo que decide si el mensaje anuncia
   // bloqueo o no. Por defecto, un salón que sigue operando.
@@ -175,9 +173,7 @@ describe('aviso de pago rechazado', () => {
     expect(inAppSent[0].message.body).toContain(
       'No aparece el pago en la cuenta',
     );
-    expect(inAppSent[0].message.actionUrl).toBe(
-      'https://app.clyps.co/suscripcion',
-    );
+    expect(inAppSent[0].message.actionUrl).toBe(PAY_URL);
   });
 });
 
