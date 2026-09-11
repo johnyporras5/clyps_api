@@ -301,7 +301,42 @@ describe('emisión del documento de cobro', () => {
     await service.startCheckout(7, {});
 
     const sent = firstArg<{ identification: string }>(client.createInvoice);
-    expect(sent.identification).toBe('J401234567');
+    // Sale normalizada aunque se haya guardado de otra forma: a Cobrix siempre
+    // le llega la misma identidad, no una por cada manera de escribirla.
+    expect(sent.identification).toBe('J-401234567');
+  });
+
+  it('normaliza lo que escribe el dueño antes de mandarlo', async () => {
+    const { service, client } = buildService({ lastIdentification: null });
+
+    await service.startCheckout(7, { identification: 'v 12.345.678' });
+
+    const sent = firstArg<{ identification: string }>(client.createInvoice);
+    expect(sent.identification).toBe('V-12345678');
+  });
+
+  /**
+   * Sin letra no se adivina: `12345678` puede ser la cédula V-12345678 o el RIF
+   * J-12345678, y elegir por él le factura a otra persona.
+   */
+  it('una cédula sin letra se rechaza, no se completa a mano', async () => {
+    const { service, client } = buildService({ lastIdentification: null });
+
+    await expect(
+      service.startCheckout(7, { identification: '12345678' }),
+    ).rejects.toThrow(/con su letra/);
+    expect(client.createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('una guardada sin letra cuenta como no tenerla: se vuelve a pedir', async () => {
+    const { service, client } = buildService({
+      lastIdentification: '1234567',
+    });
+
+    await expect(service.startCheckout(7, {})).rejects.toThrow(
+      /cédula o RIF para emitir/,
+    );
+    expect(client.createInvoice).not.toHaveBeenCalled();
   });
 
   it('sin cédula y sin ninguna guardada, la pide', async () => {

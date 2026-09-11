@@ -15,6 +15,10 @@ import { ExchangeRateService } from '../rate/exchange-rate.service';
 import { getPlan, type PlanId } from '../config/plans.config';
 import { quoteAmountVesMinor } from '../subscription-quote.util';
 import { billablePlanId } from '../entitlements.util';
+import {
+  IDENTIFICATION_FORMAT_MESSAGE,
+  normalizeIdentification,
+} from '../subscription-identification.util';
 import { SubscriptionService } from '../subscription.service';
 import { CURRENCY_VES, formatVesMinor } from '../subscription-money.util';
 import { CobrixConfig } from './cobrix.config';
@@ -103,9 +107,20 @@ export class CobrixInvoiceService {
     // La cédula/RIF solo se pide la PRIMERA vez: de ahí en más se reusa la que
     // ya escribió y el botón lo lleva directo a pagar. Si manda una nueva,
     // manda la nueva — puede estar corrigiéndola.
+    // Se normaliza SIEMPRE, venga de donde venga: Cobrix resuelve al cliente
+    // por identidad fiscal, así que `1234567` y `V-1234567` le crean dos
+    // clientes distintos con las facturas repartidas entre los dos.
+    const escrita = input.identification?.trim();
+    const normalizada = normalizeIdentification(escrita);
+    if (escrita && !normalizada)
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'IDENTIFICATION_INVALID',
+        message: IDENTIFICATION_FORMAT_MESSAGE,
+      });
+
     const identification =
-      input.identification?.trim().toUpperCase() ||
-      (await this.savedIdentification(companyId));
+      normalizada ?? (await this.savedIdentification(companyId));
     if (!identification)
       throw new BadRequestException({
         statusCode: 400,
@@ -378,6 +393,11 @@ export class CobrixInvoiceService {
    * Es PÚBLICA porque la pantalla de pago necesita saber si ya la tenemos: sin
    * eso dibuja una caja vacía que dice "solo la primera vez" a alguien que ya
    * la escribió, y el dueño no puede distinguir eso de que se haya perdido.
+   *
+   * Sale NORMALIZADA, y una guardada que no se pueda normalizar cuenta como no
+   * tenerla: son las de antes de esta regla, escritas sin letra. Preguntársela
+   * una vez más cuesta menos que seguir arrastrando a Cobrix una identidad
+   * partida en dos clientes.
    */
   async savedIdentification(companyId: number): Promise<string | null> {
     const invoice = await this.invoices.findOne({
@@ -385,14 +405,15 @@ export class CobrixInvoiceService {
       order: { id: 'DESC' },
       select: { id: true, payerIdentification: true },
     });
-    if (invoice?.payerIdentification) return invoice.payerIdentification;
+    const deFactura = normalizeIdentification(invoice?.payerIdentification);
+    if (deFactura) return deFactura;
 
     const report = await this.reports.findOne({
       where: { companyId },
       order: { id: 'DESC' },
       select: { id: true, payerIdentification: true },
     });
-    return report?.payerIdentification?.trim() || null;
+    return normalizeIdentification(report?.payerIdentification);
   }
 
   private toResponse(
