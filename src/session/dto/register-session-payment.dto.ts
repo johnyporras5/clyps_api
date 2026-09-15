@@ -243,9 +243,18 @@ export class RegisterSessionPaymentDto {
   // Si la fecha cae en un período que NO está abierto, el backend responde 409
   // PERIOD_CLOSED. El front muestra un aviso y reenvía con esto en true para
   // confirmar que sí quiere sumar la comisión a ese período (se recongela).
+  // Compat: equivale a `payrollPeriodTarget = 'past'`.
   @IsOptional()
   @IsBoolean()
   confirmClosedPeriod?: boolean;
+
+  // Cuando la fecha del cobro cae en un período no abierto, el usuario elige
+  // dónde registrar la comisión: 'past' (el período que contiene la fecha; si
+  // está cerrado, el saldo se marca pagado automáticamente) o 'current' (el
+  // período abierto actual, como un pendiente normal).
+  @IsOptional()
+  @IsIn(['past', 'current'])
+  payrollPeriodTarget?: 'past' | 'current';
 
   // CLYP-362: descuentos por servicio (0..N, uno por servicio con descuento).
   @IsOptional()
