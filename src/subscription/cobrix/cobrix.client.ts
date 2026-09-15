@@ -133,6 +133,55 @@ export class CobrixClient {
   }
 
   /**
+   * Anula el documento de cobro en Cobrix.
+   *
+   * NUNCA lanza: quien la llama es un webhook, y que Cobrix no conteste no
+   * puede impedir que nosotros demos ese cobro por muerto. Devuelve si la
+   * anulación quedó confirmada del OTRO lado — un `false` significa que la
+   * factura puede seguir viva en su panel y hay que cerrarla a mano.
+   *
+   * Un 404 cuenta como anulada: si allá ya no existe, no hay nada que cerrar.
+   */
+  async cancelInvoice(invoiceId: string): Promise<boolean> {
+    const apiKey = this.config.apiKey;
+    if (!apiKey) return false;
+
+    const url = `${this.config.apiUrl}${this.config.invoiceCancelPath.replace(
+      '{id}',
+      encodeURIComponent(invoiceId),
+    )}`;
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: this.config.invoiceCancelMethod,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+      });
+    } catch (error) {
+      this.logger.error(
+        `[cobrix] No se pudo anular la factura ${invoiceId}: ${
+          error instanceof Error ? error.message : 'error desconocido'
+        }`,
+      );
+      return false;
+    }
+
+    if (response.ok || response.status === 404) return true;
+
+    const body = await this.readJson(response);
+    this.logger.error(
+      `[cobrix] Anulación de la factura ${invoiceId} rechazada con ${response.status}: ${JSON.stringify(
+        body,
+      ).slice(0, 500)}`,
+    );
+    return false;
+  }
+
+  /**
    * 503 con un código que el front pueda distinguir. Cualquier fallo aquí deja
    * al dueño con el reporte manual de siempre, que no depende de Cobrix.
    */

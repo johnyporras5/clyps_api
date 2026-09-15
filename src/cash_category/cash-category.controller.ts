@@ -21,10 +21,13 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { CashTransactionKind } from '../cash_transaction/cash-transaction.enums';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('cash-categories')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
 @Roles('adm')
+@RequiresOperationalSubscription()
 export class CashCategoryController {
   constructor(private readonly cashCategoryService: CashCategoryService) {}
 

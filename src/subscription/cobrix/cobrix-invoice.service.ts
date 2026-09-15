@@ -1,11 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThanOrEqual, Repository } from 'typeorm';
+import { In, LessThanOrEqual, Not, Repository } from 'typeorm';
 import { Company } from '../../company/entities/company.entity';
 import { Subscription } from '../entities/subscription.entity';
 import { PaymentReport } from '../entities/payment-report.entity';
@@ -13,6 +14,12 @@ import { SubscriptionInvoice } from '../entities/subscription-invoice.entity';
 import { ExchangeRateService } from '../rate/exchange-rate.service';
 import { getPlan, type PlanId } from '../config/plans.config';
 import { quoteAmountVesMinor } from '../subscription-quote.util';
+import { billablePlanId } from '../entitlements.util';
+import {
+  IDENTIFICATION_FORMAT_MESSAGE,
+  normalizeIdentification,
+} from '../subscription-identification.util';
+import { SubscriptionService } from '../subscription.service';
 import { CURRENCY_VES, formatVesMinor } from '../subscription-money.util';
 import { CobrixConfig } from './cobrix.config';
 import { CobrixClient } from './cobrix.client';
@@ -49,6 +56,7 @@ export class CobrixInvoiceService {
     private readonly rates: ExchangeRateService,
     private readonly client: CobrixClient,
     private readonly config: CobrixConfig,
+    private readonly trials: SubscriptionService,
   ) {}
 
   /**
@@ -72,16 +80,13 @@ export class CobrixInvoiceService {
       });
     }
 
-    const subscription = await this.subscriptions.findOne({
-      where: { companyId },
-      select: { id: true, planId: true },
-    });
-    if (!subscription)
-      throw new BadRequestException(
-        'No hay una suscripción para esta compañía: no se puede emitir el cobro.',
-      );
+    // Si el registro no alcanzó a crear la suscripción, se abre la prueba aquí:
+    // el dueño está intentando PAGAR, negarle el cobro sería el peor momento.
+    const subscription = await this.trials.ensureSubscription(companyId);
 
-    const planId = input.planId ?? subscription.planId;
+    await this.assertNothingPending(subscription);
+
+    const planId = input.planId ?? billablePlanId(subscription.planId);
     const company = await this.companies.findOne({
       where: { id: companyId },
       select: { id: true, name: true, email: true },
@@ -102,9 +107,20 @@ export class CobrixInvoiceService {
     // La cédula/RIF solo se pide la PRIMERA vez: de ahí en más se reusa la que
     // ya escribió y el botón lo lleva directo a pagar. Si manda una nueva,
     // manda la nueva — puede estar corrigiéndola.
+    // Se normaliza SIEMPRE, venga de donde venga: Cobrix resuelve al cliente
+    // por identidad fiscal, así que `1234567` y `V-1234567` le crean dos
+    // clientes distintos con las facturas repartidas entre los dos.
+    const escrita = input.identification?.trim();
+    const normalizada = normalizeIdentification(escrita);
+    if (escrita && !normalizada)
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'IDENTIFICATION_INVALID',
+        message: IDENTIFICATION_FORMAT_MESSAGE,
+      });
+
     const identification =
-      input.identification?.trim().toUpperCase() ||
-      (await this.lastIdentification(companyId));
+      normalizada ?? (await this.savedIdentification(companyId));
     if (!identification)
       throw new BadRequestException({
         statusCode: 400,
@@ -246,6 +262,108 @@ export class CobrixInvoiceService {
   }
 
   /**
+   * Corta el cobro cuando el salón tiene un pago ESPERANDO VERIFICACIÓN.
+   *
+   * Es el único caso que frena el botón, y frena por una razón concreta: la
+   * factura de ese pago sigue `open` hasta que llega `invoice.paid`, así que
+   * un segundo "Pagar ahora" devolvería EL MISMO documento y el mismo enlace.
+   * El dueño pagaría dos veces el mismo cobro y el segundo pago no quedaría ni
+   * registrado — el webhook encuentra que esa factura ya tiene reporte y lo
+   * descarta. Plata que entra y no compra nada.
+   *
+   * Tener un mes pagado corriendo YA NO frena nada: pagar por adelantado es
+   * legítimo y no cuesta un día. Un pago verificado encadena su mes a partir de
+   * la fecha más lejana que el salón tenga —su período vigente o su prueba—, no
+   * desde hoy (`periodCoverage`), así que el mes comprado el 20 de octubre con
+   * cobertura hasta el 24 arranca el 24. El dueño previsor no tiene por qué
+   * esperar a quedarse sin acceso para poder pagar.
+   *
+   * Lo que sí sigue atado a un período vivo es CAMBIAR DE PLAN (`choosePlan`):
+   * eso es otra cosa —implica prorratear lo ya pagado— y no se toca aquí. Quien
+   * paga por adelantado renueva el plan que ya tiene.
+   *
+   * Un pago RECHAZADO no frena nada: ese es justo el caso en que hay que
+   * dejarlo pagar de nuevo. Por eso se miran los reportes que siguen
+   * `reported` y NO están marcados como fallidos por la pasarela.
+   */
+  private async assertNothingPending(
+    subscription: Subscription,
+  ): Promise<void> {
+    const pendiente = await this.reports.findOne({
+      where: {
+        companyId: subscription.companyId,
+        status: 'reported',
+        autoCheckStatus: Not(In(['rejected', 'expired'])),
+      },
+      select: { id: true, reportedAt: true },
+      order: { id: 'DESC' },
+    });
+
+    if (pendiente)
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'PAYMENT_ALREADY_REPORTED',
+        message:
+          'Ya tenemos un pago tuyo en revisión. Te avisamos en cuanto quede activo; no hace falta que pagues otra vez.',
+      });
+  }
+
+  /**
+   * Suelta el documento de cobro: se anula en Cobrix y se cierra del lado
+   * nuestro, para que el próximo "Pagar ahora" emita uno NUEVO.
+   *
+   * Las dos mitades importan y en este orden. Cerrarlo solo aquí dejaría el
+   * documento vivo en el panel de Cobrix: el dueño vería dos deudas del mismo
+   * mes y podría pagar la muerta, cuyo cobro ya no concilia con nada.
+   *
+   * Si la anulación falla NO se aborta: nuestra factura se cierra igual —el
+   * dueño tiene que poder pagar— y queda un ERROR en el log pidiendo cerrarla a
+   * mano. Devuelve si Cobrix confirmó la anulación.
+   */
+  async release(
+    invoice: SubscriptionInvoice,
+    reason: string,
+  ): Promise<boolean> {
+    if (invoice.status !== 'open') return true;
+
+    const canceled = invoice.providerInvoiceId
+      ? await this.client.cancelInvoice(invoice.providerInvoiceId)
+      : false;
+
+    invoice.status = 'expired';
+    await this.invoices.save(invoice);
+
+    if (canceled)
+      this.logger.log(
+        `[cobrix] Factura ${invoice.providerReference} anulada y cerrada: ${reason}`,
+      );
+    else
+      this.logger.error(
+        `[cobrix] Factura ${invoice.providerReference} cerrada de nuestro lado, pero PUEDE SEGUIR VIVA en Cobrix: anúlala a mano. (${reason})`,
+      );
+
+    return canceled;
+  }
+
+  /**
+   * Suelta la factura contra la que se hizo un reporte, si la hubo.
+   *
+   * Es el atajo para quien tiene el reporte en la mano y no el documento: el
+   * rechazo manual del admin (SUB-4). Un reporte sin `invoiceId` —pago fuera de
+   * Cobrix, o integración apagada— no tiene nada que soltar y se ignora.
+   */
+  async releaseForReport(
+    report: Pick<PaymentReport, 'invoiceId'>,
+    reason: string,
+  ): Promise<void> {
+    if (!report.invoiceId) return;
+    const invoice = await this.invoices.findOne({
+      where: { id: report.invoiceId },
+    });
+    if (invoice) await this.release(invoice, reason);
+  }
+
+  /**
    * Cierra las facturas que vencieron sin pagarse.
    *
    * No es una decisión sobre el dinero: si el pago entra tarde, el webhook la
@@ -271,21 +389,31 @@ export class CobrixInvoiceService {
    * vez hay que preguntárselo. A partir de ahí queda guardado y no se le vuelve
    * a pedir. Se toma el más reciente: si alguna vez lo corrigió, el bueno es el
    * último.
+   *
+   * Es PÚBLICA porque la pantalla de pago necesita saber si ya la tenemos: sin
+   * eso dibuja una caja vacía que dice "solo la primera vez" a alguien que ya
+   * la escribió, y el dueño no puede distinguir eso de que se haya perdido.
+   *
+   * Sale NORMALIZADA, y una guardada que no se pueda normalizar cuenta como no
+   * tenerla: son las de antes de esta regla, escritas sin letra. Preguntársela
+   * una vez más cuesta menos que seguir arrastrando a Cobrix una identidad
+   * partida en dos clientes.
    */
-  private async lastIdentification(companyId: number): Promise<string | null> {
+  async savedIdentification(companyId: number): Promise<string | null> {
     const invoice = await this.invoices.findOne({
       where: { companyId },
       order: { id: 'DESC' },
       select: { id: true, payerIdentification: true },
     });
-    if (invoice?.payerIdentification) return invoice.payerIdentification;
+    const deFactura = normalizeIdentification(invoice?.payerIdentification);
+    if (deFactura) return deFactura;
 
     const report = await this.reports.findOne({
       where: { companyId },
       order: { id: 'DESC' },
       select: { id: true, payerIdentification: true },
     });
-    return report?.payerIdentification?.trim() || null;
+    return normalizeIdentification(report?.payerIdentification);
   }
 
   private toResponse(

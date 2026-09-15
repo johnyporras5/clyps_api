@@ -2,6 +2,7 @@ import { ForbiddenException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { Repository } from 'typeorm';
 import { EntitlementsService } from './entitlements.service';
+import type { SubscriptionService } from './subscription.service';
 import type { Company } from '../company/entities/company.entity';
 import type { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import type { PaymentReport } from './entities/payment-report.entity';
@@ -26,6 +27,8 @@ function buildService(options: {
   pendingReports?: number;
   workers?: number;
   noSubscription?: boolean;
+  /** La creación de la prueba de rescate falla (base caída). */
+  startTrialFails?: boolean;
   billingExempt?: boolean;
 }): EntitlementsService {
   const subscription = options.noSubscription
@@ -55,12 +58,31 @@ function buildService(options: {
   };
   const companies = { findOne: jest.fn().mockResolvedValue({ id: 7 }) };
 
+  // La red de seguridad de CLYP-332: sin fila, el acceso se lee abriendo la
+  // prueba en ese momento. `startTrialFails` simula que ni eso se puede.
+  const trials = {
+    ensureSubscription: jest.fn().mockImplementation(() => {
+      if (options.startTrialFails) return Promise.reject(new Error('BD caída'));
+      return Promise.resolve({
+        id: 9,
+        companyId: 7,
+        planId: null,
+        status: 'trialing',
+        trialEndsAt: days(15),
+        currentPeriodEnd: null,
+        graceEndsAt: null,
+        billingExempt: false,
+      } as Subscription);
+    }),
+  };
+
   return new EntitlementsService(
     subscriptions as unknown as Repository<Subscription>,
     reports as unknown as Repository<PaymentReport>,
     workers as unknown as Repository<CompanyWorker>,
     companies as unknown as Repository<Company>,
     { get: () => undefined } as unknown as ConfigService,
+    trials as unknown as SubscriptionService,
   );
 }
 
@@ -245,6 +267,30 @@ describe('la prueba de 15 días', () => {
     expect(await service.can(7, 'workerApp')).toBe(true);
   });
 
+  it('sin fila, se le abre la prueba en el momento en vez de dejarlo gratis para siempre', async () => {
+    const service = buildService({ noSubscription: true });
+
+    const access = await service.getAccessResponse(7);
+
+    // Antes esta rama devolvía acceso completo SIN fecha: prueba perpetua.
+    expect(access.status).toBe('trialing');
+    expect(access.accessEndsAt).not.toBeNull();
+    expect(access.canOperate).toBe(true);
+  });
+
+  it('si ni la prueba de rescate se puede crear, el dueño igual entra', async () => {
+    const service = buildService({
+      noSubscription: true,
+      startTrialFails: true,
+    });
+
+    const access = await service.getAccessResponse(7);
+
+    // Un problema NUESTRO no lo deja fuera de su salón.
+    expect(access.canOperate).toBe(true);
+    expect(access.accessEndsAt).toBeNull();
+  });
+
   it('accede a todo aunque el plan elegido sea Básico', async () => {
     const service = buildService({ planId: 'basico', ...trial });
 
@@ -255,9 +301,14 @@ describe('la prueba de 15 días', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('no tiene tope de trabajadores', async () => {
+  it('usa el tope del Full: admite el #10 y corta pasados los 20', async () => {
     const service = buildService({ planId: 'basico', ...trial, workers: 9 });
     await expect(service.assertCanAddWorker(7)).resolves.toBeUndefined();
+
+    const lleno = buildService({ planId: 'basico', ...trial, workers: 20 });
+    await expect(lleno.assertCanAddWorker(7)).rejects.toThrow(
+      /permite hasta 20 trabajadores/,
+    );
   });
 
   it('el panel lo pinta todo disponible y sin tope', async () => {
@@ -276,7 +327,7 @@ describe('la prueba de 15 días', () => {
       true,
     );
     expect(response.limits).toMatchObject({
-      maxWorkers: null,
+      maxWorkers: 20,
       workersInUse: 3,
       canAddWorker: true,
     });
@@ -352,5 +403,386 @@ describe('los salones exentos de cobro', () => {
   it('quien sí paga no viene marcado como exento', async () => {
     const service = buildService({ planId: 'full' });
     expect((await service.getAccessResponse(7)).billingExempt).toBe(false);
+  });
+});
+
+/** El cuerpo del 403, tipado: es lo que el front lee para decidir a dónde llevarlo. */
+async function blockedBody(
+  service: EntitlementsService,
+): Promise<{ message: string; reason: string; trialExpired: boolean }> {
+  try {
+    await service.assertCanOperate(7);
+    throw new Error('se esperaba que bloqueara y no lo hizo');
+  } catch (error) {
+    return (error as ForbiddenException).getResponse() as {
+      message: string;
+      reason: string;
+      trialExpired: boolean;
+    };
+  }
+}
+
+describe('el mensaje del bloqueo', () => {
+  it('a quien se le acabó la PRUEBA no se le habla de renovar', async () => {
+    const body = await blockedBody(
+      buildService({ currentPeriodEnd: null, trialEndsAt: days(-1) }),
+    );
+
+    expect(body.message).toContain('días de prueba');
+    expect(body.message).not.toContain('reactivar');
+    expect(body.reason).toBe('subscription_blocked');
+    expect(body.trialExpired).toBe(true);
+  });
+
+  it('a quien se le venció el mes PAGADO sí, y se le pide reportar', async () => {
+    const body = await blockedBody(
+      buildService({ currentPeriodEnd: days(-30), graceEndsAt: days(-20) }),
+    );
+
+    expect(body.message).toContain('Tu suscripción venció');
+    expect(body.trialExpired).toBe(false);
+  });
+});
+
+/**
+ * Pagar durante la prueba no la apaga.
+ *
+ * Es el caso real que lo destapó: se registró, eligió el Básico y lo pagó el
+ * mismo día. Los días se le respetaron —el mes arranca al terminar la prueba—
+ * pero las funciones del Full se le apagaban en el acto: quedaba castigado por
+ * pagar temprano.
+ */
+describe('pagar el Básico durante la prueba', () => {
+  // Pagó el día 3: le quedan 12 de prueba y su mes llega hasta 12 + 30.
+  const paidOnTrial = { planId: 'basico' as PlanId, trialEndsAt: days(12) };
+
+  it('conserva el Full mientras la prueba corra', async () => {
+    const response = await buildService({
+      ...paidOnTrial,
+      currentPeriodEnd: days(42),
+    }).getAccessResponse(7);
+
+    expect(response.status).toBe('active');
+    expect(response.planId).toBe('full');
+    expect(response.features.payroll).toBe(true);
+    expect(response.features.aiSuggestions).toBe(true);
+    expect(response.limits.maxWorkers).toBe(20);
+  });
+
+  it('puede seguir agregando trabajadores hasta el tope del Full', async () => {
+    const service = buildService({
+      ...paidOnTrial,
+      currentPeriodEnd: days(42),
+      workers: 5,
+    });
+
+    // Con el Básico ya rigiendo, el trabajador #3 se rechazaba.
+    await expect(service.assertCanAddWorker(7)).resolves.toBeUndefined();
+  });
+
+  it('la respuesta dice a la vez qué usa y qué compró', async () => {
+    const response = await buildService({
+      ...paidOnTrial,
+      currentPeriodEnd: days(42),
+    }).getAccessResponse(7);
+
+    // Lo que usa hoy: el Full de la prueba.
+    expect(response.planId).toBe('full');
+    expect(response.planName).toBe('Full');
+    // Lo que compró y empieza a regir el día 12: el Básico.
+    expect(response.purchasedPlanId).toBe('basico');
+    expect(response.purchasedPlanName).toBe('Básico');
+    // Y la prueba sigue viva, aunque el estado ya sea `active` por el pago.
+    expect(response.onTrial).toBe(true);
+    expect(response.status).toBe('active');
+    expect(response.trialEndsAt).toBe(paidOnTrial.trialEndsAt.toISOString());
+  });
+
+  it('sin plan elegido, lo comprado viaja en null', async () => {
+    const response = await buildService({
+      noSubscription: true,
+    }).getAccessResponse(7);
+
+    expect(response.purchasedPlanId).toBeNull();
+    expect(response.purchasedPlanName).toBeNull();
+    expect(response.onTrial).toBe(true);
+  });
+
+  it('terminada la prueba, onTrial se apaga', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      trialEndsAt: days(-1),
+      currentPeriodEnd: days(29),
+    }).getAccessResponse(7);
+
+    expect(response.onTrial).toBe(false);
+    expect(response.planId).toBe('basico');
+    expect(response.purchasedPlanId).toBe('basico');
+  });
+
+  it('al terminar la prueba pasa al Básico que compró', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      trialEndsAt: days(-1),
+      currentPeriodEnd: days(29),
+    }).getAccessResponse(7);
+
+    expect(response.planId).toBe('basico');
+    expect(response.features.payroll).toBe(false);
+    expect(response.limits.maxWorkers).toBe(2);
+  });
+});
+
+/**
+ * Un pago que la PASARELA rechazó deja de dar acceso (CLYP-343).
+ *
+ * Medido el 2026-09-08: el dueño pagó, Cobrix rechazó el pago y el salón siguió
+ * operando en gracia como si nada. El reporte se queda en `reported` a
+ * propósito —rechazarlo lo decide una persona— pero conceder acceso por él es
+ * regalarle el mes a quien no pagó.
+ */
+describe('el pago que la pasarela rechazó', () => {
+  const vencido = {
+    planId: 'basico' as PlanId,
+    currentPeriodEnd: days(-30),
+    graceEndsAt: days(-20),
+  };
+
+  it('ya no concede acceso: el salón queda bloqueado', async () => {
+    const service = buildService({ ...vencido, pendingReports: 1 });
+    // El mock cuenta los reportes que la consulta encuentre; con el rechazado
+    // fuera del filtro, la cuenta es cero.
+    const access = await buildService({
+      ...vencido,
+      pendingReports: 0,
+    }).getAccessResponse(7);
+
+    expect(access.canOperate).toBe(false);
+    expect(access.status).toBe('blocked');
+    // Y con uno pendiente de verdad, sí opera.
+    expect((await service.getAccessResponse(7)).canOperate).toBe(true);
+  });
+
+  it('la consulta excluye los rechazados y respeta los reportes manuales', async () => {
+    const service = buildService({ ...vencido, pendingReports: 1 });
+    await service.getAccessResponse(7);
+
+    const [where] = (
+      (service as unknown as { reports: { countBy: jest.Mock } }).reports
+        .countBy.mock.calls as unknown[][]
+    )[0] as [unknown];
+    // Dos ramas en OR: sin pasarela (null) o con una que no sea 'rejected'.
+    expect(Array.isArray(where)).toBe(true);
+    expect(where).toHaveLength(2);
+  });
+});
+
+/**
+ * "Tengo un pago esperando" no depende de por dónde le venga el acceso.
+ *
+ * Medido el 2026-09-09: el dueño pagó estando en PRUEBA, el reporte quedó
+ * guardado, y la respuesta decía `hasPendingReport: false` porque el campo se
+ * calculaba desde `graceCause`, que solo apunta al pago cuando ese pago es lo
+ * único que lo sostiene. La pantalla de pago se guía por ese campo, así que no
+ * le mostraba "validando tu pago" y le seguía pidiendo pagar.
+ */
+describe('el pago que está esperando verificación', () => {
+  it('se avisa aunque el acceso venga de la prueba', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      trialEndsAt: days(10),
+      currentPeriodEnd: null,
+      pendingReports: 1,
+    }).getAccessResponse(7);
+
+    expect(response.hasPendingReport).toBe(true);
+    // Su acceso sigue viniendo de la prueba, no del pago.
+    expect(response.status).toBe('trialing');
+    expect(response.graceCause).toBeNull();
+  });
+
+  it('y también cuando su mes está al día', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      currentPeriodEnd: days(20),
+      pendingReports: 1,
+    }).getAccessResponse(7);
+
+    expect(response.hasPendingReport).toBe(true);
+    expect(response.status).toBe('active');
+  });
+
+  it('sin pagos esperando, es false', async () => {
+    const response = await buildService({
+      planId: 'basico',
+      trialEndsAt: days(10),
+      currentPeriodEnd: null,
+    }).getAccessResponse(7);
+
+    expect(response.hasPendingReport).toBe(false);
+  });
+});
+
+/**
+ * SUB-12: el bloqueo ya corta endpoints, y no le habla igual a todos. El dueño
+ * es el único que puede pagar; al trabajador se le corta el acceso pero no se
+ * le manda a una pantalla de pago que no le sirve.
+ */
+describe('a quién le habla el bloqueo', () => {
+  /** El cuerpo del 403, ya desempaquetado. Falla la prueba si NO bloqueó. */
+  async function cuerpoDel403(
+    run: Promise<unknown>,
+  ): Promise<Record<string, unknown>> {
+    try {
+      await run;
+    } catch (error) {
+      return (error as ForbiddenException).getResponse() as Record<
+        string,
+        unknown
+      >;
+    }
+    throw new Error('se esperaba un bloqueo y no hubo ninguno');
+  }
+
+  /** Prueba agotada y nunca pagó: bloqueado. */
+  const bloqueadoSinPagarNunca = () =>
+    buildService({
+      trialEndsAt: days(-1),
+      currentPeriodEnd: null,
+      graceEndsAt: null,
+    });
+
+  it('al dueño le dice que elija plan y pague, y marca blockedFor adm', async () => {
+    const service = bloqueadoSinPagarNunca();
+
+    await expect(service.assertCanOperate(7, 'adm')).rejects.toThrow(
+      ForbiddenException,
+    );
+
+    const body = await cuerpoDel403(service.assertCanOperate(7, 'adm'));
+    expect(body.reason).toBe('subscription_blocked');
+    expect(body.blockedFor).toBe('adm');
+    expect(body.trialExpired).toBe(true);
+    expect(String(body.message)).toContain('Elige tu plan');
+  });
+
+  it('al trabajador NO le pide pagar ni le enseña el estado de cobro', async () => {
+    const service = bloqueadoSinPagarNunca();
+
+    const body = await cuerpoDel403(service.assertCanOperate(7, 'wrk'));
+
+    expect(body.reason).toBe('subscription_blocked');
+    expect(body.blockedFor).toBe('wrk');
+    // Nada de facturación del salón donde trabaja.
+    expect(body).not.toHaveProperty('trialExpired');
+    expect(body).not.toHaveProperty('status');
+    expect(body).not.toHaveProperty('accessEndsAt');
+    const message = String(body.message).toLowerCase();
+    expect(message).toContain('administrador');
+    expect(message).not.toContain('pag');
+    expect(message).not.toContain('plan');
+  });
+
+  it('sin rol se asume el dueño: los llamadores viejos no cambian de mensaje', async () => {
+    const service = bloqueadoSinPagarNunca();
+
+    const body = await cuerpoDel403(service.assertCanOperate(7));
+    expect(body.blockedFor).toBe('adm');
+  });
+
+  it('el estado flaco del trabajador trae el cartel, no la factura', async () => {
+    const service = bloqueadoSinPagarNunca();
+
+    expect(await service.getStatusResponse(7, 'wrk')).toEqual({
+      canOperate: false,
+      blockedFor: 'wrk',
+      message: expect.stringContaining('administrador') as string,
+    });
+  });
+
+  it('sin bloqueo, el estado no trae mensaje que pintar', async () => {
+    const service = buildService({ planId: 'full' });
+
+    expect(await service.getStatusResponse(7, 'wrk')).toEqual({
+      canOperate: true,
+      blockedFor: null,
+      message: null,
+    });
+  });
+});
+
+/**
+ * SUB-12: con el guard colgado de una docena de controladores, la misma
+ * pregunta se repite muchas veces por pantalla. La caché es de segundos —el
+ * estado se recalcula con la hora de ahora— y se tira a mano cuando un pago
+ * cambia el acceso.
+ */
+describe('la caché del acceso', () => {
+  function buildWithSpy(ttl?: string) {
+    const subscriptions = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 1,
+        companyId: 7,
+        planId: 'full',
+        status: 'active',
+        trialEndsAt: null,
+        currentPeriodEnd: days(10),
+        graceEndsAt: null,
+        billingExempt: false,
+      } as Subscription),
+    };
+    const reports = { countBy: jest.fn().mockResolvedValue(0) };
+    const workers = { countBy: jest.fn().mockResolvedValue(0) };
+    const companies = { findOne: jest.fn().mockResolvedValue({ id: 7 }) };
+    const service = new EntitlementsService(
+      subscriptions as unknown as Repository<Subscription>,
+      reports as unknown as Repository<PaymentReport>,
+      workers as unknown as Repository<CompanyWorker>,
+      companies as unknown as Repository<Company>,
+      {
+        get: (key: string) =>
+          key === 'SUBSCRIPTION_ACCESS_CACHE_MS' ? ttl : undefined,
+      } as unknown as ConfigService,
+      {} as unknown as SubscriptionService,
+    );
+    return { service, subscriptions };
+  }
+
+  it('no vuelve a consultar la base dentro de la ventana', async () => {
+    const { service, subscriptions } = buildWithSpy();
+
+    await service.canOperate(7);
+    await service.canOperate(7);
+    await service.canOperate(7);
+
+    expect(subscriptions.findOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('cada salón tiene la suya: no se contagian', async () => {
+    const { service, subscriptions } = buildWithSpy();
+
+    await service.canOperate(7);
+    await service.canOperate(8);
+
+    expect(subscriptions.findOne).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidate obliga a recalcular: el pago verificado abre el salón ya', async () => {
+    const { service, subscriptions } = buildWithSpy();
+
+    await service.canOperate(7);
+    service.invalidate(7);
+    await service.canOperate(7);
+
+    expect(subscriptions.findOne).toHaveBeenCalledTimes(2);
+  });
+
+  it('con TTL en 0 queda apagada', async () => {
+    const { service, subscriptions } = buildWithSpy('0');
+
+    await service.canOperate(7);
+    await service.canOperate(7);
+
+    expect(subscriptions.findOne).toHaveBeenCalledTimes(2);
   });
 });

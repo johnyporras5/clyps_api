@@ -16,6 +16,19 @@
 /** El evento que confirma el cobro. Es el único que activa algo. */
 export const COBRIX_EVENT_INVOICE_PAID = 'invoice.paid';
 
+/**
+ * La factura se anuló en Cobrix.
+ *
+ * Es el ÚNICO aviso de "esto no se va a cobrar" que manda el canal de
+ * documentos: sus eventos automáticos son solo tres —creada, pagada y anulada—
+ * y no hay ninguno de pago rechazado. Se acepta la grafía con doble ele porque
+ * su API mezcla las dos.
+ */
+export const COBRIX_EVENT_INVOICE_CANCELED = new Set([
+  'invoice.canceled',
+  'invoice.cancelled',
+]);
+
 /** Un evento del canal de documentos (`cobrix_invoice_v1`), ya normalizado. */
 export interface CobrixInvoiceEvent {
   /** `invoice.paid`, `invoice.created`, `invoice.canceled`. */
@@ -109,6 +122,56 @@ export function eventNameOf(payload: unknown): string | null {
 /** El id de evento del canal general, que sí lo trae en el envelope. */
 export function eventIdOf(payload: unknown): string | null {
   return asString(asRecord(payload).id);
+}
+
+/**
+ * En qué quedó el pago, en minúsculas: `pending`, `approved`, `rejected`…
+ *
+ * Es lo que distingue "pagó y falta conciliar" de "esto no va a entrar", y el
+ * nombre del evento no lo dice: el rechazo medido llegó como un
+ * `checkout.session.completed` con el pago en otro estado. Por eso se mira el
+ * ESTADO y no solo el tipo.
+ */
+export function paymentStatusOf(payload: unknown): string | null {
+  const raw = asRecord(payload);
+  const status =
+    asString(pick(raw, ['data', 'payment', 'status'])) ??
+    asString(pick(raw, ['data', 'status'])) ??
+    asString(pick(raw, ['invoice', 'payment', 'status'])) ??
+    asString(pick(raw, ['invoice', 'status']));
+  return status ? status.toLowerCase() : null;
+}
+
+/**
+ * Por qué la pasarela rechazó el pago, con sus palabras.
+ *
+ * Su documentación manda mostrárselo al dueño: sin el motivo, "no pudimos
+ * confirmar tu pago" no le dice qué corregir para volver a intentarlo.
+ */
+export function failureReasonOf(payload: unknown): string | null {
+  const raw = asRecord(payload);
+  return (
+    asString(pick(raw, ['data', 'reason'])) ??
+    asString(pick(raw, ['data', 'payment', 'reason'])) ??
+    asString(pick(raw, ['data', 'failureReason'])) ??
+    asString(pick(raw, ['data', 'payment', 'failureReason'])) ??
+    asString(pick(raw, ['reason']))
+  );
+}
+
+/**
+ * La referencia bancaria que el dueño escribió en el checkout de Cobrix.
+ *
+ * Es la que él ve en su banco, así que es la que sirve para buscar el pago si
+ * hay que revisarlo a mano.
+ */
+export function paymentReferenceOf(payload: unknown): string | null {
+  const raw = asRecord(payload);
+  return (
+    asString(pick(raw, ['data', 'payment', 'paymentReference'])) ??
+    asString(pick(raw, ['data', 'paymentReference'])) ??
+    asString(pick(raw, ['data', 'payment', 'id']))
+  );
 }
 
 /**

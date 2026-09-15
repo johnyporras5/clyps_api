@@ -48,3 +48,33 @@ describe('nextPeriodEnd', () => {
     );
   });
 });
+
+describe('nextPeriodEnd con prueba', () => {
+  const now = new Date('2026-08-31T16:00:00.000Z');
+
+  it('primer pago durante la prueba: el mes arranca al vencer el trial', () => {
+    // Paga hoy, pero le quedan días de prueba hasta el 10 de septiembre.
+    const trialEndsAt = new Date('2026-09-10T16:00:00.000Z');
+    expect(nextPeriodEnd(now, null, trialEndsAt).toISOString()).toBe(
+      '2026-10-10T16:00:00.000Z',
+    );
+  });
+
+  it('primer pago en gracia: la prueba ya venció, el mes corre desde hoy', () => {
+    const trialEndsAt = new Date('2026-08-20T16:00:00.000Z');
+    expect(nextPeriodEnd(now, null, trialEndsAt).toISOString()).toBe(
+      '2026-09-30T16:00:00.000Z',
+    );
+  });
+
+  it('manda la fecha más lejana entre el período vigente y la prueba', () => {
+    const vigente = new Date('2026-09-20T16:00:00.000Z');
+    const trialEndsAt = new Date('2026-09-10T16:00:00.000Z');
+    expect(nextPeriodEnd(now, vigente, trialEndsAt).toISOString()).toBe(
+      '2026-10-20T16:00:00.000Z',
+    );
+    expect(nextPeriodEnd(now, trialEndsAt, vigente).toISOString()).toBe(
+      '2026-10-20T16:00:00.000Z',
+    );
+  });
+});

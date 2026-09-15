@@ -17,9 +17,20 @@ import { CompanyIncomeTimelineQueryDto } from './dto/company-income-timeline-que
 import { ClientsReportQueryDto } from './dto/clients-report-query.dto';
 import { ClientsListQueryDto } from './dto/clients-list-query.dto';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('reports')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+/**
+ * SUB-12: el DUEÑO bloqueado sigue entrando aquí.
+ *
+ * Todo lo de este controlador es de lectura —ingresos, clientes, empleados— y
+ * es "Análisis de datos" en el menú. Mirar sus propios números no es operar el
+ * salón, y esconderle cuánto factura justo cuando tiene que decidir si paga la
+ * suscripción es el peor momento para hacerlo.
+ */
+@RequiresOperationalSubscription('adm')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 

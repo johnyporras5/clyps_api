@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { Company } from '../company/entities/company.entity';
@@ -46,6 +47,13 @@ import type {
 import type { ReportPaymentDto } from './dto/report-payment.dto';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type { AutoCheckStatus, PaymentMethod } from './subscription.enums';
+import { billablePlanId } from './entitlements.util';
+import { EntitlementsService } from './entitlements.service';
+import type { PaymentInstructionsResponse } from './dto/payment-instructions-response.dto';
+import {
+  SUBSCRIPTION_PAYMENT_REJECTED,
+  type SubscriptionPaymentRejectedEvent,
+} from './notifications/payment-outcome.events';
 
 /**
  * Pagos de la suscripción: cotizar (SUB-2 / CLYP-334) y reportar (SUB-3 /
@@ -70,6 +78,8 @@ export class PaymentsService {
     private readonly config: ConfigService,
     private readonly cobrix: CobrixConfig,
     private readonly cobrixInvoices: CobrixInvoiceService,
+    private readonly events: EventEmitter2,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   private num(key: string, fallback: number): number {
@@ -88,6 +98,55 @@ export class PaymentsService {
         'SUBSCRIPTION_QUOTE_RATE_TOLERANCE_BPS',
         RATE_DEFAULTS.rateToleranceBps,
       ),
+    };
+  }
+
+  /** Valor de entorno ya limpio, o null si no está cargado. */
+  private str(key: string): string | null {
+    return this.config.get<string>(key)?.trim() || null;
+  }
+
+  /**
+   * A dónde paga el dueño (SUB-FE-1 / CLYP-343).
+   *
+   * Un método SIN datos cargados se devuelve en `null` y la pantalla no lo
+   * ofrece: enseñar "Binance" sin wallet es invitar a que el dinero salga hacia
+   * ninguna parte. Encender un método es cargar sus variables, no tocar código.
+   */
+  async getPaymentInstructions(
+    companyId: number,
+  ): Promise<PaymentInstructionsResponse> {
+    const phone = this.str('SUBSCRIPTION_PAY_PHONE');
+    const wallet = this.str('SUBSCRIPTION_PAY_BINANCE_WALLET');
+    const paypalEmail = this.str('SUBSCRIPTION_PAY_PAYPAL_EMAIL');
+
+    return {
+      pagoMovil: phone
+        ? {
+            phone,
+            bank: this.str('SUBSCRIPTION_PAY_BANK'),
+            identification: this.str('SUBSCRIPTION_PAY_ID'),
+            holder: this.str('SUBSCRIPTION_PAY_HOLDER'),
+          }
+        : null,
+      binance: wallet
+        ? {
+            wallet,
+            network: this.str('SUBSCRIPTION_PAY_BINANCE_NETWORK'),
+            payId: this.str('SUBSCRIPTION_PAY_BINANCE_PAY_ID'),
+          }
+        : null,
+      paypal: paypalEmail
+        ? {
+            email: paypalEmail,
+            link: this.str('SUBSCRIPTION_PAY_PAYPAL_LINK'),
+          }
+        : null,
+      cobrixEnabled: this.cobrix.enabled,
+      // Lo que ya sabemos de ÉL, para no volver a preguntárselo.
+      payerIdentification:
+        await this.cobrixInvoices.savedIdentification(companyId),
+      hasOpenCheckout: (await this.cobrixInvoices.findLive(companyId)) !== null,
     };
   }
 
@@ -168,21 +227,17 @@ export class PaymentsService {
     dto: ReportPaymentDto,
     proof?: Express.Multer.File,
   ): Promise<PaymentReportResponse> {
-    const subscription = await this.subscriptions.findOne({
-      where: { companyId },
-      select: { id: true, planId: true },
-    });
-    if (!subscription)
-      throw new BadRequestException(
-        'No hay una suscripción para esta compañía: no se puede reportar un pago.',
-      );
+    // Sin fila no se puede colgar el reporte de ninguna parte. Si el registro
+    // no llegó a crearla, se abre aquí la prueba en vez de negarle el pago.
+    const subscription =
+      await this.subscriptionService.ensureSubscription(companyId);
 
     const reference = paymentReference(dto);
     await this.assertReferenceIsNew(companyId, reference);
 
     if (dto.method === 'pago_movil') {
       await this.assertFrozenQuoteAcceptable(
-        frozenQuoteOf(dto, subscription.planId),
+        frozenQuoteOf(dto, billablePlanId(subscription.planId)),
       );
     }
 
@@ -212,7 +267,7 @@ export class PaymentsService {
       {
         companyId,
         subscriptionId: subscription.id,
-        planId: subscription.planId,
+        planId: billablePlanId(subscription.planId),
         reportedAt: new Date(),
         autoCheckStatus: autoCheck.status,
         autoCheckReason: autoCheck.reason,
@@ -298,7 +353,12 @@ export class PaymentsService {
     draft: ReturnType<typeof buildPaymentReportDraft>,
   ): Promise<PaymentReport> {
     try {
-      return await this.reports.save(this.reports.create(draft));
+      const saved = await this.reports.save(this.reports.create(draft));
+      // Un reporte nuevo CONCEDE acceso (la gracia por pago pendiente): si la
+      // caché del acceso guardara el "bloqueado" de hace un segundo, el dueño
+      // seguiría sin poder entrar justo después de reportar su pago.
+      this.entitlements.invalidate(saved.companyId);
+      return saved;
     } catch (error) {
       if (
         error instanceof QueryFailedError &&
@@ -410,6 +470,10 @@ export class PaymentsService {
    *
    * NO toca la suscripción — el tenant sigue como estaba (en gracia, bloqueado o
    * en prueba). El motivo viaja al dueño para que sepa qué corregir (SUB-9).
+   *
+   * Sí suelta el documento de cobro, igual que el rechazo de la pasarela: si el
+   * pago no valió, el dueño tiene que poder empezar de cero con un cobro nuevo
+   * en vez de volver a un enlace que ya no lleva a ninguna parte.
    */
   async rejectPayment(
     reportId: number,
@@ -424,6 +488,24 @@ export class PaymentsService {
     report.verifiedAt = new Date();
     report.rejectionReason = dto.rejectionReason;
     await this.saveDecision(report);
+
+    // SUB-9: el dueño tiene que enterarse de que su pago no pasó y de por qué.
+    // Va por evento para que un canal caído no tumbe el rechazo, que ya está
+    // guardado.
+    this.events.emit(SUBSCRIPTION_PAYMENT_REJECTED, {
+      companyId: report.companyId,
+      paymentReportId: report.id,
+      reason: dto.rejectionReason,
+      reference: report.reference ?? null,
+    } satisfies SubscriptionPaymentRejectedEvent);
+
+    // El cobro viejo se anula y se cierra para que el próximo "Pagar ahora"
+    // emita otro. Va DESPUÉS de guardar el rechazo y sin poder tumbarlo: que
+    // Cobrix no conteste no puede deshacer una decisión que el admin ya tomó.
+    if (this.cobrix.enabled)
+      await this.cobrixInvoices
+        .releaseForReport(report, dto.rejectionReason)
+        .catch(() => undefined);
 
     const subscription = await this.subscriptions.findOne({
       where: { companyId: report.companyId },
@@ -500,6 +582,54 @@ export class PaymentsService {
   }
 
   /**
+   * Rechazo firmado por la PASARELA: Cobrix dijo que ese pago no entró.
+   *
+   * A diferencia de `flagForManualReview`, esto SÍ cierra el reporte. El
+   * criterio: cuando Cobrix contesta `payment.failed` sobre un cobro suyo, está
+   * hablando del movimiento bancario que él mismo concilia — no es una opinión
+   * sobre un comprobante que no vio.
+   *
+   * Cerrarlo en `rejected` es lo que le devuelve al dueño la posibilidad de
+   * pagar otra vez: la referencia se libera (el índice único ignora los
+   * rechazados) y el reporte deja de conceder acceso y de callar los avisos.
+   *
+   * NO toca la suscripción: el tenant sigue como estaba.
+   */
+  async rejectFromGateway(
+    report: PaymentReport,
+    reason: string,
+    options: { gatewayPaymentId?: string | null; at?: Date } = {},
+  ): Promise<PaymentReport> {
+    const at = options.at ?? new Date();
+    // La columna son 255 caracteres y el motivo de Cobrix es texto libre.
+    const motivo = reason.slice(0, 255);
+
+    report.status = 'rejected';
+    // 'auto' y sin usuario: no hubo humano que responda por esta decisión.
+    report.verificationMethod = 'auto';
+    report.verifiedByUserId = null;
+    report.verifiedAt = at;
+    report.rejectionReason = motivo;
+    report.autoCheckStatus = 'rejected';
+    report.autoCheckAt = at;
+    report.autoCheckReason = motivo;
+    if (options.gatewayPaymentId)
+      report.gatewayPaymentId = options.gatewayPaymentId;
+    const saved = await this.reports.save(report);
+
+    // SUB-9: el dueño se entera AHORA y con el motivo de Cobrix, no cuando
+    // alguien revise una cola.
+    this.events.emit(SUBSCRIPTION_PAYMENT_REJECTED, {
+      companyId: saved.companyId,
+      paymentReportId: saved.id,
+      reason: motivo,
+      reference: saved.reference ?? null,
+    } satisfies SubscriptionPaymentRejectedEvent);
+
+    return saved;
+  }
+
+  /**
    * Manda el reporte a la cola manual sin resolverlo (SUB-10 → SUB-4).
    *
    * NO cambia `status`: sigue siendo `reported`, y por eso sigue apareciendo en
@@ -519,7 +649,23 @@ export class PaymentsService {
     report.autoCheckReason = reason ? reason.slice(0, 255) : null;
     if (options.gatewayPaymentId)
       report.gatewayPaymentId = options.gatewayPaymentId;
-    return this.reports.save(report);
+    const saved = await this.reports.save(report);
+
+    // La pasarela dijo que ese pago no entró: el dueño tiene que enterarse
+    // AHORA, no cuando alguien revise la cola. Callarlo lo deja creyendo que
+    // pagó, y descubriéndolo el día que se le bloquea el acceso.
+    //
+    // El reporte NO se rechaza —eso lo decide una persona (SUB-4)—, pero el
+    // aviso sí sale: son dos cosas distintas.
+    if (status === 'rejected')
+      this.events.emit(SUBSCRIPTION_PAYMENT_REJECTED, {
+        companyId: saved.companyId,
+        paymentReportId: saved.id,
+        reason: reason ?? 'La pasarela no pudo confirmar tu pago.',
+        reference: saved.reference ?? null,
+      } satisfies SubscriptionPaymentRejectedEvent);
+
+    return saved;
   }
 
   /**
@@ -529,7 +675,11 @@ export class PaymentsService {
    */
   private async saveDecision(report: PaymentReport): Promise<PaymentReport> {
     try {
-      return await this.reports.save(report);
+      const saved = await this.reports.save(report);
+      // Verificar abre el salón y rechazar puede cerrarlo: en los dos casos la
+      // foto cacheada quedó vieja y hay que tirarla ya, no en 10 segundos.
+      this.entitlements.invalidate(saved.companyId);
+      return saved;
     } catch (error) {
       if (
         error instanceof QueryFailedError &&
@@ -640,16 +790,16 @@ export class PaymentsService {
     };
   }
 
-  /** Plan de la suscripción vigente de la company. */
+  /**
+   * Plan a cotizar cuando la petición no trae uno.
+   *
+   * En la prueba todavía no eligió (`plan_id` en null) y se cotiza el Full, que
+   * es justo lo que está usando esos 15 días. Para cotizar otro, el front manda
+   * `planId` — es lo que hace la pantalla de elección de plan.
+   */
   private async currentPlanId(companyId: number): Promise<PlanId> {
-    const subscription = await this.subscriptions.findOne({
-      where: { companyId },
-      select: { planId: true },
-    });
-    if (!subscription)
-      throw new BadRequestException(
-        'No hay una suscripción para esta compañía: indica el plan a cotizar.',
-      );
-    return subscription.planId;
+    const subscription =
+      await this.subscriptionService.ensureSubscription(companyId);
+    return billablePlanId(subscription.planId);
   }
 }

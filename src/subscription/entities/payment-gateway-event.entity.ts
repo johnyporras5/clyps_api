@@ -15,6 +15,8 @@ export type GatewayEventOutcome =
   | 'verified'
   /** Casó, pero no se dio por bueno solo: va a la cola manual (SUB-4). */
   | 'manual_review'
+  /** Cobrix dijo que el pago no entró y el reporte se cerró como rechazado. */
+  | 'rejected'
   /** Ninguna referencia coincidió con una factura nuestra. */
   | 'unmatched'
   /** La factura ya estaba cobrada antes de llegar el evento. */

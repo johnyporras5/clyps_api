@@ -1,13 +1,19 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
-import { GRACE_DAYS, PLAN_IDS, PLANS, TRIAL_DAYS } from './config/plans.config';
+import {
+  GRACE_DAYS,
+  PLAN_IDS,
+  PLANS,
+  TRIAL_DAYS,
+  type PlanId,
+} from './config/plans.config';
 import { CURRENCY_USD } from './subscription-money.util';
-import { nextPeriodEnd } from './subscription-period.util';
+import { periodCoverage } from './subscription-period.util';
 import { Subscription } from './entities/subscription.entity';
 import { SubscriptionEvent } from './entities/subscription-event.entity';
-import type { PaymentReport } from './entities/payment-report.entity';
+import { PaymentReport } from './entities/payment-report.entity';
 import type { PlansResponse } from './dto/plans-response.dto';
 
 /** Lo que viaja al activarse una suscripción. Lo consume SUB-9. */
@@ -67,9 +73,10 @@ export class SubscriptionService {
    * "sin suscripción" de `resolveAccess`, que concede acceso completo SIN fecha
    * de fin: una prueba perpetua. La fila es lo que le pone reloj.
    *
-   * El plan nace `basico` porque todavía no eligió: durante la prueba usa el
-   * Full igual —el eje del plan no aplica ahí— y al vencer se le cotiza el que
-   * escoja, no el caro por descarte.
+   * Nace SIN plan (`planId` en null): el registro no pide elegir ni pagar, así
+   * que la fila no puede afirmar que escogió uno. Durante los 15 días usa el
+   * Full igual —eso lo resuelve `effectivePlanId` mirando el estado— y el plan
+   * definitivo lo fija el primer pago verificado, pague el que pague.
    *
    * IDEMPOTENTE: si el salón ya tiene suscripción se devuelve la que hay, sin
    * regalar una prueba nueva.
@@ -89,7 +96,7 @@ export class SubscriptionService {
       const created = await this.subscriptions.save(
         this.subscriptions.create({
           companyId,
-          planId: 'basico',
+          planId: null,
           status: 'trialing',
           trialEndsAt,
           currentPeriodEnd: null,
@@ -117,12 +124,67 @@ export class SubscriptionService {
   }
 
   /**
+   * La suscripción del salón, abriéndole la prueba si todavía no tiene ninguna.
+   *
+   * Es la puerta para todo el que NECESITA la fila (cotizar, reportar un pago,
+   * emitir el cobro, leer el acceso): antes cada uno respondía "no hay
+   * suscripción" y dejaba al dueño sin poder pagar, cuando lo que faltaba era
+   * una fila que el registro debió crear.
+   *
+   * Idempotente y a prueba de carreras: es `startTrial`, que devuelve la que ya
+   * existe en vez de regalar una prueba nueva.
+   */
+  async ensureSubscription(companyId: number): Promise<Subscription> {
+    return this.startTrial(companyId);
+  }
+
+  /**
+   * Fija el plan que el dueño eligió (SUB-11 / CLYP-367).
+   *
+   * Se puede elegir CUALQUIER día: el primero, el catorce, o ya en gracia. No
+   * cobra, no activa y no toca ninguna fecha — solo deja escrito qué plan
+   * quiere, que es lo que después se le cotiza y se le factura.
+   *
+   * Elegir NO cambia lo que puede usar hoy: durante la prueba sigue con el Full
+   * completo aunque escoja el Básico —lo resuelve `effectivePlanId` mirando el
+   * estado y la fecha de la prueba— y los límites del plan elegido empiezan a
+   * regir recién cuando la prueba termina, ni siquiera si paga antes.
+   *
+   * Con un período PAGADO corriendo no se deja cambiar: sería subir de plan sin
+   * pagar la diferencia, o bajar y perder lo comprado. Ese cambio pertenece a la
+   * renovación, no a esta pantalla.
+   */
+  async choosePlan(companyId: number, planId: PlanId): Promise<Subscription> {
+    const subscription = await this.ensureSubscription(companyId);
+
+    if (subscription.planId === planId) return subscription;
+
+    const now = new Date();
+    const paidPeriodRunning =
+      subscription.currentPeriodEnd !== null &&
+      subscription.currentPeriodEnd.getTime() > now.getTime();
+
+    if (paidPeriodRunning)
+      throw new BadRequestException(
+        'Ya tienes un plan pagado en curso. Podrás cambiarlo en tu próxima renovación.',
+      );
+
+    subscription.planId = planId;
+    const saved = await this.subscriptions.save(subscription);
+    this.logger.log(
+      `La company ${companyId} eligió el plan ${planId} (estado ${saved.status}).`,
+    );
+    return saved;
+  }
+
+  /**
    * Extiende el acceso del tenant por el pago verificado.
    *
    * Es lo ÚNICO que da acceso: ni cotizar ni reportar tocan este estado. El mes
-   * se cuenta desde el MAYOR entre hoy y el período vigente (pagar antes no
-   * regala ni quita días), la gracia se limpia y el plan pasa a ser el que se
-   * pagó.
+   * se cuenta desde el MAYOR entre hoy, el período vigente y el fin de la
+   * prueba: pagar antes no regala ni quita días, y el primer pago hecho durante
+   * la prueba NO se come los días que quedaban (arranca al vencer el trial).
+   * La gracia se limpia y el plan pasa a ser el que se pagó.
    *
    * IDEMPOTENTE por reporte: el mismo pago no compra dos meses. La suscripción
    * y su bitácora se guardan en la MISMA transacción, así que o queda el avance
@@ -135,7 +197,15 @@ export class SubscriptionService {
   ): Promise<Subscription> {
     const previousPeriodEnd = subscription.currentPeriodEnd;
     const previousStatus = subscription.status;
-    const newPeriodEnd = nextPeriodEnd(now, previousPeriodEnd);
+    // El ciclo COMPLETO, no solo su fecha de fin: el inicio es lo que el
+    // historial (SUB-13) necesita para decir "te cubrió del 5/10 al 5/11", y
+    // después de un segundo pago ya no habría forma de reconstruirlo.
+    const covered = periodCoverage(
+      now,
+      previousPeriodEnd,
+      subscription.trialEndsAt,
+    );
+    const newPeriodEnd = covered.to;
 
     try {
       const advanced = await this.dataSource.transaction(async (manager) => {
@@ -165,6 +235,13 @@ export class SubscriptionService {
             newPeriodEnd,
           }),
         );
+
+        // SUB-13: el ciclo que compró este pago se congela en el reporte,
+        // dentro de la MISMA transacción que lo otorga. Fuera de ella podría
+        // quedar el mes concedido y el historial sin decir de qué mes habla.
+        report.coveredFrom = covered.from;
+        report.coveredTo = covered.to;
+        await manager.save(PaymentReport, report);
 
         return saved;
       });

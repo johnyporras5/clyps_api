@@ -233,4 +233,24 @@ export class PaymentReport {
    */
   @Column({ name: 'invoice_id', type: 'int', nullable: true })
   invoiceId: number | null;
+
+  // -------------------------------------------------------------------------
+  // Ciclo de facturación cubierto (SUB-13 / CLYP-342)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Inicio del ciclo que este pago cubrió. Se CONGELA al verificarlo, en la
+   * misma transacción que avanza la suscripción (SUB-6).
+   *
+   * Va guardado y no se recalcula al leer porque la suscripción solo tiene la
+   * foto de hoy: con dos pagos seguidos, el rango del primero ya no se puede
+   * reconstruir. Null mientras el pago no esté verificado — un reclamo no
+   * compró ningún ciclo.
+   */
+  @Column({ name: 'covered_from', type: 'datetime', nullable: true })
+  coveredFrom: Date | null;
+
+  /** Fin de ese ciclo: el `current_period_end` que dejó el pago. */
+  @Column({ name: 'covered_to', type: 'datetime', nullable: true })
+  coveredTo: Date | null;
 }

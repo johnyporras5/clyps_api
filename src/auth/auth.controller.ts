@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Controller,
   Post,
   Body,
@@ -39,12 +40,14 @@ import {
 import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
+import { ImpersonationService } from './services/impersonation.service';
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly tokenBlacklistService: TokenBlacklistService,
+    private readonly impersonationService: ImpersonationService,
   ) {}
 
   // ==================== ENDPOINTS DE REGISTRO ====================
@@ -342,6 +345,16 @@ export class AuthController {
     @Headers('authorization') authHeader: string,
     @Req() req: AuthenticatedRequest,
   ) {
+    // Salir de un acceso de soporte NO es el logout del dueño. Por este
+    // camino se colarían dos mentiras en sus datos: `last_logout` diría que
+    // el dueño cerró sesión (cuando ni siquiera había entrado) y la fila de
+    // `impersonation_session` quedaría abierta para siempre, porque nadie la
+    // cierra. Se desvía al cierre de suplantación, que invalida el mismo
+    // token pero deja la contabilidad donde toca.
+    if (req.user.imp) {
+      return this.impersonationService.endOwn(req.user.imp);
+    }
+
     const userId = req.user.sub;
     return this.authService.logout(authHeader, userId);
   }
@@ -354,6 +367,17 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async forceLogoutAllDevices(@Req() req: AuthenticatedRequest) {
+    // Desde un acceso de soporte esto echaría al DUEÑO de todos sus
+    // dispositivos: el operador entró a mirar y le tira la sesión del móvil
+    // en mitad de un cobro. Se bloquea; para cerrar lo suyo tiene
+    // POST /auth/impersonation/end.
+    if (req.user.imp) {
+      throw new ForbiddenException(
+        'Un acceso de soporte no puede cerrar las sesiones del dueño. ' +
+          'Usa "Salir" para terminar tu acceso.',
+      );
+    }
+
     const userId = req.user.sub;
     return this.authService.forceLogoutAllDevices(userId);
   }

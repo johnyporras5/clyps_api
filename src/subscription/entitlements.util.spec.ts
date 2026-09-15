@@ -78,7 +78,9 @@ describe('matriz de acceso por estado', () => {
     ).toMatchObject({ status: 'blocked', canOperate: false });
   });
 
-  it('la prueba vencida también entra en gracia y luego bloquea', () => {
+  it('la prueba vencida BLOQUEA de una vez: la gracia es de quien ya pagó', () => {
+    // Sin `currentPeriodEnd` nunca hubo pago. Darle cortesía aquí sería
+    // regalarle 15 días de prueba + 5 más.
     expect(
       access({
         planId: 'basico',
@@ -87,17 +89,37 @@ describe('matriz de acceso por estado', () => {
         currentPeriodEnd: null,
         graceEndsAt: null,
       }),
-    ).toMatchObject({ status: 'grace', graceCause: 'expired' });
+    ).toMatchObject({ status: 'blocked', canOperate: false });
+  });
 
+  it('a la prueba vencida se le puede dar cortesía a mano', () => {
+    // La gracia guardada en la fila sigue mandando: es cómo se le concede una
+    // excepción a un salón puntual sin tocar la regla.
     expect(
       access({
         planId: 'basico',
         status: 'trialing',
-        trialEndsAt: days(-30),
+        trialEndsAt: days(-1),
         currentPeriodEnd: null,
-        graceEndsAt: null,
+        graceEndsAt: days(3),
       }),
-    ).toMatchObject({ status: 'blocked', canOperate: false });
+    ).toMatchObject({ status: 'grace', graceCause: 'expired' });
+  });
+
+  it('un pago reportado sostiene el acceso aunque la prueba haya vencido', () => {
+    // La invariante de SUB-5 no cambia: mientras verificamos, el tenant opera.
+    expect(
+      access(
+        {
+          planId: 'basico',
+          status: 'trialing',
+          trialEndsAt: days(-1),
+          currentPeriodEnd: null,
+          graceEndsAt: null,
+        },
+        true,
+      ),
+    ).toMatchObject({ canOperate: true, graceCause: 'pending_report' });
   });
 
   it('respeta la gracia ya guardada en la fila, no la recalcula', () => {
@@ -197,9 +219,9 @@ describe('los límites efectivos', () => {
     expect(effectivePlanId('basico', 'blocked')).toBe('basico');
   });
 
-  it('en prueba: todo abierto y sin tope, aunque el plan sea Básico', () => {
+  it('en prueba rigen los límites del Full, tope incluido', () => {
     expect(effectiveLimits('basico', 'trialing')).toEqual({
-      maxWorkers: null,
+      maxWorkers: 20,
       payroll: true,
       analytics: true,
       aiSuggestions: true,
@@ -223,6 +245,47 @@ describe('los límites efectivos', () => {
       maxWorkers: 20,
       aiSuggestions: true,
     });
+  });
+});
+
+/**
+ * Pagar durante la prueba no la apaga.
+ *
+ * Al verificarse el pago el estado pasa a `active` con días de prueba todavía
+ * por delante. Quien compró el Básico el día 1 seguía teniendo derecho al Full
+ * hasta el día 15 —lo compró al registrarse, no al no pagar— y antes lo perdía
+ * en el acto.
+ */
+describe('la prueba manda aunque ya haya pagado', () => {
+  const trialAlive = days(9);
+  const trialOver = days(-1);
+
+  it('pagó el Básico y le quedan días: sigue con el Full', () => {
+    expect(effectivePlanId('basico', 'active', trialAlive, NOW)).toBe('full');
+    expect(effectiveLimits('basico', 'active', trialAlive, NOW)).toMatchObject({
+      maxWorkers: 20,
+      payroll: true,
+      aiSuggestions: true,
+    });
+  });
+
+  it('terminada la prueba rige el plan que compró', () => {
+    expect(effectivePlanId('basico', 'active', trialOver, NOW)).toBe('basico');
+    expect(effectiveLimits('basico', 'active', trialOver, NOW)).toMatchObject({
+      maxWorkers: 2,
+      payroll: false,
+    });
+  });
+
+  it('sin fecha de prueba se comporta como antes', () => {
+    expect(effectivePlanId('basico', 'active', null, NOW)).toBe('basico');
+    expect(effectivePlanId('basico', 'trialing', null, NOW)).toBe('full');
+  });
+
+  it('la prueba no rescata al bloqueado ni al que está en gracia', () => {
+    // Con la prueba vencida el estado manda: aquí no hay Full que devolver.
+    expect(effectivePlanId('basico', 'blocked', trialOver, NOW)).toBe('basico');
+    expect(effectivePlanId('basico', 'grace', trialOver, NOW)).toBe('basico');
   });
 });
 

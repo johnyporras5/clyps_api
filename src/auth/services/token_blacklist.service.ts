@@ -64,6 +64,43 @@ export class TokenBlacklistService {
   }
 
   /**
+   * Invalidar un token del que solo se tiene el HASH, nunca el texto.
+   *
+   * Lo necesita la revocación de suplantación (CLYP-IMP): el panel corta una
+   * sesión que se entregó a OTRA pestaña, así que el JWT no está a mano — solo
+   * su sha256, guardado en `impersonation_session.token_hash`.
+   *
+   * El hash tiene que venir del MISMO algoritmo que usa `hashToken()`. Si no
+   * coincidiera, esto insertaría una fila que `isTokenBlacklisted()` jamás
+   * encuentra: el botón "Terminar" diría "listo" y la sesión seguiría viva.
+   * Por eso quien llama usa `hashOf()` y no una copia suelta de createHash.
+   */
+  async addHashToBlacklist(
+    tokenHash: string,
+    expiresAt: number,
+    userId?: number,
+    reason?: string,
+  ): Promise<BlacklistedToken> {
+    const blacklistedToken = this.blacklistedTokenRepository.create({
+      token: tokenHash,
+      expiresAt,
+      userId,
+      reason: reason || 'revoked',
+    });
+
+    return await this.blacklistedTokenRepository.save(blacklistedToken);
+  }
+
+  /**
+   * El hash tal y como lo guarda la blacklist. Es público para que quien
+   * necesite archivar el hash de un token —y revocarlo más tarde— use esta
+   * misma función y no se invente otra que no case.
+   */
+  hashOf(token: string): string {
+    return this.hashToken(token);
+  }
+
+  /**
    * Verificar si un token está en la blacklist
    */
   async isTokenBlacklisted(token: string): Promise<boolean> {

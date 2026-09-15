@@ -24,21 +24,56 @@ export function addMonths(date: Date, months: number): Date {
   return result;
 }
 
+/** El ciclo de facturación que compra un pago: desde cuándo y hasta cuándo. */
+export interface PeriodCoverage {
+  /** Arranque del ciclo: donde terminaba lo que el tenant ya tenía. */
+  from: Date;
+  /** Fin del ciclo; es el nuevo `current_period_end` de la suscripción. */
+  to: Date;
+}
+
 /**
- * Hasta cuándo llega el acceso después de verificar un pago.
+ * El ciclo completo que cubre un pago, no solo su fecha de fin.
  *
- * Si el período vigente todavía no vence, el mes nuevo se ENCADENA a partir de
- * esa fecha: pagar antes de tiempo no regala ni quita días. Si ya venció (o
- * nunca hubo), el mes corre desde ahora.
+ * El mes se ENCADENA a lo que el tenant ya tenía: pagar antes de tiempo no
+ * regala ni quita días. Ese "ya tenía" son dos fechas, y manda la más lejana:
+ *
+ * - `currentPeriodEnd`: el período pagado vigente (renovación).
+ * - `trialEndsAt`: los días de prueba que le queden. En el PRIMER pago no hay
+ *   período previo, así que sin mirar esta fecha el mes arrancaría hoy y se
+ *   comería la prueba: quien paga el día 3 de 15 perdía los 12 restantes.
+ *
+ * Si ambas ya vencieron (o no existen), el mes corre desde ahora.
+ *
+ * Devolver el RANGO y no solo su final es lo que permite guardar en el reporte
+ * QUÉ ciclo pagó (SUB-6 / CLYP-342). La suscripción sola no puede contarlo:
+ * guarda la foto de hoy, no cómo se llegó a ella.
+ */
+export function periodCoverage(
+  now: Date,
+  currentPeriodEnd: Date | null,
+  trialEndsAt: Date | null = null,
+  months: number = BILLING_PERIOD_MONTHS,
+): PeriodCoverage {
+  const base = [currentPeriodEnd, trialEndsAt].reduce<Date>(
+    (latest, candidate) =>
+      candidate && candidate.getTime() > latest.getTime() ? candidate : latest,
+    now,
+  );
+  // Copia: el `from` no puede ser la MISMA instancia que el `now` o la fecha de
+  // la suscripción que entró, o mutarla desde fuera cambiaría el rango guardado.
+  return { from: new Date(base.getTime()), to: addMonths(base, months) };
+}
+
+/**
+ * Hasta cuándo llega el acceso después de verificar un pago: el fin del ciclo
+ * que calcula `periodCoverage`.
  */
 export function nextPeriodEnd(
   now: Date,
   currentPeriodEnd: Date | null,
+  trialEndsAt: Date | null = null,
   months: number = BILLING_PERIOD_MONTHS,
 ): Date {
-  const base =
-    currentPeriodEnd && currentPeriodEnd.getTime() > now.getTime()
-      ? currentPeriodEnd
-      : now;
-  return addMonths(base, months);
+  return periodCoverage(now, currentPeriodEnd, trialEndsAt, months).to;
 }

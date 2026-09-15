@@ -28,7 +28,8 @@ export type GraceCause =
 export interface AccessInput {
   /** null = el tenant todavía no tiene suscripción creada. */
   subscription: {
-    planId: PlanId;
+    /** null = todavía no eligió plan: no cambia el acceso, solo el precio. */
+    planId: PlanId | null;
     status: SubscriptionStatus;
     trialEndsAt: Date | null;
     currentPeriodEnd: Date | null;
@@ -126,11 +127,21 @@ export function resolveAccess(input: AccessInput): AccessState {
     };
   }
 
-  // Ya venció. La gracia guardada manda; si no hay, se calcula desde el corte.
+  // Ya venció.
+  //
+  // La gracia es SOLO de quien ya pagó alguna vez: se le vence un mes comprado
+  // y se le dan unos días para renovar sin quedarse fuera. Al que se le acaba
+  // la PRUEBA no se le regalan días extra —serían 15 + 5 gratis—: se bloquea al
+  // vencer. Lo delata `currentPeriodEnd`: si es null, nunca hubo pago.
+  //
+  // Una gracia guardada a mano sigue mandando sobre todo esto: es la forma de
+  // darle cortesía a un caso puntual sin tocar la regla.
+  const everPaid = subscription.currentPeriodEnd !== null;
   const graceEndsAt =
-    subscription.graceEndsAt ?? addDays(accessEndsAt, graceDays);
+    subscription.graceEndsAt ??
+    (everPaid ? addDays(accessEndsAt, graceDays) : null);
 
-  if (graceEndsAt.getTime() > now.getTime()) {
+  if (graceEndsAt && graceEndsAt.getTime() > now.getTime()) {
     return {
       status: 'grace',
       canOperate: true,
@@ -161,16 +172,6 @@ export function resolveAccess(input: AccessInput): AccessState {
 }
 
 /**
- * Límites vigentes AHORA para el tenant.
- *
- * Igual que `PlanLimits`, salvo que `maxWorkers` admite `null` = sin tope.
- */
-export interface EffectiveLimits extends Omit<PlanLimits, 'maxWorkers'> {
-  /** null = sin tope (solo durante la prueba). */
-  maxWorkers: number | null;
-}
-
-/**
  * El plan que el tenant USA durante la prueba: el Full.
  *
  * No se guarda en `subscription.plan_id` a propósito — ahí sigue sin haber plan
@@ -179,38 +180,68 @@ export interface EffectiveLimits extends Omit<PlanLimits, 'maxWorkers'> {
  */
 export const TRIAL_PLAN_ID: PlanId = 'full';
 
-/** Todo lo del Full y además sin tope de trabajadores. */
-const TRIAL_LIMITS: EffectiveLimits = {
-  ...getPlan(TRIAL_PLAN_ID).limits,
-  maxWorkers: null,
-};
+/**
+ * El plan que se le COBRA cuando hay que ponerle precio a algo: el suyo si ya
+ * eligió, y el de la prueba mientras no. Es el mismo que está usando esos 15
+ * días, así que cotizarle otro sería cobrarle por algo que no vio.
+ *
+ * Se usa solo en los caminos de dinero (cotizar, reportar, facturar, recordar).
+ * Para pintar la pantalla va `effectivePlanId`.
+ */
+export function billablePlanId(planId: PlanId | null): PlanId {
+  return planId ?? TRIAL_PLAN_ID;
+}
 
 /**
- * El plan vigente de cara al tenant: en la prueba, el Full; si no, el suyo.
+ * ¿La prueba sigue corriendo? Se mira la FECHA, no el estado.
+ *
+ * Al verificarse un pago el estado pasa a `active` aunque queden días de
+ * prueba: sin esta función, pagar el día 1 apagaba en el acto el Full que el
+ * dueño tenía hasta el día 15.
+ */
+export function trialStillRunning(
+  trialEndsAt: Date | null,
+  now: Date = new Date(),
+): boolean {
+  return trialEndsAt !== null && trialEndsAt.getTime() > now.getTime();
+}
+
+/**
+ * El plan vigente de cara al tenant: mientras la prueba corra, el Full; si no,
+ * el suyo.
  *
  * Es lo que el panel debe mostrar — durante los 15 días está usando el Full,
  * aunque la columna diga otra cosa porque todavía no eligió.
+ *
+ * La prueba manda AUNQUE YA HAYA PAGADO: los 15 días de Full son suyos por
+ * haberse registrado, no por no haber pagado todavía. Quien compra el Básico el
+ * día 1 no pierde el Full que le quedaba —igual que no pierde los días
+ * (CLYP-337)—: su plan empieza a regir cuando la prueba termina.
  */
 export function effectivePlanId(
   planId: PlanId,
   status: SubscriptionStatus,
+  trialEndsAt: Date | null = null,
+  now: Date = new Date(),
 ): PlanId {
-  return status === 'trialing' ? TRIAL_PLAN_ID : planId;
+  if (status === 'trialing' || trialStillRunning(trialEndsAt, now))
+    return TRIAL_PLAN_ID;
+  return planId;
 }
 
 /**
- * Límites efectivos según el estado.
+ * Los límites que rigen AHORA: los del plan que está usando.
  *
- * Durante `trialing` NO se aplica el eje del plan: los 15 días muestran el
- * producto completo (nómina, IA, análisis, app del trabajador y sin tope de
- * trabajadores) aunque el tenant todavía no haya elegido plan — es el
- * escaparate que engancha, y restringirlo a Básico por defecto sería enseñarle
- * menos de lo que se le quiere vender. El eje del plan vuelve a mandar en
- * `active` y `grace`.
+ * Durante la prueba son los del Full completos —incluido su tope de
+ * trabajadores—: la prueba es el Full, no una barra libre. Así lo que el dueño
+ * ve en esos 15 días es exactamente lo que va a tener si lo paga, sin sorpresas
+ * al vencer.
  */
 export function effectiveLimits(
   planId: PlanId,
   status: SubscriptionStatus,
-): EffectiveLimits {
-  return status === 'trialing' ? TRIAL_LIMITS : getPlan(planId).limits;
+  trialEndsAt: Date | null = null,
+  now: Date = new Date(),
+): PlanLimits {
+  return getPlan(effectivePlanId(planId, status, trialEndsAt, now)).limits;
 }

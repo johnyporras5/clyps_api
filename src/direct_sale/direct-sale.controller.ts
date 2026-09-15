@@ -13,9 +13,12 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { DirectSaleService } from './direct-sale.service';
 import { CreateDirectSaleDto } from './dto/create-direct-sale.dto';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('direct-sales')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+@RequiresOperationalSubscription()
 export class DirectSaleController {
   constructor(private readonly directSaleService: DirectSaleService) {}
 

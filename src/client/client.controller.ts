@@ -24,9 +24,12 @@ import { FindAllClientsDto } from './dto/find-all-clients.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('clients')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, SubscriptionAccessGuard)
+@RequiresOperationalSubscription()
 export class ClientController {
   constructor(private readonly clientService: ClientService) {}
 

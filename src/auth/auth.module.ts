@@ -13,6 +13,12 @@ import { EmailModule } from '../email/email.module';
 import { VerificationModule } from '../verification/verification.module';
 import { BlacklistedToken } from './entities/blacklisted_token.entity';
 import { TokenBlacklistService } from './services/token_blacklist.service';
+import { ImpersonationSession } from './entities/impersonation_session.entity';
+import { ImpersonationService } from './services/impersonation.service';
+import {
+  AdminImpersonationController,
+  ImpersonationController,
+} from './impersonation.controller';
 import { Company } from 'src/company/entities/company.entity';
 import { CompanyService } from 'src/company/company.service';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
@@ -40,6 +46,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
       Worker,
       Client,
       BlacklistedToken,
+      ImpersonationSession,
       Company,
       CompanyWorker,
       CalendarCompany,
@@ -82,8 +89,24 @@ import { RealtimeModule } from '../realtime/realtime.module';
     // forwardRef: RealtimeModule importa AuthModule (Gateway usa AuthService).
     forwardRef(() => RealtimeModule),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, TokenBlacklistService, CompanyService],
-  exports: [AuthService, JwtStrategy, PassportModule, TokenBlacklistService],
+  controllers: [
+    AuthController,
+    AdminImpersonationController,
+    ImpersonationController,
+  ],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    TokenBlacklistService,
+    ImpersonationService,
+    CompanyService,
+  ],
+  exports: [
+    AuthService,
+    JwtStrategy,
+    PassportModule,
+    TokenBlacklistService,
+    ImpersonationService,
+  ],
 })
 export class AuthModule {}

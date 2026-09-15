@@ -36,9 +36,12 @@ import { GetAvailabilityDto } from './dto/get-availability.dto';
 import { ConfirmAttendanceDto } from './dto/confirm-attendance.dto';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
 import { SessionNotificationEmitter } from './session-notification.emitter';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
 
 @Controller('sessions')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+@RequiresOperationalSubscription()
 export class SessionController {
   constructor(
     private readonly sessionService: SessionService,
@@ -104,6 +107,15 @@ export class SessionController {
   // Feature B: clientes con cobros en deuda (se le pagó al worker, el cliente
   // aún no pagó a la company). Para la pantalla "pendientes por pago".
   //   ?status=pending (default) | collected (historial) | all
+  /**
+   * SUB-12: sigue abierta para el DUEÑO con el salón bloqueado.
+   *
+   * Es "Análisis de datos": mirar lo que ya pasó. No es operar —no crea citas,
+   * no cobra, no toca nada—, y son SUS números: el salón bloqueado no puede
+   * seguir trabajando, pero tiene que poder ver cuánto facturó y a quién le
+   * deben, que es justo lo que necesita para decidir si paga.
+   */
+  @RequiresOperationalSubscription('adm')
   @Get('payments/pending-collection')
   @Roles('adm')
   async getPendingCollections(
@@ -148,6 +160,15 @@ export class SessionController {
     );
   }
 
+  /**
+   * SUB-12: sigue abierta para el DUEÑO con el salón bloqueado.
+   *
+   * Es "Análisis de datos": mirar lo que ya pasó. No es operar —no crea citas,
+   * no cobra, no toca nada—, y son SUS números: el salón bloqueado no puede
+   * seguir trabajando, pero tiene que poder ver cuánto facturó y a quién le
+   * deben, que es justo lo que necesita para decidir si paga.
+   */
+  @RequiresOperationalSubscription('adm')
   @Get()
   @Roles('adm')
   async findAll(
@@ -367,6 +388,15 @@ export class SessionController {
     return this.sessionService.removeSessionWithDetails(+id);
   }
 
+  /**
+   * SUB-12: su AGENDA sí se corta, aunque el historial no.
+   *
+   * La línea está en el tiempo: lo que ya trabajó es suyo y se lo mostramos
+   * —historial, servicios, ganancia—, pero lo que está por venir es operación
+   * del salón, y con el salón bloqueado esas citas no se van a poder atender ni
+   * cobrar. Enseñarle una agenda que no va a poder trabajar es peor que no
+   * enseñársela.
+   */
   @Get('worker/my-sessions')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('wrk')
@@ -572,6 +602,16 @@ export class SessionController {
    * - Worker: ve los suyos (workerId se ignora).
    * - Admin: debe pasar ?workerId=<id>.
    */
+  /**
+   * SUB-12: sigue abierta para el TRABAJADOR con el salón bloqueado.
+   *
+   * La deuda es del dueño. Lo que el trabajador mira aquí es su propio trabajo
+   * —lo que hizo y lo que ganó—, no la operación del salón: cerrárselo sería
+   * cobrarle a él una cuenta que no es suya y que no puede pagar.
+   *
+   * Al DUEÑO se le sigue cortando: el decorador del handler pisa al de la clase.
+   */
+  @RequiresOperationalSubscription('wrk')
   @Get('worker/my-services')
   @Roles('wrk', 'adm')
   async getMyAssignedServices(
@@ -628,6 +668,16 @@ export class SessionController {
    * - Worker: ve los suyos.
    * - Admin: debe pasar ?workerId=<id>.
    */
+  /**
+   * SUB-12: sigue abierta para el TRABAJADOR con el salón bloqueado.
+   *
+   * La deuda es del dueño. Lo que el trabajador mira aquí es su propio trabajo
+   * —lo que hizo y lo que ganó—, no la operación del salón: cerrárselo sería
+   * cobrarle a él una cuenta que no es suya y que no puede pagar.
+   *
+   * Al DUEÑO se le sigue cortando: el decorador del handler pisa al de la clase.
+   */
+  @RequiresOperationalSubscription('wrk')
   @Get('worker/my-history')
   @Roles('wrk', 'adm')
   async getMyHistoryAsWorker(
@@ -651,6 +701,16 @@ export class SessionController {
    * - Admin: debe pasar ?workerId=<id>.
    * Filtros opcionales: startDate, endDate (ISO).
    */
+  /**
+   * SUB-12: sigue abierta para el TRABAJADOR con el salón bloqueado.
+   *
+   * La deuda es del dueño. Lo que el trabajador mira aquí es su propio trabajo
+   * —lo que hizo y lo que ganó—, no la operación del salón: cerrárselo sería
+   * cobrarle a él una cuenta que no es suya y que no puede pagar.
+   *
+   * Al DUEÑO se le sigue cortando: el decorador del handler pisa al de la clase.
+   */
+  @RequiresOperationalSubscription('wrk')
   @Get('worker/income-report')
   @Roles('wrk', 'adm')
   async getMyIncomeReport(

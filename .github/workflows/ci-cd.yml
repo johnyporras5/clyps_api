@@ -140,11 +140,12 @@ jobs:
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
+      # Sin --format a proposito: con --wait, doctl imprime la APP al terminar y
+      # la app no tiene columna Phase (esa es del deployment). Pedirla
+      # rompia el job con "unknown column" DESPUES de un deploy correcto.
       - name: Disparar deployment
         run: |
-          doctl apps create-deployment "${{ secrets.DO_APP_ID }}" \
-            --wait \
-            --format ID,Phase,Created
+          doctl apps create-deployment "${{ secrets.DO_APP_ID }}" --wait
 
       - name: Verificar que Node responde
         env:

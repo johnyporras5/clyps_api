@@ -15,6 +15,7 @@ import {
   type GatewayEventOutcome,
 } from '../entities/payment-gateway-event.entity';
 import { PaymentsService } from '../payments.service';
+import { CobrixInvoiceService } from './cobrix-invoice.service';
 import { CURRENCY_VES } from '../subscription-money.util';
 import { CobrixConfig } from './cobrix.config';
 import {
@@ -24,11 +25,15 @@ import {
   type SignatureHeaders,
 } from './cobrix-signature.util';
 import {
+  COBRIX_EVENT_INVOICE_CANCELED,
   COBRIX_EVENT_INVOICE_PAID,
   eventIdOf,
   eventNameOf,
+  failureReasonOf,
   findProviderReference,
   parseCobrixInvoiceEvent,
+  paymentReferenceOf,
+  paymentStatusOf,
   type CobrixInvoiceEvent,
 } from './cobrix-event.util';
 
@@ -49,6 +54,33 @@ const PROVIDER = 'cobrix';
 const CHECKOUT_COMPLETED_EVENTS = new Set([
   'checkout.session.completed',
   'checkout.collection_document_session.completed',
+]);
+
+/**
+ * Eventos por los que Cobrix dice que el pago NO va a entrar.
+ *
+ * Los nombres son una apuesta razonable —su documentación no los fija y en el
+ * rechazo medido no llegó ninguno—, así que el corte real no es esta lista sino
+ * el ESTADO que viaja en el cuerpo: ver `paymentStatusOf`. La lista solo ataja
+ * el caso en que el nombre venga y el estado no.
+ */
+const CHECKOUT_FAILED_EVENTS = new Set([
+  'checkout.session.expired',
+  'checkout.session.failed',
+  'payment.rejected',
+  'payment.failed',
+  'invoice.canceled',
+  'invoice.cancelled',
+]);
+
+/** Estados de Cobrix que significan "este pago no entró". */
+const FAILED_STATUSES = new Set([
+  'rejected',
+  'failed',
+  'canceled',
+  'cancelled',
+  'expired',
+  'declined',
 ]);
 
 /**
@@ -77,10 +109,14 @@ const CHECKOUT_COMPLETED_EVENTS = new Set([
  * 2. IDEMPOTENCIA POR EVENTO. Cobrix reparte at-least-once y reintenta cuatro
  *    veces; el candado único de `payment_gateway_event` hace que la segunda
  *    entrega no compre otro mes.
- * 3. LO QUE NO CUADRA VA A MANUAL, NO SE RECHAZA. Un monto distinto o una
- *    factura que no aparece deja el reporte en `reported` para que lo mire una
- *    persona (SUB-4). Rechazar de verdad tiene consecuencias para el tenant y
- *    lo firma un humano.
+ * 3. LO QUE NO CUADRA VA A MANUAL. Un monto distinto o una factura que no
+ *    aparece deja el reporte en `reported` para que lo mire una persona
+ *    (SUB-4): ahí Cobrix está OPINANDO sobre algo que no vio entero.
+ *
+ *    La excepción es `payment.failed` sobre un cobro suyo: ese sí cierra el
+ *    reporte en `rejected` y suelta la factura. Cobrix no está opinando, está
+ *    diciendo que el movimiento bancario que él concilia no entró — y dejarlo
+ *    "en revisión" trababa al dueño, que no podía volver a pagar.
  */
 @Injectable()
 export class CobrixWebhookService {
@@ -95,6 +131,9 @@ export class CobrixWebhookService {
     private readonly events: Repository<PaymentGatewayEvent>,
     private readonly payments: PaymentsService,
     private readonly cobrix: CobrixConfig,
+    // Suelta el documento de cobro cuando el pago se rechaza: anularlo en
+    // Cobrix es lo que evita que queden dos deudas del mismo mes.
+    private readonly invoiceService: CobrixInvoiceService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -148,9 +187,10 @@ export class CobrixWebhookService {
     event: CobrixInvoiceEvent,
     row: PaymentGatewayEvent,
   ): Promise<CobrixAck> {
-    // `invoice.created` lo provocamos nosotros y `invoice.canceled` lo resuelve
-    // el vencimiento de la factura: ninguno de los dos activa nada.
-    if (event.eventType !== COBRIX_EVENT_INVOICE_PAID)
+    const anulada = COBRIX_EVENT_INVOICE_CANCELED.has(event.eventType);
+
+    // `invoice.created` lo provocamos nosotros: no activa nada.
+    if (event.eventType !== COBRIX_EVENT_INVOICE_PAID && !anulada)
       return this.finish(
         row,
         'ignored',
@@ -174,6 +214,23 @@ export class CobrixWebhookService {
         `No hay factura con la referencia ${event.providerReference}.`,
       );
     row.invoiceId = invoice.id;
+
+    // Anulada en Cobrix: de ese cobro ya no va a entrar nada. Se suelta la
+    // factura —si no, "Pagar ahora" devuelve al dueño al mismo enlace muerto— y
+    // el pago que estuviera esperando se manda a revisión manual. NO se rechaza
+    // solo: que anulen el documento no prueba que el dueño no haya pagado.
+    if (anulada) {
+      const motivo = `Cobrix anuló la factura ${invoice.providerReference}.`;
+      const abierto = await this.findReport(invoice);
+      if (abierto)
+        await this.payments.flagForManualReview(abierto, 'rejected', motivo);
+      if (invoice.status === 'open') {
+        invoice.status = 'expired';
+        await this.invoices.save(invoice);
+      }
+      this.logger.warn(`[cobrix] ${motivo}`);
+      return this.finish(row, 'manual_review', motivo, abierto?.id);
+    }
 
     if (invoice.status === 'paid')
       return this.finish(
@@ -279,7 +336,12 @@ export class CobrixWebhookService {
     );
     if (!row) return { received: true, outcome: 'duplicate' };
 
-    if (!CHECKOUT_COMPLETED_EVENTS.has(eventType))
+    const paymentStatus = paymentStatusOf(payload);
+    const failed =
+      CHECKOUT_FAILED_EVENTS.has(eventType) ||
+      (paymentStatus !== null && FAILED_STATUSES.has(paymentStatus));
+
+    if (!CHECKOUT_COMPLETED_EVENTS.has(eventType) && !failed)
       return this.finish(
         row,
         'ignored',
@@ -304,13 +366,94 @@ export class CobrixWebhookService {
       );
 
     row.invoiceId = invoice.id;
+
+    // El pago no entró. Se CIERRA el reporte como rechazado y se suelta el
+    // documento de cobro, que es lo que deja al dueño volver a pagar de cero:
+    //
+    // - El reporte en `rejected` libera su referencia bancaria —el índice único
+    //   ignora los rechazados—, deja de conceder acceso y destapa los avisos de
+    //   cobro. Dejarlo "en revisión" lo trababa: no podía reportar la misma
+    //   referencia corregida y el salón parecía al día sin estarlo.
+    // - La factura se anula en Cobrix y se cierra aquí, así el siguiente
+    //   "Pagar ahora" emite un documento NUEVO. Anularla allá es lo que impide
+    //   que el dueño termine viendo dos deudas del mismo mes.
+    if (failed) {
+      // El motivo que manda Cobrix va tal cual: es lo que le dice al dueño qué
+      // corregir. Solo cuando no viene se cae al genérico.
+      const motivo =
+        failureReasonOf(payload) ??
+        `Cobrix reportó el pago como ${paymentStatus ?? eventType}.`;
+      const abierto = await this.findReport(invoice);
+      if (abierto) await this.payments.rejectFromGateway(abierto, motivo);
+      await this.invoiceService.release(invoice, motivo);
+      this.logger.warn(`[cobrix] ${providerReference}: ${motivo}`);
+      return this.finish(row, 'rejected', motivo, abierto?.id);
+    }
+
+    // El dueño terminó de pagar y Cobrix todavía lo está conciliando. Se le
+    // abre el reporte YA: mientras un pago está pendiente el tenant conserva el
+    // acceso y se le callan los avisos de cobro. Sin esto, quien pagaba por el
+    // enlace seguía bloqueado y recibiendo recordatorios hasta que llegara el
+    // `invoice.paid` —o para siempre, si nunca llegaba—.
+    const existente = await this.findReport(invoice);
+    if (existente)
+      return this.finish(
+        row,
+        'already_resolved',
+        `El pago de ${providerReference} ya estaba reportado.`,
+        existente.id,
+      );
+
+    const reporte = await this.createPendingReport(invoice, payload);
     this.logger.log(
-      `[cobrix] ${providerReference}: el dueño reportó su pago, esperando conciliación`,
+      `[cobrix] ${providerReference}: el dueño pagó por el enlace, reporte ${reporte.id} esperando conciliación`,
     );
     return this.finish(
       row,
-      'ignored',
+      'manual_review',
       'El dueño terminó el checkout; falta la conciliación.',
+      reporte.id,
+    );
+  }
+
+  /**
+   * Abre el reporte de un pago que el dueño hizo por el enlace y que Cobrix
+   * todavía no concilió.
+   *
+   * Nace igual que cualquier otro: `reported` + `autoCheckStatus: 'pending'`.
+   * Así lo recoge el mismo `invoice.paid` cuando llegue, y si no llega nunca lo
+   * escala a la cola manual el conciliador de respaldo.
+   */
+  private async createPendingReport(
+    invoice: SubscriptionInvoice,
+    payload: unknown,
+    at: Date = new Date(),
+  ): Promise<PaymentReport> {
+    const isVes = invoice.currency === CURRENCY_VES;
+    return this.reports.save(
+      this.reports.create({
+        companyId: invoice.companyId,
+        subscriptionId: invoice.subscriptionId,
+        planId: invoice.planId,
+        method: 'pago_movil',
+        amountVesMinor: isVes ? invoice.amountMinor : null,
+        amountUsdMinor: isVes ? null : invoice.amountMinor,
+        currency: invoice.currency,
+        frozenRate: invoice.frozenRate,
+        quotedAt: invoice.quotedAt,
+        // La referencia que el dueño escribió en el checkout de Cobrix. Sin
+        // ella, la de la factura: el único por company exige que haya una.
+        reference: (paymentReferenceOf(payload) ?? invoice.providerReference)
+          .toUpperCase()
+          .slice(0, 64),
+        note: 'Pagado por el enlace de Cobrix, esperando conciliación',
+        reportedAt: at,
+        status: 'reported',
+        autoCheckStatus: 'pending',
+        autoCheckAt: at,
+        invoiceId: invoice.id,
+        payerIdentification: invoice.payerIdentification,
+      }),
     );
   }
 

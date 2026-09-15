@@ -49,14 +49,20 @@ export const PAYMENT_REPORT_STATUSES: PaymentReportStatus[] = [
 export type VerificationMethod = 'auto' | 'manual';
 export const VERIFICATION_METHODS: VerificationMethod[] = ['auto', 'manual'];
 
-/** Momento del ciclo al que apunta un recordatorio enviado. */
-export type ReminderTier = 'd-7' | 'd-3' | 'd-1' | 'd0' | 'grace';
+/**
+ * Momento del ciclo al que apunta un recordatorio enviado.
+ *
+ * Los cuatro primeros son antes de vencer; `grace` avisa que venció y sigue
+ * operando de cortesía, y `blocked` que se le acabó.
+ */
+export type ReminderTier = 'd-7' | 'd-3' | 'd-1' | 'd0' | 'grace' | 'blocked';
 export const REMINDER_TIERS: ReminderTier[] = [
   'd-7',
   'd-3',
   'd-1',
   'd0',
   'grace',
+  'blocked',
 ];
 
 /** Canal por el que salió el recordatorio. */

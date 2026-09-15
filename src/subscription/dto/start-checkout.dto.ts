@@ -8,6 +8,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { PLAN_IDS, type PlanId } from '../config/plans.config';
+import { IDENTIFICATION_FORMAT_MESSAGE } from '../subscription-identification.util';
 
 /**
  * Cuerpo de POST /subscription/payments/checkout (SUB-10).
@@ -29,15 +30,17 @@ export class StartCheckoutDto {
    * OPCIONAL: solo hace falta la PRIMERA vez. De ahí en más el backend reusa la
    * que ya quedó guardada, y solo se manda de nuevo para corregirla.
    *
-   * Se acepta con o sin prefijo (V-12345678, 12345678, J-401234567): el formato
-   * exacto lo valida Cobrix, aquí solo se limpia y se limita el largo.
+   * La LETRA es obligatoria. Se acepta escrita de cualquier forma —`v12345678`,
+   * `V-12.345.678`— y el servicio la lleva a `V-12345678`, pero sin ella no se
+   * adivina: `12345678` puede ser la cédula V-12345678 o el RIF J-12345678, y
+   * Cobrix resuelve al cliente por ahí. Elegir mal le factura a otro.
    */
   @IsOptional()
   @IsString()
   @IsNotEmpty({ message: 'identification no puede venir vacío' })
   @MaxLength(30)
-  @Matches(/^[VEJPGvejpg]?-?\d{5,12}(-?\d)?$/, {
-    message: 'identification debe ser una cédula o RIF válido',
+  @Matches(/^[VEJPG][\s._-]?\d{6,10}([\s._-]?\d)?$/, {
+    message: IDENTIFICATION_FORMAT_MESSAGE,
   })
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim().toUpperCase() : value,

@@ -28,6 +28,16 @@ export const COBRIX_DEFAULTS = {
   requestTimeoutMs: 15_000,
   /** Vigencia del documento de cobro emitido. */
   invoiceTtlHours: 24,
+  /**
+   * Cómo se anula un documento de cobro. `{id}` es el id que Cobrix le puso a
+   * la factura.
+   *
+   * Va configurable porque su documentación pública NO fija esta operación: si
+   * el contrato real resulta ser otro (`POST /v1/invoices/{id}/cancel`, un
+   * `PATCH` de estado…), se corrige por entorno en vez de por despliegue.
+   */
+  invoiceCancelPath: '/v1/invoices/{id}',
+  invoiceCancelMethod: 'DELETE',
   /** Ventana del timestamp firmado del canal general, en segundos. */
   toleranceSeconds: 300,
   /** Métodos que Cobrix concilia. El resto va a manual (SUB-4). */
@@ -107,6 +117,22 @@ export class CobrixConfig {
       'COBRIX_INVOICE_TTL_HOURS',
       COBRIX_DEFAULTS.invoiceTtlHours,
     );
+  }
+
+  /** Ruta de anulación, con `{id}` por el id de la factura en Cobrix. */
+  get invoiceCancelPath(): string {
+    return (
+      this.str('COBRIX_INVOICE_CANCEL_PATH') ??
+      COBRIX_DEFAULTS.invoiceCancelPath
+    );
+  }
+
+  /** Verbo HTTP de la anulación. */
+  get invoiceCancelMethod(): string {
+    return (
+      this.str('COBRIX_INVOICE_CANCEL_METHOD') ??
+      COBRIX_DEFAULTS.invoiceCancelMethod
+    ).toUpperCase();
   }
 
   // ---------------------------------------------------------------------------
