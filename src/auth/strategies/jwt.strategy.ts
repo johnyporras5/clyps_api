@@ -33,6 +33,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
+    // OJO: lo que se devuelve aquí es EXACTAMENTE lo que verá `req.user`, y es
+    // una lista cerrada. Un claim que esté firmado dentro del token pero no
+    // aparezca en este objeto se pierde sin avisar: ni error ni log, solo un
+    // `undefined` en el guard que lo esperaba. Al añadir un claim nuevo al
+    // payload hay que añadirlo TAMBIÉN aquí.
     return {
       sub: payload.sub,
       email: payload.email,
@@ -42,6 +47,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // resuelve ese caso con el fallback a BD.
       companyId: payload.companyId ?? null,
       companyWorkerId: payload.companyWorkerId ?? null,
+      // Suplantación (CLYP-IMP): presentes SOLO en un token emitido por
+      // ImpersonationService. `act` dice qué persona real está detrás de una
+      // sesión que, por lo demás, es la del dueño del salón. Si se cayeran
+      // aquí, la app no podría pintar el aviso y el "salir de la suplantación"
+      // se quedaría sin saber qué sesión cerrar.
+      ...(payload.act ? { act: payload.act } : {}),
+      ...(payload.imp ? { imp: payload.imp } : {}),
     };
   }
 }
