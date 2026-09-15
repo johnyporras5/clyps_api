@@ -469,7 +469,93 @@ export class PayrollPeriodService {
         return m.save(PayrollPeriod, period);
       });
     }
+    if (newStatus === 'closed') {
+      // Al CERRAR, cualquier saldo pendiente se marca pagado automáticamente:
+      // un período cerrado no debe dejar pagos pendientes al trabajador (cubre
+      // p. ej. comisiones retroactivas que entraron tras el último pago).
+      return this.periodRepo.manager.transaction(async (m) => {
+        const saved = await m.save(PayrollPeriod, period);
+        await this.settleRemainingBalances(periodId, adminId, m);
+        return saved;
+      });
+    }
     return this.periodRepo.save(period);
+  }
+
+  /**
+   * Salda automáticamente TODO saldo pendiente del período: por cada
+   * (detalle, moneda) con neto congelado > pagado, crea un payout por la
+   * diferencia para dejarlo en 0. Se usa al cerrar un período y al sumarle
+   * comisiones retroactivas cuando ya está cerrado. INSERT…SELECT: atómico y sin
+   * bucle. Devuelve cuántos pagos creó.
+   */
+  async settleRemainingBalances(
+    periodId: number,
+    recordedByUserId: number,
+    manager?: EntityManager,
+  ): Promise<number> {
+    const m = manager ?? this.periodRepo.manager;
+
+    // Neto congelado por (detalle, moneda) y pagado por (detalle, moneda) se
+    // consultan por separado y se cruzan en JS: `payout.currency` y
+    // `period_detail_currency.currency` tienen collations distintas, así que un
+    // JOIN por la moneda en SQL falla (mismo criterio que getCurrencyBreakdown).
+    const netRows: Array<{
+      did: number;
+      companyId: number;
+      currency: string;
+      net: string;
+    }> = await m.query(
+      `SELECT pdc.period_detail_id AS did, d.company_id AS companyId,
+              pdc.currency AS currency, pdc.net_minor AS net
+         FROM period_detail_currency pdc
+         JOIN period_detail d ON d.id = pdc.period_detail_id
+        WHERE d.period_id = ?`,
+      [periodId],
+    );
+    if (netRows.length === 0) return 0;
+
+    const paidRows: Array<{ did: number; currency: string; paid: string }> =
+      await m.query(
+        `SELECT po.period_detail_id AS did, po.currency AS currency,
+                COALESCE(SUM(po.amount_minor), 0) AS paid
+           FROM payout po
+           JOIN period_detail d ON d.id = po.period_detail_id
+          WHERE d.period_id = ?
+          GROUP BY po.period_detail_id, po.currency`,
+        [periodId],
+      );
+    const paidBy = new Map<string, number>();
+    for (const r of paidRows) {
+      paidBy.set(`${r.did}|${r.currency}`, Number(r.paid));
+    }
+
+    let created = 0;
+    for (const r of netRows) {
+      const balance =
+        Number(r.net) - (paidBy.get(`${r.did}|${r.currency}`) ?? 0);
+      if (balance <= 0) continue;
+      await m.query(
+        `INSERT INTO payout
+            (company_id, period_detail_id, amount_minor, currency,
+             method, reference, recorded_by_user_id, paid_at)
+         VALUES (?, ?, ?, ?, 'otro', 'Pago automático (período cerrado)', ?, NOW())`,
+        [
+          Number(r.companyId),
+          Number(r.did),
+          balance,
+          r.currency,
+          recordedByUserId,
+        ],
+      );
+      created++;
+    }
+    if (created > 0) {
+      this.logger.log(
+        `Auto-pago período ${periodId}: ${created} saldo(s) marcado(s) como pagado(s)`,
+      );
+    }
+    return created;
   }
 
   /**
