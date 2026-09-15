@@ -62,8 +62,18 @@ export interface ActiveImpersonationSession {
 
 /** Ventana del vale. Corta de verdad: solo tiene que sobrevivir a un redirect. */
 const DEFAULT_TICKET_TTL_SECONDS = 120;
-/** Duración de la sesión suplantada. Sin refresco: cuando caduca, caducó. */
-const DEFAULT_SESSION_TTL_MINUTES = 30;
+/**
+ * Duración de la sesión suplantada: 6 horas. Sin refresco — cuando caduca,
+ * caducó, y el operador vuelve a pulsar "Acceder".
+ *
+ * La cifra es una decisión de producto: una jornada de soporte cabe dentro, y
+ * así nadie se queda tirado a media tarea. Ojo con lo que esta fecha SÍ y NO
+ * hace: no es lo que impide que otro use el token —de eso se encargan el vale
+ * de un solo uso y que el token no viaje nunca por la URL, más el corte
+ * inmediato desde el panel—, sino la red de seguridad por si se lo roban del
+ * navegador. Por eso se mide en horas y no en días.
+ */
+const DEFAULT_SESSION_TTL_MINUTES = 360;
 
 /**
  * Acceso del administrador de la PLATAFORMA (`padm`) a un salón ajeno sin
