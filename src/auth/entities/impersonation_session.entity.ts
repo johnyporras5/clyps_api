@@ -56,7 +56,7 @@ export class ImpersonationSession {
    * propósito: si mañana esa cuenta se borra o cambia de correo, el registro
    * de hace seis meses tiene que seguir diciendo quién entró.
    */
-  @Column({ name: 'actor_email', length: 245, nullable: true })
+  @Column({ name: 'actor_email', type: 'varchar', length: 245, nullable: true })
   actorEmail: string | null;
 
   /** El dueño (`adm`) en cuyo nombre se actúa. */
@@ -106,10 +106,10 @@ export class ImpersonationSession {
   endedReason: ImpersonationEndReason | null;
 
   /** IP desde la que se PIDIÓ el acceso (el panel), no desde la que se canjeó. */
-  @Column({ name: 'ip', length: 45, nullable: true })
+  @Column({ name: 'ip', type: 'varchar', length: 45, nullable: true })
   ip: string | null;
 
-  @Column({ name: 'user_agent', length: 255, nullable: true })
+  @Column({ name: 'user_agent', type: 'varchar', length: 255, nullable: true })
   userAgent: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
