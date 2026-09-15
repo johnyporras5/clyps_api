@@ -4093,22 +4093,51 @@ export class SessionService {
     // Se hace ANTES de crear el cobro para no dejar un pago sin su comisión.
     let payrollForcedPeriod: { id: number } | null = null;
     let payrollNeedsRefreeze = false;
+    let payrollTargetClosed = false;
     try {
       const resolved = await this.payrollPeriodService.resolvePeriodForDate(
         adminCompany.id,
         paidAt,
       );
-      payrollForcedPeriod = { id: resolved.period.id };
-      if (resolved.needsConfirm && !dto.confirmClosedPeriod) {
-        throw new ConflictException({
-          code: 'PERIOD_CLOSED',
-          message: `La fecha elegida cae en el período "${resolved.period.label}" que ya está "${resolved.period.status}". Confirma para sumar la comisión ahí (se recalculará).`,
-          periodId: resolved.period.id,
-          periodLabel: resolved.period.label,
-          periodStatus: resolved.period.status,
-        });
+      if (resolved.needsConfirm) {
+        // La fecha cae en un período NO abierto: el usuario elige dónde registrar
+        // la comisión. Compat: confirmClosedPeriod === true ⇒ 'past'.
+        const choice =
+          dto.payrollPeriodTarget ??
+          (dto.confirmClosedPeriod ? 'past' : undefined);
+        if (!choice) {
+          // Sin elección todavía: 409 con AMBAS opciones (período contenedor y
+          // período abierto actual) para que el front las muestre.
+          const current = await this.payrollPeriodService.findOpenPeriodFor(
+            adminCompany.id,
+          );
+          throw new ConflictException({
+            code: 'PERIOD_CLOSED',
+            message: `La fecha elegida cae en el período "${resolved.period.label}" que ya está "${resolved.period.status}". Elige dónde registrar la comisión.`,
+            periodId: resolved.period.id,
+            periodLabel: resolved.period.label,
+            periodStatus: resolved.period.status,
+            currentPeriodId: current?.id ?? null,
+            currentPeriodLabel: current?.label ?? null,
+          });
+        }
+        if (choice === 'current') {
+          // Al período abierto actual: pendiente normal, sin recongelar.
+          const current = await this.payrollPeriodService.ensureOpenPeriod(
+            adminCompany.id,
+            new Date(),
+          );
+          payrollForcedPeriod = { id: current.id };
+        } else {
+          // 'past': el período que contiene la fecha (se recongela). Si está
+          // cerrado, el saldo resultante se marca pagado automáticamente.
+          payrollForcedPeriod = { id: resolved.period.id };
+          payrollNeedsRefreeze = true;
+          payrollTargetClosed = resolved.period.status === 'closed';
+        }
+      } else {
+        payrollForcedPeriod = { id: resolved.period.id };
       }
-      payrollNeedsRefreeze = resolved.needsConfirm;
     } catch (e) {
       if (e instanceof ConflictException) throw e; // PERIOD_CLOSED se propaga
       // Otra falla al resolver (p. ej. nómina no activa): seguimos; la nómina es
@@ -4481,10 +4510,25 @@ export class SessionService {
           payrollForcedPeriod ?? undefined,
         );
 
-        // Si la comisión cayó en un período ya cerrado (backdate confirmado),
-        // recongelar sus totales para reflejar lo agregado.
+        // Si la comisión cayó en un período no abierto (backdate confirmado a
+        // 'past'), recongelar sus totales para reflejar lo agregado.
         if (payrollNeedsRefreeze && payrollForcedPeriod) {
           await this.payrollPeriodService.freezeTotals(payrollForcedPeriod.id);
+          // Período CERRADO: ese dinero ya se consideró pagado al cerrarlo, así
+          // que el saldo recién aparecido se marca pagado automáticamente y no
+          // queda pendiente. Best-effort: no rompe el cobro si falla.
+          if (payrollTargetClosed) {
+            try {
+              await this.payrollPeriodService.settleRemainingBalances(
+                payrollForcedPeriod.id,
+                adminId,
+              );
+            } catch (e) {
+              this.logger.warn(
+                `No se pudo auto-saldar el período cerrado ${payrollForcedPeriod.id}: ${(e as Error).message}`,
+              );
+            }
+          }
         }
 
         // Persistir las atribuciones resueltas (ya con el split de efectivo) para
