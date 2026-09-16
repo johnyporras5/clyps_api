@@ -1,16 +1,23 @@
 /**
- * Activación de clientes POR COMPAÑÍA.
+ * Eliminación lógica de clientes POR COMPAÑÍA.
  *
  * `client.is_active` es una sola columna global, así que cuando un salón
- * desactivaba a un cliente lo dejaba inactivo también en los demás salones
- * donde ese mismo cliente estaba. Para que la desactivación sea de cada
- * compañía se usa `client.inactive_companies`: la lista de compañías donde ESE
- * cliente está desactivado.
+ * quitaba a un cliente lo dejaba fuera también en los demás salones donde ese
+ * mismo cliente estaba. Para que sea de cada compañía se usa
+ * `client.inactive_companies`: la lista de compañías que eliminaron a ESE
+ * cliente.
  *
- * La columna global se conserva para los casos que no tienen compañía de por
- * medio (clientes creados por un usuario que aún no pertenecen a ningún salón)
- * y para el borrado suave (`temporarily_deleted` / `permanently_deleted`), que
- * sigue funcionando como hasta ahora.
+ * Esa columna nació para el toggle "Activo" y hoy significa ELIMINADO: el
+ * salón deja de ver al cliente en su lista y el cliente deja de ver al salón.
+ * No se renombró porque el comportamiento —ocultar la relación en ambos
+ * sentidos sin borrar la fila— es exactamente el mismo; lo que cambió es el
+ * nombre que se le da en la interfaz. `companies` NO se toca: es el historial
+ * de con quién tuvo relación, y es lo que permite reconocer al cliente si el
+ * salón lo vuelve a dar de alta para ofrecerle reactivarlo.
+ *
+ * La columna global `is_active` se conserva para los casos que no tienen
+ * compañía de por medio (clientes creados por un usuario que aún no pertenecen
+ * a ningún salón).
  */
 
 /** Lo mínimo que hace falta de un cliente para resolver su estado. */
@@ -36,8 +43,8 @@ export function normalizeCompanyIds(value: unknown): number[] {
 /**
  * Negocios que este cliente ve: los suyos (`companies`, que se llena cuando un
  * negocio lo registra y cuando agenda una cita) menos los salones que lo
- * desactivaron. Es la MISMA regla en la búsqueda y en las ofertas: para él solo
- * existen los negocios con los que tiene relación.
+ * eliminaron. Es la MISMA regla en la búsqueda y en las ofertas: para él solo
+ * existen los negocios con los que tiene relación viva.
  */
 export function resolveVisibleCompanyIds(
   client: ClientActivationState,
@@ -48,7 +55,7 @@ export function resolveVisibleCompanyIds(
   );
 }
 
-/** ¿Este cliente está desactivado en esta compañía en concreto? */
+/** ¿Este cliente está eliminado en esta compañía en concreto? */
 export function isClientInactiveForCompany(
   client: ClientActivationState,
   companyId: number,
@@ -60,7 +67,7 @@ export function isClientInactiveForCompany(
 
 /**
  * Compañías que el cliente comparte con quien lo consulta. Es el conjunto sobre
- * el que se resuelve el estado que ve un admin/worker y el que recibe el toggle.
+ * el que se resuelve el estado que ve un admin/worker.
  */
 export function sharedCompanyIds(
   client: ClientActivationState,
@@ -73,7 +80,7 @@ export function sharedCompanyIds(
 }
 
 /**
- * Estado que ve un admin/worker: activo si lo está en al menos una de las
+ * Estado que ve un admin/worker: vivo si lo está en al menos una de las
  * compañías que comparte con el cliente. Sin compañías compartidas manda la
  * bandera global (cliente propio que todavía no está en ningún salón).
  */
@@ -89,7 +96,7 @@ export function resolveIsActiveForCompanies(
 }
 
 /**
- * Aplica el toggle sobre un conjunto de compañías y devuelve la lista
+ * Aplica el cambio sobre un conjunto de compañías y devuelve la lista
  * `inactiveCompanies` resultante (no muta el cliente).
  */
 export function applyCompanyActivation(
@@ -103,4 +110,26 @@ export function applyCompanyActivation(
   return isActive
     ? current.filter((id) => !targets.includes(id))
     : [...new Set([...current, ...targets])];
+}
+
+/**
+ * Marca al cliente como eliminado para ESA compañía. Devuelve la lista
+ * `inactiveCompanies` resultante; no muta el cliente ni toca `companies`.
+ */
+export function markClientDeletedForCompany(
+  client: ClientActivationState,
+  companyId: number,
+): number[] {
+  return applyCompanyActivation(client, [companyId], false);
+}
+
+/**
+ * Deshace la eliminación para ESA compañía (reactivar). El cliente vuelve con
+ * su alias, sus notas y su historial porque nunca se borró nada.
+ */
+export function unmarkClientDeletedForCompany(
+  client: ClientActivationState,
+  companyId: number,
+): number[] {
+  return applyCompanyActivation(client, [companyId], true);
 }

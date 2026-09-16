@@ -16,6 +16,10 @@ import { LoginDto } from './dto/login.dto';
 import { Worker } from '../worker/entities/worker.entity';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
 import { Client } from '../client/entities/client.entity';
+import {
+  isClientInactiveForCompany,
+  unmarkClientDeletedForCompany,
+} from '../client/client-activation.util';
 import { RegisterClientDto } from './dto/register-client.dto';
 import {
   RegisterClientByAdminDto,
@@ -1108,6 +1112,7 @@ export class AuthService {
     let user: User;
     let client: Client | null = null;
     let isExistingUser = false;
+    let reactivated = false;
     let generatedPassword: string | undefined;
 
     // Si el correo no identifica a nadie, el `username` todavía puede estar
@@ -1182,13 +1187,55 @@ export class AuthService {
         : [];
 
       if (currentCompanies.includes(company.id)) {
-        throw new ConflictException({
-          statusCode: HttpStatus.CONFLICT,
-          error: 'Conflict',
-          code: 'CLIENT_ALREADY_IN_COMPANY',
-          clientId: client.id,
-          message: `El cliente ya estaba registrado y vinculado a la compañía '${company.name}'.`,
+        // El cliente sigue en `companies` aunque el salón lo haya eliminado
+        // (eliminar solo añade el salón a `inactive_companies`), así que hay
+        // que mirar esa lista para distinguir "ya lo tienes" de "lo eliminaste".
+        const wasDeletedHere = isClientInactiveForCompany(client, company.id);
+
+        if (!wasDeletedHere) {
+          throw new ConflictException({
+            statusCode: HttpStatus.CONFLICT,
+            error: 'Conflict',
+            code: 'CLIENT_ALREADY_IN_COMPANY',
+            clientId: client.id,
+            message: `El cliente ya estaba registrado y vinculado a la compañía '${company.name}'.`,
+          });
+        }
+
+        // Reactivar SOLO cuando lo identifica el correo. El username no vale
+        // para esto: no identifica a una persona, y otro cliente puede tener
+        // uno igual al que genere el formulario. Reactivar por username
+        // significaría devolverle al salón la ficha de alguien que no es su
+        // cliente, con su teléfono, sus notas y su historial.
+        if (!existingUserByEmail) {
+          throw new ConflictException({
+            statusCode: HttpStatus.CONFLICT,
+            error: 'Conflict',
+            code: 'USERNAME_TAKEN',
+            message: 'El nombre de usuario ya está en uso.',
+          });
+        }
+
+        // El admin confirma antes de reactivar, viendo de quién se trata. El
+        // front reintenta la misma petición con `confirmLink`.
+        if (!registerDto.confirmLink) {
+          throw new ConflictException({
+            statusCode: HttpStatus.CONFLICT,
+            error: 'Conflict',
+            code: 'CLIENT_DELETED_CONFIRM_REACTIVATE',
+            clientId: client.id,
+            clientName: this.buildClientDisplayName(client, user),
+            clientUsername: user.username,
+            companyName: company.name,
+            message: `${registerDto.email} ya está en el sistema y fue eliminado de ${company.name}. ¿Quieres reactivarlo?`,
+          });
+        }
+
+        // Vuelve con su alias, sus notas y su historial: nunca se borró nada.
+        await this.clientRepository.update(client.id, {
+          inactiveCompanies: unmarkClientDeletedForCompany(client, company.id),
         });
+        reactivated = true;
       }
 
       // Vincular a alguien que ya existe no es lo mismo que crearlo: el admin
@@ -1207,15 +1254,19 @@ export class AuthService {
         });
       }
 
-      currentCompanies.push(company.id);
+      // Al reactivar no hay nada que vincular: el salón ya estaba en
+      // `companies` y el update de arriba es el único cambio.
+      if (!reactivated) {
+        currentCompanies.push(company.id);
 
-      const shouldSetCreator =
-        createdByCompanyWorkerId != null &&
-        client.createdByCompanyWorkerId == null;
-      await this.clientRepository.update(client.id, {
-        companies: currentCompanies,
-        ...(shouldSetCreator ? { createdByCompanyWorkerId } : {}),
-      });
+        const shouldSetCreator =
+          createdByCompanyWorkerId != null &&
+          client.createdByCompanyWorkerId == null;
+        await this.clientRepository.update(client.id, {
+          companies: currentCompanies,
+          ...(shouldSetCreator ? { createdByCompanyWorkerId } : {}),
+        });
+      }
     } else {
       // Cuenta que ya existía pero sin perfil de cliente: se le completa aquí.
       // Sigue siendo alguien que ya estaba en CLYPS, así que también se confirma.
@@ -1266,11 +1317,13 @@ export class AuthService {
 
     const { password: _, ...userWithoutPassword } = user;
 
-    const message = isExistingUser
-      ? `Cliente existente vinculado a la compañía '${company.name}' exitosamente.`
-      : emailAbsent
-        ? `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'.`
-        : `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'. Las credenciales fueron enviadas a su correo.`;
+    const message = reactivated
+      ? `Cliente reactivado en '${company.name}'. Su historial sigue intacto.`
+      : isExistingUser
+        ? `Cliente existente vinculado a la compañía '${company.name}' exitosamente.`
+        : emailAbsent
+          ? `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'.`
+          : `Cliente registrado exitosamente y vinculado a la compañía '${company.name}'. Las credenciales fueron enviadas a su correo.`;
 
     // client.added (CLYP-246): notifica el alta/vinculación del cliente al canal
     // de la empresa. Best-effort.

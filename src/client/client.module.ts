@@ -11,9 +11,11 @@ import { Service } from 'src/service/entities/service.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { Offer } from 'src/Offer/entities/offer.entity';
 import { FileUploadService } from '../common/services/file_upload.service';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
+    RealtimeModule,
     TypeOrmModule.forFeature([
       Client,
       User,

@@ -11,6 +11,7 @@ import {
   Req,
   UseInterceptors,
   Put,
+  Delete,
   Param,
   ParseIntPipe,
 } from '@nestjs/common';
@@ -26,12 +27,17 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
 import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom } from '../realtime/rooms';
 
 @Controller('clients')
 @UseGuards(JwtAuthGuard, SubscriptionAccessGuard)
 @RequiresOperationalSubscription()
 export class ClientController {
-  constructor(private readonly clientService: ClientService) {}
+  constructor(
+    private readonly clientService: ClientService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   /**
    * Endpoint principal para listar los clientes de la compañía.
@@ -155,6 +161,50 @@ export class ClientController {
       // Compañía activa del token: acota el toggle "Activo" a ESE salón.
       req.user?.companyId ?? null,
     );
+  }
+
+  /**
+   * Eliminar un cliente de ESTE salón (eliminación lógica).
+   *
+   * Solo el admin, y solo para la compañía que trae su token: un mismo cliente
+   * puede estar en varios salones y eliminarlo aquí no lo toca en los demás.
+   * La fila no se borra; si el admin lo vuelve a registrar más adelante se le
+   * ofrece reactivarlo con todo su historial.
+   *
+   * DELETE /clients/admin/:clientId
+   */
+  @Delete('admin/:clientId')
+  @Roles('adm')
+  @UseGuards(RolesGuard)
+  async removeClient(
+    @Request() req: AuthenticatedRequest,
+    @Param('clientId', ParseIntPipe) clientId: number,
+  ): Promise<{ message: string; clientId: number; companyId: number }> {
+    const adminId = req.user.sub;
+    if (!adminId) {
+      throw new UnauthorizedException('Usuario no autenticado correctamente');
+    }
+
+    const result = await this.clientService.removeClientFromCompany(
+      clientId,
+      adminId,
+      req.user?.companyId ?? null,
+    );
+
+    // client.removed: si otro admin del salón tiene la lista abierta, que el
+    // cliente le desaparezca sin recargar. Best-effort: no rompe el borrado.
+    try {
+      this.realtime.emitEntity(companyRoom(result.companyId), {
+        type: 'client.removed',
+        entityId: clientId,
+        companyId: result.companyId,
+        data: { clientId },
+      });
+    } catch {
+      // best-effort
+    }
+
+    return result;
   }
 
   /**

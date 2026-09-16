@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
+  HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -24,10 +26,12 @@ import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
 import { FindAllClientsDto } from './dto/find-all-clients.dto';
 import {
-  applyCompanyActivation,
+  isClientInactiveForCompany,
+  markClientDeletedForCompany,
   normalizeCompanyIds,
   resolveIsActiveForCompanies,
   sharedCompanyIds,
+  unmarkClientDeletedForCompany,
 } from './client-activation.util';
 
 @Injectable()
@@ -363,8 +367,20 @@ export class ClientService {
       );
     }
 
-    if (options.isActive !== undefined) {
-      const wantsActive = parseInt(options.isActive, 10) === 1;
+    // Los clientes ELIMINADOS de este salón no salen en el listado. Antes el
+    // filtro era opcional y sin él salían todos (activos e inactivos), porque
+    // `inactive_companies` solo apagaba un toggle. Ahora significa eliminado,
+    // así que el listado por defecto trae SOLO los vivos: `isActive` ausente
+    // se comporta igual que `isActive=1`.
+    //
+    // `isActive=0` sigue devolviendo los eliminados. No hay pantalla que lo
+    // use, pero es la única forma de listarlos si alguien necesita recuperar
+    // uno sin entrar a la base de datos.
+    {
+      const wantsActive =
+        options.isActive === undefined
+          ? true
+          : parseInt(options.isActive, 10) === 1;
 
       if (adminCompanyIds.length === 0) {
         queryBuilder.andWhere('client.is_active = :isActiveFlag', {
@@ -818,18 +834,18 @@ export class ClientService {
         )
       : [];
 
+    // `isActive` ya no se acepta por aquí. El toggle "Activo" se retiró: ahora
+    // la acción es ELIMINAR, y tiene su propio endpoint con la validación de
+    // citas sin cerrar. Si se siguiera aceptando aquí, una app vieja que
+    // todavía mande el toggle eliminaría al cliente sin pasar por esa
+    // validación y sin que nadie lo haya pedido.
+    //
+    // Se ignora en vez de rechazarse por lo mismo que los campos personales de
+    // arriba: front y backend no se despliegan a la vez.
     if (updateClientDto.isActive !== undefined) {
-      const shouldBeActive = Number(updateClientDto.isActive) === 1;
-
-      if (targetCompanyIds.length > 0) {
-        client.inactiveCompanies = applyCompanyActivation(
-          client,
-          targetCompanyIds,
-          shouldBeActive,
-        );
-      } else {
-        client.isActive = shouldBeActive ? 1 : 0;
-      }
+      this.logger.warn(
+        `Toggle isActive ignorado para el cliente ${clientId}: el estado ahora se maneja con DELETE /clients/admin/:id`,
+      );
     }
 
     const saved = await this.clientRepository.save(client);
@@ -924,6 +940,195 @@ export class ClientService {
     }
     client.companyAliases = aliases;
 
+    return this.clientRepository.save(client);
+  }
+
+  /**
+   * Citas del cliente EN ESTE SALÓN que todavía no están cerradas.
+   *
+   * Cerradas son Pagado (4), Cancelada (5) y Calificada (6) —esta última va
+   * después de pagar—. El resto sigue viva: Agendado (1), En proceso (2),
+   * Completada (3, atendida pero sin cobrar) y Pendiente de asignación de
+   * trabajador (8, agendada aunque todavía no tenga a quién).
+   *
+   * La cita se ata al salón por el trabajador del detalle, o por la compañía de
+   * la oferta cuando el detalle no tiene trabajador asignado (mismo criterio
+   * que la agenda). Ojo: aquí se usan TODOS los company_worker del salón, no
+   * solo los activos. Si se filtrara por activos, una cita agendada con alguien
+   * que después se fue del salón no se contaría y dejaría eliminar al cliente
+   * con esa cita abierta.
+   */
+  private async findOpenSessionsInCompany(
+    clientId: number,
+    companyId: number,
+  ): Promise<{ id: number; startDatetime: Date | null; status: number }[]> {
+    const OPEN_SESSION_STATUSES = [1, 2, 3, 8];
+
+    const companyWorkers = await this.companyWorkerRepository.find({
+      where: { companyId },
+      select: ['id'],
+    });
+    const companyWorkerIds = companyWorkers.map((cw) => cw.id);
+
+    const query = this.sessionRepository
+      .createQueryBuilder('session')
+      .innerJoin(SessionDetail, 'detail', 'detail.session_id = session.id')
+      .leftJoin(Offer, 'offer', 'offer.id = detail.offer_id')
+      .where('session.client_id = :clientId', { clientId })
+      .andWhere('session.session_status IN (:...openStatuses)', {
+        openStatuses: OPEN_SESSION_STATUSES,
+      });
+
+    if (companyWorkerIds.length === 0) {
+      query.andWhere(
+        '(detail.company_worker_id IS NULL AND offer.company_id = :companyId)',
+        { companyId },
+      );
+    } else {
+      query.andWhere(
+        new Brackets((qb) => {
+          qb.where('detail.company_worker_id IN (:...companyWorkerIds)', {
+            companyWorkerIds,
+          }).orWhere(
+            '(detail.company_worker_id IS NULL AND offer.company_id = :companyId)',
+            { companyId },
+          );
+        }),
+      );
+    }
+
+    // Una cita con varios servicios tiene varios detalles y saldría repetida.
+    const sessions = await query
+      .select([
+        'session.id AS id',
+        'session.start_datetime AS startDatetime',
+        'session.session_status AS status',
+      ])
+      .distinct(true)
+      .orderBy('session.start_datetime', 'ASC')
+      .getRawMany<{ id: number; startDatetime: Date | null; status: number }>();
+
+    return sessions.map((s) => ({
+      id: Number(s.id),
+      startDatetime: s.startDatetime,
+      status: Number(s.status),
+    }));
+  }
+
+  /**
+   * Compañía sobre la que actúa el admin, tomada del TOKEN.
+   *
+   * No se resuelve con `findOne({ where: { userId } })` como hacía el borrado
+   * viejo: un admin puede tener varias compañías y ese `findOne` devolvía una
+   * cualquiera, así que en el segundo salón la operación fallaba diciendo que
+   * el cliente no era suyo.
+   */
+  private async resolveAdminCompany(
+    adminId: number,
+    companyId?: number | null,
+  ): Promise<Company> {
+    if (!companyId) {
+      throw new BadRequestException(
+        'No se pudo determinar el salón. Vuelve a iniciar sesión.',
+      );
+    }
+
+    const company = await this.companyRepository.findOne({
+      where: { id: Number(companyId), userId: adminId },
+    });
+
+    if (!company) {
+      throw new ForbiddenException('No tienes acceso a este salón');
+    }
+
+    return company;
+  }
+
+  /**
+   * Elimina al cliente de ESTE salón. Es una eliminación lógica: la fila no se
+   * borra y `companies` no se toca, solo se añade el salón a
+   * `inactive_companies`. El cliente desaparece de la lista del salón y el
+   * salón desaparece de la app del cliente; los demás salones no se enteran.
+   *
+   * Se bloquea si quedan citas sin cerrar: eliminar al cliente con una cita
+   * viva dejaría en la agenda una cita de alguien que ya no está en la lista,
+   * y sin forma de cobrarla.
+   */
+  async removeClientFromCompany(
+    clientId: number,
+    adminId: number,
+    companyId?: number | null,
+  ): Promise<{ message: string; clientId: number; companyId: number }> {
+    const company = await this.resolveAdminCompany(adminId, companyId);
+
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+    });
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    if (!normalizeCompanyIds(client.companies).includes(company.id)) {
+      throw new NotFoundException('Este cliente no pertenece a tu salón');
+    }
+
+    if (isClientInactiveForCompany(client, company.id)) {
+      throw new BadRequestException('Este cliente ya fue eliminado');
+    }
+
+    const openSessions = await this.findOpenSessionsInCompany(
+      clientId,
+      company.id,
+    );
+
+    if (openSessions.length > 0) {
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'Conflict',
+        code: 'CLIENT_HAS_OPEN_SESSIONS',
+        count: openSessions.length,
+        sessions: openSessions,
+        message:
+          openSessions.length === 1
+            ? 'Este cliente tiene 1 cita sin cerrar. Márcala como pagada o cancelada antes de eliminarlo.'
+            : `Este cliente tiene ${openSessions.length} citas sin cerrar. Márcalas como pagadas o canceladas antes de eliminarlo.`,
+      });
+    }
+
+    client.inactiveCompanies = markClientDeletedForCompany(client, company.id);
+    await this.clientRepository.save(client);
+
+    this.logger.log(
+      `Cliente ${clientId} eliminado del salón ${company.id} por el admin ${adminId}`,
+    );
+
+    return {
+      message: 'Cliente eliminado.',
+      clientId,
+      companyId: company.id,
+    };
+  }
+
+  /**
+   * Deshace la eliminación: el cliente vuelve a este salón con su alias, sus
+   * notas y su historial, porque nunca se borró nada.
+   *
+   * No tiene endpoint propio. Se llama desde el alta de clientes cuando el
+   * admin vuelve a registrar a alguien que había eliminado y confirma que
+   * quiere reactivarlo (ver auth.service → registerClientByAdmin).
+   */
+  async reactivateClientForCompany(
+    clientId: number,
+    companyId: number,
+  ): Promise<Client> {
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+    });
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    client.inactiveCompanies = unmarkClientDeletedForCompany(client, companyId);
     return this.clientRepository.save(client);
   }
 
