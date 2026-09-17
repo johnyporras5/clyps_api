@@ -183,6 +183,13 @@ export class SubscriptionController {
       req.user.sub,
     );
     await this.subscriptionService.choosePlan(companyId, dto.planId);
+    /*
+     * Elegir plan CAMBIA lo que el salón puede hacer, así que la foto cacheada
+     * ya no sirve: sin esto la propia respuesta de abajo podía devolver el plan
+     * anterior hasta 10 s, y el trabajador de un salón que acaba de subir a
+     * Full seguía sin poder entrar ese rato (SUB-14).
+     */
+    this.entitlements.invalidate(companyId);
     return this.entitlements.getAccessResponse(companyId);
   }
 

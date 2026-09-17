@@ -70,9 +70,24 @@ export interface AccessResponse {
  * no tiene por qué ver la facturación del salón donde trabaja.
  */
 export interface SubscriptionStatusResponse {
+  /**
+   * ¿Puede ESTE usuario usar la app ahora?
+   *
+   * Ojo, no es solo "el salón está al día": para el trabajador también es
+   * `false` cuando el salón está en Básico, porque ese plan no incluye la app
+   * del equipo (SUB-14). Desde el teléfono las dos situaciones se ven igual
+   * —no puede trabajar— y la razón va aparte, en `reason`.
+   */
   canOperate: boolean;
   /** A quién le habla el mensaje: define qué pantalla pinta el front. */
   blockedFor: 'adm' | 'wrk' | null;
   /** Qué decirle a ESTE rol. `null` cuando no hay bloqueo. */
   message: string | null;
+  /**
+   * Por qué no puede: el salón no pagó, o el salón no compró esta función.
+   * `null` cuando puede. El front lo usa para elegir el CTA —pagar no es lo
+   * mismo que subir de plan, y al trabajador no se le ofrece ninguno de los
+   * dos—.
+   */
+  reason: 'subscription_blocked' | 'plan_upgrade_required' | null;
 }

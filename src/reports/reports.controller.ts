@@ -18,10 +18,19 @@ import { ClientsReportQueryDto } from './dto/clients-report-query.dto';
 import { ClientsListQueryDto } from './dto/clients-list-query.dto';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
-import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
+import {
+  RequiresFeature,
+  RequiresOperationalSubscription,
+} from '../subscription/guards/requires-feature.decorator';
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+/**
+ * SUB-14: "Análisis de datos" es del plan Full. Ojo con la diferencia entre los
+ * dos decoradores de abajo: el Básico no ve estos reportes NUNCA (no los
+ * compró), y el Full moroso sí los sigue viendo (los compró y solo debe el mes).
+ */
+@RequiresFeature('analytics')
 /**
  * SUB-12: el DUEÑO bloqueado sigue entrando aquí.
  *

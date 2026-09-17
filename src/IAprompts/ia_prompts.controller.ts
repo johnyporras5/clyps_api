@@ -29,6 +29,8 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ProcessPromptDto } from './dto/process-prompt.dto';
 import { SuggestionsDto } from './dto/suggestions.dto';
 import type { AuthenticatedRequest } from '../auth/types/authenticated-request';
+import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
+import { RequiresFeature } from '../subscription/guards/requires-feature.decorator';
 import { Observable } from 'rxjs';
 
 @Controller('ia-prompts')
@@ -94,8 +96,17 @@ export class IAPromptsController {
     return this.iaPromptsService.getSuggestions(dto, image);
   }
 
+  /**
+   * SUB-14: la IA es del plan Full.
+   *
+   * El guard solo puede cortar a quien pertenece a UN salón —dueño y
+   * trabajador—. El cliente final pasa de largo: su token no trae salón y el
+   * catálogo lo dice expreso, a él no se le pinta candado. Lo suyo se apaga en
+   * la app, con `GET /subscription/company/:id/features`.
+   */
   @Post('process')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionAccessGuard)
+  @RequiresFeature('aiSuggestions')
   async processPrompt(
     @Body() dto: ProcessPromptDto,
     @Request() req: AuthenticatedRequest,
@@ -113,7 +124,8 @@ export class IAPromptsController {
    * El cliente recibe eventos continuos hasta que llega '[DONE]'
    */
   @Post('process/stream')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionAccessGuard)
+  @RequiresFeature('aiSuggestions')
   @Sse()
   async processPromptStream(
     @Body() dto: ProcessPromptDto,

@@ -697,6 +697,7 @@ describe('a quién le habla el bloqueo', () => {
       canOperate: false,
       blockedFor: 'wrk',
       message: expect.stringContaining('administrador') as string,
+      reason: 'subscription_blocked',
     });
   });
 
@@ -707,7 +708,47 @@ describe('a quién le habla el bloqueo', () => {
       canOperate: true,
       blockedFor: null,
       message: null,
+      reason: null,
     });
+  });
+
+  /**
+   * SUB-14. El salón paga puntual, pero compró el Básico: el trabajador no
+   * tiene app. Para él es el mismo "no puedes trabajar" que el bloqueo, y por
+   * eso viaja como `canOperate: false`; lo que cambia es el porqué.
+   */
+  it('en Básico al día, el trabajador queda afuera por PLAN, no por deuda', async () => {
+    const service = buildService({ planId: 'basico' });
+
+    const estado = await service.getStatusResponse(7, 'wrk');
+
+    expect(estado).toEqual({
+      canOperate: false,
+      blockedFor: 'wrk',
+      message: expect.stringContaining('administrador') as string,
+      reason: 'plan_upgrade_required',
+    });
+    // Ni precios ni nombres de plan: el trabajador no decide ni paga.
+    expect(estado.message?.toLowerCase()).not.toContain('plan');
+  });
+
+  it('al DUEÑO del mismo salón Básico no le pasa nada: su panel es suyo', async () => {
+    const service = buildService({ planId: 'basico' });
+
+    expect(await service.getStatusResponse(7, 'adm')).toEqual({
+      canOperate: true,
+      blockedFor: null,
+      message: null,
+      reason: null,
+    });
+  });
+
+  it('debiendo y en Básico, la noticia es la deuda: es lo que sí se puede resolver', async () => {
+    const service = bloqueadoSinPagarNunca();
+
+    expect((await service.getStatusResponse(7, 'wrk')).reason).toBe(
+      'subscription_blocked',
+    );
   });
 });
 

@@ -22,6 +22,8 @@ function build(options: {
   feature?: string;
   mode?: string;
   blocked?: boolean;
+  /** Funciones que el plan del salón NO incluye (SUB-14). */
+  sinPlan?: string[];
 }) {
   const assertCanOperate = jest.fn().mockImplementation(() => {
     if (options.blocked)
@@ -31,11 +33,21 @@ function build(options: {
     return Promise.resolve({});
   });
   const assertCanUseFeature = jest.fn().mockResolvedValue(undefined);
+  const assertPlanIncludes = jest
+    .fn()
+    .mockImplementation((_companyId: number, feature: string) => {
+      if (options.sinPlan?.includes(feature))
+        return Promise.reject(
+          new ForbiddenException({ reason: 'plan_upgrade_required', feature }),
+        );
+      return Promise.resolve({});
+    });
   const resolveCompanyIdForAdmin = jest.fn().mockResolvedValue(99);
 
   const entitlements = {
     assertCanOperate,
     assertCanUseFeature,
+    assertPlanIncludes,
     resolveCompanyIdForAdmin,
   } as unknown as EntitlementsService;
 
@@ -72,6 +84,7 @@ function build(options: {
     call,
     assertCanOperate,
     assertCanUseFeature,
+    assertPlanIncludes,
     resolveCompanyIdForAdmin,
   };
 }
@@ -150,6 +163,41 @@ describe('a quién corta', () => {
 
     await expect(call('wrk')).resolves.toBe(true);
     expect(assertCanOperate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * SUB-14, la trampa que separó los dos ejes: la exención es del bloqueo por
+   * DEUDA. Si el salón nunca compró la app del equipo, el trabajador no entra
+   * ni por la puerta que lo exime — no hay nada que eximir, no lo compraron.
+   */
+  it('al trabajador exento SÍ, si el salón no tiene la app del equipo', async () => {
+    const { call, assertCanOperate, assertPlanIncludes } = build({
+      operation: { allowWhenBlocked: ['wrk'] },
+      mode: 'on',
+      sinPlan: ['workerApp'],
+    });
+
+    await expect(call('wrk')).rejects.toThrow(ForbiddenException);
+    expect(assertCanOperate).not.toHaveBeenCalled();
+    expect(assertPlanIncludes).toHaveBeenCalledWith(7, 'workerApp', 'wrk');
+  });
+
+  it('al dueño exento no se le mira ningún plan: se va sin tocar la base', async () => {
+    const {
+      call,
+      assertCanOperate,
+      assertPlanIncludes,
+      resolveCompanyIdForAdmin,
+    } = build({
+      operation: { allowWhenBlocked: ['adm'] },
+      mode: 'on',
+      blocked: true,
+    });
+
+    await expect(call('adm', null)).resolves.toBe(true);
+    expect(assertCanOperate).not.toHaveBeenCalled();
+    expect(assertPlanIncludes).not.toHaveBeenCalled();
+    expect(resolveCompanyIdForAdmin).not.toHaveBeenCalled();
   });
 
   it('al dueño SÍ, aunque el endpoint exima al trabajador', async () => {
@@ -234,14 +282,77 @@ describe('a quién corta', () => {
   });
 });
 
-describe('el eje del plan sigue funcionando', () => {
+describe('el eje del plan', () => {
   it('un endpoint con función del plan pregunta por la función, con el rol', async () => {
-    const { call, assertCanUseFeature } = build({
+    const { call, assertPlanIncludes } = build({
       feature: 'payroll',
       mode: 'on',
     });
 
     await expect(call('adm')).resolves.toBe(true);
-    expect(assertCanUseFeature).toHaveBeenCalledWith(7, 'payroll', 'adm');
+    expect(assertPlanIncludes).toHaveBeenCalledWith(7, 'payroll', 'adm');
+  });
+
+  it('corta al dueño de un Básico que pide una función del Full', async () => {
+    const { call } = build({
+      feature: 'payroll',
+      mode: 'on',
+      sinPlan: ['payroll'],
+    });
+
+    await expect(call('adm')).rejects.toThrow(ForbiddenException);
+  });
+
+  /**
+   * El orden importa: al dueño que DEBE se le manda a pagar, no a comparar
+   * planes. Si fallan los dos ejes a la vez, habla el del pago.
+   */
+  it('debiendo y sin el plan, el 403 que sale es el de la deuda', async () => {
+    const { call } = build({
+      feature: 'payroll',
+      mode: 'on',
+      blocked: true,
+      sinPlan: ['payroll'],
+    });
+
+    await expect(call('adm')).rejects.toMatchObject({
+      response: { reason: 'subscription_blocked' },
+    });
+  });
+
+  /**
+   * SUB-14: la app del equipo no se marca endpoint por endpoint —se olvidaría
+   * uno—. Todo trabajador que toca una puerta marcada la necesita.
+   */
+  it('al trabajador se le exige la app del equipo aunque el endpoint no pida función', async () => {
+    const { call, assertPlanIncludes } = build({
+      operation: operativo,
+      mode: 'on',
+      sinPlan: ['workerApp'],
+    });
+
+    await expect(call('wrk')).rejects.toThrow(ForbiddenException);
+    expect(assertPlanIncludes).toHaveBeenCalledWith(7, 'workerApp', 'wrk');
+  });
+
+  it('al dueño no se le exige la app del equipo: su panel no es esa app', async () => {
+    const { call, assertPlanIncludes } = build({
+      operation: operativo,
+      mode: 'on',
+      sinPlan: ['workerApp'],
+    });
+
+    await expect(call('adm')).resolves.toBe(true);
+    expect(assertPlanIncludes).not.toHaveBeenCalled();
+  });
+
+  it('con el interruptor en log, el que no tiene el plan igual entra', async () => {
+    const { call } = build({
+      operation: operativo,
+      mode: 'log',
+      sinPlan: ['workerApp'],
+    });
+
+    await expect(call('wrk')).resolves.toBe(true);
   });
 });
