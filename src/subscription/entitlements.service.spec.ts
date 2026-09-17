@@ -5,6 +5,8 @@ import { EntitlementsService } from './entitlements.service';
 import type { SubscriptionService } from './subscription.service';
 import type { Company } from '../company/entities/company.entity';
 import type { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+import type { Client } from '../client/entities/client.entity';
+import type { ClientFavoriteCompany } from '../client_favorite_company/entities/client-favorite-company.entity';
 import type { PaymentReport } from './entities/payment-report.entity';
 import type { Subscription } from './entities/subscription.entity';
 import type { PlanId } from './config/plans.config';
@@ -81,10 +83,22 @@ function buildService(options: {
     reports as unknown as Repository<PaymentReport>,
     workers as unknown as Repository<CompanyWorker>,
     companies as unknown as Repository<Company>,
+    sinClientes.clients,
+    sinClientes.favorites,
     { get: () => undefined } as unknown as ConfigService,
     trials as unknown as SubscriptionService,
   );
 }
+
+/** Los repos del cliente final, que la mayoría de estas pruebas no usa. */
+const sinClientes = {
+  clients: {
+    findOne: jest.fn().mockResolvedValue(null),
+  } as unknown as Repository<Client>,
+  favorites: {
+    find: jest.fn().mockResolvedValue([]),
+  } as unknown as Repository<ClientFavoriteCompany>,
+};
 
 describe('el eje del plan', () => {
   it('el Básico al día NO accede a IA, nómina, análisis ni app del trabajador', async () => {
@@ -753,6 +767,168 @@ describe('a quién le habla el bloqueo', () => {
 });
 
 /**
+ * SUB-14: la IA del cliente final.
+ *
+ * La regla que decidió el usuario: la entrada suelta del menú se le muestra si
+ * AL MENOS UNO de sus salones tiene el plan que trae la IA. Si todos son
+ * Básico, no se le muestra.
+ */
+describe('la IA suelta del cliente', () => {
+  const salon = (companyId: number, planId: PlanId | null, extra = {}) => ({
+    id: companyId,
+    companyId,
+    planId,
+    status: 'active',
+    // Prueba ya terminada: manda el plan comprado, que es lo que se prueba.
+    trialEndsAt: days(-30),
+    currentPeriodEnd: days(10),
+    graceEndsAt: null,
+    billingExempt: false,
+    ...extra,
+  });
+
+  const build = (options: {
+    /** Salones del cliente, como filas de suscripción. */
+    salones?: ReturnType<typeof salon>[];
+    /** Ids que el cliente tiene y que NO tienen fila de suscripción. */
+    sinFila?: number[];
+    favoritos?: number[];
+    /** El usuario no tiene ficha de cliente. */
+    sinCliente?: boolean;
+  }) => {
+    const salones = options.salones ?? [];
+    const ids = [
+      ...salones.map((s) => s.companyId),
+      ...(options.sinFila ?? []),
+    ];
+
+    const subscriptions = { find: jest.fn().mockResolvedValue(salones) };
+    const clients = {
+      findOne: jest
+        .fn()
+        .mockResolvedValue(
+          options.sinCliente ? null : { id: 3, companies: ids },
+        ),
+    };
+    const favorites = {
+      find: jest
+        .fn()
+        .mockResolvedValue(
+          (options.favoritos ?? []).map((companyId) => ({ companyId })),
+        ),
+    };
+
+    const service = new EntitlementsService(
+      subscriptions as unknown as Repository<Subscription>,
+      {
+        countBy: jest.fn().mockResolvedValue(0),
+      } as unknown as Repository<PaymentReport>,
+      {
+        countBy: jest.fn().mockResolvedValue(0),
+      } as unknown as Repository<CompanyWorker>,
+      { findOne: jest.fn() } as unknown as Repository<Company>,
+      clients as unknown as Repository<Client>,
+      favorites as unknown as Repository<ClientFavoriteCompany>,
+      { get: () => undefined } as unknown as ConfigService,
+      {} as unknown as SubscriptionService,
+    );
+
+    return { service, subscriptions, favorites };
+  };
+
+  it('con un salón Full entre varios Básico, SÍ se le muestra', async () => {
+    const { service } = build({
+      salones: [salon(1, 'basico'), salon(2, 'basico'), salon(3, 'full')],
+    });
+
+    expect(await service.clientHasAiSuggestions(50)).toBe(true);
+  });
+
+  it('con todos sus salones en Básico, NO se le muestra', async () => {
+    const { service } = build({
+      salones: [salon(1, 'basico'), salon(2, 'basico')],
+    });
+
+    expect(await service.clientHasAiSuggestions(50)).toBe(false);
+  });
+
+  it('sin salones tampoco: no hay quién le pague la IA', async () => {
+    const { service } = build({ salones: [] });
+
+    expect(await service.clientHasAiSuggestions(50)).toBe(false);
+  });
+
+  it('el usuario sin ficha de cliente no rompe nada', async () => {
+    const { service } = build({ sinCliente: true });
+
+    expect(await service.clientHasAiSuggestions(50)).toBe(false);
+  });
+
+  /**
+   * Un salón Full que dejó de pagar no le presta la IA a nadie: el eje del
+   * plan y el del pago tienen que dar verde los dos.
+   */
+  it('un Full bloqueado no cuenta', async () => {
+    const { service } = build({
+      salones: [
+        salon(1, 'full', {
+          currentPeriodEnd: days(-30),
+          graceEndsAt: days(-20),
+        }),
+      ],
+    });
+
+    expect(await service.clientHasAiSuggestions(50)).toBe(false);
+  });
+
+  /** Durante la prueba rige el Full, aunque haya elegido el Básico. */
+  it('un salón en prueba cuenta, haya elegido lo que haya elegido', async () => {
+    const { service } = build({
+      salones: [
+        salon(1, 'basico', {
+          status: 'trialing',
+          trialEndsAt: days(5),
+          currentPeriodEnd: null,
+        }),
+      ],
+    });
+
+    expect(await service.clientHasAiSuggestions(50)).toBe(true);
+  });
+
+  it('el favorito cuenta aunque nunca haya agendado ahí', async () => {
+    const { service, subscriptions } = build({
+      salones: [salon(9, 'full')],
+      favoritos: [9],
+    });
+
+    expect(await service.clientHasAiSuggestions(50)).toBe(true);
+    expect(subscriptions.find).toHaveBeenCalled();
+  });
+
+  /**
+   * El mismo criterio permisivo del resto del módulo: la fila puede faltar por
+   * un alta que falló, y eso no lo paga quien está mirando la app.
+   */
+  it('un salón SIN fila de suscripción cuenta como abierto', async () => {
+    const { service } = build({ salones: [], sinFila: [4] });
+
+    expect(await service.clientHasAiSuggestions(50)).toBe(true);
+  });
+
+  it('todo sale de dos consultas, no de una por salón', async () => {
+    const { service, subscriptions, favorites } = build({
+      salones: [salon(1, 'basico'), salon(2, 'basico'), salon(3, 'basico')],
+    });
+
+    await service.clientHasAiSuggestions(50);
+
+    expect(subscriptions.find).toHaveBeenCalledTimes(1);
+    expect(favorites.find).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
  * SUB-12: con el guard colgado de una docena de controladores, la misma
  * pregunta se repite muchas veces por pantalla. La caché es de segundos —el
  * estado se recalcula con la hora de ahora— y se tira a mano cuando un pago
@@ -780,6 +956,8 @@ describe('la caché del acceso', () => {
       reports as unknown as Repository<PaymentReport>,
       workers as unknown as Repository<CompanyWorker>,
       companies as unknown as Repository<Company>,
+      sinClientes.clients,
+      sinClientes.favorites,
       {
         get: (key: string) =>
           key === 'SUBSCRIPTION_ACCESS_CACHE_MS' ? ttl : undefined,

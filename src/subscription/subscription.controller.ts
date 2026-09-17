@@ -129,6 +129,28 @@ export class SubscriptionController {
   }
 
   /**
+   * SUB-14: si a ESTE cliente se le pinta la entrada suelta de la IA.
+   *
+   * La de arriba responde por un salón concreto —la del agendamiento—. Esta es
+   * para la del menú, que no cuelga de ninguno: se muestra si al menos uno de
+   * sus salones tiene el plan que la incluye.
+   *
+   * Solo banderas de presentación: no dice de qué salón vino el sí, porque eso
+   * sería filtrarle el plan que paga un salón a alguien que no es su dueño.
+   */
+  @Roles('cli')
+  @Get('features/me')
+  async getMyClientFeatures(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ aiSuggestions: boolean }> {
+    return {
+      aiSuggestions: await this.entitlements.clientHasAiSuggestions(
+        req.user.sub,
+      ),
+    };
+  }
+
+  /**
    * SUB-2: monto exacto en Bs a pagar, con la tasa del momento. No persiste
    * nada — el cliente muestra el monto y lo conserva para reportarlo.
    */

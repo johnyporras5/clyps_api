@@ -1,9 +1,11 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Company } from '../company/entities/company.entity';
+import { Client } from '../client/entities/client.entity';
+import { ClientFavoriteCompany } from '../client_favorite_company/entities/client-favorite-company.entity';
 import {
   GRACE_DAYS,
   TRIAL_DAYS,
@@ -115,6 +117,10 @@ export class EntitlementsService {
     private readonly workers: Repository<CompanyWorker>,
     @InjectRepository(Company)
     private readonly companies: Repository<Company>,
+    @InjectRepository(Client)
+    private readonly clients: Repository<Client>,
+    @InjectRepository(ClientFavoriteCompany)
+    private readonly favorites: Repository<ClientFavoriteCompany>,
     private readonly config: ConfigService,
     private readonly trials: SubscriptionService,
   ) {}
@@ -577,6 +583,74 @@ export class EntitlementsService {
       message: null,
       reason: null,
     };
+  }
+
+  /**
+   * ¿Alguno de los salones de este cliente tiene la IA? (SUB-14)
+   *
+   * La sugerencia con IA es del plan Full, o sea que la paga el SALÓN. Pero el
+   * cliente final no pertenece a uno solo, y su menú tiene una entrada suelta
+   * que no cuelga de ninguno. La regla que decidió el usuario: si al menos uno
+   * de sus salones la tiene, la entrada se le muestra; si todos son Básico, no.
+   *
+   * "Sus salones" son los dos que el sistema ya sabe: donde es cliente
+   * (`client.companies`, que se llena al agendar) y los que marcó como
+   * favoritos. Un salón sin fila de suscripción cuenta como que SÍ la tiene:
+   * es el mismo criterio permisivo del resto del módulo —la fila puede faltar
+   * por un alta que falló, y eso no es culpa de quien está mirando la app—.
+   *
+   * Todo sale de dos consultas, no de una por salón: un cliente con 30 salones
+   * no puede costar 30 viajes a la base para pintar un botón.
+   */
+  async clientHasAiSuggestions(userId: number): Promise<boolean> {
+    const companyIds = await this.companyIdsOfClient(userId);
+    if (companyIds.length === 0) return false;
+
+    const subscriptions = await this.subscriptions.find({
+      where: { companyId: In(companyIds) },
+    });
+
+    // Sin fila no hay a quién preguntarle: cuenta como abierto.
+    const conFila = new Set(subscriptions.map((s) => s.companyId));
+    if (companyIds.some((id) => !conFila.has(id))) return true;
+
+    const now = new Date();
+    return subscriptions.some((subscription) => {
+      const access = resolveAccess({
+        subscription,
+        // A efectos de mostrar un botón, un pago en revisión no cambia nada y
+        // consultarlo costaría una query por salón.
+        hasPendingReport: false,
+        graceDays: this.graceDays,
+        now,
+      });
+      const limits = effectiveLimits(
+        subscription.planId ?? 'basico',
+        access.status,
+        subscription.trialEndsAt ?? null,
+        now,
+      );
+      return access.canOperate && limits.aiSuggestions;
+    });
+  }
+
+  /** Los salones donde este cliente ya estuvo, más los que marcó. */
+  private async companyIdsOfClient(userId: number): Promise<number[]> {
+    const client = await this.clients.findOne({
+      where: { userId },
+      select: { id: true, companies: true },
+    });
+    if (!client) return [];
+
+    const favoritos = await this.favorites.find({
+      where: { clientId: client.id },
+      select: { companyId: true },
+    });
+
+    const ids = new Set<number>();
+    for (const id of client.companies ?? []) if (id) ids.add(Number(id));
+    for (const favorito of favoritos) ids.add(favorito.companyId);
+    return [...ids];
   }
 
   /**
