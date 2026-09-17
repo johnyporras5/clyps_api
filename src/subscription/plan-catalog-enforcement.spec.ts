@@ -36,10 +36,48 @@ const featureDe = (target: unknown): PlanFeature | undefined =>
 describe('cada función del Full está enganchada a su puerta', () => {
   it.each([
     ['la nómina', PayrollController, 'payroll'],
-    ['Análisis de datos', ReportsController, 'analytics'],
     ['Rentabilidad', CashProfitabilityController, 'analytics'],
   ])('%s exige su función del plan', (_caso, controller, feature) => {
     expect(featureDe(controller)).toBe(feature);
+  });
+
+  /**
+   * Los reportes se marcan UNO A UNO y no por controlador. La lista es la
+   * prueba: si alguien agrega un reporte nuevo y no lo marca, no se entera
+   * nadie hasta que un salón Básico lo esté usando gratis.
+   */
+  it.each([
+    ['ingresos por servicio', ReportsController.prototype.getIncomeByServices],
+    ['ingresos por producto', ReportsController.prototype.getIncomeByProducts],
+    [
+      'comisiones de producto',
+      ReportsController.prototype.getProductCommissionsByEmployee,
+    ],
+    ['ingresos por empleado', ReportsController.prototype.getIncomeByEmployees],
+    ['ingresos del salón', ReportsController.prototype.getCompanyIncome],
+    [
+      'ingresos en el tiempo',
+      ReportsController.prototype.getCompanyIncomeTimeline,
+    ],
+    ['movimiento de clientes', ReportsController.prototype.getClientsReport],
+    ['lista de clientes', ReportsController.prototype.getClientsList],
+  ])('el reporte de %s exige "analytics"', (_caso, handler) => {
+    expect(featureDe(handler)).toBe('analytics');
+  });
+
+  /**
+   * La excepción, y la razón por la que el candado no va sobre la clase.
+   *
+   * `product-sales` vive en /reports pero NO es análisis: lo pinta el historial
+   * de la pantalla de Venta directa, que está en los dos planes. Marcado, el
+   * dueño de un salón Básico abre "Venta" y se encuentra la lista rota. Esta
+   * prueba existe para que nadie lo "arregle" marcándolo.
+   */
+  it('el historial de Venta directa NO se marca: es operación, no análisis', () => {
+    expect(
+      featureDe(ReportsController.prototype.getProductSalesHistory),
+    ).toBeUndefined();
+    expect(featureDe(ReportsController)).toBeUndefined();
   });
 
   it.each([

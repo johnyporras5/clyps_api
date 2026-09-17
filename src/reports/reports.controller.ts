@@ -26,11 +26,17 @@ import {
 @Controller('reports')
 @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
 /**
- * SUB-14: "Análisis de datos" es del plan Full. Ojo con la diferencia entre los
- * dos decoradores de abajo: el Básico no ve estos reportes NUNCA (no los
- * compró), y el Full moroso sí los sigue viendo (los compró y solo debe el mes).
+ * SUB-14: "Análisis de datos" es del plan Full, pero el candado va HANDLER POR
+ * HANDLER y no sobre la clase entera, y eso tiene una razón concreta:
+ * `product-sales` vive en este controlador y NO es análisis — lo consume el
+ * historial de la pantalla de Venta directa, que es operación de todos los días
+ * y está en los dos planes. Marcado arriba, un salón Básico abría "Venta" y se
+ * encontraba la lista rota.
+ *
+ * Ojo también con la diferencia entre los dos ejes: el Básico no ve estos
+ * reportes NUNCA (no los compró), y el Full moroso sí los sigue viendo (los
+ * compró y solo debe el mes).
  */
-@RequiresFeature('analytics')
 /**
  * SUB-12: el DUEÑO bloqueado sigue entrando aquí.
  *
@@ -43,6 +49,7 @@ import {
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
+  @RequiresFeature('analytics')
   @Get('income-services')
   @Roles('adm')
   async getIncomeByServices(
@@ -60,6 +67,7 @@ export class ReportsController {
   }
 
   // Reporte de productos
+  @RequiresFeature('analytics')
   @Get('income-products')
   @Roles('adm')
   async getIncomeByProducts(
@@ -78,6 +86,7 @@ export class ReportsController {
 
   // Comisiones de productos por empleado (quién ganó comisión y de qué
   // productos), dentro del rango. Alimenta la vista "Empleados" del reporte.
+  @RequiresFeature('analytics')
   @Get('income-products/commissions')
   @Roles('adm')
   async getProductCommissionsByEmployee(
@@ -91,7 +100,14 @@ export class ReportsController {
     );
   }
 
-  // Historial (ledger) de ventas de productos: cada venta como un movimiento.
+  /**
+   * Historial (ledger) de ventas de productos: cada venta como un movimiento.
+   *
+   * SIN `@RequiresFeature`, y es a propósito: aunque la ruta viva en /reports,
+   * esto no es análisis de datos. Lo pinta `DirectSaleHistory` dentro de la
+   * pantalla de Venta directa, que está en los DOS planes. Si se marca, el
+   * dueño de un salón Básico abre "Venta" y ve la lista rota.
+   */
   @Get('product-sales')
   @Roles('adm')
   async getProductSalesHistory(
@@ -109,6 +125,7 @@ export class ReportsController {
     });
   }
 
+  @RequiresFeature('analytics')
   @Get('income-employees')
   @Roles('adm')
   async getIncomeByEmployees(
@@ -127,6 +144,7 @@ export class ReportsController {
 
   // Ingresos por compañía: solo la parte de la company, en caja real (cobrado),
   // por moneda y en Bs acumulado (tasa histórica de cada cobro).
+  @RequiresFeature('analytics')
   @Get('company-income')
   @Roles('adm')
   async getCompanyIncome(
@@ -142,6 +160,7 @@ export class ReportsController {
 
   // Serie temporal de "Ingresos por compañía", agrupada por bucket
   // (day|week|month|quarter|semester|year), por fecha de cobro.
+  @RequiresFeature('analytics')
   @Get('company-income/timeline')
   @Roles('adm')
   async getCompanyIncomeTimeline(
@@ -156,6 +175,7 @@ export class ReportsController {
     );
   }
 
+  @RequiresFeature('analytics')
   @Get('clients')
   @Roles('adm')
   async getClientsReport(
@@ -180,6 +200,7 @@ export class ReportsController {
     });
   }
 
+  @RequiresFeature('analytics')
   @Get('clients/list')
   @Roles('adm')
   async getClientsList(
