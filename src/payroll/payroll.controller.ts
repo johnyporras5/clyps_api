@@ -26,10 +26,18 @@ import { ReverseConceptDto } from './dto/reverse-concept.dto';
 import { CreateProductPurchaseDto } from './dto/create-product-purchase.dto';
 import { ListPeriodsDto } from './dto/list-periods.dto';
 import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
-import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
+import {
+  RequiresFeature,
+  RequiresOperationalSubscription,
+} from '../subscription/guards/requires-feature.decorator';
 
 @Controller('payroll')
 @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
+/**
+ * SUB-14: la nómina es del plan Full. Un salón Básico no la tiene, ni para el
+ * dueño ni para el trabajador — no es una deuda, es algo que nunca compró.
+ */
+@RequiresFeature('payroll')
 @RequiresOperationalSubscription('wrk')
 export class PayrollController {
   constructor(

@@ -30,6 +30,8 @@ import { PaymentGatewayEvent } from './entities/payment-gateway-event.entity';
 import { SubscriptionInvoice } from './entities/subscription-invoice.entity';
 import { Company } from '../company/entities/company.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+import { Client } from '../client/entities/client.entity';
+import { ClientFavoriteCompany } from '../client_favorite_company/entities/client-favorite-company.entity';
 import { ReminderLog } from './entities/reminder-log.entity';
 import { CommonModule } from '../common/common.module';
 import { EmailModule } from '../email/email.module';
@@ -65,6 +67,10 @@ import { EmailModule } from '../email/email.module';
       Company,
       // Solo para contar trabajadores contra el tope del plan (SUB-5).
       CompanyWorker,
+      // Los salones del cliente final, para saber si a alguno le compraron la
+      // IA (SUB-14). Solo se leen.
+      Client,
+      ClientFavoriteCompany,
       // Bitácora de recordatorios de cobro: su idempotencia (SUB-8).
       ReminderLog,
     ]),

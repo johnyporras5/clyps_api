@@ -42,11 +42,16 @@ export type EnforcementMode = 'off' | 'log' | 'on';
 const DEFAULT_MODE: EnforcementMode = 'on';
 
 /**
- * Guard reutilizable de acceso por suscripción (SUB-5 / CLYP-338, SUB-12).
+ * Guard reutilizable de acceso por suscripción (SUB-5 / CLYP-338, SUB-12,
+ * SUB-14).
  *
  * Se pone DESPUÉS de `JwtAuthGuard` (necesita `req.user`) y decide con
  * `EntitlementsService`, que es la única puerta: aquí no se lee ni el plan ni el
  * estado por cuenta propia.
+ *
+ * Revisa DOS ejes distintos y en este orden: primero el PAGO (¿el salón está al
+ * día?) y después el PLAN (¿el salón compró esta función?). Se pueden fallar por
+ * separado y cada uno tiene su 403: "te falta pagar" no es "no lo compraste".
  *
  * Un endpoint sin `@RequiresFeature` ni `@RequiresOperationalSubscription` pasa
  * de largo: así las rutas de pago e historial siguen abiertas incluso con el
@@ -100,10 +105,29 @@ export class SubscriptionAccessGuard implements CanActivate {
     // salón: `SessionService.createSessionByClient`.
     if (user.userType === 'cli' || user.userType === 'padm') return true;
 
-    // Exento por rol en ESTE endpoint (la nómina del trabajador, SUB-12).
-    if (operation?.allowWhenBlocked?.includes(user.userType)) return true;
-
     const role: TenantRole = user.userType;
+
+    /**
+     * Exento del bloqueo por DEUDA en este endpoint (la nómina del trabajador,
+     * SUB-12). Ojo: exime del eje del pago, NO del eje del plan — ver abajo.
+     */
+    const exentoDelBloqueo =
+      operation?.allowWhenBlocked?.includes(role) ?? false;
+
+    /**
+     * ¿Hay que mirar el PLAN en esta petición? (SUB-14)
+     *
+     * Dos motivos posibles: el endpoint pide una función concreta, o el que
+     * llama es un TRABAJADOR —y la app del equipo es en sí misma una función
+     * del plan, así que en un salón Básico ninguna puerta marcada es suya—.
+     */
+    const miraElPlan = role === 'wrk' || isPlanFeature(feature);
+
+    // Exento y sin nada que mirar del plan: se va sin tocar la base, igual que
+    // antes de SUB-14. Es el camino del dueño bloqueado entrando a "Análisis
+    // de datos", que son muchas peticiones y ninguna necesita consultar nada.
+    if (exentoDelBloqueo && !miraElPlan) return true;
+
     // Todo lo que puede cortar va DENTRO del try, resolver la company incluida:
     // en modo `log` nadie debe quedarse afuera por culpa de este guard, ni
     // siquiera el dueño al que todavía no se le creó la company.
@@ -118,11 +142,25 @@ export class SubscriptionAccessGuard implements CanActivate {
       if (companyId === null)
         throw new ForbiddenException('No tienes una compañía asignada');
 
-      if (isPlanFeature(feature)) {
-        await this.entitlements.assertCanUseFeature(companyId, feature, role);
-      } else {
+      // 1. El pago. Va primero porque a un dueño moroso hay que mandarlo a
+      //    pagar, no a comparar planes.
+      if (!exentoDelBloqueo)
         await this.entitlements.assertCanOperate(companyId, role);
-      }
+
+      // 2. El plan. La app del equipo se exige a TODO trabajador, incluso en
+      //    los endpoints que lo eximen del bloqueo por deuda: que el dueño esté
+      //    al día no le compra al salón una función que nunca contrató.
+      if (role === 'wrk')
+        await this.entitlements.assertPlanIncludes(
+          companyId,
+          'workerApp',
+          role,
+        );
+
+      // 3. La función concreta del endpoint (nómina, análisis, IA…).
+      if (isPlanFeature(feature))
+        await this.entitlements.assertPlanIncludes(companyId, feature, role);
+
       return true;
     } catch (error) {
       if (mode === 'on') throw error;

@@ -1,9 +1,11 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Company } from '../company/entities/company.entity';
+import { Client } from '../client/entities/client.entity';
+import { ClientFavoriteCompany } from '../client_favorite_company/entities/client-favorite-company.entity';
 import {
   GRACE_DAYS,
   TRIAL_DAYS,
@@ -115,6 +117,10 @@ export class EntitlementsService {
     private readonly workers: Repository<CompanyWorker>,
     @InjectRepository(Company)
     private readonly companies: Repository<Company>,
+    @InjectRepository(Client)
+    private readonly clients: Repository<Client>,
+    @InjectRepository(ClientFavoriteCompany)
+    private readonly favorites: Repository<ClientFavoriteCompany>,
     private readonly config: ConfigService,
     private readonly trials: SubscriptionService,
   ) {}
@@ -371,25 +377,79 @@ export class EntitlementsService {
   }
 
   /**
-   * Corta la acción si el plan no incluye la función. NO bloquea la app: el
-   * error es una invitación a subir de plan, que es un problema distinto a estar
-   * moroso.
+   * Corta si el PLAN no incluye la función, SIN mirar el estado de pago.
+   *
+   * Los dos ejes van por separado a propósito (SUB-14). El del pago tiene
+   * excepciones por rol —la nómina del trabajador se ve aunque el dueño deba— y
+   * el del plan NO puede heredarlas: lo que el salón nunca compró no existe
+   * para nadie, esté al día o no. Antes iban pegados en un solo método, así que
+   * un rol exento del bloqueo se llevaba de regalo las funciones del Full.
+   */
+  async assertPlanIncludes(
+    companyId: number,
+    feature: PlanFeature,
+    role: TenantRole = 'adm',
+  ): Promise<EntitlementContext> {
+    const context = await this.context(companyId);
+    if (!context.limits[feature]) {
+      throw new ForbiddenException(
+        this.planBlockedBody(context, feature, role),
+      );
+    }
+    return context;
+  }
+
+  /**
+   * Corta la acción si el tenant está bloqueado O si el plan no incluye la
+   * función. El orden importa: primero el pago y después el plan, porque a un
+   * dueño moroso hay que mandarlo a pagar, no a comparar planes.
    */
   async assertCanUseFeature(
     companyId: number,
     feature: PlanFeature,
     role: TenantRole = 'adm',
   ): Promise<void> {
-    const { planId, limits } = await this.assertCanOperate(companyId, role);
-    const plan = getPlan(planId);
-    if (!limits[feature]) {
-      throw new ForbiddenException({
-        message: `Tu plan ${plan.name} no incluye esta función. Sube al plan Full para activarla.`,
+    await this.assertCanOperate(companyId, role);
+    await this.assertPlanIncludes(companyId, feature, role);
+  }
+
+  /**
+   * El cuerpo del 403 cuando lo que falta es el PLAN y no el pago (SUB-14).
+   *
+   * Al dueño se le nombra su plan y se le ofrece subir: es quien decide y quien
+   * paga. Al trabajador NO se le nombra ningún plan ni se le habla de precios
+   * —no es su cuenta, y un catálogo de planes dentro de la app del teléfono es
+   * justo lo que las tiendas no quieren ver—: se le dice que hable con el
+   * administrador y nada más.
+   *
+   * `reason: 'plan_upgrade_required'` lo distingue de `subscription_blocked`:
+   * son dos pantallas distintas, "no lo compraste" no es "no lo pagaste".
+   */
+  private planBlockedBody(
+    context: EntitlementContext,
+    feature: PlanFeature,
+    role: TenantRole,
+  ): Record<string, unknown> {
+    if (role === 'wrk') {
+      return {
+        message:
+          feature === 'workerApp'
+            ? 'Este salón no tiene activada la app del equipo. Comunícate con el administrador del salón.'
+            : 'Esta función no está activa en este salón. Comunícate con el administrador del salón.',
         reason: 'plan_upgrade_required',
         feature,
-        planId,
-      });
+        blockedFor: 'wrk',
+      };
     }
+
+    const plan = getPlan(context.planId);
+    return {
+      message: `Tu plan ${plan.name} no incluye esta función. Sube al plan Full para activarla.`,
+      reason: 'plan_upgrade_required',
+      feature,
+      planId: context.planId,
+      blockedFor: 'adm',
+    };
   }
 
   /**
@@ -476,27 +536,121 @@ export class EntitlementsService {
   }
 
   /**
-   * La foto mínima del acceso para el rol que pregunta (SUB-12).
+   * La foto mínima del acceso para el rol que pregunta (SUB-12, SUB-14).
    *
    * El dueño ya tiene `GET /subscription/access` con todo; esto es para el
-   * trabajador, que necesita saber si el salón está bloqueado ANTES de tocar
-   * una cita y recibir un 403 seco. Reutiliza `blockedBody` para que el
-   * mensaje del cartel y el del error nunca se separen.
+   * trabajador, que necesita saber si puede trabajar ANTES de tocar una cita y
+   * recibir un 403 seco. Reutiliza los mismos cuerpos que los errores para que
+   * el cartel y el 403 nunca digan cosas distintas.
+   *
+   * Responde a las DOS razones por las que un trabajador puede quedarse afuera:
+   * el salón no pagó (`subscription_blocked`) o el salón está en Básico, que no
+   * incluye la app del equipo (`plan_upgrade_required`). El pago se mira
+   * primero: si el salón debe, esa es la noticia, aunque además esté en Básico.
    */
   async getStatusResponse(
     companyId: number,
     role: TenantRole,
   ): Promise<SubscriptionStatusResponse> {
     const context = await this.context(companyId);
-    if (context.access.canOperate)
-      return { canOperate: true, blockedFor: null, message: null };
 
-    const body = this.blockedBody(context, role);
+    if (!context.access.canOperate) {
+      const body = this.blockedBody(context, role);
+      return {
+        canOperate: false,
+        blockedFor: body.blockedFor as 'adm' | 'wrk',
+        message: body.message as string,
+        reason: 'subscription_blocked',
+      };
+    }
+
+    // El salón está al día, pero el plan puede no traer la app del equipo. Al
+    // dueño esto NO se le aplica: su panel es la app del dueño, no la del
+    // equipo, y en Básico sigue entrando entero.
+    if (role === 'wrk' && !context.limits.workerApp) {
+      const body = this.planBlockedBody(context, 'workerApp', role);
+      return {
+        canOperate: false,
+        blockedFor: 'wrk',
+        message: body.message as string,
+        reason: 'plan_upgrade_required',
+      };
+    }
+
     return {
-      canOperate: false,
-      blockedFor: body.blockedFor as 'adm' | 'wrk',
-      message: body.message as string,
+      canOperate: true,
+      blockedFor: null,
+      message: null,
+      reason: null,
     };
+  }
+
+  /**
+   * ¿Alguno de los salones de este cliente tiene la IA? (SUB-14)
+   *
+   * La sugerencia con IA es del plan Full, o sea que la paga el SALÓN. Pero el
+   * cliente final no pertenece a uno solo, y su menú tiene una entrada suelta
+   * que no cuelga de ninguno. La regla que decidió el usuario: si al menos uno
+   * de sus salones la tiene, la entrada se le muestra; si todos son Básico, no.
+   *
+   * "Sus salones" son los dos que el sistema ya sabe: donde es cliente
+   * (`client.companies`, que se llena al agendar) y los que marcó como
+   * favoritos. Un salón sin fila de suscripción cuenta como que SÍ la tiene:
+   * es el mismo criterio permisivo del resto del módulo —la fila puede faltar
+   * por un alta que falló, y eso no es culpa de quien está mirando la app—.
+   *
+   * Todo sale de dos consultas, no de una por salón: un cliente con 30 salones
+   * no puede costar 30 viajes a la base para pintar un botón.
+   */
+  async clientHasAiSuggestions(userId: number): Promise<boolean> {
+    const companyIds = await this.companyIdsOfClient(userId);
+    if (companyIds.length === 0) return false;
+
+    const subscriptions = await this.subscriptions.find({
+      where: { companyId: In(companyIds) },
+    });
+
+    // Sin fila no hay a quién preguntarle: cuenta como abierto.
+    const conFila = new Set(subscriptions.map((s) => s.companyId));
+    if (companyIds.some((id) => !conFila.has(id))) return true;
+
+    const now = new Date();
+    return subscriptions.some((subscription) => {
+      const access = resolveAccess({
+        subscription,
+        // A efectos de mostrar un botón, un pago en revisión no cambia nada y
+        // consultarlo costaría una query por salón.
+        hasPendingReport: false,
+        graceDays: this.graceDays,
+        now,
+      });
+      const limits = effectiveLimits(
+        subscription.planId ?? 'basico',
+        access.status,
+        subscription.trialEndsAt ?? null,
+        now,
+      );
+      return access.canOperate && limits.aiSuggestions;
+    });
+  }
+
+  /** Los salones donde este cliente ya estuvo, más los que marcó. */
+  private async companyIdsOfClient(userId: number): Promise<number[]> {
+    const client = await this.clients.findOne({
+      where: { userId },
+      select: { id: true, companies: true },
+    });
+    if (!client) return [];
+
+    const favoritos = await this.favorites.find({
+      where: { clientId: client.id },
+      select: { companyId: true },
+    });
+
+    const ids = new Set<number>();
+    for (const id of client.companies ?? []) if (id) ids.add(Number(id));
+    for (const favorito of favoritos) ids.add(favorito.companyId);
+    return [...ids];
   }
 
   /**
