@@ -335,8 +335,19 @@ export class SessionController {
     );
     const sessionId = result?.validation?.sessionId;
     if (sessionId) {
+      // El estado del servicio cambió: refrescar las vistas abiertas (tiempo real).
       await this.realtimeEmitter.emitStatusChanged(sessionId);
-      await this.notificationEmitter.notifyStatusChanged(sessionId, userId);
+      // Notificación POR SERVICIO: al admin y al trabajador de ESE servicio
+      // (− quien hizo la acción). Es simétrica (worker→admin, admin→worker) y no
+      // molesta a los demás trabajadores ni manda el genérico "la cita ahora está
+      // X" (que confundía al cancelar un servicio dejando otro activo).
+      await this.notificationEmitter.notifyDetailStatusChanged(
+        sessionId,
+        +detailId,
+        updateDetailStatusDto.status,
+        result?.validation?.detailPreviousStatus ?? 0,
+        userId,
+      );
     }
     // Citas AGENDADAS que el arrastre empujó (no la que se está atendiendo).
     await this.notifyRippleMoved(result?.movedByRipple, userId);
