@@ -35,6 +35,7 @@ import { CashTransactionModule } from './cash_transaction/cash-transaction.modul
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { GeocodingModule } from './geocoding/geocoding.module';
 
 @Module({
   imports: [
@@ -140,6 +141,7 @@ import { SubscriptionModule } from './subscription/subscription.module';
     OnboardingModule,
     OnboardingRescueModule,
     SubscriptionModule,
+    GeocodingModule,
   ],
   controllers: [AppController],
   providers: [

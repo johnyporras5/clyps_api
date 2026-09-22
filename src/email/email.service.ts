@@ -540,6 +540,192 @@ export class EmailService {
     );
   }
 
+  /** Correo de REACTIVACIÓN de la cita al cliente (la cita vuelve a estar activa). */
+  async sendSessionReactivationToClient(
+    clientEmail: string,
+    clientName: string,
+    sessionData: { date: string; time: string },
+    companyInfo: { name: string; email?: string; address?: string },
+  ): Promise<boolean> {
+    const html = this.getSessionReactivationClientTemplate(
+      clientName,
+      sessionData,
+      companyInfo,
+    );
+    return this.sendEmail(
+      clientEmail,
+      `✅ Cita reactivada - ${sessionData.date}`,
+      html,
+    );
+  }
+
+  /** Correo de REACTIVACIÓN de la cita al trabajador. */
+  async sendSessionReactivationToWorker(
+    workerEmail: string,
+    workerName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      clientName: string;
+    },
+  ): Promise<boolean> {
+    const html = this.getSessionReactivationWorkerTemplate(
+      workerName,
+      sessionData,
+    );
+    return this.sendEmail(
+      workerEmail,
+      `✅ Cita reactivada - ${sessionData.date}`,
+      html,
+    );
+  }
+
+  private getSessionReactivationClientTemplate(
+    clientName: string,
+    sessionData: { date: string; time: string },
+    companyInfo: { name: string; email?: string; address?: string },
+  ): string {
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cita Reactivada - CLYPS</title>
+  <style>
+    body { margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, sans-serif; color:#334155; }
+    .container { max-width:580px; margin:30px auto; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.08); border:1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #059669 0%, #10b981 100%); color:#fff; padding:35px 40px; text-align:center; }
+    .logo { font-size:36px; font-weight:700; margin:0 0 8px; }
+    .content { padding:40px; }
+    .greeting { font-size:22px; font-weight:600; color:#1e293b; margin:0 0 20px; border-bottom:2px solid #f1f5f9; padding-bottom:15px; }
+    .message { color:#475569; margin:0 0 30px; font-size:15.5px; line-height:1.7; }
+    .card { background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-radius:10px; padding:35px; margin:35px 0; border:1px solid #a7f3d0; text-align:center; }
+    .card-title { font-size:22px; font-weight:600; color:#047857; margin:0 0 25px; }
+    .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    .detail-card { background:#fff; border-radius:8px; padding:20px; border:1px solid #e2e8f0; }
+    .detail-label { font-size:13px; color:#64748b; text-transform:uppercase; letter-spacing:1px; font-weight:600; margin-bottom:8px; }
+    .detail-value { font-size:18px; font-weight:600; color:#1e293b; }
+    .footer { background:#f8fafc; padding:25px 40px; text-align:center; color:#64748b; font-size:13px; border-top:1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="logo">CLYPS</h1>
+      <p>Cita Reactivada</p>
+    </div>
+    <div class="content">
+      <h2 class="greeting">Estimado/a ${clientName},</h2>
+      <p class="message">
+        ¡Buenas noticias! Tu cita que había sido cancelada volvió a estar
+        <strong>activa</strong>. Te esperamos en la fecha y hora indicadas:
+      </p>
+      <div class="card">
+        <h3 class="card-title">✅ Cita Reactivada</h3>
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-label">📅 Fecha</div>
+            <div class="detail-value">${sessionData.date}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">🕐 Hora</div>
+            <div class="detail-value">${sessionData.time}</div>
+          </div>
+        </div>
+      </div>
+      <p style="color:#475569; font-size:15px; line-height:1.6;">
+        Si tienes dudas, contacta a <strong>${companyInfo.name}</strong>.
+      </p>
+      ${companyInfo.email ? `<p style="color:#475569; font-size:14px;">✉️ ${companyInfo.email}</p>` : ''}
+      ${companyInfo.address ? `<p style="color:#475569; font-size:14px;">📍 ${companyInfo.address}</p>` : ''}
+    </div>
+    <div class="footer">
+      <p>© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
+      <p style="opacity:0.8;">Sistema de Gestión de Citas Profesional</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+  }
+
+  private getSessionReactivationWorkerTemplate(
+    workerName: string,
+    sessionData: {
+      date: string;
+      time: string;
+      serviceName: string;
+      clientName: string;
+    },
+  ): string {
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cita Reactivada - CLYPS</title>
+  <style>
+    body { margin:0; padding:0; background:#f8fafc; font-family: 'Segoe UI', Roboto, sans-serif; color:#334155; }
+    .container { max-width:580px; margin:30px auto; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.08); border:1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #059669 0%, #10b981 100%); color:#fff; padding:35px 40px; text-align:center; }
+    .logo { font-size:36px; font-weight:700; margin:0 0 8px; }
+    .content { padding:40px; }
+    .greeting { font-size:22px; font-weight:600; color:#1e293b; margin:0 0 20px; border-bottom:2px solid #f1f5f9; padding-bottom:15px; }
+    .message { color:#475569; margin:0 0 30px; font-size:15.5px; line-height:1.7; }
+    .card { background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-radius:10px; padding:35px; margin:35px 0; border:1px solid #a7f3d0; }
+    .card-title { font-size:22px; font-weight:600; color:#047857; text-align:center; margin:0 0 25px; }
+    .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    .detail-card { background:#fff; border-radius:8px; padding:20px; border:1px solid #e2e8f0; }
+    .detail-label { font-size:13px; color:#64748b; text-transform:uppercase; letter-spacing:1px; font-weight:600; margin-bottom:8px; }
+    .detail-value { font-size:18px; font-weight:600; color:#1e293b; }
+    .footer { background:#f8fafc; padding:25px 40px; text-align:center; color:#64748b; font-size:13px; border-top:1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="logo">CLYPS</h1>
+      <p>Cita Reactivada</p>
+    </div>
+    <div class="content">
+      <h2 class="greeting">Hola ${workerName},</h2>
+      <p class="message">
+        Una cita que había sido cancelada volvió a estar activa en tu agenda:
+      </p>
+      <div class="card">
+        <h3 class="card-title">✅ Cita Reactivada</h3>
+        <div class="detail-grid">
+          <div class="detail-card">
+            <div class="detail-label">📅 Fecha</div>
+            <div class="detail-value">${sessionData.date}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">🕐 Hora</div>
+            <div class="detail-value">${sessionData.time}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">💼 Servicio</div>
+            <div class="detail-value">${sessionData.serviceName}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-label">👤 Cliente</div>
+            <div class="detail-value">${sessionData.clientName}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="footer">
+      <p>© ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+  }
+
   private getVerificationEmailTemplate(
     username: string,
     code: string,

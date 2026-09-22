@@ -17,4 +17,13 @@ export class UpdateSessionStatusDto {
   @IsOptional()
   @IsNumber()
   detailId?: number;
+
+  /**
+   * Confirma marcar En proceso (2) aunque el trabajador ya tenga otro servicio
+   * en progreso. Sin esto, el backend responde 409 WORKER_IN_PROGRESS para que
+   * el front pida confirmación (no es lo esperable tener dos a la vez).
+   */
+  @IsOptional()
+  @IsBoolean()
+  confirmInProgress?: boolean;
 }
