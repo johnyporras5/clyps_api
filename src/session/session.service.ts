@@ -1801,6 +1801,35 @@ export class SessionService {
   }
 
   /**
+   * Nombre de UN trabajador (de los dados) que ya tenga OTRO servicio En proceso
+   * (status 2) en una sesión distinta a la indicada. null si ninguno está
+   * ocupado. Se usa para avisar antes de dejar dos servicios en progreso a la
+   * vez (no es lo esperable para un mismo trabajador).
+   */
+  private async workerAlreadyInProgress(
+    companyWorkerIds: number[],
+    excludeSessionId: number,
+  ): Promise<string | null> {
+    const ids = [
+      ...new Set(companyWorkerIds.filter((n) => Number.isFinite(n) && n > 0)),
+    ];
+    if (ids.length === 0) return null;
+    const rows: Array<{ name: string | null }> =
+      await this.sessionDetailRepository.query(
+        `SELECT w.name AS name
+           FROM session_detail sd
+           JOIN company_worker cw ON cw.id = sd.company_worker_id
+           JOIN worker w ON w.id = cw.worker_id
+          WHERE sd.company_worker_id IN (?)
+            AND sd.status = 2
+            AND sd.session_id <> ?
+          LIMIT 1`,
+        [ids, excludeSessionId],
+      );
+    return rows[0]?.name?.trim() || null;
+  }
+
+  /**
    * Calcula el tiempo total real de una sesión considerando solapamiento entre servicios.
    * En lugar de sumar los tiempos individuales, calcula la unión de los rangos de tiempo.
    * Ejemplo: servicio 2:00-2:50 (50min) + servicio 2:10-3:10 (60min) → tiempo real = 70min (2:00-3:10)
@@ -3667,6 +3696,23 @@ export class SessionService {
     //      y el auto-sync deja de recalcular el estado de la cita.
     const previousStatus = session.sessionStatus;
     const newStatus = updateSessionStatusDto.sessionStatus;
+
+    // Al marcar En proceso (2): si algún trabajador de la cita YA tiene otro
+    // servicio en progreso, se avisa (409) para que el front confirme. No es lo
+    // esperable tener dos en progreso a la vez para un mismo trabajador.
+    if (newStatus === 2 && !updateSessionStatusDto.confirmInProgress) {
+      const workerIds = sessionDetails
+        .filter((d) => d.status !== 5 && d.companyWorkerId)
+        .map((d) => d.companyWorkerId);
+      const busyName = await this.workerAlreadyInProgress(workerIds, sessionId);
+      if (busyName) {
+        throw new ConflictException({
+          code: 'WORKER_IN_PROGRESS',
+          message: `${busyName} ya tiene un servicio en progreso.`,
+          workerName: busyName,
+        });
+      }
+    }
 
     // Solo se propaga a detalles si el nuevo estado es un estado válido de
     // detalle (1-5). El estado 8 (pendiente de asignación) es solo de cita.
@@ -5780,6 +5826,26 @@ export class SessionService {
             'No se puede reactivar el servicio: su horario se solapa con otra cita del trabajador. Reprograma antes de reactivarlo.',
           );
         }
+      }
+    }
+
+    // 4.4 Al marcar En proceso (2): si el trabajador YA tiene otro servicio en
+    //     progreso en otra cita, se avisa (409) para que el front confirme.
+    if (
+      updateDetailStatusDto.status === 2 &&
+      !updateDetailStatusDto.confirmInProgress &&
+      detail.companyWorkerId
+    ) {
+      const busyName = await this.workerAlreadyInProgress(
+        [detail.companyWorkerId],
+        detail.sessionId,
+      );
+      if (busyName) {
+        throw new ConflictException({
+          code: 'WORKER_IN_PROGRESS',
+          message: `${busyName} ya tiene un servicio en progreso.`,
+          workerName: busyName,
+        });
       }
     }
 
