@@ -3706,6 +3706,29 @@ export class SessionService {
           SessionService.withinScheduleTolerance(now, plannedEnd));
     }
 
+    // Reactivar una cita CANCELADA (5 → activa): antes de tocar nada, validar que
+    // ningún servicio a reactivar se solape con otra cita del trabajador. Si
+    // alguno choca, se bloquea entera (hay que reprogramar primero).
+    const isReactivation =
+      previousStatus === 5 && newStatus >= 1 && newStatus <= 3;
+    if (isReactivation) {
+      for (const d of sessionDetails) {
+        if (d.status !== 5) continue; // solo se reactivan los cancelados
+        if (!d.companyWorkerId || !d.startDatetime || !d.totalTime) continue;
+        const clash = await this.checkIfWorkerHasAppointmentAtSameTime(
+          d.companyWorkerId,
+          d.startDatetime,
+          d.totalTime,
+          sessionId,
+        );
+        if (clash) {
+          throw new ConflictException(
+            'No se puede reactivar la cita: un servicio se solapa con otra cita del trabajador. Reprograma antes de reactivar.',
+          );
+        }
+      }
+    }
+
     const queryRunner =
       this.sessionRepository.manager.connection.createQueryRunner();
     await queryRunner.connect();
@@ -3718,6 +3741,10 @@ export class SessionService {
       // Si el admin cancela la cita completa, registrar que la canceló él.
       if (newStatus === 5) {
         session.cancelledBy = 'adm';
+      }
+      // Al reactivar una cita cancelada, limpiar el rastro de la cancelación.
+      if (isReactivation) {
+        session.cancelledBy = null;
       }
       // Al iniciar la cita (En progreso), sobrescribir su startDatetime con la
       // hora real, igual que en los detalles. Solo cuando realmente cambia a 2
@@ -3759,6 +3786,11 @@ export class SessionService {
         if (newStatus === 5) {
           setValues.cancelledBy = 'adm';
         }
+        if (isReactivation) {
+          // Reactivación: se limpian los rastros de la cancelación en los detalles.
+          setValues.cancelledBy = null;
+          setValues.cancelReason = null;
+        }
         if (newStatus === 2 && !keptSchedule) {
           setValues.startDatetime = () => ':now';
           // El bloque se mueve a la hora real conservando su duración planificada
@@ -3773,8 +3805,15 @@ export class SessionService {
           .update(SessionDetail)
           .set(setValues)
           .setParameter('now', now)
-          .where('sessionId = :sessionId', { sessionId })
-          .andWhere('status != :cancelled', { cancelled: 5 });
+          .where('sessionId = :sessionId', { sessionId });
+
+        // Normalmente los servicios cancelados NO se tocan (se mantienen). La
+        // excepción es reactivar la cita (5 → activa): ahí sí se reactivan ellos.
+        if (!isReactivation) {
+          cascadeQuery = cascadeQuery.andWhere('status != :cancelled', {
+            cancelled: 5,
+          });
+        }
 
         // Al iniciar la cita, no tocar los detalles que ya están en progreso:
         // así conservan el inicio real que el worker ya marcó.
@@ -4917,9 +4956,12 @@ export class SessionService {
     if (!session) {
       throw new NotFoundException(`Cita ${sessionId} no encontrada`);
     }
-    if (session.sessionStatus !== 4) {
+    // Se puede revertir una cita Pagada (4) o Calificada (6): la Calificada es
+    // una Pagada con reseña, así que revertirla deshace el cobro igual y la deja
+    // en Completada (3). La reseña del cliente se conserva (no se toca aquí).
+    if (session.sessionStatus !== 4 && session.sessionStatus !== 6) {
       throw new ConflictException(
-        'Solo se puede revertir una cita que está Pagada',
+        'Solo se puede revertir una cita que está Pagada o Calificada',
       );
     }
 
@@ -5606,17 +5648,18 @@ export class SessionService {
       );
     }
 
-    // 1.2 Estados terminales: si la cita ya está Pagada (4), Cancelada (5)
-    //     o Calificada (6), es una decisión final y no se admiten cambios
-    //     en sus servicios.
+    // 1.2 Cita Pagada (4) o Calificada (6): hay dinero de por medio; para volver
+    //     atrás se revierte el cobro (deshace comisiones y nómina) con el endpoint
+    //     de reversión, no cambiando servicios uno a uno.
+    //     La Cancelada (5) SÍ admite reactivar un servicio: al reactivarlo, la
+    //     cita revive (Agendada) con los demás servicios aún cancelados (el
+    //     auto-recálculo la trae de vuelta).
     if (
       parentSession &&
-      (parentSession.sessionStatus === 4 ||
-        parentSession.sessionStatus === 5 ||
-        parentSession.sessionStatus === 6)
+      (parentSession.sessionStatus === 4 || parentSession.sessionStatus === 6)
     ) {
       throw new BadRequestException(
-        `La cita está en estado "${this.getSessionStatusText(parentSession.sessionStatus)}" y no admite cambios en sus servicios`,
+        `La cita está "${this.getSessionStatusText(parentSession.sessionStatus)}": para volver atrás debes revertir el cobro, no cambiar sus servicios uno a uno.`,
       );
     }
 
@@ -5688,43 +5731,41 @@ export class SessionService {
       );
     }
 
-    // 4.1 El trabajador solo puede mover SU servicio a En proceso (2),
-    //     Completado (3) o Cancelado (5). Agendado (1) y Pagado (4) son del admin.
+    // 4.1 El trabajador puede mover SU servicio a Agendado (1), En proceso (2),
+    //     Completado (3) o Cancelado (5). Agendado (1) es válido como retroceso
+    //     ("me equivoqué al marcar") o reactivación de un cancelado. Pagado (4)
+    //     sigue siendo exclusivo del admin (dinero).
     if (userRole === 'wrk') {
-      const allowedWorkerStatuses = [2, 3, 5];
+      const allowedWorkerStatuses = [1, 2, 3, 5];
       if (!allowedWorkerStatuses.includes(updateDetailStatusDto.status)) {
         throw new ForbiddenException(
-          'Como trabajador solo puedes marcar tu servicio como "En proceso" (2), "Completado" (3) o "Cancelado" (5)',
+          'Como trabajador solo puedes marcar tu servicio como "Agendado" (1), "En proceso" (2), "Completado" (3) o "Cancelado" (5)',
         );
       }
     }
 
-    // 4.2 Si el admin ya tomó control de la cita (statusLocked), el trabajador
-    //     solo puede AVANZAR el estado de su servicio, nunca retrocederlo.
-    //     Cancelar (5) solo se permite mientras el servicio siga "Agendado" (1);
-    //     una vez iniciado, cancelarlo es decisión del administrador.
-    if (userRole === 'wrk' && parentSession?.statusLocked) {
-      const progression = [1, 2, 3, 4]; // orden normal de avance
-      const target = updateDetailStatusDto.status;
+    // 4.2 Aunque la cita esté bajo control del admin (statusLocked), el trabajador
+    //     PUEDE retroceder o reactivar SU propio servicio (corregir un "marqué mal").
+    //     La cita se recalcula para seguir ese cambio (ver updateSessionStatusBasedOnDetails,
+    //     que ya permite el retroceso también bajo control del admin). El único
+    //     estado que el trabajador nunca toca es Pagado (4), filtrado en 4.1.
 
-      if (previousStatus === 5) {
-        throw new ForbiddenException(
-          'La cita está bajo control del administrador y este servicio ya está cancelado; no se puede modificar',
+    // 4.3 Reactivar un servicio CANCELADO (5 → activo): su horario pautado pudo
+    //     quedar ocupado por otra cita del trabajador mientras estuvo cancelado.
+    //     Si ahora se solapa, se bloquea (hay que reprogramar antes de reactivar).
+    if (previousStatus === 5 && updateDetailStatusDto.status !== 5) {
+      if (detail.companyWorkerId && detail.startDatetime && detail.totalTime) {
+        const clash = await this.checkIfWorkerHasAppointmentAtSameTime(
+          detail.companyWorkerId,
+          detail.startDatetime,
+          detail.totalTime,
+          detail.sessionId,
         );
-      }
-
-      if (target === 5) {
-        if (previousStatus !== 1) {
-          throw new ForbiddenException(
-            `La cita está bajo control del administrador. Solo puedes cancelar tu servicio mientras esté "Agendado"; el tuyo está "${this.getDetailStatusText(previousStatus)}"`,
+        if (clash) {
+          throw new ConflictException(
+            'No se puede reactivar el servicio: su horario se solapa con otra cita del trabajador. Reprograma antes de reactivarlo.',
           );
         }
-      } else if (
-        progression.indexOf(target) < progression.indexOf(previousStatus)
-      ) {
-        throw new ForbiddenException(
-          `La cita está bajo control del administrador. No puedes retroceder tu servicio de "${this.getDetailStatusText(previousStatus)}" a "${this.getDetailStatusText(target)}"; solo puedes avanzarlo`,
-        );
       }
     }
 
@@ -5797,6 +5838,10 @@ export class SessionService {
     if (updateDetailStatusDto.status === 5) {
       detail.cancelReason = updateDetailStatusDto.reason ?? null;
       detail.cancelledBy = userRole;
+    } else if (previousStatus === 5) {
+      // Reactivación: se limpian los rastros de la cancelación previa.
+      detail.cancelReason = null;
+      detail.cancelledBy = null;
     }
 
     const updatedDetail = await this.sessionDetailRepository.save(detail);
@@ -6251,16 +6296,12 @@ export class SessionService {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
 
-    // 1.1 Si la cita está en un estado terminal (Pagada 4 / Cancelada 5 /
-    //     Calificada 6), el auto-sync NO la modifica: es una decisión final.
-    //     Nota: si el admin tomó control (statusLocked) el auto-sync SÍ corre,
-    //     pero solo puede AVANZAR el estado de la cita, nunca retrocederlo
-    //     (ver paso 5.1).
-    if (
-      session.sessionStatus === 4 ||
-      session.sessionStatus === 5 ||
-      session.sessionStatus === 6
-    ) {
+    // 1.1 Pagada (4) y Calificada (6) son terminales con dinero: el auto-sync NO
+    //     las modifica (volver atrás es por reversión de cobro). La Cancelada (5)
+    //     SÍ se recalcula: si un servicio se reactiva, la cita revive (Agendada)
+    //     con los demás servicios aún cancelados. Si todos siguen cancelados,
+    //     el recálculo la deja en Cancelada igual.
+    if (session.sessionStatus === 4 || session.sessionStatus === 6) {
       const motivo = `la cita está en estado terminal "${this.getSessionStatusText(session.sessionStatus)}"`;
       console.log(
         `ℹ️ Sesión ${sessionId}: ${motivo}, no se recalcula automáticamente`,
@@ -6401,30 +6442,13 @@ export class SessionService {
     // 5. Solo actualizar si el estado cambió
     let updated = false;
 
-    // 5.1 Si el admin tomó control de la cita (statusLocked), el auto-sync solo
-    //     puede AVANZAR el estado de la cita reflejando el progreso de los
-    //     trabajadores, nunca retrocederlo: la decisión del admin no se deshace.
-    //     La cancelación total (5) se permite siempre, no es un retroceso.
-    const progressionRank: Record<number, number> = {
-      8: 0,
-      1: 1,
-      2: 2,
-      3: 3,
-      4: 4,
-    };
-    if (
-      session.statusLocked === true &&
-      newStatus !== previousStatus &&
-      newStatus !== 5 &&
-      (progressionRank[newStatus] ?? 0) < (progressionRank[previousStatus] ?? 0)
-    ) {
-      console.log(
-        `ℹ️ Sesión ${sessionId}: la cita está bajo control del administrador; se omite el retroceso automático ${this.getSessionStatusText(previousStatus)} → ${this.getSessionStatusText(newStatus)}`,
-      );
-      newStatus = previousStatus;
-      reason =
-        'La cita está bajo control del administrador; no se aplica retroceso automático';
-    }
+    // 5.1 Antes, bajo control del admin (statusLocked) el auto-sync solo AVANZABA
+    //     la cita, nunca la retrocedía. Ahora el trabajador puede revertir SU
+    //     servicio (corregir un "marqué mal") y la cita debe seguir ese cambio,
+    //     así que también se permite el retroceso automático bajo control del
+    //     admin. (La reactivación de una cita 100% cancelada sigue siendo del
+    //     admin por el endpoint de cita; el auto-sync no revive estados
+    //     terminales 4/5/6, ver el corte al inicio de este método.)
 
     if (newStatus !== previousStatus) {
       session.sessionStatus = newStatus;
@@ -6432,6 +6456,11 @@ export class SessionService {
       // registrar quién provocó la cancelación (el autor del último detalle).
       if (newStatus === 5) {
         session.cancelledBy = cancelledBy ?? session.cancelledBy ?? null;
+      }
+      // Si la cita REVIVE de Cancelada (5) a un estado activo porque se reactivó
+      // un servicio, limpiar el rastro de la cancelación de la cita.
+      if (previousStatus === 5 && newStatus !== 5) {
+        session.cancelledBy = null;
       }
       await this.sessionRepository.save(session);
       updated = true;
@@ -6562,6 +6591,18 @@ export class SessionService {
       }
     }
 
+    // 1.b Cita Pagada (4) o Calificada (6): no se cambia el estado a mano. Para
+    //     volver atrás hay que revertir el cobro (endpoint de reversión), que
+    //     deshace comisiones y nómina y la deja en Completada (3).
+    if (
+      (session.sessionStatus === 4 || session.sessionStatus === 6) &&
+      newSessionStatus !== session.sessionStatus
+    ) {
+      canUpdate = false;
+      errorMessage =
+        'Para volver atrás una cita Pagada o Calificada, revierte el cobro (deshace comisiones y nómina).';
+    }
+
     // 2. Advertencia si se intenta cambiar manualmente a un estado que no coincide con la lógica automática
     if (
       newSessionStatus !== 4 &&
@@ -6569,7 +6610,7 @@ export class SessionService {
       newSessionStatus !== recommendedStatus
     ) {
       console.warn(
-        `⚠️ Intento de cambiar estado de sesión ${sessionId} a ${newSessionStatus}, pero la lógica automática recomienda ${recommendedStatus} (${reason})`,
+        `Intento de cambiar estado de sesión ${sessionId} a ${newSessionStatus}, pero la lógica automática recomienda ${recommendedStatus} (${reason})`,
       );
     }
 

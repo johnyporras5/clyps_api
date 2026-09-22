@@ -261,7 +261,8 @@ export class SessionController {
     return result;
   }
 
-  // Revertir un cobro: la cita vuelve de Pagada a Completada (audita todo). Admin.
+  // Revertir un cobro: la cita Pagada (4) o Calificada (6) vuelve a Completada
+  // (3), deshaciendo cobro y nómina (audita todo). La reseña se conserva. Admin.
   @Post(':id/payment/revert')
   @Roles('adm')
   async revertPayment(
