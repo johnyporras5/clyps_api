@@ -1814,6 +1814,9 @@ export class SessionService {
       ...new Set(companyWorkerIds.filter((n) => Number.isFinite(n) && n > 0)),
     ];
     if (ids.length === 0) return null;
+    // Solo cuenta lo que está en progreso HOY: "en progreso" es un estado en
+    // vivo. Los detalles status=2 de días pasados quedaron colgados (nadie los
+    // completó) y no deben disparar el aviso.
     const rows: Array<{ name: string | null }> =
       await this.sessionDetailRepository.query(
         `SELECT w.name AS name
@@ -1823,6 +1826,7 @@ export class SessionService {
           WHERE sd.company_worker_id IN (?)
             AND sd.status = 2
             AND sd.session_id <> ?
+            AND DATE(sd.start_datetime) = CURDATE()
           LIMIT 1`,
         [ids, excludeSessionId],
       );
