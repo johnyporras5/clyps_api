@@ -3905,6 +3905,12 @@ export class SessionService {
       `✅ Estado de sesión ${sessionId} actualizado de ${previousStatus} a ${newStatus}. Detalles propagados: ${detailsUpdated}. Cita bloqueada para trabajadores.`,
     );
 
+    // Si la cita se REACTIVÓ (estaba cancelada → activa), avisar por correo al
+    // cliente y a los trabajadores. Best-effort: no rompe la respuesta.
+    if (isReactivation) {
+      void this.sendReactivationEmails(updatedSession).catch(() => undefined);
+    }
+
     // Arrastre (ripple): al Comenzar (2) / Terminar (3) los bloques de la cita
     // se movieron/crecieron. Empujar las citas AGENDADAS siguientes de CADA
     // columna de worker de la cita (cada worker es independiente).
@@ -5701,14 +5707,17 @@ export class SessionService {
       where: { id: detail.sessionId },
     });
 
-    // 1.1 Si el admin tomó el control de la cita (statusLocked):
+    // 1.1 Si el admin tomó el control de la cita (statusLocked), el estado se
+    //     gestiona a nivel de cita. Excepciones puntuales por servicio: cancelar
+    //     (status 5) y reactivar un servicio ya cancelado (detail.status === 5).
     if (
       parentSession?.statusLocked &&
       userRole === 'adm' &&
-      updateDetailStatusDto.status !== 5
+      updateDetailStatusDto.status !== 5 &&
+      detail.status !== 5
     ) {
       throw new BadRequestException(
-        'La cita está bajo control del administrador. Gestiona su estado con PUT /sessions/:id/status (salvo cancelar un servicio puntual).',
+        'La cita está bajo control del administrador. Gestiona su estado con PUT /sessions/:id/status (salvo cancelar o reactivar un servicio puntual).',
       );
     }
 
@@ -6559,6 +6568,12 @@ export class SessionService {
       }
       await this.sessionRepository.save(session);
       updated = true;
+
+      // Reactivación por auto-sync (un servicio cancelado se reactivó y revivió
+      // la cita): avisar por correo. Best-effort.
+      if (previousStatus === 5 && newStatus !== 5) {
+        void this.sendReactivationEmails(session).catch(() => undefined);
+      }
 
       console.log(
         `✅ Estado de sesión ${sessionId} actualizado automáticamente: ${this.getSessionStatusText(previousStatus)} → ${this.getSessionStatusText(newStatus)}`,
@@ -9622,6 +9637,84 @@ export class SessionService {
     } catch (error) {
       this.logger.error(
         `❌ Error enviando correos de cancelación: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
+    }
+  }
+
+  /**
+   * Correos de REACTIVACIÓN (cita que estaba cancelada vuelve a estar activa):
+   * al cliente y a cada trabajador involucrado. Espejo de sendCancellationEmails,
+   * en positivo y sin motivo. Best-effort: nunca rompe la mutación.
+   */
+  private async sendReactivationEmails(session: Session): Promise<void> {
+    try {
+      const clientInfo = await this.getClientInfo(session.clientId);
+      const sessionDetails = await this.sessionDetailRepository.find({
+        where: { sessionId: session.id },
+      });
+
+      let companyName = '';
+      let companyEmail = '';
+      let companyAddress = '';
+      if (sessionDetails.length > 0) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: sessionDetails[0].companyWorkerId },
+          relations: ['company'],
+        });
+        if (companyWorker?.company) {
+          companyName = companyWorker.company.name;
+          companyEmail = companyWorker.company.email || '';
+          companyAddress = companyWorker.company.location || '';
+        }
+      }
+
+      const formatted = this.emailService.formatSessionDate(
+        session.sessionDatetime,
+      );
+
+      if (clientInfo.email) {
+        await this.emailService.sendSessionReactivationToClient(
+          clientInfo.email,
+          clientInfo.name,
+          { date: formatted.date, time: formatted.time },
+          { name: companyName, email: companyEmail, address: companyAddress },
+        );
+        this.logger.log(
+          `✅ Correo de reactivación enviado al cliente: ${clientInfo.email}`,
+        );
+      }
+
+      for (const detail of sessionDetails) {
+        const companyWorker = await this.companyWorkerRepository.findOne({
+          where: { id: detail.companyWorkerId },
+          relations: ['worker'],
+        });
+        if (!companyWorker?.worker) continue;
+        const workerUser = await this.userRepository.findOne({
+          where: { id: companyWorker.worker.userId },
+        });
+        if (!workerUser?.email) continue;
+        const service = await this.serviceRepository.findOne({
+          where: { id: detail.serviceId },
+        });
+        await this.emailService.sendSessionReactivationToWorker(
+          workerUser.email,
+          (companyWorker.worker.name || '').trim(),
+          {
+            date: formatted.date,
+            time: formatted.time,
+            serviceName: service?.name || 'Servicio',
+            clientName: clientInfo.name,
+          },
+        );
+        this.logger.log(
+          `✅ Correo de reactivación enviado al trabajador: ${workerUser.email}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `❌ Error enviando correos de reactivación: ${(error as Error).message}`,
         (error as Error).stack,
       );
     }
