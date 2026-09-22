@@ -3753,6 +3753,12 @@ export class SessionService {
       if (newStatus === 2 && previousStatus !== 2 && !keptSchedule) {
         session.startDatetime = now;
       }
+      // Al VOLVER A AGENDADA (revert), restaurar la hora pautada original: deshace
+      // el corrimiento que "Comenzar" hizo a la hora real, para que el bloque
+      // vuelva a su lugar y no quede solapado con otra cita.
+      if (newStatus === 1 && session.originalStartDatetime) {
+        session.startDatetime = session.originalStartDatetime;
+      }
       updatedSession = await queryRunner.manager.save(session);
 
       if (cascadeToDetails) {
@@ -3798,6 +3804,14 @@ export class SessionService {
           // el bloque y para que el arrastre detecte solapes.
           setValues.endDatetime = () =>
             'DATE_ADD(:now, INTERVAL GREATEST(COALESCE(total_time, 0), 1) MINUTE)';
+        }
+        if (newStatus === 1) {
+          // Volver a agendada: restaurar la hora pautada original de cada servicio
+          // (deshace el corrimiento a la hora real que hizo "Comenzar").
+          setValues.startDatetime = () =>
+            'COALESCE(original_start_datetime, start_datetime)';
+          setValues.endDatetime = () =>
+            'COALESCE(original_end_datetime, end_datetime)';
         }
 
         let cascadeQuery = queryRunner.manager
@@ -5771,6 +5785,17 @@ export class SessionService {
 
     // 5. Actualizar el detalle
     detail.status = updateDetailStatusDto.status;
+    // Volver a agendada / reactivar (status 1): restaurar la hora pautada
+    // original del servicio (deshace el corrimiento a la hora real que hizo
+    // "Comenzar"), para que el bloque vuelva a su lugar y no quede solapado.
+    if (updateDetailStatusDto.status === 1) {
+      if (detail.originalStartDatetime) {
+        detail.startDatetime = detail.originalStartDatetime;
+      }
+      if (detail.originalEndDatetime) {
+        detail.endDatetime = detail.originalEndDatetime;
+      }
+    }
     // ✨ Registrar tiempos reales de inicio y fin.
     //    Aplica tanto para el worker (que ejecuta el servicio) como para el
     //    admin (que puede gestionar el estado). Cada transición sobrescribe el
