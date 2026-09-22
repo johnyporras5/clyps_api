@@ -25,4 +25,13 @@ export class UpdateDetailStatusDto {
   @IsString()
   @MaxLength(255)
   reason?: string;
+
+  /**
+   * Confirma marcar En proceso (2) aunque el trabajador ya tenga otro servicio
+   * en progreso. Sin esto, el backend responde 409 WORKER_IN_PROGRESS para que
+   * el front pida confirmación.
+   */
+  @IsOptional()
+  @IsBoolean()
+  confirmInProgress?: boolean;
 }

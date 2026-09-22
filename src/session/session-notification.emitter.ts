@@ -109,6 +109,66 @@ export class SessionNotificationEmitter {
     });
   }
 
+  /**
+   * Cambio de estado de UN servicio (detalle) por un trabajador o el admin.
+   * Notifica al admin dueño Y al trabajador de ESE servicio (− quien hizo la
+   * acción), con un mensaje claro por servicio, sin molestar a los demás
+   * trabajadores de la cita. Cubre cancelar / reactivar / comenzar / terminar /
+   * volver a agendar. Es simétrico: si lo hace el worker → llega al admin; si lo
+   * hace el admin → llega al worker (haya uno o varios servicios).
+   */
+  async notifyDetailStatusChanged(
+    sessionId: number,
+    detailId: number,
+    newStatus: number,
+    previousStatus: number,
+    actorUserId?: number,
+  ): Promise<void> {
+    await this.safe('appointment.detail_status_changed', async () => {
+      const session = await this.sessionService.findOneWithDetails(sessionId);
+      const svc = (session.services ?? []).find((s) => s.detailId === detailId);
+      const adminUserId = await this.adminUserId(session.companyId);
+      const workerUserIds = svc?.companyWorkerId
+        ? await this.workerUserIds([svc.companyWorkerId])
+        : [];
+      const workerName = (svc?.workerName || 'Un trabajador').trim();
+      const serviceName = svc?.serviceName || 'un servicio';
+      const cliente = this.clientName(session);
+      const data = buildNavigationData(
+        'appointment',
+        session.id,
+        session.companyId,
+      );
+
+      const verbo =
+        newStatus === 5
+          ? 'canceló'
+          : previousStatus === 5
+            ? 'reactivó'
+            : newStatus === 2
+              ? 'comenzó'
+              : newStatus === 3
+                ? 'terminó'
+                : newStatus === 1
+                  ? 'volvió a agendar'
+                  : 'actualizó';
+
+      // El sujeto es QUIEN hizo la acción: el admin o el trabajador del servicio.
+      const actorIsAdmin = actorUserId != null && actorUserId === adminUserId;
+      const sujeto = actorIsAdmin ? 'El administrador' : workerName;
+
+      await this.notifications.createNotificationForUsers(
+        this.exclude([adminUserId, ...workerUserIds], actorUserId),
+        {
+          type: 'appointment',
+          title: 'Servicio de una cita',
+          body: `${sujeto} ${verbo} el servicio "${serviceName}" en la cita de ${cliente}`,
+          data,
+        },
+      );
+    });
+  }
+
   /** Cita cancelada → cliente + admin + workers (− actor), con texto por rol. */
   async notifyCancelled(
     sessionId: number,
