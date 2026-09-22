@@ -528,6 +528,8 @@ export class SessionController {
       result?.session?.cancellationReason ?? cancelDto?.reason ?? null,
       result?.session?.cancelledBy ?? 'adm',
     );
+    // Push a cliente + trabajadores (− el admin que canceló).
+    await this.notificationEmitter.notifyCancelled(+id, adminId);
     return result;
   }
 
@@ -575,6 +577,8 @@ export class SessionController {
       result?.session?.cancellationReason ?? cancelDto?.reason ?? null,
       result?.session?.cancelledBy ?? 'cli',
     );
+    // Push a admin + trabajadores (− el cliente que canceló).
+    await this.notificationEmitter.notifyCancelled(+id, userId);
     return result;
   }
 
