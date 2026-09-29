@@ -1,6 +1,12 @@
 import { CompanyFeedback } from '../../company_feedback/entities/company_feedback.entity';
 import { CalendarCompany } from '../../calendar_company/entities/calendar-company.entity';
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  OneToMany,
+  Index,
+} from 'typeorm';
 import { ServiceCategory } from '../../service_category/entities/service_category.entity';
 import { CompanyCategory } from '../../company_category/entities/company_category.entity';
 
@@ -24,6 +30,12 @@ export class Company {
 
   @Column({ name: 'logo', length: 245, nullable: true })
   logo: string;
+
+  // Segmento del enlace público de reservas (/reservar/<slug>). Se genera al
+  // crear la compañía (CompanySubscriber) y no cambia con el nombre.
+  @Index('UQ_company_slug', { unique: true })
+  @Column({ name: 'slug', type: 'varchar', length: 160, nullable: true })
+  slug: string | null;
 
   @Column({ name: 'description', length: 45, nullable: true })
   description: string;

@@ -50,6 +50,7 @@ import { EntitlementsService } from '../subscription/entitlements.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 import type { AuthenticatedUser } from './types/authenticated-request';
+import { generateSimplePassword } from './password.util';
 
 @Injectable()
 export class AuthService {
@@ -262,30 +263,7 @@ export class AuthService {
    * Ejemplo: "gato4821"
    */
   private generateRandomPassword(_length: number = 8): string {
-    const words = [
-      'gato',
-      'sol',
-      'luna',
-      'casa',
-      'flor',
-      'mar',
-      'rio',
-      'pan',
-      'cielo',
-      'verde',
-      'rojo',
-      'pez',
-      'uva',
-      'oso',
-      'lago',
-    ];
-
-    const word = words[Math.floor(Math.random() * words.length)];
-
-    // 4 dígitos (sin ceros a la izquierda) -> entre 1000 y 9999
-    const digits = Math.floor(1000 + Math.random() * 9000).toString();
-
-    return `${word}${digits}`;
+    return generateSimplePassword();
   }
 
   /**

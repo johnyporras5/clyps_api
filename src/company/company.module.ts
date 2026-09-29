@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CompanyService } from './company.service';
 import { CompanyController } from './company.controller';
 import { Company } from './entities/company.entity';
+import { CompanySubscriber } from './company.subscriber';
 import { CommonModule } from 'src/common/common.module';
 import { User } from 'src/user/entities/user.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
@@ -42,7 +43,7 @@ import { OnboardingModule } from '../onboarding/onboarding.module';
     RealtimeModule,
     OnboardingModule,
   ],
-  providers: [CompanyService],
+  providers: [CompanyService, CompanySubscriber],
   controllers: [CompanyController],
   exports: [CompanyService],
 })
