@@ -36,6 +36,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
 import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { GeocodingModule } from './geocoding/geocoding.module';
+import { PublicBookingModule } from './public_booking/public-booking.module';
 
 @Module({
   imports: [
@@ -142,6 +143,7 @@ import { GeocodingModule } from './geocoding/geocoding.module';
     OnboardingRescueModule,
     SubscriptionModule,
     GeocodingModule,
+    PublicBookingModule,
   ],
   controllers: [AppController],
   providers: [

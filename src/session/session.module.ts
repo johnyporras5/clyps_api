@@ -75,6 +75,8 @@ import { SessionSubscriber } from './session.subscriber';
     SessionSubscriber,
   ],
   controllers: [SessionController, AppointmentBeforeAfterController],
-  exports: [SessionService],
+  // Los emitters se exportan para que la reserva pública (PublicBookingModule)
+  // dispare el mismo realtime + push que una cita creada desde la app.
+  exports: [SessionService, SessionRealtimeEmitter, SessionNotificationEmitter],
 })
 export class SessionModule {}
