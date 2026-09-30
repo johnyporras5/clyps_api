@@ -13,6 +13,7 @@ import { PortfolioPicturesModule } from '../portfolio_pictures/portfolio_picture
 import { SessionModule } from '../session/session.module';
 import { EmailModule } from '../email/email.module';
 import { PublicBookingController } from './public-booking.controller';
+import { BookingLinksController } from './booking-links.controller';
 import { PublicBookingService } from './public-booking.service';
 
 @Module({
@@ -32,7 +33,7 @@ import { PublicBookingService } from './public-booking.service';
     SessionModule,
     EmailModule,
   ],
-  controllers: [PublicBookingController],
+  controllers: [PublicBookingController, BookingLinksController],
   providers: [PublicBookingService],
 })
 export class PublicBookingModule {}

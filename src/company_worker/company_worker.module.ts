@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CompanyWorkerService } from './company_worker.service';
 import { CompanyWorkerController } from './company_worker.controller';
 import { CompanyWorker } from './entities/company_worker.entity';
+import { CompanyWorkerSubscriber } from './company-worker.subscriber';
 import { Company } from '../company/entities/company.entity';
 import { Worker } from '../worker/entities/worker.entity';
 import { User } from '../user/entities/user.entity';
@@ -30,7 +31,7 @@ import { SubscriptionModule } from '../subscription/subscription.module';
     SubscriptionModule,
   ],
   controllers: [CompanyWorkerController],
-  providers: [CompanyWorkerService],
+  providers: [CompanyWorkerService, CompanyWorkerSubscriber],
   exports: [CompanyWorkerService],
 })
 export class CompanyWorkerModule {}

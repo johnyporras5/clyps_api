@@ -31,6 +31,15 @@ export class PublicBookingController {
     return this.publicBookingService.getProfile(slug);
   }
 
+  /** Página de un profesional: /reservar/<negocio>/<profesional>. */
+  @Get(':slug/workers/:workerSlug')
+  getWorkerProfile(
+    @Param('slug') slug: string,
+    @Param('workerSlug') workerSlug: string,
+  ) {
+    return this.publicBookingService.getWorkerProfile(slug, workerSlug);
+  }
+
   @Get(':slug/availability')
   getAvailability(
     @Param('slug') slug: string,

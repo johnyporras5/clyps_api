@@ -5,12 +5,15 @@ import { Company } from './entities/company.entity';
 const SLUG_MAX_LENGTH = 140;
 
 /**
- * Convierte el nombre del negocio en un segmento de URL: minúsculas, sin
- * acentos, solo letras/números separados por guiones.
+ * Convierte un nombre en un segmento de URL: minúsculas, sin acentos, solo
+ * letras/números separados por guiones.
  * Ej.: "Orquídea Beauty Spa & Co." → "orquidea-beauty-spa-co".
  */
-export function slugifyCompanyName(name: string | null | undefined): string {
-  const base = (name ?? '')
+export function slugifyText(
+  text: string | null | undefined,
+  fallback: string,
+): string {
+  const base = (text ?? '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
@@ -18,7 +21,11 @@ export function slugifyCompanyName(name: string | null | undefined): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, SLUG_MAX_LENGTH)
     .replace(/-+$/g, '');
-  return base || 'negocio';
+  return base || fallback;
+}
+
+export function slugifyCompanyName(name: string | null | undefined): string {
+  return slugifyText(name, 'negocio');
 }
 
 /**

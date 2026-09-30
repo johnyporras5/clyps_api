@@ -28,6 +28,7 @@ import { EntitlementsService } from '../subscription/entitlements.service';
 import { generateSimplePassword } from '../auth/password.util';
 import { normalizeCompanyCalendarDetail } from '../common/utils/company-calendar.util';
 import { isWithinOpenHours } from './booking-hours.util';
+import { generateUniqueWorkerSlug } from '../company_worker/company-worker-slug.util';
 import {
   CreatePublicBookingDto,
   PublicAvailabilityQueryDto,
@@ -149,6 +150,123 @@ export class PublicBookingService {
         pictureUrl: p.pictureUrl,
       })),
     };
+  }
+
+  /**
+   * Página de un profesional (/reservar/<negocio>/<profesional>): los datos
+   * del negocio, el profesional, y SOLO los servicios que él hace, cada uno ya
+   * con él como único profesional. Sin ofertas ni portafolio.
+   */
+  async getWorkerProfile(slug: string, workerSlug: string) {
+    const company = await this.findCompanyBySlug(slug);
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: {
+        companyId: company.id,
+        slug: (workerSlug ?? '').trim().toLowerCase(),
+      },
+    });
+
+    if (!companyWorker) {
+      throw new NotFoundException({
+        message: 'No encontramos este profesional.',
+        reason: 'worker_not_found',
+        companyName: company.name,
+        companySlug: company.slug,
+      });
+    }
+    if (
+      companyWorker.isActive !== 1 ||
+      companyWorker.temporarilyDeleted ||
+      companyWorker.permanentlyDeleted
+    ) {
+      throw new NotFoundException({
+        message: `Este profesional ya no está disponible en ${company.name}.`,
+        reason: 'worker_unavailable',
+        companyName: company.name,
+        companySlug: company.slug,
+      });
+    }
+
+    const profile = await this.getProfile(slug);
+    const cwId = companyWorker.id;
+
+    const isThisWorker = (w: { companyWorkerId?: number }) =>
+      Number(w.companyWorkerId) === cwId;
+
+    const services = profile.services
+      .filter((s) => s.workersInfo.some(isThisWorker))
+      .map((s) => ({
+        ...s,
+        workers: s.workers.filter((w) => Number(w.id) === cwId),
+        workersInfo: s.workersInfo.filter(isThisWorker),
+      }));
+
+    const workerInfo = services[0]?.workersInfo[0] as
+      | {
+          workerInfo?: {
+            name?: string;
+            pictureUrl?: string | null;
+            rating?: { average: number; total: number };
+          };
+        }
+      | undefined;
+
+    return {
+      ...profile,
+      services,
+      offers: [],
+      portfolio: [],
+      worker: {
+        companyWorkerId: cwId,
+        slug: companyWorker.slug,
+        name: workerInfo?.workerInfo?.name ?? companyWorker.worker?.name ?? '',
+        pictureUrl: workerInfo?.workerInfo?.pictureUrl ?? null,
+        rating: workerInfo?.workerInfo?.rating ?? { average: 0, total: 0 },
+      },
+    };
+  }
+
+  /**
+   * Enlaces de reservas del trabajador autenticado: uno por cada negocio en el
+   * que está activo. Si algún registro viejo quedó sin slug, se le asigna.
+   */
+  async getMyBookingLinks(userId: number) {
+    const companyWorkers = await this.companyWorkerRepository.find({
+      // `company_worker.user_id` no siempre está lleno; el vínculo fiable con
+      // el usuario es `worker.user_id`.
+      where: {
+        worker: { userId },
+        isActive: 1,
+        temporarilyDeleted: false,
+        permanentlyDeleted: false,
+      },
+      relations: ['worker', 'company'],
+    });
+
+    const links: {
+      companyId: number;
+      companyName: string;
+      companySlug: string | null;
+      workerSlug: string;
+    }[] = [];
+
+    for (const cw of companyWorkers) {
+      if (!cw.slug) {
+        cw.slug = await generateUniqueWorkerSlug(
+          this.companyWorkerRepository.manager,
+          cw.companyId,
+          cw.worker?.name,
+        );
+        await this.companyWorkerRepository.update(cw.id, { slug: cw.slug });
+      }
+      links.push({
+        companyId: cw.companyId,
+        companyName: cw.company?.name ?? '',
+        companySlug: cw.company?.slug ?? null,
+        workerSlug: cw.slug,
+      });
+    }
+    return links;
   }
 
   /** Servicio con solo lo que necesita la página de reservas. */
