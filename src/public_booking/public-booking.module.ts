@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Company } from '../company/entities/company.entity';
 import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
-import { CompanyFeedback } from '../company_feedback/entities/company_feedback.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Service } from '../service/entities/service.entity';
 import { Session } from '../session/entities/session.entity';
@@ -21,7 +20,6 @@ import { PublicBookingService } from './public-booking.service';
     TypeOrmModule.forFeature([
       Company,
       CalendarCompany,
-      CompanyFeedback,
       CompanyWorker,
       Service,
       Session,

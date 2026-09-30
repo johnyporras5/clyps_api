@@ -11,7 +11,6 @@ import { In, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { Company } from '../company/entities/company.entity';
 import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
-import { CompanyFeedback } from '../company_feedback/entities/company_feedback.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { Service } from '../service/entities/service.entity';
 import { Session } from '../session/entities/session.entity';
@@ -38,7 +37,6 @@ import {
 const MIN_FORM_ELAPSED_MS = 3000;
 /** Hasta cuántos días hacia adelante se puede reservar desde el enlace. */
 const MAX_DAYS_AHEAD = 180;
-const REVIEWS_LIMIT = 10;
 const PORTFOLIO_LIMIT = 24;
 
 type ServiceWorkerAssignment = {
@@ -65,8 +63,6 @@ export class PublicBookingService {
     private readonly companyRepository: Repository<Company>,
     @InjectRepository(CalendarCompany)
     private readonly calendarCompanyRepository: Repository<CalendarCompany>,
-    @InjectRepository(CompanyFeedback)
-    private readonly companyFeedbackRepository: Repository<CompanyFeedback>,
     @InjectRepository(CompanyWorker)
     private readonly companyWorkerRepository: Repository<CompanyWorker>,
     @InjectRepository(Service)
@@ -92,7 +88,9 @@ export class PublicBookingService {
   async getProfile(slug: string) {
     const company = await this.findCompanyBySlug(slug);
 
-    const [booking, offers, portfolio, reviews, bookable] = await Promise.all([
+    // Las reseñas NO se publican aquí: el comentario es texto libre del
+    // cliente y puede traer datos personales. Solo va el promedio (rating).
+    const [booking, offers, portfolio, bookable] = await Promise.all([
       this.serviceService.findAllByCompanyIdWithWorkers(
         company.id,
         { page: 1, limit: 500 },
@@ -104,7 +102,6 @@ export class PublicBookingService {
       this.portfolioService
         .findAllByCompany(company.id, { page: 1, limit: PORTFOLIO_LIMIT })
         .catch(() => ({ data: [] as any[] })),
-      this.getRecentReviews(company.id),
       this.entitlements.canOperate(company.id),
     ]);
 
@@ -151,7 +148,6 @@ export class PublicBookingService {
         id: p.id,
         pictureUrl: p.pictureUrl,
       })),
-      reviews,
     };
   }
 
@@ -204,47 +200,6 @@ export class PublicBookingService {
         })),
       workersInfo,
     };
-  }
-
-  private async getRecentReviews(companyId: number) {
-    const rows = await this.companyFeedbackRepository
-      .createQueryBuilder('f')
-      .leftJoin(Client, 'c', 'c.id = f.clientId')
-      .select('f.id', 'id')
-      .addSelect('f.stars', 'stars')
-      .addSelect('f.description', 'description')
-      .addSelect('f.datetime', 'datetime')
-      .addSelect('c.name', 'clientName')
-      .addSelect('c.lastName', 'clientLastName')
-      .where('f.companyId = :companyId', { companyId })
-      .andWhere('f.stars IS NOT NULL')
-      .andWhere("f.description IS NOT NULL AND TRIM(f.description) <> ''")
-      .orderBy('f.datetime', 'DESC')
-      .limit(REVIEWS_LIMIT)
-      .getRawMany<{
-        id: number;
-        stars: number;
-        description: string;
-        datetime: Date;
-        clientName: string | null;
-        clientLastName: string | null;
-      }>();
-
-    // Solo nombre + inicial del apellido: la reseña es pública.
-    return rows.map((r) => {
-      const first = (r.clientName ?? '').trim().split(/\s+/)[0] ?? '';
-      const initial = (r.clientLastName ?? '').trim().charAt(0);
-      return {
-        id: Number(r.id),
-        stars: Number(r.stars),
-        description: r.description,
-        datetime: r.datetime,
-        authorName:
-          [first, initial ? `${initial.toUpperCase()}.` : '']
-            .filter(Boolean)
-            .join(' ') || 'Cliente',
-      };
-    });
   }
 
   // ─────────────────────────── Disponibilidad ───────────────────────────
