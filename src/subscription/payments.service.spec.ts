@@ -14,6 +14,7 @@ import type { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
 import type { FileUploadService } from '../common/services/file_upload.service';
 import type { Company } from '../company/entities/company.entity';
 import { PaymentReport } from './entities/payment-report.entity';
+import { addMonths } from './subscription-period.util';
 import { Subscription } from './entities/subscription.entity';
 import type { SubscriptionEvent } from './entities/subscription-event.entity';
 import type { ReportPaymentDto } from './dto/report-payment.dto';
@@ -703,7 +704,9 @@ function savedReport(save: jest.Mock): PaymentReport | undefined {
 
 describe('el ciclo que cubrió el pago', () => {
   it('lo congela en el reporte al verificarlo', async () => {
-    const currentPeriodEnd = new Date('2026-10-05T16:00:00.000Z');
+    // Relativa a hoy: con una fecha fija el test caducaba al pasar esa hora y
+    // el ciclo, con razón, arrancaba "ahora".
+    const currentPeriodEnd = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
     const report = reportFixture();
     const { service, manager } = buildService({
       report,
@@ -721,7 +724,9 @@ describe('el ciclo que cubrió el pago', () => {
     expect(stored?.coveredFrom?.toISOString()).toBe(
       currentPeriodEnd.toISOString(),
     );
-    expect(stored?.coveredTo?.toISOString()).toBe('2026-11-05T16:00:00.000Z');
+    expect(stored?.coveredTo?.toISOString()).toBe(
+      addMonths(currentPeriodEnd, 1).toISOString(),
+    );
   });
 
   it('el primer pago dentro de la prueba cubre desde que ella termina', async () => {
