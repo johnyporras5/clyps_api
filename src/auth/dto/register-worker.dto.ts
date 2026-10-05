@@ -8,17 +8,20 @@ import {
   IsJSON,
   IsNumber,
   IsIn,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { isEmailUnavailable } from './register-client-by-admin.dto';
 
 export class RegisterWorkerDto {
   @IsString()
   @IsNotEmpty()
   username: string;
 
+  @IsOptional()
+  @ValidateIf((o) => !isEmailUnavailable(o.email))
   @IsEmail()
-  @IsNotEmpty()
-  email: string;
+  email?: string;
 
   @IsOptional()
   @IsString()

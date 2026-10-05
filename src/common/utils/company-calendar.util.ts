@@ -49,6 +49,7 @@ export const DEFAULT_BUSINESS_DAYS = [
   'thursday',
   'friday',
   'saturday',
+  'sunday',
 ];
 
 /**

@@ -25,6 +25,7 @@ import { RegisterWorkerDto } from './dto/register-worker.dto';
 import { RegisterClientDto } from './dto/register-client.dto';
 import { RegisterClientByAdminDto } from './dto/register-client-by-admin.dto';
 import { AssignClientEmailDto } from './dto/assign-client-email.dto';
+import { AssignWorkerEmailDto } from './dto/assign-worker-email.dto';
 import { Roles } from './decorators/roles.decorator';
 import { RolesGuard } from './guards/roles.guard';
 import { RegisterAdminDto } from './dto/register-admin.dto';
@@ -171,6 +172,18 @@ export class AuthController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.authService.assignClientEmail(clientId, dto, req.user);
+  }
+
+  @Post('workers/:workerId/email')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('adm')
+  @HttpCode(HttpStatus.OK)
+  async assignWorkerEmail(
+    @Param('workerId', ParseIntPipe) workerId: number,
+    @Body() dto: AssignWorkerEmailDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.authService.assignWorkerEmail(workerId, dto, req.user);
   }
 
   // ==================== ENDPOINTS DE LOGIN ====================

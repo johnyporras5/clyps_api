@@ -41,6 +41,7 @@ import { ChangePasswordWithoutAuthDto } from './dto/change-password-without-auth
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { AssignClientEmailDto } from './dto/assign-client-email.dto';
+import { AssignWorkerEmailDto } from './dto/assign-worker-email.dto';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
 import { SiteCategoryService } from '../site_category/site_category.service';
@@ -279,10 +280,15 @@ export class AuthService {
     generatedPassword?: string;
     access_token?: string;
   }> {
-    // 1. Verificar si el email ya existe en la tabla User
-    const existingUserByEmail = await this.userRepository.findOne({
-      where: { email: registerDto.email },
-    });
+    // 1. Verificar si el email ya existe en la tabla User. Sin correo la
+    // identidad se garantiza por username, como en el alta de clientes.
+    const emailAbsent = isEmailUnavailable(registerDto.email);
+    const email = emailAbsent
+      ? null
+      : (registerDto.email as string).trim().toLowerCase();
+    const existingUserByEmail = email
+      ? await this.userRepository.findOne({ where: { email } })
+      : null;
 
     let user: User;
     let worker: Worker | null = null;
@@ -333,7 +339,7 @@ export class AuthService {
       // El email pertenece a un trabajador que aún no verificó su correo:
       // reenviamos el código para que pueda completar la verificación.
       if (existingUserByEmail.emailVerified === 0) {
-        await this.trySendVerificationCode(registerDto.email);
+        await this.trySendVerificationCode(existingUserByEmail.email);
         throw new ConflictException({
           statusCode: HttpStatus.CONFLICT,
           error: 'Conflict',
@@ -377,7 +383,7 @@ export class AuthService {
       // Crear usuario con la contraseña generada
       const newUser = this.userRepository.create({
         username: registerDto.username,
-        email: registerDto.email,
+        email: email as unknown as string,
         password: hashedPassword,
         userType: 'wrk',
         emailVerified: 0,
@@ -385,22 +391,25 @@ export class AuthService {
 
       user = await this.userRepository.save(newUser);
 
-      // Enviar credenciales por correo solo si es nuevo
-      const credentialsSent = await this.emailService.sendWorkerCredentials(
-        user.email,
-        user.username,
-        generatedPassword,
-        company.name, // Nombre de la compañía para el email
-      );
-
-      if (!credentialsSent) {
-        console.warn(
-          'No se pudieron enviar las credenciales por correo, pero el usuario fue creado',
+      // Sin correo no hay a dónde mandar nada: las credenciales se generan y
+      // envían cuando el admin le asigna uno.
+      if (email) {
+        const credentialsSent = await this.emailService.sendWorkerCredentials(
+          email,
+          user.username,
+          generatedPassword,
+          company.name, // Nombre de la compañía para el email
         );
-      }
 
-      // Enviar código de verificación solo si es nuevo (no bloqueante).
-      await this.trySendVerificationCode(user.email);
+        if (!credentialsSent) {
+          console.warn(
+            'No se pudieron enviar las credenciales por correo, pero el usuario fue creado',
+          );
+        }
+
+        // Enviar código de verificación solo si es nuevo (no bloqueante).
+        await this.trySendVerificationCode(email);
+      }
     }
 
     // ==================== [NUEVO] PROCESAR ARCHIVO DE FOTO (SI SE ENVIÓ) ====================
@@ -500,8 +509,14 @@ export class AuthService {
     const message = [
       `Trabajador registrado exitosamente en el sistema CLYPS.`,
       `Ha sido asignado a la compañía '${company.name}'.`,
-      `Las credenciales de acceso han sido enviadas a su correo electrónico.`,
-      `Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`,
+      ...(emailAbsent
+        ? [
+            `No tiene correo, así que todavía no puede entrar: cuando se le asigne uno recibirá sus credenciales de acceso.`,
+          ]
+        : [
+            `Las credenciales de acceso han sido enviadas a su correo electrónico.`,
+            `Para activar su cuenta, por favor verifique su correo utilizando el código enviado.`,
+          ]),
     ].join(' ');
 
     // Construir objeto de respuesta
@@ -1026,6 +1041,85 @@ export class AuthService {
         ? `Se enviaron las credenciales a ${email}.`
         : `El correo quedó guardado, pero no se pudo enviar el mensaje a ${email}. Vuelve a intentarlo.`,
       clientId: client.id,
+      credentialsSent,
+    };
+  }
+
+  async assignWorkerEmail(
+    workerId: number,
+    dto: AssignWorkerEmailDto,
+    caller: AuthenticatedUser,
+  ): Promise<{ message: string; workerId: number; credentialsSent: boolean }> {
+    const company = await this.resolveCallerCompany(caller);
+
+    const worker = await this.workerRepository.findOne({
+      where: { id: workerId },
+      relations: ['user'],
+    });
+    if (!worker) {
+      throw new NotFoundException(
+        `Trabajador con ID ${workerId} no encontrado`,
+      );
+    }
+
+    const assignment = await this.companyWorkerRepository.findOne({
+      where: { workerId: worker.id, companyId: company.id },
+    });
+    if (!assignment) {
+      throw new ForbiddenException('Este trabajador no pertenece a tu negocio');
+    }
+
+    const user = worker.user;
+    if (!user) {
+      throw new NotFoundException('El trabajador no tiene una cuenta asociada');
+    }
+
+    const email = dto.email.trim().toLowerCase();
+
+    if (!isEmailUnavailable(user.email)) {
+      // Con correo ya puesto, la cuenta es suya. Solo se permite reenviar el
+      // acceso al MISMO correo mientras no lo haya verificado.
+      const sameEmail = user.email.trim().toLowerCase() === email;
+      if (!sameEmail || user.emailVerified === 1) {
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'WORKER_ALREADY_HAS_EMAIL',
+          message:
+            'Este trabajador ya tiene un correo. Solo él puede cambiarlo desde su perfil.',
+        });
+      }
+    }
+
+    const taken = await this.userRepository.findOne({ where: { email } });
+    if (taken && taken.id !== user.id) {
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'Conflict',
+        code: 'EMAIL_ALREADY_REGISTERED',
+        message: 'Ese correo ya tiene una cuenta en CLYPS.',
+      });
+    }
+
+    const generatedPassword = this.generateRandomPassword(8);
+    user.email = email;
+    user.password = await bcrypt.hash(generatedPassword, 10);
+    user.emailVerified = 0;
+    await this.userRepository.save(user);
+
+    const credentialsSent = await this.emailService.sendWorkerCredentials(
+      email,
+      user.username,
+      generatedPassword,
+      company.name,
+    );
+    await this.trySendVerificationCode(email);
+
+    return {
+      message: credentialsSent
+        ? `Se enviaron las credenciales a ${email}.`
+        : `El correo quedó guardado, pero no se pudo enviar el mensaje a ${email}. Vuelve a intentarlo.`,
+      workerId: worker.id,
       credentialsSent,
     };
   }
