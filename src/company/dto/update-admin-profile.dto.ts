@@ -10,8 +10,13 @@ import {
   MaxLength,
   ValidateIf,
 } from 'class-validator';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 export class UpdateAdminProfileDto {
+  // Cédula o RIF del negocio. Vacía la borra.
+  @IdentificationField()
+  identification?: string | null;
+
   @IsOptional()
   @IsString()
   name?: string;

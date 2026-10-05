@@ -11,6 +11,7 @@ import {
   IsInt,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 /**
  * Normaliza `preferences` que llega en multipart como string JSON ("[1,3,4]"),
@@ -35,6 +36,10 @@ const toIntArray = ({ value }: { value: unknown }): number[] | undefined => {
 };
 
 export class RegisterClientDto {
+  // Cédula o RIF del cliente.
+  @IdentificationField()
+  identification?: string | null;
+
   @IsString()
   @IsNotEmpty()
   username: string;

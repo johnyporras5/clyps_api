@@ -1,13 +1,14 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { GeneratedModules } from './generated-modules';
 import { AuthModule } from './auth/auth.module';
 import { CleanupTask } from './tasks/cleanup.task';
+import { HideIdentificationInterceptor } from './common/interceptors/hide-identification.interceptor';
 import { OfferExpirationTask } from './tasks/offer-expiration.task';
 import { VerificationModule } from './verification/verification.module';
 //import { SeedsModule } from './database/seeds/seeds.module';
@@ -152,6 +153,8 @@ import { PublicBookingModule } from './public_booking/public-booking.module';
     OfferExpirationTask,
     // Activa el rate limiting de forma global en toda la app.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Oculta la cédula/RIF a los salones excluidos del cambio de identidad.
+    { provide: APP_INTERCEPTOR, useClass: HideIdentificationInterceptor },
   ],
 })
 export class AppModule {}

@@ -12,8 +12,13 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { isEmailUnavailable } from './register-client-by-admin.dto';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 export class RegisterWorkerDto {
+  // Cédula o RIF del trabajador. No se repite dentro del salón.
+  @IdentificationField()
+  identification?: string | null;
+
   @IsString()
   @IsNotEmpty()
   username: string;

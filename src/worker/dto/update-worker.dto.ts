@@ -8,8 +8,13 @@ import {
   Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 export class UpdateWorkerDto {
+  // Cédula o RIF. Vacía la borra.
+  @IdentificationField()
+  identification?: string | null;
+
   @IsOptional()
   @IsString()
   @Length(1, 145)

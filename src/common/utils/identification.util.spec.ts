@@ -1,4 +1,4 @@
-import { normalizeIdentification } from './subscription-identification.util';
+import { normalizeIdentification } from './identification.util';
 
 /**
  * La forma canónica de la cédula/RIF (CLYP-343).

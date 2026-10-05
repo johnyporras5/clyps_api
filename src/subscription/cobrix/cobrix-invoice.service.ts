@@ -18,7 +18,7 @@ import { billablePlanId } from '../entitlements.util';
 import {
   IDENTIFICATION_FORMAT_MESSAGE,
   normalizeIdentification,
-} from '../subscription-identification.util';
+} from '../../common/utils/identification.util';
 import { SubscriptionService } from '../subscription.service';
 import { CURRENCY_VES, formatVesMinor } from '../subscription-money.util';
 import { CobrixConfig } from './cobrix.config';

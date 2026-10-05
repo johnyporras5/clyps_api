@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
+import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
+import { stripIdentification } from '../common/utils/strip-identification.util';
 
 /**
  * Contrato global de evento de tiempo real (CLYP-240).
@@ -53,7 +55,31 @@ export class RealtimeService {
     const targetRooms = Array.isArray(rooms) ? rooms : [rooms];
     if (targetRooms.length === 0) return;
 
-    this.server.to(targetRooms).emit(event, payload);
+    const safePayload = this.touchesLegacyIdentityCompany(targetRooms, payload)
+      ? stripIdentification(payload)
+      : payload;
+    this.server.to(targetRooms).emit(event, safePayload);
+  }
+
+  /**
+   * Los salones excluidos del cambio de identidad (legacy-identity.util.ts) no
+   * ven la cédula/RIF; HideIdentificationInterceptor lo cubre en HTTP y esto en
+   * los eventos. Se quita del evento entero si es de uno de esos salones o va a
+   * su room: las rooms de trabajador (`worker:<companyWorkerId>`) no dicen de
+   * qué salón son, pero el evento sí (`companyId`).
+   */
+  private touchesLegacyIdentityCompany(
+    rooms: string[],
+    payload: unknown,
+  ): boolean {
+    const eventCompanyId = (payload as { companyId?: unknown } | null)
+      ?.companyId;
+    if (isLegacyIdentityCompany(Number(eventCompanyId))) return true;
+
+    return rooms.some((room) => {
+      const match = /^company(?:-public)?:(\d+)$/.exec(room);
+      return !!match && isLegacyIdentityCompany(Number(match[1]));
+    });
   }
 
   /**

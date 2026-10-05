@@ -9,8 +9,13 @@ import {
   Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 export class UpdateWorkerByAdminDto {
+  // Cédula o RIF. Vacía la borra.
+  @IdentificationField()
+  identification?: string | null;
+
   // ── User ──────────────────────────────────────────
   @IsOptional()
   @IsString()

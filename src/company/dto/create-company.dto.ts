@@ -6,8 +6,13 @@ import {
   IsNumber,
   IsDateString,
 } from 'class-validator';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 export class CreateCompanyDto {
+  // Cédula o RIF del negocio (la del dueño).
+  @IdentificationField()
+  identification?: string | null;
+
   @IsOptional()
   @IsString()
   name?: string;

@@ -4,6 +4,7 @@ import {
   Column,
   OneToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 
@@ -23,6 +24,17 @@ export class Client {
 
   @Column({ type: 'varchar', length: 20, nullable: true })
   phone: string;
+
+  // Cédula o RIF, en forma canónica: V-12345678. No se repite dentro de un
+  // mismo salón (lo valida identification-conflict.util.ts).
+  @Index('IDX_client_identification')
+  @Column({
+    name: 'identification',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  identification: string | null;
 
   @Column({ name: 'birth_date', type: 'date', nullable: true })
   birthDate: Date;

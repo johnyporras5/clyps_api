@@ -10,8 +10,13 @@ import {
   ArrayMaxSize,
   ArrayUnique,
 } from 'class-validator';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 export class RegisterAdminDto {
+  // Cédula o RIF del negocio (la del dueño). Se guarda en company.
+  @IdentificationField()
+  identification?: string | null;
+
   @IsString()
   @IsNotEmpty()
   username: string;

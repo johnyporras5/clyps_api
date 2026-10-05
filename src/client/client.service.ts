@@ -25,6 +25,9 @@ import {
 import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
 import { FindAllClientsDto } from './dto/find-all-clients.dto';
+import { isEmailUnavailable } from '../auth/dto/register-client-by-admin.dto';
+import { assertClientIdentificationFree } from '../common/utils/identification-conflict.util';
+import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
 import {
   isClientInactiveForCompany,
   markClientDeletedForCompany,
@@ -546,6 +549,24 @@ export class ClientService {
     }
   }
 
+  /**
+   * La cédula nueva no puede ser la de otro cliente de ninguno de los salones
+   * donde está este. Se llama antes de tocar nada (ni la foto).
+   */
+  private async assertIdentificationFreeForClient(
+    client: Client,
+    identification: string | null | undefined,
+  ): Promise<void> {
+    if (!identification || identification === client.identification) return;
+
+    await assertClientIdentificationFree(
+      this.clientRepository,
+      identification,
+      Array.isArray(client.companies) ? client.companies : [],
+      client.id,
+    );
+  }
+
   async updateProfileWithPhoto(
     userId: number,
     updateClientDto: UpdateClientDto,
@@ -562,6 +583,11 @@ export class ClientService {
         `Perfil de cliente para el usuario ${userId} no encontrado`,
       );
     }
+
+    await this.assertIdentificationFreeForClient(
+      client,
+      updateClientDto.identification,
+    );
 
     // 2. Procesar foto si se envía
     if (photoFile) {
@@ -597,6 +623,7 @@ export class ClientService {
     const allowedFields = [
       'name',
       'lastName',
+      'identification',
       'email',
       'phone',
       'birthDate',
@@ -846,6 +873,31 @@ export class ClientService {
       this.logger.warn(
         `Toggle isActive ignorado para el cliente ${clientId}: el estado ahora se maneja con DELETE /clients/admin/:id`,
       );
+    }
+
+    // La cédula también es dato personal, con una excepción: el cliente sin
+    // correo no puede entrar a corregirla él mismo, así que mientras no tenga
+    // correo la maneja el salón. Se rechaza en vez de ignorarse porque el
+    // campo es nuevo: ninguna app vieja lo manda.
+    // Un salón excluido del cambio de identidad (legacy-identity.util.ts) no
+    // la ve ni la toca: lo que mande se ignora.
+    if (
+      updateClientDto.identification !== undefined &&
+      !isLegacyIdentityCompany(callerCompanyId)
+    ) {
+      if (!isEmailUnavailable(client.user?.email)) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          code: 'IDENTIFICATION_OWNED_BY_CLIENT',
+          message:
+            'Este cliente tiene su propia cuenta: la cédula o RIF solo la cambia él desde su perfil.',
+        });
+      }
+      await this.assertIdentificationFreeForClient(
+        client,
+        updateClientDto.identification,
+      );
+      client.identification = updateClientDto.identification;
     }
 
     const saved = await this.clientRepository.save(client);

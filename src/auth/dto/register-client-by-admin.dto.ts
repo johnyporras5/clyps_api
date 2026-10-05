@@ -11,6 +11,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 /**
  * El email se considera "no disponible" cuando no se envía, viene vacío o el
@@ -29,6 +30,10 @@ export function isEmailUnavailable(email?: string | null): boolean {
  * correo. La identidad única se garantiza por `username`.
  */
 export class RegisterClientByAdminDto {
+  // Cédula o RIF del cliente. No se repite dentro del salón.
+  @IdentificationField()
+  identification?: string | null;
+
   @IsString()
   @IsNotEmpty()
   username: string;

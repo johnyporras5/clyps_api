@@ -42,6 +42,11 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { AssignClientEmailDto } from './dto/assign-client-email.dto';
 import { AssignWorkerEmailDto } from './dto/assign-worker-email.dto';
+import {
+  assertClientIdentificationFree,
+  assertWorkerIdentificationFree,
+} from '../common/utils/identification-conflict.util';
+import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
 import { SiteCategoryService } from '../site_category/site_category.service';
@@ -218,6 +223,7 @@ export class AuthService {
       logo: logoFileName,
       phone: registerDto.phone,
       location: registerDto.location,
+      identification: registerDto.identification ?? null,
     };
 
     const company = await this.companyService.create(companyData);
@@ -319,6 +325,19 @@ export class AuthService {
     // SUB-5: el tope de trabajadores lo decide el plan. Se pregunta ANTES de
     // crear el usuario, para no dejar cuentas huérfanas si el cupo está lleno.
     await this.entitlements.assertCanAddWorker(company.id);
+
+    // Un salón excluido del cambio de identidad no usa cédula: si el front la
+    // manda igual, se ignora en vez de rechazar el alta.
+    if (isLegacyIdentityCompany(company.id)) {
+      registerDto.identification = undefined;
+    }
+
+    // Igual que el cupo: la cédula repetida se rechaza antes de crear nada.
+    await assertWorkerIdentificationFree(
+      this.workerRepository,
+      registerDto.identification,
+      [company.id],
+    );
 
     // ==================== VERIFICAR SI YA EXISTE EL TRABAJADOR ====================
     // Un trabajador pertenece a una sola compañía: cualquier re-registro con un
@@ -449,6 +468,7 @@ export class AuthService {
 
       const newWorker = this.workerRepository.create({
         name: registerDto.name,
+        identification: registerDto.identification ?? null,
         phone: registerDto.phone,
         address: registerDto.address,
         birthdate: registerDto.birthdate,
@@ -690,6 +710,7 @@ export class AuthService {
       const newClient = this.clientRepository.create({
         name: registerDto.name,
         lastName: registerDto.lastName,
+        identification: registerDto.identification ?? null,
         email: registerDto.email,
         phone: registerDto.phone,
         birthDate: registerDto.birthdate,
@@ -1199,6 +1220,27 @@ export class AuthService {
         });
     const existingUser = existingUserByEmail ?? existingUserByUsername;
 
+    // Un salón excluido del cambio de identidad no usa cédula: si el front la
+    // manda igual, se ignora en vez de rechazar el alta.
+    if (isLegacyIdentityCompany(company.id)) {
+      registerDto.identification = undefined;
+    }
+
+    // El perfil se busca antes de crear nada para validar la cédula: un 409
+    // por cédula repetida no debe dejar un `user` recién creado sin cliente.
+    // El propio cliente que se está vinculando no choca consigo mismo.
+    const existingClient = existingUser
+      ? await this.clientRepository.findOne({
+          where: { userId: existingUser.id },
+        })
+      : null;
+    await assertClientIdentificationFree(
+      this.clientRepository,
+      registerDto.identification,
+      [company.id],
+      existingClient?.id,
+    );
+
     if (existingUser) {
       if (existingUser.userType !== 'cli') {
         throw new ConflictException(
@@ -1244,10 +1286,8 @@ export class AuthService {
       }
     }
 
-    // 3. Buscar el perfil del cliente
-    client = await this.clientRepository.findOne({
-      where: { userId: user.id },
-    });
+    // 3. El perfil del cliente (ya buscado arriba; un usuario nuevo no tiene)
+    client = existingClient;
 
     if (client) {
       // El cliente ya tiene perfil: solo gestionamos su relación con la compañía.
@@ -1326,6 +1366,15 @@ export class AuthService {
         });
       }
 
+      // La cédula que trae el alta solo completa una ficha que no la tenía:
+      // si ya tiene una, es suya y no se pisa desde otro salón.
+      if (registerDto.identification && !client.identification) {
+        await this.clientRepository.update(client.id, {
+          identification: registerDto.identification,
+        });
+        client.identification = registerDto.identification;
+      }
+
       // Al reactivar no hay nada que vincular: el salón ya estaba en
       // `companies` y el update de arriba es el único cambio.
       if (!reactivated) {
@@ -1374,6 +1423,7 @@ export class AuthService {
       const newClient = this.clientRepository.create({
         name: registerDto.name,
         lastName: registerDto.lastName,
+        identification: registerDto.identification ?? null,
         email: registerDto.email,
         phone: registerDto.phone,
         birthDate: registerDto.birthdate,

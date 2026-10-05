@@ -5,6 +5,7 @@ import {
   OneToMany,
   OneToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { WorkerFeedback } from '../../worker_feedback/entities/worker_feedback.entity';
@@ -19,6 +20,17 @@ export class Worker {
 
   @Column({ type: 'varchar', length: 20, nullable: true })
   phone: string;
+
+  // Cédula o RIF, en forma canónica: V-12345678. No se repite dentro de un
+  // mismo salón (lo valida identification-conflict.util.ts).
+  @Index('IDX_worker_identification')
+  @Column({
+    name: 'identification',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  identification: string | null;
 
   @Column({ name: 'address', length: 145, nullable: true })
   address: string;

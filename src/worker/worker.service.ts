@@ -25,6 +25,11 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { FeedbackSummary } from './types/feedback_summary.type';
 import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
 import { WorkerCalendarDto } from './dto/update-worker-calendar.dto';
+import { assertWorkerIdentificationFree } from '../common/utils/identification-conflict.util';
+import {
+  isLegacyIdentityCompany,
+  withoutLegacyIdentityCompanies,
+} from '../common/utils/legacy-identity.util';
 
 /** Nombres de días en español para los mensajes de validación del horario. */
 const DAY_LABELS_ES: Record<string, string> = {
@@ -190,6 +195,42 @@ export class WorkerService {
     return await this.workerRepository.save(worker);
   }
 
+  /**
+   * Decide qué pasa con la cédula que trae una edición, antes de tocar nada
+   * (ni la foto):
+   *  - si el trabajador solo está en salones excluidos del cambio de identidad
+   *    (legacy-identity.util.ts), se descarta: allí la cédula no se usa;
+   *  - si no, no puede ser la de otro trabajador de sus salones.
+   */
+  private async resolveWorkerIdentification(
+    worker: Worker,
+    dto: { identification?: string | null },
+  ): Promise<void> {
+    if (dto.identification === undefined) return;
+
+    const assignments = await this.companyWorkerRepository.find({
+      where: { workerId: worker.id },
+      select: { companyId: true },
+    });
+    const companyIds = assignments.map((a) => a.companyId);
+    if (
+      companyIds.length > 0 &&
+      withoutLegacyIdentityCompanies(companyIds).length === 0
+    ) {
+      dto.identification = undefined;
+      return;
+    }
+
+    if (!dto.identification || dto.identification === worker.identification)
+      return;
+    await assertWorkerIdentificationFree(
+      this.workerRepository,
+      dto.identification,
+      companyIds,
+      worker.id,
+    );
+  }
+
   async update(
     id: number,
     updateWorkerDto: UpdateWorkerDto,
@@ -210,6 +251,8 @@ export class WorkerService {
         'No tienes permiso para actualizar este perfil',
       );
     }
+
+    await this.resolveWorkerIdentification(worker, updateWorkerDto);
 
     Object.assign(worker, updateWorkerDto);
     return await this.workerRepository.save(worker);
@@ -238,6 +281,8 @@ export class WorkerService {
         `Perfil de trabajador para el usuario ${userId} no encontrado`,
       );
     }
+
+    await this.resolveWorkerIdentification(worker, updateWorkerDto);
 
     // 2. Procesar foto si se proporciona
     if (photoFile) {
@@ -269,6 +314,7 @@ export class WorkerService {
     // 3. Actualizar campos del trabajador (excluyendo userId y campos protegidos)
     const allowedFields = [
       'name',
+      'identification',
       'phone',
       'address',
       'birthdate',
@@ -375,6 +421,11 @@ export class WorkerService {
       );
     }
 
+    // El salón de quien edita está excluido del cambio de identidad: no
+    // toca la cédula, aunque el trabajador también esté en otro salón.
+    if (isLegacyIdentityCompany(company.id)) dto.identification = undefined;
+    await this.resolveWorkerIdentification(worker, dto);
+
     // 4. Procesar foto
     if (photoFile) {
       try {
@@ -424,6 +475,7 @@ export class WorkerService {
     // 6. Actualizar Worker
     const workerFields: (keyof UpdateWorkerByAdminDto)[] = [
       'name',
+      'identification',
       'phone',
       'address',
       'birthdate',
