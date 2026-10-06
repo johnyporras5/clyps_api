@@ -2879,9 +2879,14 @@ export class SessionService {
     }
 
     const worker = companyWorker.worker;
-    const user = await this.userRepository.findOne({
-      where: { id: worker.userId },
-    });
+    // Sin cuenta no hay a quién buscar. Ojo: `where: { id: null }` no filtra
+    // en TypeORM y devolvería el primer usuario de la tabla.
+    const user =
+      worker.userId === null
+        ? null
+        : await this.userRepository.findOne({
+            where: { id: worker.userId },
+          });
 
     return {
       email: user?.email || '',
@@ -2904,9 +2909,13 @@ export class SessionService {
       throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
     }
 
-    const user = await this.userRepository.findOne({
-      where: { id: client.userId },
-    });
+    // Sin cuenta no hay a quién buscar (y `where: { id: null }` no filtra).
+    const user =
+      client.userId === null
+        ? null
+        : await this.userRepository.findOne({
+            where: { id: client.userId },
+          });
 
     return {
       email: client.email || user?.email || '',
@@ -7193,6 +7202,18 @@ export class SessionService {
       throw new NotFoundException('Trabajador no encontrado');
     }
 
+    return this.getSessionsForWorker(worker, getSessionsDto);
+  }
+
+  /**
+   * Las citas de un trabajador ya resuelto. La usa el propio trabajador (por
+   * su usuario, arriba) y el admin al ver su historial, que lo busca por su
+   * id: un trabajador sin correo no tiene usuario, pero sí citas.
+   */
+  private async getSessionsForWorker(
+    worker: Worker,
+    getSessionsDto: GetSessionsDto,
+  ): Promise<PaginationResult<any>> {
     // 2. Buscar las asignaciones activas del trabajador en company_worker
     const companyWorkers = await this.companyWorkerRepository.find({
       where: {
@@ -9607,7 +9628,9 @@ export class SessionService {
           where: { id: detail.companyWorkerId },
           relations: ['worker', 'worker.user'],
         });
-        if (!companyWorker?.worker) continue;
+        // Sin cuenta no hay correo al que avisar.
+        if (!companyWorker?.worker || companyWorker.worker.userId === null)
+          continue;
 
         const workerUser = await this.userRepository.findOne({
           where: { id: companyWorker.worker.userId },
@@ -9690,7 +9713,9 @@ export class SessionService {
           where: { id: detail.companyWorkerId },
           relations: ['worker'],
         });
-        if (!companyWorker?.worker) continue;
+        // Sin cuenta no hay correo al que avisar.
+        if (!companyWorker?.worker || companyWorker.worker.userId === null)
+          continue;
         const workerUser = await this.userRepository.findOne({
           where: { id: companyWorker.worker.userId },
         });
@@ -11549,8 +11574,8 @@ export class SessionService {
       onlyScheduled: false,
     };
 
-    // Si admin pasa workerId, resolvemos el userId de ese worker para reutilizar
-    // getSessionsForAuthenticatedWorker sin duplicar lógica.
+    // Si admin pasa workerId, se reusa la misma consulta que ve el trabajador,
+    // con el trabajador ya resuelto (no hace falta que tenga usuario).
     if (targetWorkerId) {
       const worker = await this.workerRepository.findOne({
         where: { id: targetWorkerId },
@@ -11558,7 +11583,7 @@ export class SessionService {
       if (!worker) {
         throw new NotFoundException('Trabajador no encontrado');
       }
-      return this.getSessionsForAuthenticatedWorker(worker.userId, filteredDto);
+      return this.getSessionsForWorker(worker, filteredDto);
     }
     return this.getSessionsForAuthenticatedWorker(userId, filteredDto);
   }

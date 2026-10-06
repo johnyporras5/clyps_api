@@ -426,6 +426,21 @@ export class WorkerService {
     if (isLegacyIdentityCompany(company.id)) dto.identification = undefined;
     await this.resolveWorkerIdentification(worker, dto);
 
+    // Sin cuenta no hay usuario ni correo que cambiar: el acceso se le da
+    // asignándole un correo, que es lo que crea la cuenta. Se frena antes de
+    // subir la foto para no dejarla huérfana.
+    if (
+      worker.userId === null &&
+      (dto.username !== undefined || dto.email !== undefined)
+    ) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'WORKER_HAS_NO_ACCOUNT',
+        message:
+          'Este trabajador todavía no tiene cuenta. Asígnale un correo para darle acceso.',
+      });
+    }
+
     // 4. Procesar foto
     if (photoFile) {
       try {
@@ -433,7 +448,8 @@ export class WorkerService {
           photoFile,
           this.WORKER_PHOTO_FOLDER,
           'worker',
-          worker.userId,
+          // Sin cuenta todavía: se nombra con el id del trabajador.
+          worker.userId ?? worker.id,
         );
         if (worker.picture) {
           await this.fileUploadService.deleteFile(
@@ -468,7 +484,8 @@ export class WorkerService {
       }
       userUpdates.email = dto.email;
     }
-    if (Object.keys(userUpdates).length > 0) {
+    // `userId` nunca es null aquí si hay cambios: se frena antes de la foto.
+    if (Object.keys(userUpdates).length > 0 && worker.userId !== null) {
       await this.userRepository.update(worker.userId, userUpdates);
     }
 
@@ -545,7 +562,9 @@ export class WorkerService {
         )
       : '';
 
-    const { password: _, ...userWithoutPassword } = updatedWorker.user as any;
+    // Sin cuenta, `user` es null: desarmarlo directo tiraría un 500.
+    const userWithoutPassword =
+      this.excludePasswordFromUser(updatedWorker.user) ?? null;
 
     return {
       worker: { ...updatedWorker, user: userWithoutPassword, photoUrl },
@@ -692,7 +711,7 @@ export class WorkerService {
    * @param user Objeto usuario (puede ser undefined)
    * @returns Objeto usuario sin contraseña o undefined
    */
-  private excludePasswordFromUser(user?: User): any | undefined {
+  private excludePasswordFromUser(user?: User | null): any | undefined {
     if (!user) {
       return undefined;
     }
