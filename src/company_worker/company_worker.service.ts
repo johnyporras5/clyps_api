@@ -42,6 +42,7 @@ interface WorkerListRawRow {
   temporarilyDeleted: number;
   permanentlyDeleted: number;
   calendar: unknown;
+  userId: number | null;
 }
 
 interface PaginationMeta {
@@ -434,6 +435,7 @@ export class CompanyWorkerService {
         'cw.temporarily_deleted AS temporarilyDeleted',
         'cw.permanently_deleted AS permanentlyDeleted',
         'cw.calendar AS calendar',
+        'worker.user_id AS userId',
         'COALESCE(AVG(wf.stars), 0) AS averageRating',
         'COUNT(wf.id) AS totalReviews',
       ])
@@ -497,6 +499,8 @@ export class CompanyWorkerService {
         temporarilyDeleted: result.temporarilyDeleted,
         permanentlyDeleted: result.permanentlyDeleted,
         calendar: this.parseCalendar(result.calendar),
+        // Sin correo no tiene cuenta: el front lo marca y ofrece darle acceso.
+        hasAccount: result.userId !== null && result.userId !== undefined,
       };
     });
 

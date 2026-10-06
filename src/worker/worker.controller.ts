@@ -72,7 +72,7 @@ export class WorkerController {
       );
     }
 
-    return this.workerService.findByUserId(userId);
+    return this.workerService.findByUserId(userId, req.user.companyId);
   }
 
   /**

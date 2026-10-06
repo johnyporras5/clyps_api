@@ -129,7 +129,14 @@ export class WorkerService {
 
   async findByUserId(
     userId: number,
-  ): Promise<PhotoWithUrl & { feedbackSummary?: FeedbackSummary }> {
+    /** Salón del token (el activo). Decide `identificationEnabled`. */
+    activeCompanyId?: number | null,
+  ): Promise<
+    PhotoWithUrl & {
+      feedbackSummary?: FeedbackSummary;
+      identificationEnabled: boolean;
+    }
+  > {
     const worker = await this.workerRepository.findOne({
       where: { userId },
       relations: ['user'],
@@ -161,6 +168,12 @@ export class WorkerService {
       user: userWithoutPassword,
       feedbackSummary,
       companyWorker: companyWorker ?? null,
+      // Le dice al front si el salón con el que entró pide y muestra la
+      // cédula (p. ej. al dar de alta un cliente). Los excluidos del cambio
+      // de identidad (legacy-identity.util.ts) no.
+      identificationEnabled: !isLegacyIdentityCompany(
+        activeCompanyId ?? companyWorker?.companyId,
+      ),
     };
   }
 

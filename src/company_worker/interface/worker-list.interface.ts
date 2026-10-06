@@ -11,5 +11,7 @@ export interface WorkerList {
   endDate: Date;
   isActive: number;
   calendar: Record<string, any> | null;
+  /** Si tiene cuenta (`user`). Sin correo no la tiene hasta que se le asigna uno. */
+  hasAccount: boolean;
 }
 export type PaginatedWorkerListResult = PaginationResult<WorkerList>;
