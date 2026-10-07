@@ -80,7 +80,13 @@ describe('perfil del trabajador: identificationEnabled', () => {
 });
 
 describe('lista del equipo: hasAccount', () => {
-  async function list(rows: { workerId: number; userId: number | null }[]) {
+  async function list(
+    rows: {
+      workerId: number;
+      userId: number | null;
+      userEmail?: string | null;
+    }[],
+  ) {
     const qb: Record<string, jest.Mock> = {};
     for (const m of [
       'innerJoin',
@@ -118,10 +124,10 @@ describe('lista del equipo: hasAccount', () => {
     return { result, select: qb.select };
   }
 
-  it('marca quién tiene cuenta y quién no', async () => {
+  it('marca quién puede entrar: cuenta y correo', async () => {
     const { result } = await list([
-      { workerId: 3, userId: null },
-      { workerId: 4, userId: 99 },
+      { workerId: 3, userId: null, userEmail: null },
+      { workerId: 4, userId: 99, userEmail: 'ana@x.com' },
     ]);
     expect(result.data.map((w) => [w.workerId, w.hasAccount])).toEqual([
       [3, false],
@@ -129,10 +135,21 @@ describe('lista del equipo: hasAccount', () => {
     ]);
   });
 
-  it('lo saca de worker.user_id en la misma consulta', async () => {
+  it('el de antes, con cuenta pero sin correo, tampoco entra', async () => {
+    const { result } = await list([
+      { workerId: 5, userId: 98, userEmail: null },
+      { workerId: 6, userId: 97, userEmail: 'no disponible' },
+    ]);
+    expect(result.data.map((w) => w.hasAccount)).toEqual([false, false]);
+  });
+
+  it('lo saca de worker.user_id y del correo del user en la misma consulta', async () => {
     const { select } = await list([]);
     expect(select).toHaveBeenCalledWith(
-      expect.arrayContaining(['worker.user_id AS userId']),
+      expect.arrayContaining([
+        'worker.user_id AS userId',
+        'MAX(u.email) AS userEmail',
+      ]),
     );
   });
 });

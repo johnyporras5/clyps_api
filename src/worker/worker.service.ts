@@ -25,7 +25,10 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { FeedbackSummary } from './types/feedback_summary.type';
 import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
 import { WorkerCalendarDto } from './dto/update-worker-calendar.dto';
-import { assertWorkerIdentificationFree } from '../common/utils/identification-conflict.util';
+import {
+  assertIdentificationNotRemoved,
+  assertWorkerIdentificationFree,
+} from '../common/utils/identification-conflict.util';
 import {
   isLegacyIdentityCompany,
   withoutLegacyIdentityCompanies,
@@ -213,7 +216,8 @@ export class WorkerService {
    * (ni la foto):
    *  - si el trabajador solo está en salones excluidos del cambio de identidad
    *    (legacy-identity.util.ts), se descarta: allí la cédula no se usa;
-   *  - si no, no puede ser la de otro trabajador de sus salones.
+   *  - si ya tenía una, no se puede quitar (sí cambiar);
+   *  - no puede ser la de otro trabajador de sus salones.
    */
   private async resolveWorkerIdentification(
     worker: Worker,
@@ -234,6 +238,7 @@ export class WorkerService {
       return;
     }
 
+    assertIdentificationNotRemoved(worker.identification, dto.identification);
     if (!dto.identification || dto.identification === worker.identification)
       return;
     await assertWorkerIdentificationFree(

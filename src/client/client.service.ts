@@ -26,7 +26,10 @@ import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
 import { FindAllClientsDto } from './dto/find-all-clients.dto';
 import { isEmailUnavailable } from '../auth/dto/register-client-by-admin.dto';
-import { assertClientIdentificationFree } from '../common/utils/identification-conflict.util';
+import {
+  assertClientIdentificationFree,
+  assertIdentificationNotRemoved,
+} from '../common/utils/identification-conflict.util';
 import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
 import {
   isClientInactiveForCompany,
@@ -584,6 +587,12 @@ export class ClientService {
       );
     }
 
+    if (updateClientDto.identification !== undefined) {
+      assertIdentificationNotRemoved(
+        client.identification,
+        updateClientDto.identification,
+      );
+    }
     await this.assertIdentificationFreeForClient(
       client,
       updateClientDto.identification,
@@ -893,6 +902,10 @@ export class ClientService {
             'Este cliente tiene su propia cuenta: la cédula o RIF solo la cambia él desde su perfil.',
         });
       }
+      assertIdentificationNotRemoved(
+        client.identification,
+        updateClientDto.identification,
+      );
       await this.assertIdentificationFreeForClient(
         client,
         updateClientDto.identification,

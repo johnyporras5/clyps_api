@@ -170,9 +170,39 @@ describe('alta de trabajador por el dueño', () => {
     const { auth } = setup();
     expect(
       await codeOf(
-        auth.registerWorker({ email: 'ana@x.com' } as RegisterWorkerDto, 1),
+        auth.registerWorker(
+          {
+            email: 'ana@x.com',
+            identification: 'V-1234567',
+          } as RegisterWorkerDto,
+          1,
+        ),
       ),
     ).toMatchObject({ code: 'USERNAME_REQUIRED' });
+  });
+
+  it('con correo y sin cédula (app vieja): se crea con su cuenta', async () => {
+    const { auth, users, workers, email } = setup();
+
+    await auth.registerWorker(
+      { username: 'ana', email: 'ana@x.com' } as RegisterWorkerDto,
+      1,
+    );
+
+    expect(users.saved[0]).toMatchObject({ username: 'ana' });
+    expect(workers.saved[0]).toMatchObject({ userId: users.saved[0].id });
+    expect(email.sendWorkerCredentials).toHaveBeenCalled();
+  });
+
+  it('salón excluido, con correo y sin cédula: se crea como hoy', async () => {
+    const { auth, users } = setup(LEGACY_COMPANY);
+
+    await auth.registerWorker(
+      { username: 'ana', email: 'ana@x.com' } as RegisterWorkerDto,
+      1,
+    );
+
+    expect(users.saved[0]).toMatchObject({ username: 'ana' });
   });
 
   it('salón excluido, sin correo: se le sigue creando la cuenta como hoy', async () => {
@@ -240,6 +270,25 @@ describe('alta de cliente por el salón', () => {
       ),
     ).toMatchObject({ code: 'IDENTIFICATION_REQUIRED' });
     expect(clients.save).not.toHaveBeenCalled();
+  });
+
+  it('con correo y sin cédula (app vieja): se crea con su cuenta', async () => {
+    const { auth, users, clients } = setup();
+
+    await auth.registerClientByAdmin(
+      {
+        name: 'Marta',
+        username: 'marta',
+        email: 'marta@x.com',
+      } as RegisterClientByAdminDto,
+      CALLER,
+    );
+
+    expect(users.saved[0]).toMatchObject({
+      username: 'marta',
+      userType: 'cli',
+    });
+    expect(clients.saved[0]).toMatchObject({ userId: users.saved[0].id });
   });
 
   it('la cédula ya es de un cliente de otro salón: pide confirmar el vínculo', async () => {

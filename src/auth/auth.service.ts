@@ -336,15 +336,18 @@ export class AuthService {
     }
 
     // Sin correo, en un salón que sigue el cambio de identidad, no se crea
-    // cuenta: solo la ficha del trabajador. Su cédula es lo que lo identifica
-    // en el salón, así que es obligatoria. Con cuenta, el username lo es.
+    // cuenta: solo la ficha del trabajador, y su cédula es lo único que lo
+    // identifica, así que aquí es obligatoria. Con correo el front nuevo
+    // también la exige, pero el backend no: una app vieja que todavía no se
+    // actualizó no la manda y su alta con correo tiene que seguir funcionando.
+    // Con cuenta, el username es obligatorio.
     const accountless = emailAbsent && !isLegacyIdentityCompany(company.id);
     if (accountless && !registerDto.identification) {
       throw new BadRequestException({
         statusCode: 400,
         code: 'IDENTIFICATION_REQUIRED',
         message:
-          'Sin correo, la cédula o RIF es obligatoria: es lo que identifica al trabajador en tu salón.',
+          'La cédula o RIF es obligatoria: es lo que identifica al trabajador en tu salón.',
       });
     }
     if (!accountless && !registerDto.username) {
@@ -1379,16 +1382,18 @@ export class AuthService {
     }
 
     // Sin correo, en un salón que sigue el cambio de identidad, no se crea
-    // cuenta: solo la ficha del cliente, y su cédula es lo que lo identifica
-    // (obligatoria). Con cuenta —tiene correo, o el salón está excluido— el
-    // username lo es, como siempre.
+    // cuenta: solo la ficha del cliente, y su cédula es lo único que lo
+    // identifica, así que aquí es obligatoria. Con correo el front nuevo
+    // también la exige, pero el backend no: una app vieja que todavía no se
+    // actualizó no la manda y su alta con correo tiene que seguir funcionando.
+    // Con cuenta —tiene correo, o el salón está excluido— el username lo es.
     const accountless = emailAbsent && !isLegacyIdentityCompany(company.id);
     if (accountless && !registerDto.identification) {
       throw new BadRequestException({
         statusCode: 400,
         code: 'IDENTIFICATION_REQUIRED',
         message:
-          'Sin correo, la cédula o RIF es obligatoria: es lo que identifica al cliente.',
+          'La cédula o RIF es obligatoria: es lo que identifica al cliente.',
       });
     }
     if (!accountless && !registerDto.username) {

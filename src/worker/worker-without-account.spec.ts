@@ -11,7 +11,11 @@ import { FileUploadService } from '../common/services/file_upload.service';
  * fila en `user`). Lo que se prueba es que no se intente actualizar un usuario
  * que no existe, y que el freno llegue ANTES de subir la foto.
  */
-function setup(worker: { id: number; userId: number | null }) {
+function setup(worker: {
+  id: number;
+  userId: number | null;
+  identification?: string | null;
+}) {
   const repo = () => ({
     findOne: jest.fn(),
     find: jest.fn().mockResolvedValue([]),
@@ -84,5 +88,40 @@ describe('respuesta de la edición de un trabajador sin cuenta', () => {
       service.updateWorkerByAdmin(3, 1, { name: 'Luis' }),
     ).resolves.toMatchObject({ worker: { id: 3, user: null } });
     expect(workers.update).toHaveBeenCalledWith(3, { name: 'Luis' });
+  });
+});
+
+describe('el dueño edita la cédula de un trabajador', () => {
+  it('quitarle la que tiene responde 400 y no guarda nada', async () => {
+    const { service, workers, files } = setup({
+      id: 3,
+      userId: null,
+      identification: 'V-12345678',
+    });
+
+    const error = await service
+      .updateWorkerByAdmin(3, 1, { identification: null }, PHOTO)
+      .catch((e: unknown) => e);
+
+    expect((error as BadRequestException).getResponse()).toMatchObject({
+      code: 'IDENTIFICATION_CANNOT_BE_REMOVED',
+    });
+    expect(files.saveFile).not.toHaveBeenCalled();
+    expect(workers.update).not.toHaveBeenCalled();
+  });
+
+  it('uno viejo sin cédula se sigue guardando sin ella', async () => {
+    const { service, workers } = setup({
+      id: 3,
+      userId: null,
+      identification: null,
+    });
+
+    await service.updateWorkerByAdmin(3, 1, {
+      name: 'Luis',
+      identification: null,
+    });
+
+    expect(workers.update).toHaveBeenCalled();
   });
 });
