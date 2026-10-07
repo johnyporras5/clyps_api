@@ -71,6 +71,23 @@ export class ClientController {
   }
 
   /**
+   * Antes de dar de alta a un cliente: ¿esa cédula ya es de alguien?
+   * Responde si no existe, si ya está en este salón (activo o eliminado) o si
+   * es de otro salón (solo el nombre y el contacto tapado).
+   *
+   * GET /clients/admin/lookup?identification=V-12345678
+   */
+  @Get('admin/lookup')
+  @Roles('adm', 'wrk')
+  @UseGuards(RolesGuard)
+  async lookupByIdentification(
+    @Request() req: AuthenticatedRequest,
+    @Query('identification') identification?: string,
+  ) {
+    return this.clientService.lookupByIdentification(identification, req.user);
+  }
+
+  /**
    * Actualizar perfil del cliente autenticado (con foto opcional)
    * Ruta y lógica idéntica a WorkerController
    */

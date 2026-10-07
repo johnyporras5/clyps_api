@@ -1432,22 +1432,25 @@ export class AuthService {
     // El perfil se busca antes de crear nada para validar la cédula: un 409
     // por cédula repetida no debe dejar un `user` recién creado sin cliente.
     // El propio cliente que se está vinculando no choca consigo mismo.
-    // Sin correo, al cliente que ya existe (cargado por otro salón, o con su
-    // propia cuenta) se le reconoce por la cédula.
+    // Si ni el correo ni el username reconocen a nadie, al cliente que ya
+    // existe (cargado por otro salón, o con su propia cuenta) se le reconoce
+    // por la cédula, haya o no correo: si no, un correo nuevo con la cédula de
+    // alguien que ya está en CLYPS crearía otra ficha de la misma persona.
     const existingClient = existingUser
       ? await this.clientRepository.findOne({
           where: { userId: existingUser.id },
         })
-      : accountless
+      : registerDto.identification
         ? await this.clientRepository.findOne({
             where: {
-              identification: registerDto.identification as string,
+              identification: registerDto.identification,
               permanentlyDeleted: false,
             },
             relations: ['user'],
             order: { id: 'ASC' },
           })
         : null;
+    const matchedByIdentification = !existingUser && !!existingClient;
     await assertClientIdentificationFree(
       this.clientRepository,
       registerDto.identification,
@@ -1476,9 +1479,11 @@ export class AuthService {
       }
       user = existingUser;
       isExistingUser = true;
-    } else if (accountless) {
-      // Sin cuenta: no se crea `user`. Si la cédula ya era de un cliente,
-      // es él (con la cuenta que tenga, si tiene).
+    } else if (accountless || matchedByIdentification) {
+      // Sin cuenta, o reconocido por la cédula: no se crea `user`. Si la
+      // cédula ya era de un cliente, es él, con la cuenta que tenga (si
+      // tiene). El correo que se haya escrito no se usa: para darle acceso,
+      // se hace desde su ficha.
       if (existingClient) {
         user = existingClient.user ?? null;
         isExistingUser = true;
@@ -1541,7 +1546,7 @@ export class AuthService {
         // significaría devolverle al salón la ficha de alguien que no es su
         // cliente, con su teléfono, sus notas y su historial. La cédula sí
         // identifica a una persona: sin correo, es lo que lo reconoció.
-        if (!existingUserByEmail && !accountless) {
+        if (!existingUserByEmail && !matchedByIdentification) {
           throw new ConflictException({
             statusCode: HttpStatus.CONFLICT,
             error: 'Conflict',
@@ -1584,6 +1589,9 @@ export class AuthService {
           clientName: this.buildClientDisplayName(client, user),
           clientUsername: user?.username ?? null,
           companyName: company.name,
+          // El front pregunta "¿es la misma persona?" cuando lo reconoció la
+          // cédula; por correo vincula directo, como siempre.
+          matchedBy: matchedByIdentification ? 'identification' : 'account',
           message: `${this.buildClientDisplayName(client, user)} ya está registrado en CLYPS. ¿Quieres agregarlo a ${company.name}?`,
         });
       }

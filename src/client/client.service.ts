@@ -32,6 +32,11 @@ import {
 } from '../common/utils/identification-conflict.util';
 import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
 import {
+  IDENTIFICATION_FIELD_MESSAGE,
+  normalizeIdentification,
+} from '../common/utils/identification.util';
+import { maskEmail, maskPhone } from '../common/utils/mask-contact.util';
+import {
   isClientInactiveForCompany,
   markClientDeletedForCompany,
   normalizeCompanyIds,
@@ -39,6 +44,23 @@ import {
   sharedCompanyIds,
   unmarkClientDeletedForCompany,
 } from './client-activation.util';
+
+/**
+ * Lo que encuentra la búsqueda por cédula antes de dar de alta a un cliente.
+ * De un cliente de otro salón solo va el nombre y el contacto tapado: el salón
+ * todavía no lo tiene, y la cédula sola no le da derecho a ver sus datos.
+ */
+export type ClientLookupResult =
+  | { status: 'not_found' }
+  | { status: 'in_company'; clientId: number; name: string }
+  | { status: 'deleted_in_company'; clientId: number; name: string }
+  | {
+      status: 'other_company';
+      name: string;
+      maskedEmail: string | null;
+      maskedPhone: string | null;
+      hasAccount: boolean;
+    };
 
 @Injectable()
 export class ClientService {
@@ -738,6 +760,90 @@ export class ClientService {
       lastAppointment,
       nextAppointment,
     } as any;
+  }
+
+  /**
+   * Busca por cédula, antes de dar de alta, si la persona ya es cliente.
+   *
+   * Orden: si está en el salón de quien busca, eso primero (activo, o
+   * eliminado y por reactivar); si no, el de otro salón con la ficha más
+   * antigua, que es el mismo que vincula el alta (`registerClientByAdmin`).
+   * Un salón excluido del cambio de identidad no busca: siempre `not_found`.
+   */
+  async lookupByIdentification(
+    raw: string | undefined,
+    caller: { sub: number; userType?: string; companyId?: number | null },
+  ): Promise<ClientLookupResult> {
+    // El salón viaja en el token; uno viejo puede no traerlo y se resuelve
+    // igual que en el resto: el dueño por su compañía, el trabajador por su
+    // membresía activa.
+    let companyId = caller.companyId ?? null;
+    if (!companyId && caller.userType === 'adm') {
+      companyId =
+        (
+          await this.companyRepository.findOne({
+            where: { userId: caller.sub },
+          })
+        )?.id ?? null;
+    } else if (!companyId && caller.userType === 'wrk') {
+      companyId =
+        (
+          await this.companyWorkerRepository.findOne({
+            where: { userId: caller.sub, isActive: 1 },
+          })
+        )?.companyId ?? null;
+    }
+    if (!companyId) {
+      throw new BadRequestException(
+        'No se pudo identificar tu salón. Vuelve a iniciar sesión.',
+      );
+    }
+    const identification = normalizeIdentification(raw);
+    if (!identification) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'IDENTIFICATION_INVALID',
+        message: IDENTIFICATION_FIELD_MESSAGE,
+      });
+    }
+    if (isLegacyIdentityCompany(companyId)) return { status: 'not_found' };
+
+    const matches = await this.clientRepository.find({
+      where: { identification, permanentlyDeleted: false },
+      relations: ['user'],
+      order: { id: 'ASC' },
+    });
+    if (matches.length === 0) return { status: 'not_found' };
+
+    const nameOf = (c: Client) =>
+      [c.name, c.lastName].filter(Boolean).join(' ').trim() ||
+      c.user?.username ||
+      'Cliente';
+
+    const mine = matches.find((c) =>
+      normalizeCompanyIds(c.companies).includes(companyId),
+    );
+    if (mine) {
+      return {
+        status: isClientInactiveForCompany(mine, companyId)
+          ? 'deleted_in_company'
+          : 'in_company',
+        clientId: mine.id,
+        name: nameOf(mine),
+      };
+    }
+
+    const other = matches[0];
+    const accountEmail = isEmailUnavailable(other.user?.email)
+      ? null
+      : other.user?.email;
+    return {
+      status: 'other_company',
+      name: nameOf(other),
+      maskedEmail: maskEmail(accountEmail ?? other.email),
+      maskedPhone: maskPhone(other.phone),
+      hasAccount: !!accountEmail,
+    };
   }
 
   /**

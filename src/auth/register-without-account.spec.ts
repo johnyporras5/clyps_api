@@ -331,6 +331,84 @@ describe('alta de cliente por el salón', () => {
     expect(result).toMatchObject({ clientId: 7, user: null });
   });
 
+  it('correo nuevo con la cédula de un cliente de otro salón: pregunta, sin crear cuenta', async () => {
+    const { auth, users, clients, email } = setup();
+    clients.findOne.mockResolvedValue({
+      id: 7,
+      name: 'Marta',
+      identification: 'E-7654321',
+      companies: [9],
+      user: null,
+    });
+
+    expect(
+      await codeOf(
+        auth.registerClientByAdmin(
+          {
+            ...SIN_CORREO,
+            email: 'marta.nueva@x.com',
+            username: 'martanueva',
+          },
+          CALLER,
+        ),
+      ),
+    ).toMatchObject({
+      code: 'CLIENT_EXISTS_CONFIRM_LINK',
+      clientId: 7,
+      matchedBy: 'identification',
+    });
+    expect(users.save).not.toHaveBeenCalled();
+    expect(email.sendClientCredentials).not.toHaveBeenCalled();
+    expect(clients.save).not.toHaveBeenCalled();
+  });
+
+  it('confirmado con correo: vincula la ficha que existía y no crea cuenta', async () => {
+    const { auth, users, clients } = setup();
+    clients.findOne.mockResolvedValue({
+      id: 7,
+      identification: 'E-7654321',
+      companies: [9],
+      user: null,
+    });
+
+    const result = await auth.registerClientByAdmin(
+      {
+        ...SIN_CORREO,
+        email: 'marta.nueva@x.com',
+        username: 'martanueva',
+        confirmLink: true,
+      },
+      CALLER,
+    );
+
+    expect(users.save).not.toHaveBeenCalled();
+    expect(clients.save).not.toHaveBeenCalled();
+    expect(clients.update).toHaveBeenCalledWith(7, { companies: [9, 41] });
+    expect(result).toMatchObject({ clientId: 7 });
+  });
+
+  it('correo nuevo y cédula de un cliente que este salón eliminó: ofrece reactivarlo', async () => {
+    const { auth, users, clients } = setup();
+    clients.findOne.mockResolvedValue({
+      id: 7,
+      name: 'Marta',
+      identification: 'E-7654321',
+      companies: [41],
+      inactiveCompanies: [41],
+      user: null,
+    });
+
+    expect(
+      await codeOf(
+        auth.registerClientByAdmin(
+          { ...SIN_CORREO, email: 'marta@x.com', username: 'marta' },
+          CALLER,
+        ),
+      ),
+    ).toMatchObject({ code: 'CLIENT_DELETED_CONFIRM_REACTIVATE', clientId: 7 });
+    expect(users.save).not.toHaveBeenCalled();
+  });
+
   it('eliminado de este salón: ofrece reactivarlo (la cédula lo identifica)', async () => {
     const { auth, clients } = setup();
     clients.findOne.mockResolvedValue({
