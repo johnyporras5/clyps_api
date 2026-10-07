@@ -124,6 +124,15 @@ describe('cédula repetida dentro del salón', () => {
       });
     });
 
+    it('no cuenta a los eliminados de su salón, ni temporales', async () => {
+      const { repo, calls } = fakeRepo<Worker>(false);
+      await assertWorkerIdentificationFree(repo, 'V-12345678', [7]);
+      expect(calls).toContainEqual({
+        method: 'andWhere',
+        args: ['cw.temporarily_deleted = 0'],
+      });
+    });
+
     it('no cuenta a los borrados para siempre de su salón', async () => {
       const { repo, calls } = fakeRepo<Worker>(false);
       await assertWorkerIdentificationFree(repo, 'V-12345678', [7]);

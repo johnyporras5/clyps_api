@@ -45,9 +45,11 @@ function conflict(
  * en uno de ellos sale el aviso de siempre ("en este salón"); si está en otro,
  * uno propio que no dice cuál, para no mostrarle a un salón datos de otro.
  *
- * Solo cuentan los trabajadores que siguen en algún salón: eliminar a alguien
- * borra su fila de `company_worker` pero deja la ficha con su cédula, y esa
- * persona tiene que poder entrar a trabajar en otro salón.
+ * Solo cuentan los trabajadores que siguen activos en algún salón. Un salón
+ * que elimina a alguien —aunque sea temporal, que se puede deshacer— deja de
+ * reclamar su cédula: esa persona tiene que poder entrar a trabajar en otro
+ * salón. Si después lo quiere restaurar y la cédula ya está en otro salón, la
+ * restauración se rechaza (CompanyService.restoreTemporarilyRemovedWorker).
  */
 export async function assertWorkerIdentificationFree(
   workers: Repository<Worker>,
@@ -63,7 +65,8 @@ export async function assertWorkerIdentificationFree(
     .innerJoin(CompanyWorker, 'cw', 'cw.worker_id = worker.id')
     .select('cw.company_id', 'companyId')
     .where('worker.identification = :identification', { identification })
-    .andWhere('cw.permanently_deleted = 0');
+    .andWhere('cw.permanently_deleted = 0')
+    .andWhere('cw.temporarily_deleted = 0');
   if (excludeWorkerId) {
     qb.andWhere('worker.id <> :excludeWorkerId', { excludeWorkerId });
   }

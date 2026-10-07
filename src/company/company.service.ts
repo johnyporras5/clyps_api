@@ -41,6 +41,8 @@ import { SessionDetail } from 'src/session_detail/entities/session_detail.entity
 import { SiteCategory } from 'src/site_category/entities/site_category.entity';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
+import { assertWorkerIdentificationFree } from '../common/utils/identification-conflict.util';
+import { Worker } from '../worker/entities/worker.entity';
 
 /**
  * La compañía sin su cédula/RIF, para las respuestas que ve cualquiera (el
@@ -814,6 +816,28 @@ export class CompanyService {
       throw new BadRequestException(
         'Este trabajador no está temporalmente eliminado',
       );
+    }
+
+    // Mientras estuvo eliminado su cédula quedó libre y otro salón (o este
+    // mismo, con otra ficha) pudo registrar a alguien con ella. Restaurarlo
+    // dejaría dos trabajadores activos con la misma cédula.
+    const worker = await this.companyWorkerRepository.manager
+      .getRepository(Worker)
+      .findOne({ where: { id: companyWorker.workerId } });
+    try {
+      await assertWorkerIdentificationFree(
+        this.companyWorkerRepository.manager.getRepository(Worker),
+        worker?.identification,
+        [company.id],
+        companyWorker.workerId,
+      );
+    } catch (error) {
+      if (!(error instanceof ConflictException)) throw error;
+      const response = error.getResponse() as Record<string, unknown>;
+      throw new ConflictException({
+        ...response,
+        message: `No se puede restaurar: ${String(response.message)}`,
+      });
     }
 
     // Restaurar el trabajador
