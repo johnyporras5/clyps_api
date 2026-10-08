@@ -6,6 +6,7 @@ import {
   Logger,
   ForbiddenException,
   ConflictException,
+  HttpStatus,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -1741,6 +1742,46 @@ export class SessionService {
       startDatetime: detail.startDatetime,
       durationMinutes: Number(detail.totalTime || 0),
     }));
+  }
+
+  /**
+   * Reactivar una cita (o un servicio) cancelada de un cliente que el salón
+   * eliminó dejaría una cita viva de alguien que ya no está en su lista. Se
+   * bloquea: primero hay que reactivar al cliente desde Clientes.
+   *
+   * La cita no guarda su salón: sale del trabajador de sus servicios
+   * (`company_worker`). Basta con que el cliente esté eliminado en uno de esos
+   * salones para frenarlo.
+   */
+  private async assertClientNotDeletedForReactivation(
+    clientId: number | null | undefined,
+    companyWorkerIds: (number | null | undefined)[],
+  ): Promise<void> {
+    const ids = [
+      ...new Set(companyWorkerIds.filter((id): id is number => !!id)),
+    ];
+    if (!clientId || ids.length === 0) return;
+
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+    });
+    if (!client) return;
+
+    const assignments = await this.companyWorkerRepository.find({
+      where: { id: In(ids) },
+      select: { id: true, companyId: true },
+    });
+    if (
+      assignments.some((cw) => isClientInactiveForCompany(client, cw.companyId))
+    ) {
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'Conflict',
+        code: 'CLIENT_DELETED_IN_COMPANY',
+        message:
+          'Este cliente fue eliminado de tu salón. Reactívalo desde Clientes para poder reactivar la cita.',
+      });
+    }
   }
 
   /**
@@ -3771,6 +3812,10 @@ export class SessionService {
     const isReactivation =
       previousStatus === 5 && newStatus >= 1 && newStatus <= 3;
     if (isReactivation) {
+      await this.assertClientNotDeletedForReactivation(
+        session.clientId,
+        sessionDetails.map((d) => d.companyWorkerId),
+      );
       for (const d of sessionDetails) {
         if (d.status !== 5) continue; // solo se reactivan los cancelados
         if (!d.companyWorkerId || !d.startDatetime || !d.totalTime) continue;
@@ -5836,6 +5881,10 @@ export class SessionService {
     //     quedar ocupado por otra cita del trabajador mientras estuvo cancelado.
     //     Si ahora se solapa, se bloquea (hay que reprogramar antes de reactivar).
     if (previousStatus === 5 && updateDetailStatusDto.status !== 5) {
+      await this.assertClientNotDeletedForReactivation(
+        parentSession?.clientId,
+        [detail.companyWorkerId],
+      );
       if (detail.companyWorkerId && detail.startDatetime && detail.totalTime) {
         const clash = await this.checkIfWorkerHasAppointmentAtSameTime(
           detail.companyWorkerId,
