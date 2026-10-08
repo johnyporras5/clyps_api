@@ -21,6 +21,10 @@ function setup(rows: Record<string, unknown>[]) {
     companyWorkerRepository: {
       findOne: jest.fn().mockResolvedValue({ companyId: 41 }),
     },
+    fileUploadService: {
+      getFileUrl: (folder: string, file: string) => `url/${folder}/${file}`,
+    },
+    CLIENT_PHOTO_FOLDER: 'client_photo',
   });
   return { service: service as unknown as ClientService, clients };
 }
@@ -84,13 +88,16 @@ describe('buscar cliente por cédula', () => {
     ).resolves.toMatchObject({ status: 'in_company', clientId: 5 });
   });
 
-  it('de otro salón: solo nombre y contacto tapado, sin id', async () => {
+  it('de otro salón: sus datos para llenar el formulario, sin su id', async () => {
     const { service } = setup([
       {
         id: 2,
         name: 'Ana',
         lastName: 'Gil',
         phone: '+584141234567',
+        birthDate: '1990-05-01',
+        location: 'Barquisimeto',
+        picture: 'ana.jpg',
         companies: [9],
         user: { email: 'ana.gil@gmail.com', username: 'anagil' },
       },
@@ -99,25 +106,34 @@ describe('buscar cliente por cédula', () => {
     expect(result).toEqual({
       status: 'other_company',
       name: 'Ana Gil',
-      maskedEmail: 'an***@gmail.com',
-      maskedPhone: '••• 4567',
+      email: 'ana.gil@gmail.com',
+      username: 'anagil',
+      phone: '+584141234567',
+      birthdate: '1990-05-01',
+      location: 'Barquisimeto',
+      photoUrl: 'url/client_photo/ana.jpg',
       hasAccount: true,
     });
-    expect(JSON.stringify(result)).not.toContain('ana.gil');
-    expect(JSON.stringify(result)).not.toContain('1234567');
+    expect(result).not.toHaveProperty('clientId');
   });
 
-  it('de otro salón sin cuenta ni contacto: sin datos que tapar', async () => {
+  it('de otro salón sin cuenta: el correo de la ficha y sin usuario', async () => {
     const { service } = setup([
-      { id: 2, name: 'Ana', companies: [9], user: null },
+      {
+        id: 2,
+        name: 'Ana',
+        email: 'ana@ficha.com',
+        companies: [9],
+        user: null,
+      },
     ]);
     await expect(
       service.lookupByIdentification('V-12345678', ADMIN),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       status: 'other_company',
-      name: 'Ana',
-      maskedEmail: null,
-      maskedPhone: null,
+      email: 'ana@ficha.com',
+      username: null,
+      photoUrl: null,
       hasAccount: false,
     });
   });

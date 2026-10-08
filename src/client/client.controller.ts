@@ -73,7 +73,7 @@ export class ClientController {
   /**
    * Antes de dar de alta a un cliente: ¿esa cédula ya es de alguien?
    * Responde si no existe, si ya está en este salón (activo o eliminado) o si
-   * es de otro salón (solo el nombre y el contacto tapado).
+   * es de otro salón (con sus datos, para llenar el formulario).
    *
    * GET /clients/admin/lookup?identification=V-12345678
    */

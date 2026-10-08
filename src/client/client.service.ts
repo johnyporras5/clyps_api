@@ -35,7 +35,6 @@ import {
   IDENTIFICATION_FIELD_MESSAGE,
   normalizeIdentification,
 } from '../common/utils/identification.util';
-import { maskEmail, maskPhone } from '../common/utils/mask-contact.util';
 import {
   isClientInactiveForCompany,
   markClientDeletedForCompany,
@@ -47,8 +46,9 @@ import {
 
 /**
  * Lo que encuentra la búsqueda por cédula antes de dar de alta a un cliente.
- * De un cliente de otro salón solo va el nombre y el contacto tapado: el salón
- * todavía no lo tiene, y la cédula sola no le da derecho a ver sus datos.
+ * De un cliente de otro salón van sus datos completos para llenar el
+ * formulario (decisión de producto: el salón lo ve en solo lectura y, al
+ * guardar, lo agrega tal cual).
  */
 export type ClientLookupResult =
   | { status: 'not_found' }
@@ -57,8 +57,12 @@ export type ClientLookupResult =
   | {
       status: 'other_company';
       name: string;
-      maskedEmail: string | null;
-      maskedPhone: string | null;
+      email: string | null;
+      username: string | null;
+      phone: string | null;
+      birthdate: string | Date | null;
+      location: string | null;
+      photoUrl: string | null;
       hasAccount: boolean;
     };
 
@@ -840,8 +844,17 @@ export class ClientService {
     return {
       status: 'other_company',
       name: nameOf(other),
-      maskedEmail: maskEmail(accountEmail ?? other.email),
-      maskedPhone: maskPhone(other.phone),
+      email: accountEmail ?? (other.email?.trim() || null),
+      username: accountEmail ? (other.user?.username ?? null) : null,
+      phone: other.phone ?? null,
+      birthdate: other.birthDate ?? null,
+      location: other.location ?? null,
+      photoUrl: other.picture
+        ? this.fileUploadService.getFileUrl(
+            this.CLIENT_PHOTO_FOLDER,
+            other.picture,
+          )
+        : null,
       hasAccount: !!accountEmail,
     };
   }
