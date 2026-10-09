@@ -12,11 +12,20 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { isEmailUnavailable } from './register-client-by-admin.dto';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 export class RegisterWorkerDto {
+  // Cédula o RIF del trabajador. No se repite dentro del salón.
+  @IdentificationField()
+  identification?: string | null;
+
+  // Solo hace falta cuando se le crea cuenta (tiene correo, o el salón está
+  // excluido del cambio de identidad): lo exige el servicio. Sin correo no hay
+  // cuenta y la persona se identifica por su cédula en el salón.
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  username: string;
+  username?: string;
 
   @IsOptional()
   @ValidateIf((o) => !isEmailUnavailable(o.email))

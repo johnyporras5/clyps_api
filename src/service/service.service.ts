@@ -469,7 +469,8 @@ export class ServiceService {
     const companyWorkers = await this.companyWorkerRepository
       .createQueryBuilder('cw')
       .innerJoinAndSelect('cw.worker', 'worker')
-      .innerJoinAndSelect('worker.user', 'user')
+      // LEFT: un trabajador sin correo no tiene cuenta y debe seguir saliendo.
+      .leftJoinAndSelect('worker.user', 'user')
       .where('cw.id IN (:...ids)', { ids: workerIds })
       .andWhere('cw.companyId = :companyId', { companyId: companyId })
       .andWhere('cw.isActive = 1')
@@ -517,20 +518,25 @@ export class ServiceService {
         };
       }
 
+      // Un trabajador sin correo todavía no tiene cuenta: sin `user`.
+      const user = companyWorker.worker.user;
+
       return {
         companyWorkerId: companyWorker.id,
         percentage: workerAssignment.percentage,
         workerId: companyWorker.worker.id,
-        userId: companyWorker.worker.user.id,
-        userInfo: {
-          id: companyWorker.worker.user.id,
-          username: companyWorker.worker.user.username,
-          email: companyWorker.worker.user.email,
-          userType: companyWorker.worker.user.userType,
-          emailVerified: companyWorker.worker.user.emailVerified,
-          lastLogin: companyWorker.worker.user.lastLogin,
-          lastLogout: companyWorker.worker.user.lastLogout,
-        },
+        userId: user?.id ?? null,
+        userInfo: user
+          ? {
+              id: user.id,
+              username: user.username,
+              email: user.email,
+              userType: user.userType,
+              emailVerified: user.emailVerified,
+              lastLogin: user.lastLogin,
+              lastLogout: user.lastLogout,
+            }
+          : null,
         workerInfo: {
           id: companyWorker.worker.id,
           name: companyWorker.worker.name,

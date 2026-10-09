@@ -36,7 +36,7 @@ interface ClientActivity {
   appointments: number[];
   /** Timestamp (ms) de la primera cita con esta compañía, o null. */
   firstAppointmentMs: number | null;
-  /** Timestamp (ms) de registro del usuario (user.created_at), o null. */
+  /** Timestamp (ms) de alta del cliente (client.created_at), o null. */
   registeredMs: number | null;
 }
 
@@ -1607,8 +1607,11 @@ export class ReportsService {
         firstAppointmentMs = appointments[0];
       }
 
-      const registeredMs = client.user?.createdAt
-        ? new Date(client.user.createdAt).getTime()
+      // La fecha de alta es la del cliente: el que no tiene correo no tiene
+      // cuenta. La de la cuenta queda solo de respaldo.
+      const registeredAt = client.createdAt ?? client.user?.createdAt;
+      const registeredMs = registeredAt
+        ? new Date(registeredAt).getTime()
         : null;
 
       return { client, appointments, firstAppointmentMs, registeredMs };

@@ -10,8 +10,14 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { isEmailUnavailable } from '../../auth/dto/register-client-by-admin.dto';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 export class UpdateClientDto {
+  // Cédula o RIF. Vacía la borra. Desde el salón solo se acepta si el
+  // cliente no tiene correo (ver ClientService.updateClientByAdmin).
+  @IdentificationField()
+  identification?: string | null;
+
   @IsOptional()
   @IsString()
   username?: string;

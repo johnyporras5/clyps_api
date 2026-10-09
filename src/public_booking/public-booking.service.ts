@@ -24,6 +24,7 @@ import { SessionService } from '../session/session.service';
 import { SessionRealtimeEmitter } from '../session/session-realtime.emitter';
 import { SessionNotificationEmitter } from '../session/session-notification.emitter';
 import { EmailService } from '../email/email.service';
+import { generateUniqueUsername } from '../common/utils/username.util';
 import { EntitlementsService } from '../subscription/entitlements.service';
 import { generateSimplePassword } from '../auth/password.util';
 import { normalizeCompanyCalendarDetail } from '../common/utils/company-calendar.util';
@@ -573,7 +574,11 @@ export class PublicBookingService {
     const password = generateSimplePassword();
     const user = await this.userRepository.save(
       this.userRepository.create({
-        username: await this.generateUniqueUsername(dto.name, email),
+        username: await generateUniqueUsername(
+          this.userRepository,
+          dto.name,
+          email,
+        ),
         email,
         password: await bcrypt.hash(password, 10),
         userType: 'cli',
@@ -609,29 +614,6 @@ export class PublicBookingService {
     }
   }
 
-  /** "María González" → "mariagonzalez4821" (único). */
-  private async generateUniqueUsername(
-    name: string,
-    email: string,
-  ): Promise<string> {
-    const fromName = normalizeForUsername(name);
-    const base =
-      (fromName.length >= 3
-        ? fromName
-        : normalizeForUsername(email.split('@')[0])
-      ).slice(0, 20) || 'cliente';
-
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const candidate = `${base}${Math.floor(1000 + Math.random() * 9000)}`;
-      const taken = await this.userRepository.findOne({
-        where: { username: candidate },
-        select: { id: true },
-      });
-      if (!taken) return candidate;
-    }
-    return `${base}${Date.now().toString(36)}`;
-  }
-
   private async findCompanyBySlug(slug: string): Promise<Company> {
     const normalized = (slug ?? '').trim().toLowerCase();
     const company = normalized
@@ -648,12 +630,4 @@ function splitName(fullName: string): { firstName: string; lastName: string } {
   const parts = fullName.trim().split(/\s+/);
   const firstName = parts.shift() ?? '';
   return { firstName, lastName: parts.join(' ') };
-}
-
-function normalizeForUsername(value: string): string {
-  return (value ?? '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
 }

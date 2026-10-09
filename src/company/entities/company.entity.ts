@@ -31,6 +31,17 @@ export class Company {
   @Column({ name: 'logo', length: 245, nullable: true })
   logo: string;
 
+  // Cédula o RIF del negocio (el del dueño), en forma canónica: V-12345678.
+  // Puede repetirse: un mismo dueño puede tener dos salones.
+  @Index('IDX_company_identification')
+  @Column({
+    name: 'identification',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  identification: string | null;
+
   // Segmento del enlace público de reservas (/reservar/<slug>). Se genera al
   // crear la compañía (CompanySubscriber) y no cambia con el nombre.
   @Index('UQ_company_slug', { unique: true })

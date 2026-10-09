@@ -40,6 +40,21 @@ import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { SiteCategory } from 'src/site_category/entities/site_category.entity';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
+import { assertWorkerIdentificationFree } from '../common/utils/identification-conflict.util';
+import { Worker } from '../worker/entities/worker.entity';
+
+/**
+ * La compañía sin su cédula/RIF, para las respuestas que ve cualquiera (el
+ * directorio, el perfil del salón): puede ser la cédula personal del dueño.
+ * Solo sale en las del propio dueño (`findByUserId`, las de edición).
+ */
+function withoutIdentification(
+  company: Company,
+): Omit<Company, 'identification'> {
+  const { identification: _, ...rest } = company;
+  return rest;
+}
 
 @Injectable()
 export class CompanyService {
@@ -117,7 +132,7 @@ export class CompanyService {
     // Transformar los datos para incluir logoUrl
     const dataWithLogoUrl = paginationResult.data.map((company) => {
       const companyWithLogo: CompanyWithLogoUrl = {
-        ...company,
+        ...withoutIdentification(company),
         logoUrl: company.logo
           ? this.fileUploadService.getFileUrl('company_logo', company.logo)
           : null,
@@ -309,7 +324,7 @@ export class CompanyService {
       : null;
 
     return {
-      ...company,
+      ...withoutIdentification(company),
       logoUrl: company.logo
         ? this.fileUploadService.getFileUrl('company_logo', company.logo)
         : null,
@@ -373,6 +388,9 @@ export class CompanyService {
         : null,
       calendarDetail: calendarDetail, // ✅ Objeto JSON, no string
       user: userWithoutPassword,
+      // Le dice al front si este salón pide y muestra la cédula/RIF. Los
+      // excluidos del cambio de identidad (legacy-identity.util.ts) no.
+      identificationEnabled: !isLegacyIdentityCompany(company.id),
     };
 
     return companyWithLogo;
@@ -423,6 +441,11 @@ export class CompanyService {
     const company = await this.companyRepository.findOne({ where: { id } });
     if (!company) {
       throw new NotFoundException(`Company with id ${id} not found`);
+    }
+
+    // Un salón excluido del cambio de identidad no guarda cédula/RIF.
+    if (isLegacyIdentityCompany(company.id)) {
+      updateCompanyDto.identification = undefined;
     }
 
     Object.assign(company, updateCompanyDto);
@@ -519,6 +542,12 @@ export class CompanyService {
       updateData.email = updateAdminProfileDto.email;
     if (updateAdminProfileDto.phone !== undefined)
       updateData.phone = updateAdminProfileDto.phone;
+    // Un salón excluido del cambio de identidad no guarda cédula/RIF.
+    if (
+      updateAdminProfileDto.identification !== undefined &&
+      !isLegacyIdentityCompany(company.id)
+    )
+      updateData.identification = updateAdminProfileDto.identification;
     if (updateAdminProfileDto.description !== undefined)
       updateData.description = updateAdminProfileDto.description;
     if (updateAdminProfileDto.managerName !== undefined)
@@ -787,6 +816,28 @@ export class CompanyService {
       throw new BadRequestException(
         'Este trabajador no está temporalmente eliminado',
       );
+    }
+
+    // Mientras estuvo eliminado su cédula quedó libre y otro salón (o este
+    // mismo, con otra ficha) pudo registrar a alguien con ella. Restaurarlo
+    // dejaría dos trabajadores activos con la misma cédula.
+    const worker = await this.companyWorkerRepository.manager
+      .getRepository(Worker)
+      .findOne({ where: { id: companyWorker.workerId } });
+    try {
+      await assertWorkerIdentificationFree(
+        this.companyWorkerRepository.manager.getRepository(Worker),
+        worker?.identification,
+        [company.id],
+        companyWorker.workerId,
+      );
+    } catch (error) {
+      if (!(error instanceof ConflictException)) throw error;
+      const response = error.getResponse() as Record<string, unknown>;
+      throw new ConflictException({
+        ...response,
+        message: `No se puede restaurar: ${String(response.message)}`,
+      });
     }
 
     // Restaurar el trabajador
@@ -1153,7 +1204,7 @@ export class CompanyService {
 
   private mapToCompanyWithLogoUrl(company: Company): CompanyWithLogoUrl {
     return {
-      ...company,
+      ...withoutIdentification(company),
       logoUrl: company.logo
         ? this.fileUploadService.getFileUrl('company_logo', company.logo)
         : null,

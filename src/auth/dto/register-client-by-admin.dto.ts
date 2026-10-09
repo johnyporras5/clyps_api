@@ -11,6 +11,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 /**
  * El email se considera "no disponible" cuando no se envía, viene vacío o el
@@ -26,12 +27,22 @@ export function isEmailUnavailable(email?: string | null): boolean {
 /**
  * Alta de cliente por parte del admin. A diferencia del registro público,
  * el email es OPCIONAL: un negocio puede registrar clientes que no tienen
- * correo. La identidad única se garantiza por `username`.
+ * correo. Sin correo no se le crea cuenta y su identidad es la cédula/RIF
+ * (obligatoria en ese caso), salvo en los salones excluidos del cambio de
+ * identidad, que siguen creando la cuenta con su `username`.
  */
 export class RegisterClientByAdminDto {
+  // Cédula o RIF del cliente. No se repite dentro del salón.
+  @IdentificationField()
+  identification?: string | null;
+
+  // Solo hace falta cuando se le crea cuenta (tiene correo, o el salón está
+  // excluido del cambio de identidad): lo exige el servicio. Sin correo no hay
+  // cuenta y la persona se identifica por su cédula en el salón.
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  username: string;
+  username?: string;
 
   // Opcional. Si viene un email "real" (no vacío ni "no disponible"), se valida
   // su formato; si no, se acepta como "no disponible".

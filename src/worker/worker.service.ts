@@ -25,6 +25,14 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { FeedbackSummary } from './types/feedback_summary.type';
 import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
 import { WorkerCalendarDto } from './dto/update-worker-calendar.dto';
+import {
+  assertIdentificationNotRemoved,
+  assertWorkerIdentificationFree,
+} from '../common/utils/identification-conflict.util';
+import {
+  isLegacyIdentityCompany,
+  withoutLegacyIdentityCompanies,
+} from '../common/utils/legacy-identity.util';
 
 /** Nombres de días en español para los mensajes de validación del horario. */
 const DAY_LABELS_ES: Record<string, string> = {
@@ -124,7 +132,14 @@ export class WorkerService {
 
   async findByUserId(
     userId: number,
-  ): Promise<PhotoWithUrl & { feedbackSummary?: FeedbackSummary }> {
+    /** Salón del token (el activo). Decide `identificationEnabled`. */
+    activeCompanyId?: number | null,
+  ): Promise<
+    PhotoWithUrl & {
+      feedbackSummary?: FeedbackSummary;
+      identificationEnabled: boolean;
+    }
+  > {
     const worker = await this.workerRepository.findOne({
       where: { userId },
       relations: ['user'],
@@ -156,6 +171,12 @@ export class WorkerService {
       user: userWithoutPassword,
       feedbackSummary,
       companyWorker: companyWorker ?? null,
+      // Le dice al front si el salón con el que entró pide y muestra la
+      // cédula (p. ej. al dar de alta un cliente). Los excluidos del cambio
+      // de identidad (legacy-identity.util.ts) no.
+      identificationEnabled: !isLegacyIdentityCompany(
+        activeCompanyId ?? companyWorker?.companyId,
+      ),
     };
   }
 
@@ -190,6 +211,44 @@ export class WorkerService {
     return await this.workerRepository.save(worker);
   }
 
+  /**
+   * Decide qué pasa con la cédula que trae una edición, antes de tocar nada
+   * (ni la foto):
+   *  - si el trabajador solo está en salones excluidos del cambio de identidad
+   *    (legacy-identity.util.ts), se descarta: allí la cédula no se usa;
+   *  - si ya tenía una, no se puede quitar (sí cambiar);
+   *  - no puede ser la de otro trabajador de sus salones.
+   */
+  private async resolveWorkerIdentification(
+    worker: Worker,
+    dto: { identification?: string | null },
+  ): Promise<void> {
+    if (dto.identification === undefined) return;
+
+    const assignments = await this.companyWorkerRepository.find({
+      where: { workerId: worker.id },
+      select: { companyId: true },
+    });
+    const companyIds = assignments.map((a) => a.companyId);
+    if (
+      companyIds.length > 0 &&
+      withoutLegacyIdentityCompanies(companyIds).length === 0
+    ) {
+      dto.identification = undefined;
+      return;
+    }
+
+    assertIdentificationNotRemoved(worker.identification, dto.identification);
+    if (!dto.identification || dto.identification === worker.identification)
+      return;
+    await assertWorkerIdentificationFree(
+      this.workerRepository,
+      dto.identification,
+      companyIds,
+      worker.id,
+    );
+  }
+
   async update(
     id: number,
     updateWorkerDto: UpdateWorkerDto,
@@ -210,6 +269,8 @@ export class WorkerService {
         'No tienes permiso para actualizar este perfil',
       );
     }
+
+    await this.resolveWorkerIdentification(worker, updateWorkerDto);
 
     Object.assign(worker, updateWorkerDto);
     return await this.workerRepository.save(worker);
@@ -238,6 +299,8 @@ export class WorkerService {
         `Perfil de trabajador para el usuario ${userId} no encontrado`,
       );
     }
+
+    await this.resolveWorkerIdentification(worker, updateWorkerDto);
 
     // 2. Procesar foto si se proporciona
     if (photoFile) {
@@ -269,6 +332,7 @@ export class WorkerService {
     // 3. Actualizar campos del trabajador (excluyendo userId y campos protegidos)
     const allowedFields = [
       'name',
+      'identification',
       'phone',
       'address',
       'birthdate',
@@ -375,6 +439,26 @@ export class WorkerService {
       );
     }
 
+    // El salón de quien edita está excluido del cambio de identidad: no
+    // toca la cédula, aunque el trabajador también esté en otro salón.
+    if (isLegacyIdentityCompany(company.id)) dto.identification = undefined;
+    await this.resolveWorkerIdentification(worker, dto);
+
+    // Sin cuenta no hay usuario ni correo que cambiar: el acceso se le da
+    // asignándole un correo, que es lo que crea la cuenta. Se frena antes de
+    // subir la foto para no dejarla huérfana.
+    if (
+      worker.userId === null &&
+      (dto.username !== undefined || dto.email !== undefined)
+    ) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'WORKER_HAS_NO_ACCOUNT',
+        message:
+          'Este trabajador todavía no tiene cuenta. Asígnale un correo para darle acceso.',
+      });
+    }
+
     // 4. Procesar foto
     if (photoFile) {
       try {
@@ -382,7 +466,8 @@ export class WorkerService {
           photoFile,
           this.WORKER_PHOTO_FOLDER,
           'worker',
-          worker.userId,
+          // Sin cuenta todavía: se nombra con el id del trabajador.
+          worker.userId ?? worker.id,
         );
         if (worker.picture) {
           await this.fileUploadService.deleteFile(
@@ -417,13 +502,15 @@ export class WorkerService {
       }
       userUpdates.email = dto.email;
     }
-    if (Object.keys(userUpdates).length > 0) {
+    // `userId` nunca es null aquí si hay cambios: se frena antes de la foto.
+    if (Object.keys(userUpdates).length > 0 && worker.userId !== null) {
       await this.userRepository.update(worker.userId, userUpdates);
     }
 
     // 6. Actualizar Worker
     const workerFields: (keyof UpdateWorkerByAdminDto)[] = [
       'name',
+      'identification',
       'phone',
       'address',
       'birthdate',
@@ -493,7 +580,9 @@ export class WorkerService {
         )
       : '';
 
-    const { password: _, ...userWithoutPassword } = updatedWorker.user as any;
+    // Sin cuenta, `user` es null: desarmarlo directo tiraría un 500.
+    const userWithoutPassword =
+      this.excludePasswordFromUser(updatedWorker.user) ?? null;
 
     return {
       worker: { ...updatedWorker, user: userWithoutPassword, photoUrl },
@@ -640,7 +729,7 @@ export class WorkerService {
    * @param user Objeto usuario (puede ser undefined)
    * @returns Objeto usuario sin contraseña o undefined
    */
-  private excludePasswordFromUser(user?: User): any | undefined {
+  private excludePasswordFromUser(user?: User | null): any | undefined {
     if (!user) {
       return undefined;
     }

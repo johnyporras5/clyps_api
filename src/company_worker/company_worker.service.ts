@@ -26,6 +26,7 @@ import {
   AllowedFolder,
 } from '../common/services/file_upload.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { isEmailUnavailable } from '../auth/dto/register-client-by-admin.dto';
 import { EntitlementsService } from '../subscription/entitlements.service';
 
 /** Fila cruda (getRawMany) del listado de trabajadores antes de formatear. */
@@ -42,6 +43,8 @@ interface WorkerListRawRow {
   temporarilyDeleted: number;
   permanentlyDeleted: number;
   calendar: unknown;
+  userId: number | null;
+  userEmail: string | null;
 }
 
 interface PaginationMeta {
@@ -423,6 +426,7 @@ export class CompanyWorkerService {
       .createQueryBuilder('worker')
       .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id')
       .leftJoin('worker_feedback', 'wf', 'wf.worker_id = worker.id')
+      .leftJoin('user', 'u', 'u.id = worker.user_id')
       .select([
         'cw.id AS companyWorkerId',
         'worker.id AS workerId',
@@ -434,6 +438,9 @@ export class CompanyWorkerService {
         'cw.temporarily_deleted AS temporarilyDeleted',
         'cw.permanently_deleted AS permanentlyDeleted',
         'cw.calendar AS calendar',
+        'worker.user_id AS userId',
+        // MAX: la consulta agrupa por trabajador; hay un solo user por trabajador.
+        'MAX(u.email) AS userEmail',
         'COALESCE(AVG(wf.stars), 0) AS averageRating',
         'COUNT(wf.id) AS totalReviews',
       ])
@@ -497,6 +504,12 @@ export class CompanyWorkerService {
         temporarilyDeleted: result.temporarilyDeleted,
         permanentlyDeleted: result.permanentlyDeleted,
         calendar: this.parseCalendar(result.calendar),
+        // Puede entrar a la app: tiene cuenta Y correo. Los de antes podían
+        // tener cuenta sin correo; tampoco entran, así que van marcados igual.
+        hasAccount:
+          result.userId !== null &&
+          result.userId !== undefined &&
+          !isEmailUnavailable(result.userEmail),
       };
     });
 

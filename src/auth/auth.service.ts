@@ -42,6 +42,12 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { RegisterAdminDto } from './dto/register-admin.dto';
 import { AssignClientEmailDto } from './dto/assign-client-email.dto';
 import { AssignWorkerEmailDto } from './dto/assign-worker-email.dto';
+import {
+  assertClientIdentificationFree,
+  assertWorkerIdentificationFree,
+} from '../common/utils/identification-conflict.util';
+import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
+import { generateUniqueUsername } from '../common/utils/username.util';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
 import { SiteCategoryService } from '../site_category/site_category.service';
@@ -218,6 +224,7 @@ export class AuthService {
       logo: logoFileName,
       phone: registerDto.phone,
       location: registerDto.location,
+      identification: registerDto.identification ?? null,
     };
 
     const company = await this.companyService.create(companyData);
@@ -276,12 +283,14 @@ export class AuthService {
     pictureFile?: Express.Multer.File,
   ): Promise<{
     message: string;
-    user: Partial<User>;
+    /** `null` cuando no se le creó cuenta (sin correo). */
+    user: Partial<User> | null;
+    workerId: number;
     generatedPassword?: string;
     access_token?: string;
   }> {
-    // 1. Verificar si el email ya existe en la tabla User. Sin correo la
-    // identidad se garantiza por username, como en el alta de clientes.
+    // 1. Verificar si el email ya existe en la tabla User. Sin correo no se
+    // crea cuenta y la identidad es la cédula dentro del salón.
     const emailAbsent = isEmailUnavailable(registerDto.email);
     const email = emailAbsent
       ? null
@@ -290,7 +299,7 @@ export class AuthService {
       ? await this.userRepository.findOne({ where: { email } })
       : null;
 
-    let user: User;
+    let user: User | null = null;
     let worker: Worker | null = null;
     let generatedPassword: string | undefined;
 
@@ -319,6 +328,42 @@ export class AuthService {
     // SUB-5: el tope de trabajadores lo decide el plan. Se pregunta ANTES de
     // crear el usuario, para no dejar cuentas huérfanas si el cupo está lleno.
     await this.entitlements.assertCanAddWorker(company.id);
+
+    // Un salón excluido del cambio de identidad no usa cédula: si el front la
+    // manda igual, se ignora en vez de rechazar el alta.
+    if (isLegacyIdentityCompany(company.id)) {
+      registerDto.identification = undefined;
+    }
+
+    // Sin correo, en un salón que sigue el cambio de identidad, no se crea
+    // cuenta: solo la ficha del trabajador, y su cédula es lo único que lo
+    // identifica, así que aquí es obligatoria. Con correo el front nuevo
+    // también la exige, pero el backend no: una app vieja que todavía no se
+    // actualizó no la manda y su alta con correo tiene que seguir funcionando.
+    // Con cuenta, el username es obligatorio.
+    const accountless = emailAbsent && !isLegacyIdentityCompany(company.id);
+    if (accountless && !registerDto.identification) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'IDENTIFICATION_REQUIRED',
+        message:
+          'La cédula o RIF es obligatoria: es lo que identifica al trabajador en tu salón.',
+      });
+    }
+    if (!accountless && !registerDto.username) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'USERNAME_REQUIRED',
+        message: 'El nombre de usuario es obligatorio.',
+      });
+    }
+
+    // Igual que el cupo: la cédula repetida se rechaza antes de crear nada.
+    await assertWorkerIdentificationFree(
+      this.workerRepository,
+      registerDto.identification,
+      [company.id],
+    );
 
     // ==================== VERIFICAR SI YA EXISTE EL TRABAJADOR ====================
     // Un trabajador pertenece a una sola compañía: cualquier re-registro con un
@@ -358,11 +403,14 @@ export class AuthService {
         message:
           'El trabajador ya estaba registrado y verificado en el sistema.',
       });
-    } else {
-      // ==================== CREAR NUEVO TRABAJADOR ====================
+    } else if (!accountless) {
+      // ==================== CREAR NUEVO TRABAJADOR (CON CUENTA) ====================
+      // Validado arriba: con cuenta, el username viene.
+      const username = registerDto.username as string;
+
       // Verificar si el username ya existe
       const existingUserByUsername = await this.userRepository.findOne({
-        where: { username: registerDto.username },
+        where: { username },
       });
 
       if (existingUserByUsername) {
@@ -382,7 +430,7 @@ export class AuthService {
 
       // Crear usuario con la contraseña generada
       const newUser = this.userRepository.create({
-        username: registerDto.username,
+        username,
         email: email as unknown as string,
         password: hashedPassword,
         userType: 'wrk',
@@ -420,7 +468,9 @@ export class AuthService {
           pictureFile,
           'worker_photo', // subcarpeta
           'worker', // tipo de entidad
-          user.id, // ID del usuario
+          // ID del usuario. Sin cuenta el trabajador aún no existe: el nombre
+          // lleva 0 y el uuid que agrega saveFile lo hace único igual.
+          user?.id ?? 0,
         );
         pictureFileName = fileInfo.fileName;
         console.log(`✅ Foto de trabajador guardada: ${pictureFileName}`);
@@ -430,25 +480,34 @@ export class AuthService {
     }
 
     // ==================== VERIFICAR SI YA ESTÁ EN COMPANY_WORKER ====================
-    // Verificar si ya está asignado a esta compañía por userId
-    const existingAssignment = await this.companyWorkerRepository.findOne({
-      where: {
-        userId: user.id,
-        companyId: company.id,
-      },
-    });
+    // Verificar si ya está asignado a esta compañía por userId. Sin cuenta el
+    // trabajador es nuevo seguro: no hay nada que buscar (y `where` con un
+    // userId vacío no filtraría).
+    const existingAssignment = user
+      ? await this.companyWorkerRepository.findOne({
+          where: {
+            userId: user.id,
+            companyId: company.id,
+          },
+        })
+      : null;
 
     // Buscar el perfil de worker
-    worker = await this.workerRepository.findOne({
-      where: { userId: user.id },
-    });
+    worker = user
+      ? await this.workerRepository.findOne({
+          where: { userId: user.id },
+        })
+      : null;
 
     // Si no existe perfil de worker, crearlo
     if (!worker) {
-      console.log(`Creando perfil de trabajador (userId: ${user.id})`);
+      console.log(
+        `Creando perfil de trabajador (userId: ${user?.id ?? 'sin cuenta'})`,
+      );
 
       const newWorker = this.workerRepository.create({
         name: registerDto.name,
+        identification: registerDto.identification ?? null,
         phone: registerDto.phone,
         address: registerDto.address,
         birthdate: registerDto.birthdate,
@@ -456,7 +515,7 @@ export class AuthService {
         description: registerDto.description,
         isActive: 1,
         location: registerDto.location,
-        userId: user.id,
+        userId: user?.id ?? null,
       });
 
       worker = await this.workerRepository.save(newWorker);
@@ -485,7 +544,7 @@ export class AuthService {
       const companyWorker = this.companyWorkerRepository.create({
         workerId: worker.id,
         companyId: company.id,
-        userId: user.id,
+        userId: user?.id ?? null,
         isActive: 1,
         startDate: new Date(),
         servicesDetail: {},
@@ -500,8 +559,10 @@ export class AuthService {
 
     // No se genera token JWT en el registro de trabajador
 
-    // Eliminar password del objeto de respuesta
-    const { password: _, ...userWithoutPassword } = user;
+    // Eliminar password del objeto de respuesta (sin cuenta no hay usuario)
+    const userWithoutPassword = user
+      ? (({ password: _, ...rest }) => rest)(user)
+      : null;
 
     // ==================== CONSTRUIR MENSAJE DE RESPUESTA ====================
     // En este punto el trabajador es siempre nuevo: los casos de trabajador
@@ -520,9 +581,12 @@ export class AuthService {
     ].join(' ');
 
     // Construir objeto de respuesta
+    // `workerId` va para que el front pueda darle acceso (asignarle correo)
+    // sin depender del usuario, que puede no existir.
     const response: any = {
       message,
       user: userWithoutPassword,
+      workerId: worker.id,
     };
 
     // worker.added (CLYP-246): notifica el alta del worker al roster de la
@@ -690,6 +754,7 @@ export class AuthService {
       const newClient = this.clientRepository.create({
         name: registerDto.name,
         lastName: registerDto.lastName,
+        identification: registerDto.identification ?? null,
         email: registerDto.email,
         phone: registerDto.phone,
         birthDate: registerDto.birthdate,
@@ -920,11 +985,16 @@ export class AuthService {
   /**
    * Nombre con el que se le muestra al admin un cliente que ya existe, para que
    * pueda reconocerlo antes de agregarlo. Si el perfil todavía no tiene nombre
-   * cargado se cae al username, que siempre está.
+   * cargado se cae al username y, si no tiene cuenta, a su cédula.
    */
-  private buildClientDisplayName(client: Client | null, user: User): string {
+  private buildClientDisplayName(
+    client: Client | null,
+    user: User | null,
+  ): string {
     const fullName = `${client?.name ?? ''} ${client?.lastName ?? ''}`.trim();
-    return fullName || user.username;
+    return (
+      fullName || user?.username || client?.identification || 'Este cliente'
+    );
   }
 
   /**
@@ -960,6 +1030,105 @@ export class AuthService {
     return company;
   }
 
+  private emailTakenError(): ConflictException {
+    return new ConflictException({
+      statusCode: HttpStatus.CONFLICT,
+      error: 'Conflict',
+      code: 'EMAIL_ALREADY_REGISTERED',
+      message: 'Ese correo ya tiene una cuenta en CLYPS.',
+    });
+  }
+
+  /**
+   * Crea la cuenta (`user`) de un trabajador o cliente que se dio de alta sin
+   * correo, y la enlaza a su ficha. Es lo que pasa cuando el salón le asigna
+   * un correo por primera vez.
+   *
+   * Todo va en una transacción: si falla el enlace no queda un `user` suelto.
+   * La ficha se bloquea (FOR UPDATE) y se vuelve a mirar adentro, así dos
+   * clics a la vez no crean dos cuentas: el segundo espera y ve que ya la
+   * tiene. El correo también se vuelve a mirar adentro, porque `user.email` no
+   * tiene índice único que lo frene.
+   *
+   * No envía nada: las credenciales salen después, fuera de la transacción.
+   */
+  private async createAccountForProfile(params: {
+    kind: 'wrk' | 'cli';
+    profileId: number;
+    name: string | null | undefined;
+    email: string;
+  }): Promise<{ username: string; password: string }> {
+    const { kind, profileId, name, email } = params;
+
+    // Antes de abrir la transacción, para fallar rápido en el caso común.
+    if (await this.userRepository.findOne({ where: { email } })) {
+      throw this.emailTakenError();
+    }
+
+    const password = this.generateRandomPassword(8);
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const username = await generateUniqueUsername(
+      this.userRepository,
+      name,
+      email,
+    );
+
+    await this.userRepository.manager.transaction(async (em) => {
+      const profile =
+        kind === 'wrk'
+          ? await em.getRepository(Worker).findOne({
+              where: { id: profileId },
+              lock: { mode: 'pessimistic_write' },
+            })
+          : await em.getRepository(Client).findOne({
+              where: { id: profileId },
+              lock: { mode: 'pessimistic_write' },
+            });
+      if (!profile) {
+        throw new NotFoundException('No se encontró la ficha');
+      }
+      if (profile.userId !== null) {
+        throw new ConflictException({
+          statusCode: HttpStatus.CONFLICT,
+          error: 'Conflict',
+          code: 'ACCESS_ALREADY_GRANTED',
+          message:
+            'Ya se le dio acceso hace un momento. Si no le llegó el correo, vuelve a enviarlo.',
+        });
+      }
+      if (await em.getRepository(User).findOne({ where: { email } })) {
+        throw this.emailTakenError();
+      }
+
+      const users = em.getRepository(User);
+      const user = await users.save(
+        users.create({
+          username,
+          email,
+          password: hashedPassword,
+          userType: kind,
+          // Sin verificar: lo verifica él con el código que le llega.
+          emailVerified: 0,
+        }),
+      );
+
+      if (kind === 'wrk') {
+        await em.getRepository(Worker).update(profileId, { userId: user.id });
+        // `company_worker.user_id` es como se lo reconoce al iniciar sesión
+        // y para sus notificaciones, en cada salón donde trabaje.
+        await em
+          .getRepository(CompanyWorker)
+          .update({ workerId: profileId }, { userId: user.id });
+      } else {
+        await em
+          .getRepository(Client)
+          .update(profileId, { userId: user.id, email });
+      }
+    });
+
+    return { username, password };
+  }
+
   async assignClientEmail(
     clientId: number,
     dto: AssignClientEmailDto,
@@ -982,12 +1151,34 @@ export class AuthService {
       throw new ForbiddenException('Este cliente no pertenece a tu negocio');
     }
 
+    const email = dto.email.trim().toLowerCase();
     const user = client.user;
+
     if (!user) {
-      throw new NotFoundException('El cliente no tiene una cuenta asociada');
+      // Sin cuenta todavía (se dio de alta sin correo): el correo la crea.
+      const created = await this.createAccountForProfile({
+        kind: 'cli',
+        profileId: client.id,
+        name: [client.name, client.lastName].filter(Boolean).join(' '),
+        email,
+      });
+      // Fuera de la transacción: si el correo no sale, la cuenta igual quedó
+      // creada y la respuesta lo dice, para reintentar.
+      const sent = await this.emailService.sendClientCredentials(
+        email,
+        created.username,
+        created.password,
+      );
+      await this.trySendVerificationCode(email);
+      return {
+        message: sent
+          ? `Se enviaron las credenciales a ${email}.`
+          : `El correo quedó guardado, pero no se pudo enviar el mensaje a ${email}. Vuelve a intentarlo.`,
+        clientId: client.id,
+        credentialsSent: sent,
+      };
     }
 
-    const email = dto.email.trim().toLowerCase();
     const hasEmail = !isEmailUnavailable(user.email);
 
     if (hasEmail) {
@@ -1069,47 +1260,54 @@ export class AuthService {
       throw new ForbiddenException('Este trabajador no pertenece a tu negocio');
     }
 
-    const user = worker.user;
-    if (!user) {
-      throw new NotFoundException('El trabajador no tiene una cuenta asociada');
-    }
-
     const email = dto.email.trim().toLowerCase();
+    const user = worker.user;
+    let username: string;
+    let generatedPassword: string;
 
-    if (!isEmailUnavailable(user.email)) {
-      // Con correo ya puesto, la cuenta es suya. Solo se permite reenviar el
-      // acceso al MISMO correo mientras no lo haya verificado.
-      const sameEmail = user.email.trim().toLowerCase() === email;
-      if (!sameEmail || user.emailVerified === 1) {
-        throw new ConflictException({
-          statusCode: HttpStatus.CONFLICT,
-          error: 'Conflict',
-          code: 'WORKER_ALREADY_HAS_EMAIL',
-          message:
-            'Este trabajador ya tiene un correo. Solo él puede cambiarlo desde su perfil.',
-        });
+    if (!user) {
+      // Sin cuenta todavía (se dio de alta sin correo): el correo la crea.
+      ({ username, password: generatedPassword } =
+        await this.createAccountForProfile({
+          kind: 'wrk',
+          profileId: worker.id,
+          name: worker.name,
+          email,
+        }));
+    } else {
+      if (!isEmailUnavailable(user.email)) {
+        // Con correo ya puesto, la cuenta es suya. Solo se permite reenviar el
+        // acceso al MISMO correo mientras no lo haya verificado.
+        const sameEmail = user.email.trim().toLowerCase() === email;
+        if (!sameEmail || user.emailVerified === 1) {
+          throw new ConflictException({
+            statusCode: HttpStatus.CONFLICT,
+            error: 'Conflict',
+            code: 'WORKER_ALREADY_HAS_EMAIL',
+            message:
+              'Este trabajador ya tiene un correo. Solo él puede cambiarlo desde su perfil.',
+          });
+        }
       }
+
+      const taken = await this.userRepository.findOne({ where: { email } });
+      if (taken && taken.id !== user.id) {
+        throw this.emailTakenError();
+      }
+
+      generatedPassword = this.generateRandomPassword(8);
+      user.email = email;
+      user.password = await bcrypt.hash(generatedPassword, 10);
+      user.emailVerified = 0;
+      await this.userRepository.save(user);
+      username = user.username;
     }
 
-    const taken = await this.userRepository.findOne({ where: { email } });
-    if (taken && taken.id !== user.id) {
-      throw new ConflictException({
-        statusCode: HttpStatus.CONFLICT,
-        error: 'Conflict',
-        code: 'EMAIL_ALREADY_REGISTERED',
-        message: 'Ese correo ya tiene una cuenta en CLYPS.',
-      });
-    }
-
-    const generatedPassword = this.generateRandomPassword(8);
-    user.email = email;
-    user.password = await bcrypt.hash(generatedPassword, 10);
-    user.emailVerified = 0;
-    await this.userRepository.save(user);
-
+    // Fuera de la transacción: si el correo no sale, la cuenta igual quedó
+    // creada y la respuesta lo dice, para reintentar.
     const credentialsSent = await this.emailService.sendWorkerCredentials(
       email,
-      user.username,
+      username,
       generatedPassword,
       company.name,
     );
@@ -1130,7 +1328,8 @@ export class AuthService {
     pictureFile?: Express.Multer.File,
   ): Promise<{
     message: string;
-    user: Partial<User>;
+    /** `null` cuando el cliente no tiene cuenta (sin correo). */
+    user: Partial<User> | null;
     clientId: number;
   }> {
     let company: Company;
@@ -1173,15 +1372,45 @@ export class AuthService {
     }
 
     // 2. Verificar email. Si el cliente no tiene email ("no disponible"/vacío),
-    // se omite la búsqueda por email y la identidad se garantiza por username.
+    // se omite la búsqueda por email.
     const emailAbsent = isEmailUnavailable(registerDto.email);
+
+    // Un salón excluido del cambio de identidad no usa cédula: si el front la
+    // manda igual, se ignora en vez de rechazar el alta.
+    if (isLegacyIdentityCompany(company.id)) {
+      registerDto.identification = undefined;
+    }
+
+    // Sin correo, en un salón que sigue el cambio de identidad, no se crea
+    // cuenta: solo la ficha del cliente, y su cédula es lo único que lo
+    // identifica, así que aquí es obligatoria. Con correo el front nuevo
+    // también la exige, pero el backend no: una app vieja que todavía no se
+    // actualizó no la manda y su alta con correo tiene que seguir funcionando.
+    // Con cuenta —tiene correo, o el salón está excluido— el username lo es.
+    const accountless = emailAbsent && !isLegacyIdentityCompany(company.id);
+    if (accountless && !registerDto.identification) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'IDENTIFICATION_REQUIRED',
+        message:
+          'La cédula o RIF es obligatoria: es lo que identifica al cliente.',
+      });
+    }
+    if (!accountless && !registerDto.username) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'USERNAME_REQUIRED',
+        message: 'El nombre de usuario es obligatorio.',
+      });
+    }
+
     const existingUserByEmail = emailAbsent
       ? null
       : await this.userRepository.findOne({
           where: { email: registerDto.email },
         });
 
-    let user: User;
+    let user: User | null = null;
     let client: Client | null = null;
     let isExistingUser = false;
     let reactivated = false;
@@ -1191,13 +1420,43 @@ export class AuthService {
     // apuntando a un cliente que ya existe: es el caso del admin que da de alta
     // a alguien que ya está en CLYPS y no sabe con qué correo se registró.
     // Antes eso moría en un 409 seco; ahora sirve para reconocerlo y ofrecer
-    // vincularlo a su negocio.
-    const existingUserByUsername = existingUserByEmail
-      ? null
-      : await this.userRepository.findOne({
-          where: { username: registerDto.username },
-        });
+    // vincularlo a su negocio. Sin cuenta no hay username que mirar.
+    const existingUserByUsername =
+      existingUserByEmail || accountless
+        ? null
+        : await this.userRepository.findOne({
+            where: { username: registerDto.username },
+          });
     const existingUser = existingUserByEmail ?? existingUserByUsername;
+
+    // El perfil se busca antes de crear nada para validar la cédula: un 409
+    // por cédula repetida no debe dejar un `user` recién creado sin cliente.
+    // El propio cliente que se está vinculando no choca consigo mismo.
+    // Si ni el correo ni el username reconocen a nadie, al cliente que ya
+    // existe (cargado por otro salón, o con su propia cuenta) se le reconoce
+    // por la cédula, haya o no correo: si no, un correo nuevo con la cédula de
+    // alguien que ya está en CLYPS crearía otra ficha de la misma persona.
+    const existingClient = existingUser
+      ? await this.clientRepository.findOne({
+          where: { userId: existingUser.id },
+        })
+      : registerDto.identification
+        ? await this.clientRepository.findOne({
+            where: {
+              identification: registerDto.identification,
+              permanentlyDeleted: false,
+            },
+            relations: ['user'],
+            order: { id: 'ASC' },
+          })
+        : null;
+    const matchedByIdentification = !existingUser && !!existingClient;
+    await assertClientIdentificationFree(
+      this.clientRepository,
+      registerDto.identification,
+      [company.id],
+      existingClient?.id,
+    );
 
     if (existingUser) {
       if (existingUser.userType !== 'cli') {
@@ -1220,6 +1479,15 @@ export class AuthService {
       }
       user = existingUser;
       isExistingUser = true;
+    } else if (accountless || matchedByIdentification) {
+      // Sin cuenta, o reconocido por la cédula: no se crea `user`. Si la
+      // cédula ya era de un cliente, es él, con la cuenta que tenga (si
+      // tiene). El correo que se haya escrito no se usa: para darle acceso,
+      // se hace desde su ficha.
+      if (existingClient) {
+        user = existingClient.user ?? null;
+        isExistingUser = true;
+      }
     } else {
       generatedPassword = this.generateRandomPassword(8);
       const hashedPassword = await bcrypt.hash(generatedPassword, 10);
@@ -1244,10 +1512,8 @@ export class AuthService {
       }
     }
 
-    // 3. Buscar el perfil del cliente
-    client = await this.clientRepository.findOne({
-      where: { userId: user.id },
-    });
+    // 3. El perfil del cliente (ya buscado arriba; un usuario nuevo no tiene)
+    client = existingClient;
 
     if (client) {
       // El cliente ya tiene perfil: solo gestionamos su relación con la compañía.
@@ -1278,8 +1544,9 @@ export class AuthService {
         // para esto: no identifica a una persona, y otro cliente puede tener
         // uno igual al que genere el formulario. Reactivar por username
         // significaría devolverle al salón la ficha de alguien que no es su
-        // cliente, con su teléfono, sus notas y su historial.
-        if (!existingUserByEmail) {
+        // cliente, con su teléfono, sus notas y su historial. La cédula sí
+        // identifica a una persona: sin correo, es lo que lo reconoció.
+        if (!existingUserByEmail && !matchedByIdentification) {
           throw new ConflictException({
             statusCode: HttpStatus.CONFLICT,
             error: 'Conflict',
@@ -1297,9 +1564,9 @@ export class AuthService {
             code: 'CLIENT_DELETED_CONFIRM_REACTIVATE',
             clientId: client.id,
             clientName: this.buildClientDisplayName(client, user),
-            clientUsername: user.username,
+            clientUsername: user?.username ?? null,
             companyName: company.name,
-            message: `${registerDto.email} ya está en el sistema y fue eliminado de ${company.name}. ¿Quieres reactivarlo?`,
+            message: `${existingUserByEmail ? registerDto.email : this.buildClientDisplayName(client, user)} ya está en el sistema y fue eliminado de ${company.name}. ¿Quieres reactivarlo?`,
           });
         }
 
@@ -1320,10 +1587,22 @@ export class AuthService {
           code: 'CLIENT_EXISTS_CONFIRM_LINK',
           clientId: client.id,
           clientName: this.buildClientDisplayName(client, user),
-          clientUsername: user.username,
+          clientUsername: user?.username ?? null,
           companyName: company.name,
+          // El front pregunta "¿es la misma persona?" cuando lo reconoció la
+          // cédula; por correo vincula directo, como siempre.
+          matchedBy: matchedByIdentification ? 'identification' : 'account',
           message: `${this.buildClientDisplayName(client, user)} ya está registrado en CLYPS. ¿Quieres agregarlo a ${company.name}?`,
         });
+      }
+
+      // La cédula que trae el alta solo completa una ficha que no la tenía:
+      // si ya tiene una, es suya y no se pisa desde otro salón.
+      if (registerDto.identification && !client.identification) {
+        await this.clientRepository.update(client.id, {
+          identification: registerDto.identification,
+        });
+        client.identification = registerDto.identification;
       }
 
       // Al reactivar no hay nada que vincular: el salón ya estaba en
@@ -1349,9 +1628,9 @@ export class AuthService {
           code: 'CLIENT_EXISTS_CONFIRM_LINK',
           clientId: null,
           clientName: this.buildClientDisplayName(null, user),
-          clientUsername: user.username,
+          clientUsername: user?.username ?? null,
           companyName: company.name,
-          message: `${user.username} ya está registrado en CLYPS. ¿Quieres agregarlo a ${company.name}?`,
+          message: `${this.buildClientDisplayName(null, user)} ya está registrado en CLYPS. ¿Quieres agregarlo a ${company.name}?`,
         });
       }
 
@@ -1363,7 +1642,8 @@ export class AuthService {
             pictureFile,
             'client_photo',
             'client',
-            user.id,
+            // Sin cuenta: 0 (el uuid de saveFile lo hace único igual).
+            user?.id ?? 0,
           );
           pictureFileName = fileInfo.fileName;
         } catch (error) {
@@ -1374,6 +1654,7 @@ export class AuthService {
       const newClient = this.clientRepository.create({
         name: registerDto.name,
         lastName: registerDto.lastName,
+        identification: registerDto.identification ?? null,
         email: registerDto.email,
         phone: registerDto.phone,
         birthDate: registerDto.birthdate,
@@ -1381,13 +1662,16 @@ export class AuthService {
         isActive: registerDto.isActive ?? 1,
         companies: [company.id],
         location: registerDto.location,
-        userId: user.id,
+        userId: user?.id ?? null,
         createdByCompanyWorkerId,
       });
       client = await this.clientRepository.save(newClient);
     }
 
-    const { password: _, ...userWithoutPassword } = user;
+    // Sin cuenta no hay usuario que devolver.
+    const userWithoutPassword = user
+      ? (({ password: _, ...rest }) => rest)(user)
+      : null;
 
     const message = reactivated
       ? `Cliente reactivado en '${company.name}'. Su historial sigue intacto.`

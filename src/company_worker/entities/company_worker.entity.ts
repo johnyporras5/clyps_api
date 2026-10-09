@@ -41,8 +41,9 @@ export class CompanyWorker {
   @Column({ name: 'services_detail', type: 'json', nullable: true })
   servicesDetail: any;
 
-  @Column({ name: 'user_id', nullable: true })
-  userId: number;
+  // Usuario del trabajador. NULL mientras no tenga cuenta (sin correo).
+  @Column({ name: 'user_id', type: 'int', nullable: true })
+  userId: number | null;
 
   @Column({ name: 'calendar', type: 'json', nullable: true })
   calendar: any;

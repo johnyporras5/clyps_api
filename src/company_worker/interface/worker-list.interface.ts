@@ -11,5 +11,10 @@ export interface WorkerList {
   endDate: Date;
   isActive: number;
   calendar: Record<string, any> | null;
+  /**
+   * Si puede entrar a la app: tiene cuenta (`user`) y esa cuenta tiene correo.
+   * Sin correo no entra, tenga cuenta (los de antes) o no (los nuevos).
+   */
+  hasAccount: boolean;
 }
 export type PaginatedWorkerListResult = PaginationResult<WorkerList>;

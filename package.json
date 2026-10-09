@@ -34,6 +34,7 @@
     "migration:revert": "npm run typeorm -- migration:revert -d src/typeorm-config/typeorm.config.ts",
     "migration:revert:prod": "node ./node_modules/typeorm/cli.js migration:revert -d dist/typeorm-config/typeorm.config.js",
     "migration:show": "npm run typeorm -- migration:show -d src/typeorm-config/typeorm.config.ts",
+    "cleanup:accountless": "ts-node -P tsconfig.json src/scripts/cleanup-accountless-users.ts",
     "seed": "ts-node -r tsconfig-paths/register src/commands.ts seed",
     "seed:dev": "ts-node -r tsconfig-paths/register src/commands.ts seed",
     "seed:test": "ts-node -r tsconfig-paths/register src/commands.ts test-relations",

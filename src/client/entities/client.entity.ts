@@ -4,6 +4,8 @@ import {
   Column,
   OneToOne,
   JoinColumn,
+  Index,
+  CreateDateColumn,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 
@@ -24,6 +26,17 @@ export class Client {
   @Column({ type: 'varchar', length: 20, nullable: true })
   phone: string;
 
+  // Cédula o RIF, en forma canónica: V-12345678. No se repite dentro de un
+  // mismo salón (lo valida identification-conflict.util.ts).
+  @Index('IDX_client_identification')
+  @Column({
+    name: 'identification',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  identification: string | null;
+
   @Column({ name: 'birth_date', type: 'date', nullable: true })
   birthDate: Date;
 
@@ -36,8 +49,9 @@ export class Client {
   @Column({ name: 'location', length: 245, nullable: true })
   location: string;
 
-  @Column({ name: 'user_id' })
-  userId: number;
+  // Opcional: el cliente sin correo no tiene cuenta hasta que se le asigna uno.
+  @Column({ name: 'user_id', type: 'int', nullable: true })
+  userId: number | null;
 
   @Column({ type: 'json', nullable: true })
   companies: number[];
@@ -73,8 +87,13 @@ export class Client {
   @Column({ name: 'permanently_deleted', type: 'boolean', default: false })
   permanentlyDeleted: boolean;
 
-  // Relación uno a uno con User
-  @OneToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
+  // Fecha de alta del cliente. Antes se tomaba la de su cuenta, pero el
+  // cliente sin correo no tiene cuenta (migración 1780000000073).
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 6 })
+  createdAt: Date;
+
+  // Relación uno a uno con User (opcional, ver `userId`).
+  @OneToOne(() => User, { nullable: true, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
-  user: User;
+  user: User | null;
 }

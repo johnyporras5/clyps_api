@@ -8,7 +8,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { PLAN_IDS, type PlanId } from '../config/plans.config';
-import { IDENTIFICATION_FORMAT_MESSAGE } from '../subscription-identification.util';
+import { IDENTIFICATION_FORMAT_MESSAGE } from '../../common/utils/identification.util';
 
 /**
  * Cuerpo de POST /subscription/payments/checkout (SUB-10).

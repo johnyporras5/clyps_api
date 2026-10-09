@@ -25,6 +25,16 @@ import {
 import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
 import { FindAllClientsDto } from './dto/find-all-clients.dto';
+import { isEmailUnavailable } from '../auth/dto/register-client-by-admin.dto';
+import {
+  assertClientIdentificationFree,
+  assertIdentificationNotRemoved,
+} from '../common/utils/identification-conflict.util';
+import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
+import {
+  IDENTIFICATION_FIELD_MESSAGE,
+  normalizeIdentification,
+} from '../common/utils/identification.util';
 import {
   isClientInactiveForCompany,
   markClientDeletedForCompany,
@@ -33,6 +43,28 @@ import {
   sharedCompanyIds,
   unmarkClientDeletedForCompany,
 } from './client-activation.util';
+
+/**
+ * Lo que encuentra la búsqueda por cédula antes de dar de alta a un cliente.
+ * De un cliente de otro salón van sus datos completos para llenar el
+ * formulario (decisión de producto: el salón lo ve en solo lectura y, al
+ * guardar, lo agrega tal cual).
+ */
+export type ClientLookupResult =
+  | { status: 'not_found' }
+  | { status: 'in_company'; clientId: number; name: string }
+  | { status: 'deleted_in_company'; clientId: number; name: string }
+  | {
+      status: 'other_company';
+      name: string;
+      email: string | null;
+      username: string | null;
+      phone: string | null;
+      birthdate: string | Date | null;
+      location: string | null;
+      photoUrl: string | null;
+      hasAccount: boolean;
+    };
 
 @Injectable()
 export class ClientService {
@@ -546,6 +578,24 @@ export class ClientService {
     }
   }
 
+  /**
+   * La cédula nueva no puede ser la de otro cliente de ninguno de los salones
+   * donde está este. Se llama antes de tocar nada (ni la foto).
+   */
+  private async assertIdentificationFreeForClient(
+    client: Client,
+    identification: string | null | undefined,
+  ): Promise<void> {
+    if (!identification || identification === client.identification) return;
+
+    await assertClientIdentificationFree(
+      this.clientRepository,
+      identification,
+      Array.isArray(client.companies) ? client.companies : [],
+      client.id,
+    );
+  }
+
   async updateProfileWithPhoto(
     userId: number,
     updateClientDto: UpdateClientDto,
@@ -562,6 +612,17 @@ export class ClientService {
         `Perfil de cliente para el usuario ${userId} no encontrado`,
       );
     }
+
+    if (updateClientDto.identification !== undefined) {
+      assertIdentificationNotRemoved(
+        client.identification,
+        updateClientDto.identification,
+      );
+    }
+    await this.assertIdentificationFreeForClient(
+      client,
+      updateClientDto.identification,
+    );
 
     // 2. Procesar foto si se envía
     if (photoFile) {
@@ -597,6 +658,7 @@ export class ClientService {
     const allowedFields = [
       'name',
       'lastName',
+      'identification',
       'email',
       'phone',
       'birthDate',
@@ -702,6 +764,99 @@ export class ClientService {
       lastAppointment,
       nextAppointment,
     } as any;
+  }
+
+  /**
+   * Busca por cédula, antes de dar de alta, si la persona ya es cliente.
+   *
+   * Orden: si está en el salón de quien busca, eso primero (activo, o
+   * eliminado y por reactivar); si no, el de otro salón con la ficha más
+   * antigua, que es el mismo que vincula el alta (`registerClientByAdmin`).
+   * Un salón excluido del cambio de identidad no busca: siempre `not_found`.
+   */
+  async lookupByIdentification(
+    raw: string | undefined,
+    caller: { sub: number; userType?: string; companyId?: number | null },
+  ): Promise<ClientLookupResult> {
+    // El salón viaja en el token; uno viejo puede no traerlo y se resuelve
+    // igual que en el resto: el dueño por su compañía, el trabajador por su
+    // membresía activa.
+    let companyId = caller.companyId ?? null;
+    if (!companyId && caller.userType === 'adm') {
+      companyId =
+        (
+          await this.companyRepository.findOne({
+            where: { userId: caller.sub },
+          })
+        )?.id ?? null;
+    } else if (!companyId && caller.userType === 'wrk') {
+      companyId =
+        (
+          await this.companyWorkerRepository.findOne({
+            where: { userId: caller.sub, isActive: 1 },
+          })
+        )?.companyId ?? null;
+    }
+    if (!companyId) {
+      throw new BadRequestException(
+        'No se pudo identificar tu salón. Vuelve a iniciar sesión.',
+      );
+    }
+    const identification = normalizeIdentification(raw);
+    if (!identification) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'IDENTIFICATION_INVALID',
+        message: IDENTIFICATION_FIELD_MESSAGE,
+      });
+    }
+    if (isLegacyIdentityCompany(companyId)) return { status: 'not_found' };
+
+    const matches = await this.clientRepository.find({
+      where: { identification, permanentlyDeleted: false },
+      relations: ['user'],
+      order: { id: 'ASC' },
+    });
+    if (matches.length === 0) return { status: 'not_found' };
+
+    const nameOf = (c: Client) =>
+      [c.name, c.lastName].filter(Boolean).join(' ').trim() ||
+      c.user?.username ||
+      'Cliente';
+
+    const mine = matches.find((c) =>
+      normalizeCompanyIds(c.companies).includes(companyId),
+    );
+    if (mine) {
+      return {
+        status: isClientInactiveForCompany(mine, companyId)
+          ? 'deleted_in_company'
+          : 'in_company',
+        clientId: mine.id,
+        name: nameOf(mine),
+      };
+    }
+
+    const other = matches[0];
+    const accountEmail = isEmailUnavailable(other.user?.email)
+      ? null
+      : other.user?.email;
+    return {
+      status: 'other_company',
+      name: nameOf(other),
+      email: accountEmail ?? (other.email?.trim() || null),
+      username: accountEmail ? (other.user?.username ?? null) : null,
+      phone: other.phone ?? null,
+      birthdate: other.birthDate ?? null,
+      location: other.location ?? null,
+      photoUrl: other.picture
+        ? this.fileUploadService.getFileUrl(
+            this.CLIENT_PHOTO_FOLDER,
+            other.picture,
+          )
+        : null,
+      hasAccount: !!accountEmail,
+    };
   }
 
   /**
@@ -846,6 +1001,35 @@ export class ClientService {
       this.logger.warn(
         `Toggle isActive ignorado para el cliente ${clientId}: el estado ahora se maneja con DELETE /clients/admin/:id`,
       );
+    }
+
+    // La cédula también es dato personal, con una excepción: el cliente sin
+    // correo no puede entrar a corregirla él mismo, así que mientras no tenga
+    // correo la maneja el salón. Se rechaza en vez de ignorarse porque el
+    // campo es nuevo: ninguna app vieja lo manda.
+    // Un salón excluido del cambio de identidad (legacy-identity.util.ts) no
+    // la ve ni la toca: lo que mande se ignora.
+    if (
+      updateClientDto.identification !== undefined &&
+      !isLegacyIdentityCompany(callerCompanyId)
+    ) {
+      if (!isEmailUnavailable(client.user?.email)) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          code: 'IDENTIFICATION_OWNED_BY_CLIENT',
+          message:
+            'Este cliente tiene su propia cuenta: la cédula o RIF solo la cambia él desde su perfil.',
+        });
+      }
+      assertIdentificationNotRemoved(
+        client.identification,
+        updateClientDto.identification,
+      );
+      await this.assertIdentificationFreeForClient(
+        client,
+        updateClientDto.identification,
+      );
+      client.identification = updateClientDto.identification;
     }
 
     const saved = await this.clientRepository.save(client);

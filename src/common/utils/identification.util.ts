@@ -14,7 +14,15 @@
  * cédula `V-12345678` o el RIF `J-12345678`, y elegir por él manda a Cobrix una
  * identidad que no es la suya: la factura sale a nombre de otro, o la rechaza.
  * Preguntarle una vez cuesta menos que arreglar eso después.
+ *
+ * La misma forma se usa para la cédula/RIF del dueño (`company`), del
+ * trabajador y del cliente: así una búsqueda por identidad encuentra a la
+ * persona escriba como la escriba.
  */
+
+import { applyDecorators } from '@nestjs/common';
+import { Transform } from 'class-transformer';
+import { IsOptional, IsString, Matches } from 'class-validator';
 
 /** Las letras que usa el SENIAT. */
 const PREFIJOS = 'VEJPG';
@@ -45,3 +53,31 @@ export function normalizeIdentification(
 /** El mensaje que se le muestra al dueño. Uno solo, escrito en un solo sitio. */
 export const IDENTIFICATION_FORMAT_MESSAGE =
   'Escribe tu cédula o RIF con su letra: V-12345678 o J-401234567.';
+
+/** El mensaje para formularios donde no la escribe el propio dueño. */
+export const IDENTIFICATION_FIELD_MESSAGE =
+  'La cédula o RIF lleva su letra: V-12345678 o J-401234567.';
+
+/** La forma canónica que sale de `normalizeIdentification`. */
+const CANONICA = new RegExp(`^[${PREFIJOS}]-\\d{6,10}$`);
+
+/**
+ * Campo `identification` de un DTO. Opcional.
+ *
+ * Llega escrita como sea y sale en forma canónica, así se guarda siempre
+ * igual. Lo que no se puede normalizar se deja tal cual para que la validación
+ * lo rechace con el mensaje del formato. Vacía llega como `null`: en una
+ * edición eso la borra.
+ */
+export function IdentificationField(): PropertyDecorator {
+  return applyDecorators(
+    Transform(({ value }: { value: unknown }) => {
+      if (typeof value !== 'string') return value;
+      if (value.trim() === '') return null;
+      return normalizeIdentification(value) ?? value;
+    }),
+    IsOptional(),
+    IsString(),
+    Matches(CANONICA, { message: IDENTIFICATION_FIELD_MESSAGE }),
+  );
+}

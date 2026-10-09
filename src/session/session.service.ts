@@ -6,6 +6,7 @@ import {
   Logger,
   ForbiddenException,
   ConflictException,
+  HttpStatus,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -1744,6 +1745,46 @@ export class SessionService {
   }
 
   /**
+   * Reactivar una cita (o un servicio) cancelada de un cliente que el salón
+   * eliminó dejaría una cita viva de alguien que ya no está en su lista. Se
+   * bloquea: primero hay que reactivar al cliente desde Clientes.
+   *
+   * La cita no guarda su salón: sale del trabajador de sus servicios
+   * (`company_worker`). Basta con que el cliente esté eliminado en uno de esos
+   * salones para frenarlo.
+   */
+  private async assertClientNotDeletedForReactivation(
+    clientId: number | null | undefined,
+    companyWorkerIds: (number | null | undefined)[],
+  ): Promise<void> {
+    const ids = [
+      ...new Set(companyWorkerIds.filter((id): id is number => !!id)),
+    ];
+    if (!clientId || ids.length === 0) return;
+
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+    });
+    if (!client) return;
+
+    const assignments = await this.companyWorkerRepository.find({
+      where: { id: In(ids) },
+      select: { id: true, companyId: true },
+    });
+    if (
+      assignments.some((cw) => isClientInactiveForCompany(client, cw.companyId))
+    ) {
+      throw new ConflictException({
+        statusCode: HttpStatus.CONFLICT,
+        error: 'Conflict',
+        code: 'CLIENT_DELETED_IN_COMPANY',
+        message:
+          'Este cliente fue eliminado de tu salón. Reactívalo desde Clientes para poder reactivar la cita.',
+      });
+    }
+  }
+
+  /**
    * Verificar si el trabajador ya tiene una cita que se solape con el horario propuesto.
    * Compara el rango [startDatetime, startDatetime + totalTime] contra los detalles existentes del trabajador.
    * Excluye detalles con status 5 (cancelados) y opcionalmente una sesión específica.
@@ -2879,9 +2920,14 @@ export class SessionService {
     }
 
     const worker = companyWorker.worker;
-    const user = await this.userRepository.findOne({
-      where: { id: worker.userId },
-    });
+    // Sin cuenta no hay a quién buscar. Ojo: `where: { id: null }` no filtra
+    // en TypeORM y devolvería el primer usuario de la tabla.
+    const user =
+      worker.userId === null
+        ? null
+        : await this.userRepository.findOne({
+            where: { id: worker.userId },
+          });
 
     return {
       email: user?.email || '',
@@ -2904,9 +2950,13 @@ export class SessionService {
       throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
     }
 
-    const user = await this.userRepository.findOne({
-      where: { id: client.userId },
-    });
+    // Sin cuenta no hay a quién buscar (y `where: { id: null }` no filtra).
+    const user =
+      client.userId === null
+        ? null
+        : await this.userRepository.findOne({
+            where: { id: client.userId },
+          });
 
     return {
       email: client.email || user?.email || '',
@@ -3762,6 +3812,10 @@ export class SessionService {
     const isReactivation =
       previousStatus === 5 && newStatus >= 1 && newStatus <= 3;
     if (isReactivation) {
+      await this.assertClientNotDeletedForReactivation(
+        session.clientId,
+        sessionDetails.map((d) => d.companyWorkerId),
+      );
       for (const d of sessionDetails) {
         if (d.status !== 5) continue; // solo se reactivan los cancelados
         if (!d.companyWorkerId || !d.startDatetime || !d.totalTime) continue;
@@ -5827,6 +5881,10 @@ export class SessionService {
     //     quedar ocupado por otra cita del trabajador mientras estuvo cancelado.
     //     Si ahora se solapa, se bloquea (hay que reprogramar antes de reactivar).
     if (previousStatus === 5 && updateDetailStatusDto.status !== 5) {
+      await this.assertClientNotDeletedForReactivation(
+        parentSession?.clientId,
+        [detail.companyWorkerId],
+      );
       if (detail.companyWorkerId && detail.startDatetime && detail.totalTime) {
         const clash = await this.checkIfWorkerHasAppointmentAtSameTime(
           detail.companyWorkerId,
@@ -7193,6 +7251,18 @@ export class SessionService {
       throw new NotFoundException('Trabajador no encontrado');
     }
 
+    return this.getSessionsForWorker(worker, getSessionsDto);
+  }
+
+  /**
+   * Las citas de un trabajador ya resuelto. La usa el propio trabajador (por
+   * su usuario, arriba) y el admin al ver su historial, que lo busca por su
+   * id: un trabajador sin correo no tiene usuario, pero sí citas.
+   */
+  private async getSessionsForWorker(
+    worker: Worker,
+    getSessionsDto: GetSessionsDto,
+  ): Promise<PaginationResult<any>> {
     // 2. Buscar las asignaciones activas del trabajador en company_worker
     const companyWorkers = await this.companyWorkerRepository.find({
       where: {
@@ -9607,7 +9677,9 @@ export class SessionService {
           where: { id: detail.companyWorkerId },
           relations: ['worker', 'worker.user'],
         });
-        if (!companyWorker?.worker) continue;
+        // Sin cuenta no hay correo al que avisar.
+        if (!companyWorker?.worker || companyWorker.worker.userId === null)
+          continue;
 
         const workerUser = await this.userRepository.findOne({
           where: { id: companyWorker.worker.userId },
@@ -9690,7 +9762,9 @@ export class SessionService {
           where: { id: detail.companyWorkerId },
           relations: ['worker'],
         });
-        if (!companyWorker?.worker) continue;
+        // Sin cuenta no hay correo al que avisar.
+        if (!companyWorker?.worker || companyWorker.worker.userId === null)
+          continue;
         const workerUser = await this.userRepository.findOne({
           where: { id: companyWorker.worker.userId },
         });
@@ -11549,8 +11623,8 @@ export class SessionService {
       onlyScheduled: false,
     };
 
-    // Si admin pasa workerId, resolvemos el userId de ese worker para reutilizar
-    // getSessionsForAuthenticatedWorker sin duplicar lógica.
+    // Si admin pasa workerId, se reusa la misma consulta que ve el trabajador,
+    // con el trabajador ya resuelto (no hace falta que tenga usuario).
     if (targetWorkerId) {
       const worker = await this.workerRepository.findOne({
         where: { id: targetWorkerId },
@@ -11558,7 +11632,7 @@ export class SessionService {
       if (!worker) {
         throw new NotFoundException('Trabajador no encontrado');
       }
-      return this.getSessionsForAuthenticatedWorker(worker.userId, filteredDto);
+      return this.getSessionsForWorker(worker, filteredDto);
     }
     return this.getSessionsForAuthenticatedWorker(userId, filteredDto);
   }
