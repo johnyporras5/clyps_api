@@ -4,6 +4,7 @@ import { SubscriptionService } from './subscription.service';
 import { PaymentsService } from './payments.service';
 import { EntitlementsService } from './entitlements.service';
 import { BillingHistoryService } from './billing-history.service';
+import { WorkersSelectionService } from './workers-selection.service';
 import { ExchangeRateService } from './rate/exchange-rate.service';
 import { SubscriptionAccessGuard } from './guards/subscription-access.guard';
 import { SubscriptionController } from './subscription.controller';
@@ -86,6 +87,9 @@ import { EmailModule } from '../email/email.module';
     EntitlementsService,
     // SUB-13: el historial de facturación del dueño. Solo lectura.
     BillingHistoryService,
+    // Con qué trabajadores se queda un salón cuyo equipo no cabe en su plan, y
+    // su vuelta al pagar el Full.
+    WorkersSelectionService,
     ExchangeRateService,
     SubscriptionAccessGuard,
     // SUB-10. El job de conciliación vive aquí y no en `src/tasks` para que el

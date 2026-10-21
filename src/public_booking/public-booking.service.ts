@@ -178,7 +178,9 @@ export class PublicBookingService {
     if (
       companyWorker.isActive !== 1 ||
       companyWorker.temporarilyDeleted ||
-      companyWorker.permanentlyDeleted
+      companyWorker.permanentlyDeleted ||
+      // Suspendido por el plan del salón: no recibe citas nuevas.
+      companyWorker.planSuspended
     ) {
       throw new NotFoundException({
         message: `Este profesional ya no está disponible en ${company.name}.`,
@@ -441,7 +443,12 @@ export class PublicBookingService {
         where: { id: In(serviceIds), companyId, status: 1 },
       }),
       this.companyWorkerRepository.find({
-        where: { id: In(workerIds), companyId, isActive: 1 },
+        where: {
+          id: In(workerIds),
+          companyId,
+          isActive: 1,
+          planSuspended: false,
+        },
       }),
       this.calendarCompanyRepository.findOne({ where: { companyId } }),
     ]);

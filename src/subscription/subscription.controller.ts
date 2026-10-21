@@ -33,6 +33,9 @@ import { QueryQuoteDto } from './dto/query-quote.dto';
 import { ReportPaymentDto } from './dto/report-payment.dto';
 import { StartCheckoutDto } from './dto/start-checkout.dto';
 import { ChoosePlanDto } from './dto/choose-plan.dto';
+import { SelectWorkersDto } from './dto/select-workers.dto';
+import type { WorkersSelectionResponse } from './dto/workers-selection-response.dto';
+import { WorkersSelectionService } from './workers-selection.service';
 import { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
 import type { PaymentReportResponse } from './dto/payment-report-response.dto';
 import type {
@@ -63,6 +66,7 @@ export class SubscriptionController {
     private readonly entitlements: EntitlementsService,
     private readonly checkout: CobrixInvoiceService,
     private readonly billingHistory: BillingHistoryService,
+    private readonly workersSelection: WorkersSelectionService,
   ) {}
 
   /** Planes disponibles con sus límites, más los días de prueba y gracia. */
@@ -213,6 +217,43 @@ export class SubscriptionController {
      */
     this.entitlements.invalidate(companyId);
     return this.entitlements.getAccessResponse(companyId);
+  }
+
+  /**
+   * La pantalla "Escoge con quiénes te quedas": cuántos puede conservar y los
+   * candidatos, con sus citas pendientes.
+   *
+   * Siempre permitido: es justo la pantalla que se le muestra mientras el
+   * resto de la operación responde 403 con `workers_selection_required`.
+   */
+  @Roles('adm')
+  @Get('workers-selection')
+  async getWorkersSelection(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<WorkersSelectionResponse> {
+    const companyId = await this.entitlements.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.workersSelection.getSelection(companyId);
+  }
+
+  /**
+   * Guarda con qué trabajadores se queda. El resto queda suspendido por el
+   * plan: no se borra, pero no recibe citas nuevas hasta que el salón pague el
+   * Full. Solo se puede una vez por plan: fuera de la selección pendiente
+   * responde 400.
+   */
+  @Roles('adm')
+  @Post('workers-selection')
+  @HttpCode(HttpStatus.OK)
+  async selectWorkers(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: SelectWorkersDto,
+  ): Promise<WorkersSelectionResponse> {
+    const companyId = await this.entitlements.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.workersSelection.select(companyId, dto.keepCompanyWorkerIds);
   }
 
   /**

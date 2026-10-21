@@ -195,6 +195,9 @@ export class ServiceService {
         const workersInfo = await this.getWorkersInfoForService(
           service.workers,
           companyId,
+          // Al cliente (app y reserva pública) no se le ofrece un suspendido
+          // por el plan: no se le puede agendar.
+          viewerType === 'cli',
         );
         return { ...service, workersInfo };
       }),
@@ -457,6 +460,7 @@ export class ServiceService {
   private async getWorkersInfoForService(
     workersAssignments: Array<{ id: number; percentage: number }>,
     companyId: number,
+    excludePlanSuspended = false,
   ): Promise<any[]> {
     if (!workersAssignments || workersAssignments.length === 0) {
       return [];
@@ -474,6 +478,7 @@ export class ServiceService {
       .where('cw.id IN (:...ids)', { ids: workerIds })
       .andWhere('cw.companyId = :companyId', { companyId: companyId })
       .andWhere('cw.isActive = 1')
+      .andWhere(excludePlanSuspended ? 'cw.planSuspended = 0' : '1 = 1')
       .getMany();
 
     // Obtener ratings agregados por worker
@@ -558,6 +563,9 @@ export class ServiceService {
           startDate: companyWorker.startDate,
           endDate: companyWorker.endDate,
           isActive: companyWorker.isActive,
+          // El dueño lo sigue viendo en sus servicios, pero no le puede dar
+          // citas nuevas: el front lo pinta deshabilitado al agendar.
+          planSuspended: Boolean(companyWorker.planSuspended),
           servicesDetail: companyWorker.servicesDetail,
           calendar: companyWorker.calendar,
         },

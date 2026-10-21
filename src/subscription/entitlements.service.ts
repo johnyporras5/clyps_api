@@ -93,7 +93,24 @@ interface EntitlementContext {
    * saberlo para decir "validando tu pago" en vez de pedirle que pague otra vez.
    */
   hasPendingReport: boolean;
+  /**
+   * Trabajadores que hoy pueden recibir citas: activos, sin borrar y sin
+   * suspender por el plan. Es lo que se compara contra `maxWorkers`.
+   */
+  activeWorkers: number;
+  /**
+   * El salón tiene más trabajadores de los que admite su plan y el dueño
+   * todavía no escogió con cuáles se queda. Mientras sea `true` no se opera:
+   * lo único abierto es la pantalla de selección (y las de pago).
+   *
+   * Nunca durante la prueba: el plan comprado empieza a regir cuando ella
+   * termina, aunque se haya pagado antes.
+   */
+  workersSelectionRequired: boolean;
 }
+
+/** El motivo del 403 mientras el dueño no escoja sus trabajadores. */
+export const WORKERS_SELECTION_REQUIRED = 'workers_selection_required';
 
 /**
  * La ÚNICA puerta de acceso del sistema (SUB-5 / CLYP-338).
@@ -219,18 +236,47 @@ export class EntitlementsService {
       graceDays: this.graceDays,
       now,
     });
+    const limits = effectiveLimits(
+      storedPlanId,
+      access.status,
+      trialEndsAt,
+      now,
+    );
+    const onTrial = trialStillRunning(trialEndsAt, now);
+    const activeWorkers = await this.countBookableWorkers(companyId);
 
     return {
       planId: effectivePlanId(storedPlanId, access.status, trialEndsAt, now),
       access,
-      limits: effectiveLimits(storedPlanId, access.status, trialEndsAt, now),
+      limits,
       billingExempt: Boolean(subscription?.billingExempt),
       everPaid: subscription?.currentPeriodEnd != null,
       purchasedPlanId: subscription?.planId ?? null,
-      onTrial: trialStillRunning(trialEndsAt, now),
+      onTrial,
       trialEndsAt,
       hasPendingReport,
+      activeWorkers,
+      workersSelectionRequired:
+        !onTrial &&
+        planBackedByPayment(access) &&
+        activeWorkers > limits.maxWorkers,
     };
+  }
+
+  /**
+   * Trabajadores que hoy cuentan contra el tope del plan: activos, sin borrar y
+   * sin suspender. Los suspendidos no cuentan —ya no reciben citas— y los
+   * inactivos tampoco: para volver a contar tienen que reactivarse, y eso pasa
+   * por `assertCanActivateWorker`.
+   */
+  async countBookableWorkers(companyId: number): Promise<number> {
+    return this.workers.countBy({
+      companyId,
+      isActive: 1,
+      temporarilyDeleted: false,
+      permanentlyDeleted: false,
+      planSuspended: false,
+    });
   }
 
   /**
@@ -306,13 +352,19 @@ export class EntitlementsService {
    * enseñan el producto entero.
    */
   async can(companyId: number, feature: PlanFeature): Promise<boolean> {
-    const { access, limits } = await this.context(companyId);
-    return access.canOperate && limits[feature];
+    const context = await this.context(companyId);
+    return operable(context) && context.limits[feature];
   }
 
-  /** ¿Puede ejecutar acciones de operación (crear cita, cobrar, etc.)? */
+  /**
+   * ¿Puede ejecutar acciones de operación (crear cita, cobrar, etc.)?
+   *
+   * Un salón que todavía no escogió sus trabajadores tampoco: hasta que lo haga
+   * no se sabe a quién se le pueden dar citas, así que el cliente final y la
+   * reserva pública lo ven como no reservable.
+   */
   async canOperate(companyId: number): Promise<boolean> {
-    return (await this.context(companyId)).access.canOperate;
+    return operable(await this.context(companyId));
   }
 
   // ---------------------------------------------------------------------------
@@ -332,7 +384,41 @@ export class EntitlementsService {
     if (!context.access.canOperate) {
       throw new ForbiddenException(this.blockedBody(context, role));
     }
+    if (context.workersSelectionRequired) {
+      throw new ForbiddenException(this.selectionBody(context, role));
+    }
     return context;
+  }
+
+  /**
+   * El cuerpo del 403 mientras el dueño no escoja con qué trabajadores se queda.
+   *
+   * Al dueño se le dice cuántos puede conservar: el front lo manda a la
+   * pantalla de selección con `reason`. Al trabajador no se le habla del plan
+   * —igual que en el bloqueo por pago—: solo que espere al administrador.
+   */
+  private selectionBody(
+    context: EntitlementContext,
+    role: TenantRole,
+  ): Record<string, unknown> {
+    if (role === 'wrk') {
+      return {
+        message:
+          'El salón está organizando su equipo. Comunícate con el administrador del salón.',
+        reason: WORKERS_SELECTION_REQUIRED,
+        blockedFor: 'wrk',
+      };
+    }
+
+    const plan = getPlan(context.planId);
+    return {
+      message: `Tu plan ${plan.name} permite hasta ${context.limits.maxWorkers} trabajadores y tienes ${context.activeWorkers}. Escoge con cuáles te quedas para seguir usando Clyps.`,
+      reason: WORKERS_SELECTION_REQUIRED,
+      blockedFor: 'adm',
+      planId: context.planId,
+      limit: context.limits.maxWorkers,
+      current: context.activeWorkers,
+    };
   }
 
   /**
@@ -463,7 +549,9 @@ export class EntitlementsService {
     const { planId, limits } = await this.assertCanOperate(companyId);
     const max = limits.maxWorkers;
     const plan = getPlan(planId);
-    const current = await this.workers.countBy({ companyId, isActive: 1 });
+    // Se cuenta en vivo y no del contexto cacheado: dos altas seguidas dentro
+    // de los segundos de la caché verían el mismo número y pasarían las dos.
+    const current = await this.countBookableWorkers(companyId);
 
     if (current >= max) {
       throw new ForbiddenException({
@@ -475,6 +563,31 @@ export class EntitlementsService {
         current,
       });
     }
+  }
+
+  /**
+   * ¿Se puede volver a activar este trabajador? Para restaurar un borrado o
+   * pasar un inactivo a activo.
+   *
+   * Dos cortes:
+   *   1. Suspendido por el plan: no lo reactiva el dueño, lo reactiva pagar el
+   *      Full. Sin esto, la selección de trabajadores se saltaba con un botón.
+   *   2. El tope del plan: reactivar es sumar uno más que puede recibir citas,
+   *      igual que crearlo. Antes este camino no miraba el tope.
+   */
+  async assertCanActivateWorker(
+    companyId: number,
+    worker: Pick<CompanyWorker, 'planSuspended'>,
+  ): Promise<void> {
+    if (worker.planSuspended) {
+      throw new ForbiddenException({
+        message:
+          'Este trabajador quedó suspendido por tu plan. Sube a Full para volver a activarlo.',
+        reason: 'worker_plan_suspended',
+        feature: 'maxWorkers',
+      });
+    }
+    await this.assertCanAddWorker(companyId);
   }
 
   // ---------------------------------------------------------------------------
@@ -495,18 +608,17 @@ export class EntitlementsService {
       onTrial,
       trialEndsAt,
       hasPendingReport,
+      activeWorkers: workersInUse,
+      workersSelectionRequired,
     } = await this.context(companyId);
     const plan = getPlan(planId);
-    const workersInUse = await this.workers.countBy({
-      companyId,
-      isActive: 1,
-    });
 
     const features = PLAN_FEATURES.reduce(
       (acc, feature) => {
         // El eje del plan sigue aplicando dentro de los estados con acceso
         // (salvo en la prueba, donde los límites vienen todos abiertos).
-        acc[feature] = access.canOperate && limits[feature];
+        acc[feature] =
+          access.canOperate && !workersSelectionRequired && limits[feature];
         return acc;
       },
       {} as Record<PlanFeature, boolean>,
@@ -526,11 +638,15 @@ export class EntitlementsService {
       graceEndsAt: access.graceEndsAt?.toISOString() ?? null,
       hasPendingReport,
       billingExempt,
+      workersSelectionRequired,
       features,
       limits: {
         maxWorkers: limits.maxWorkers,
         workersInUse,
-        canAddWorker: access.canOperate && workersInUse < limits.maxWorkers,
+        canAddWorker:
+          access.canOperate &&
+          !workersSelectionRequired &&
+          workersInUse < limits.maxWorkers,
       },
     };
   }
@@ -561,6 +677,16 @@ export class EntitlementsService {
         blockedFor: body.blockedFor as 'adm' | 'wrk',
         message: body.message as string,
         reason: 'subscription_blocked',
+      };
+    }
+
+    if (context.workersSelectionRequired) {
+      const body = this.selectionBody(context, role);
+      return {
+        canOperate: false,
+        blockedFor: body.blockedFor as 'adm' | 'wrk',
+        message: body.message as string,
+        reason: WORKERS_SELECTION_REQUIRED,
       };
     }
 
@@ -671,4 +797,32 @@ export class EntitlementsService {
       clientApp: access.canOperate && limits.clientApp,
     };
   }
+}
+
+/**
+ * ¿El plan que rige ahora está PAGADO? Solo entonces se le pide escoger
+ * trabajadores: la selección es consecuencia de pagar un plan, no de elegirlo.
+ *
+ * - `active`: mes pagado corriendo (o exento, que no paga porque no le toca).
+ * - Gracia por `pending_report`: ya pagó y falta que lo verifiquemos; la
+ *   demora es nuestra, no suya.
+ *
+ * Quedan fuera, a propósito:
+ * - la prueba (se mira aparte, por fecha);
+ * - la gracia por VENCIMIENTO: son los días que se le dan para pagar, no un
+ *   plan nuevo. La selección sale cuando entra un pago, no antes;
+ * - el bloqueo (la prueba o la gracia se agotaron sin pagar): ahí la noticia
+ *   es pagar. Cuando pague, si el plan que pagó no alcanza para su equipo,
+ *   entonces escoge.
+ */
+function planBackedByPayment(access: AccessState): boolean {
+  return (
+    access.status === 'active' ||
+    (access.status === 'grace' && access.graceCause === 'pending_report')
+  );
+}
+
+/** Al día Y con sus trabajadores escogidos: lo que hace falta para operar. */
+function operable(context: EntitlementContext): boolean {
+  return context.access.canOperate && !context.workersSelectionRequired;
 }

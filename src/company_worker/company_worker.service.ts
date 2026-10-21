@@ -42,6 +42,7 @@ interface WorkerListRawRow {
   isActive: number;
   temporarilyDeleted: number;
   permanentlyDeleted: number;
+  planSuspended: number;
   calendar: unknown;
   userId: number | null;
   userEmail: string | null;
@@ -191,6 +192,7 @@ export class CompanyWorkerService {
 
     // Solo actualizar isActive si viene en el updateData
     if (updateData.isActive !== undefined) {
+      await this.assertActivationAllowed(company.id, companyWorker, updateData);
       allowedUpdates.isActive = updateData.isActive;
     }
 
@@ -225,6 +227,22 @@ export class CompanyWorkerService {
     await this.onboardingService.safeRecomputeStep(saved.companyId, 'add_team');
 
     return saved;
+  }
+
+  /**
+   * Pasar un inactivo a activo es sumar uno más que recibe citas: se mira el
+   * tope del plan, y un suspendido por el plan no se reactiva desde aquí (solo
+   * pagando el Full). Desactivar, o dejarlo como estaba, no se revisa.
+   */
+  private async assertActivationAllowed(
+    companyId: number,
+    companyWorker: CompanyWorker,
+    updateData: UpdateCompanyWorkerDto,
+  ): Promise<void> {
+    const activating =
+      Number(updateData.isActive) === 1 && companyWorker.isActive !== 1;
+    if (activating)
+      await this.entitlements.assertCanActivateWorker(companyId, companyWorker);
   }
 
   /**
@@ -274,6 +292,7 @@ export class CompanyWorkerService {
 
     // Solo actualizar isActive si viene en el updateData
     if (updateData.isActive !== undefined) {
+      await this.assertActivationAllowed(company.id, companyWorker, updateData);
       allowedUpdates.isActive = updateData.isActive;
     }
 
@@ -437,6 +456,7 @@ export class CompanyWorkerService {
         'cw.is_active AS isActive',
         'cw.temporarily_deleted AS temporarilyDeleted',
         'cw.permanently_deleted AS permanentlyDeleted',
+        'cw.plan_suspended AS planSuspended',
         'cw.calendar AS calendar',
         'worker.user_id AS userId',
         // MAX: la consulta agrupa por trabajador; hay un solo user por trabajador.
@@ -503,6 +523,7 @@ export class CompanyWorkerService {
         isActive: result.isActive,
         temporarilyDeleted: result.temporarilyDeleted,
         permanentlyDeleted: result.permanentlyDeleted,
+        planSuspended: Boolean(Number(result.planSuspended)),
         calendar: this.parseCalendar(result.calendar),
         // Puede entrar a la app: tiene cuenta Y correo. Los de antes podían
         // tener cuenta sin correo; tampoco entran, así que van marcados igual.

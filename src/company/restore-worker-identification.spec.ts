@@ -46,6 +46,7 @@ function setup(takenInCompanies: number[]) {
     },
     companyWorkerRepository: companyWorkers,
     onboardingService: { safeRecomputeStep: jest.fn() },
+    entitlements: { assertCanAddWorker: jest.fn() },
   });
   return {
     service: service as unknown as CompanyService,
