@@ -25,6 +25,7 @@ import { WorkerFeedback } from 'src/worker_feedback/entities/worker_feedback.ent
 import { FeedbackSummary } from './types/feedback_summary.type';
 import { CalendarCompany } from '../calendar_company/entities/calendar-company.entity';
 import { WorkerCalendarDto } from './dto/update-worker-calendar.dto';
+import { EntitlementsService } from '../subscription/entitlements.service';
 import {
   assertIdentificationNotRemoved,
   assertWorkerIdentificationFree,
@@ -65,6 +66,7 @@ export class WorkerService {
     private calendarCompanyRepository: Repository<CalendarCompany>,
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   async findOne(
@@ -539,8 +541,20 @@ export class WorkerService {
 
     // 7. Actualizar CompanyWorker
     const cwUpdates: Partial<CompanyWorker> = {};
-    if (dto.companyWorkerIsActive !== undefined)
+    if (dto.companyWorkerIsActive !== undefined) {
+      // Pasarlo de inactivo a activo es sumar uno que recibe citas: tope del
+      // plan, y un suspendido por el plan no se reactiva desde aquí. El
+      // formulario manda el campo siempre, así que solo se revisa el cambio.
+      if (
+        Number(dto.companyWorkerIsActive) === 1 &&
+        companyWorker.isActive !== 1
+      )
+        await this.entitlements.assertCanActivateWorker(
+          companyWorker.companyId,
+          companyWorker,
+        );
       cwUpdates.isActive = Number(dto.companyWorkerIsActive);
+    }
     if (dto.startDate !== undefined) cwUpdates.startDate = dto.startDate;
     if (dto.endDate !== undefined) cwUpdates.endDate = dto.endDate;
     if (dto.servicesDetail !== undefined) {

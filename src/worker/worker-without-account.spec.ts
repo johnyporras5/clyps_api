@@ -39,6 +39,7 @@ function setup(worker: {
     repo() as never,
     repo() as never,
     files as unknown as FileUploadService,
+    { assertCanActivateWorker: jest.fn() } as never,
   );
   return { service, users, workers, files };
 }
