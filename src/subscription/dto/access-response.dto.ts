@@ -52,6 +52,13 @@ export interface AccessResponse {
    * de pago y el aviso de vencimiento; su plan se sigue respetando.
    */
   billingExempt: boolean;
+  /**
+   * Tiene más trabajadores de los que admite su plan y todavía no escogió con
+   * cuáles se queda. Mientras sea `true` el front muestra SOLO la pantalla de
+   * selección (`GET/POST /subscription/workers-selection`): el resto de la
+   * operación responde 403 con `reason: 'workers_selection_required'`.
+   */
+  workersSelectionRequired: boolean;
   features: Record<PlanFeature, boolean>;
   limits: {
     /** Tope del plan vigente. En la prueba, el del Full. */
@@ -89,5 +96,9 @@ export interface SubscriptionStatusResponse {
    * mismo que subir de plan, y al trabajador no se le ofrece ninguno de los
    * dos—.
    */
-  reason: 'subscription_blocked' | 'plan_upgrade_required' | null;
+  reason:
+    | 'subscription_blocked'
+    | 'plan_upgrade_required'
+    | 'workers_selection_required'
+    | null;
 }

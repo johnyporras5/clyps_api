@@ -26,6 +26,18 @@ export class CompanyWorker {
   @Column({ name: 'is_active', nullable: true })
   isActive: number;
 
+  /**
+   * Suspendido por el plan: el salón tenía más trabajadores de los que admite
+   * el plan que compró y el dueño escogió con cuáles se quedaba.
+   *
+   * Va APARTE de `isActive` a propósito: `isActive = 0` le quita el login y el
+   * dueño lo cambia con un botón. Este no: el trabajador sigue entrando y
+   * moviendo el estatus de sus citas, solo que no se le pueden dar citas
+   * nuevas, y el dueño no lo puede quitar — vuelve solo al pagar el Full.
+   */
+  @Column({ name: 'plan_suspended', type: 'boolean', default: false })
+  planSuspended: boolean;
+
   // Segmento del enlace de reservas del profesional
   // (/reservar/<negocio>/<slug>). Único dentro del negocio; se genera al
   // crear el registro (CompanyWorkerSubscriber) y no cambia con el nombre.

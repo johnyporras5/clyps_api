@@ -28,6 +28,7 @@ import { toMinor, pct, fromMinor } from '../payroll/payroll-money.util';
 import { FeedbacksService } from '../feedbacks/feedbacks.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { EntitlementsService } from '../subscription/entitlements.service';
+import { WORKER_PLAN_SUSPENDED } from './session-detail.subscriber';
 import { CreateSessionDto } from './dto/create-session.dto';
 import {
   CreateSessionWithDetailDto,
@@ -6212,6 +6213,20 @@ export class SessionService {
         throw new BadRequestException(
           `El trabajador ${assignment.companyWorkerId} no está activo`,
         );
+      }
+      // Pasarle la cita a un suspendido por el plan es darle una cita nueva.
+      // Dejársela a quien ya la tenía no: esa sigue su curso. Esto va aquí y
+      // no en el subscriber porque el UPDATE de abajo es por QueryBuilder y no
+      // sabe si el trabajador cambió.
+      if (
+        newCompanyWorker.planSuspended &&
+        detail.companyWorkerId !== assignment.companyWorkerId
+      ) {
+        throw new ForbiddenException({
+          message: `El trabajador ${assignment.companyWorkerId} está suspendido por el plan del salón y no puede recibir citas nuevas.`,
+          reason: WORKER_PLAN_SUSPENDED,
+          companyWorkerId: assignment.companyWorkerId,
+        });
       }
 
       const service = await this.serviceRepository.findOne({

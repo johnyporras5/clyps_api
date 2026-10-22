@@ -34,6 +34,7 @@ import { AppointmentBeforeAfter } from './entities/appointment-before-after.enti
 import { AppointmentBeforeAfterController } from './appointment-before-after.controller';
 import { AppointmentBeforeAfterService } from './appointment-before-after.service';
 import { SessionSubscriber } from './session.subscriber';
+import { SessionDetailSubscriber } from './session-detail.subscriber';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { SessionSubscriber } from './session.subscriber';
     ReminderSchedulerService,
     AppointmentBeforeAfterService,
     SessionSubscriber,
+    SessionDetailSubscriber,
   ],
   controllers: [SessionController, AppointmentBeforeAfterController],
   // Los emitters se exportan para que la reserva pública (PublicBookingModule)

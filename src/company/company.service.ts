@@ -40,6 +40,7 @@ import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { SiteCategory } from 'src/site_category/entities/site_category.entity';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { EntitlementsService } from '../subscription/entitlements.service';
 import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
 import { assertWorkerIdentificationFree } from '../common/utils/identification-conflict.util';
 import { Worker } from '../worker/entities/worker.entity';
@@ -90,6 +91,7 @@ export class CompanyService {
     @Inject(FileUploadService)
     private fileUploadService: FileUploadService,
     private readonly onboardingService: OnboardingService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   /**
@@ -168,6 +170,9 @@ export class CompanyService {
           isActive: 1,
           temporarilyDeleted: false,
           permanentlyDeleted: false,
+          // Al cliente no se le ofrece un suspendido por el plan: no puede
+          // agendarle. El dueño sí lo ve, es parte de su equipo.
+          ...(viewerType === 'cli' ? { planSuspended: false } : {}),
         },
       }),
       this.serviceRepository.find({
@@ -840,6 +845,14 @@ export class CompanyService {
       });
     }
 
+    // Restaurarlo es sumar uno más que recibe citas: se mira el tope del plan.
+    // Un suspendido por el plan se restaura igual, pero sigue suspendido —no
+    // cuenta contra el tope ni recibe citas—: borrar y restaurar no puede ser
+    // la forma de saltarse la selección de trabajadores.
+    if (!companyWorker.planSuspended) {
+      await this.entitlements.assertCanAddWorker(company.id);
+    }
+
     // Restaurar el trabajador
     companyWorker.temporarilyDeleted = false;
     companyWorker.isActive = 1; // Reactivar
@@ -991,6 +1004,9 @@ export class CompanyService {
           isActive: 1,
           temporarilyDeleted: false,
           permanentlyDeleted: false,
+          // El horario de un suspendido no abre el salón: no se le puede
+          // agendar.
+          planSuspended: false,
         },
       }),
     ]);
@@ -1522,6 +1538,8 @@ export class CompanyService {
           isActive: 1,
           temporarilyDeleted: false,
           permanentlyDeleted: false,
+          // El directorio es del cliente: no se le ofrece un suspendido.
+          planSuspended: false,
         },
       }),
       this.serviceRepository.find({
