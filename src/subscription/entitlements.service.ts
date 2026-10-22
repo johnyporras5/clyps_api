@@ -80,6 +80,12 @@ interface EntitlementContext {
    * esto en Básico. Sin los dos, la pantalla le dice "Full" a quien pagó $15.
    */
   purchasedPlanId: PlanId | null;
+  /**
+   * El plan que eligió para el PRÓXIMO cobro, si es distinto del que tiene
+   * pagado. `null` = va a seguir con el mismo. Elegirlo no cambia nada hasta
+   * que ese pago se verifique.
+   */
+  nextPlanId: PlanId | null;
   /** La prueba todavía corre, haya pagado o no. */
   onTrial: boolean;
   trialEndsAt: Date | null;
@@ -225,7 +231,20 @@ export class EntitlementsService {
     const subscription = await this.loadSubscription(companyId);
     const hasPendingReport = await this.hasPendingReport(companyId);
 
-    const storedPlanId = subscription?.planId ?? 'basico';
+    const billingExempt = Boolean(subscription?.billingExempt);
+    /**
+     * El plan que USA sale del último pago VERIFICADO, no de `plan_id`.
+     *
+     * `plan_id` es lo que eligió para el próximo cobro, y elegir no cambia
+     * nada: quien está en gracia con el Básico y escoge el Full sigue con el
+     * Básico —funciones y tope— hasta que el pago del Full se verifique; si no
+     * paga, se bloquea con el Básico. Sin pagos verificados (prueba, primer
+     * plan elegido) o exento, manda `plan_id` como siempre.
+     */
+    const paidPlanId = billingExempt
+      ? null
+      : await this.lastPaidPlanId(companyId);
+    const storedPlanId = paidPlanId ?? subscription?.planId ?? 'basico';
     // Un solo instante para todo el cálculo: el estado y el plan vigente no
     // pueden leerse en dos "ahora" distintos y contradecirse en el borde.
     const now = new Date();
@@ -242,6 +261,8 @@ export class EntitlementsService {
       trialEndsAt,
       now,
     );
+    const purchasedPlanId = paidPlanId ?? subscription?.planId ?? null;
+    const chosenPlanId = subscription?.planId ?? null;
     const onTrial = trialStillRunning(trialEndsAt, now);
     const activeWorkers = await this.countBookableWorkers(companyId);
 
@@ -249,9 +270,13 @@ export class EntitlementsService {
       planId: effectivePlanId(storedPlanId, access.status, trialEndsAt, now),
       access,
       limits,
-      billingExempt: Boolean(subscription?.billingExempt),
+      billingExempt,
       everPaid: subscription?.currentPeriodEnd != null,
-      purchasedPlanId: subscription?.planId ?? null,
+      purchasedPlanId,
+      nextPlanId:
+        chosenPlanId !== null && chosenPlanId !== purchasedPlanId
+          ? chosenPlanId
+          : null,
       onTrial,
       trialEndsAt,
       hasPendingReport,
@@ -261,6 +286,16 @@ export class EntitlementsService {
         planBackedByPayment(access) &&
         activeWorkers > limits.maxWorkers,
     };
+  }
+
+  /** El plan del último pago verificado. `null` = nunca se le verificó uno. */
+  private async lastPaidPlanId(companyId: number): Promise<PlanId | null> {
+    const report = await this.reports.findOne({
+      where: { companyId, status: 'verified' },
+      order: { verifiedAt: 'DESC', id: 'DESC' },
+      select: { id: true, planId: true },
+    });
+    return report?.planId ?? null;
   }
 
   /**
@@ -605,6 +640,7 @@ export class EntitlementsService {
       limits,
       billingExempt,
       purchasedPlanId,
+      nextPlanId,
       onTrial,
       trialEndsAt,
       hasPendingReport,
@@ -629,6 +665,8 @@ export class EntitlementsService {
       planName: plan.name,
       purchasedPlanId,
       purchasedPlanName: purchasedPlanId ? getPlan(purchasedPlanId).name : null,
+      nextPlanId,
+      nextPlanName: nextPlanId ? getPlan(nextPlanId).name : null,
       onTrial,
       trialEndsAt: trialEndsAt?.toISOString() ?? null,
       status: access.status,
