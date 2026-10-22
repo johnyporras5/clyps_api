@@ -1,3 +1,4 @@
+import type { PaginationResult } from '../../common/dto/pagination.dto';
 import type { PlanId } from '../config/plans.config';
 
 /**
@@ -16,8 +17,8 @@ export interface WorkersSelectionResponse {
   /** Cuántos tiene que escoger: exactamente este número. */
   maxWorkers: number;
   /**
-   * Los candidatos: activos y sin suspender. Después de escoger quedan solo
-   * los escogidos.
+   * Los candidatos de ESTA página: activos y sin suspender. Después de
+   * escoger quedan solo los escogidos.
    */
   workers: Array<{
     companyWorkerId: number;
@@ -30,4 +31,6 @@ export interface WorkersSelectionResponse {
      */
     pendingAppointments: number;
   }>;
+  /** La paginación de `workers`. `total` es cuántos candidatos hay en todo. */
+  meta: PaginationResult<unknown>['meta'];
 }

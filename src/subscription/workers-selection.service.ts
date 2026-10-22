@@ -10,6 +10,7 @@ import { In, Repository } from 'typeorm';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 import { FileUploadService } from '../common/services/file_upload.service';
+import type { PaginationOptions } from '../common/dto/pagination.dto';
 import { getPlan, type PlanId } from './config/plans.config';
 import { EntitlementsService } from './entitlements.service';
 import {
@@ -23,6 +24,12 @@ const PENDING_STATUSES = [1, 2];
 
 /** El único plan cuyo pago devuelve a los suspendidos. */
 const FULL_PLAN_ID: PlanId = 'full';
+
+/**
+ * Candidatos por página cuando no se pide otra cosa. Un salón Full que baja al
+ * Básico puede traer decenas: la pantalla los va pidiendo a medida que baja.
+ */
+const DEFAULT_PAGE: PaginationOptions = { page: 1, limit: 20 };
 
 /** Trabajador que hoy puede recibir citas (sin contar el tope). */
 const BOOKABLE = {
@@ -61,13 +68,25 @@ export class WorkersSelectionService {
    * Lo que pinta la pantalla de selección: cuántos puede conservar y entre
    * quiénes elige, con sus citas pendientes para que decida sabiendo a quién
    * le quedan clientes agendados.
+   *
+   * Los candidatos vienen por páginas: la pantalla pide la siguiente al llegar
+   * al final de la lista. El orden es por id, que es único, así que entre una
+   * página y otra no se repite ni se salta a nadie.
    */
-  async getSelection(companyId: number): Promise<WorkersSelectionResponse> {
+  async getSelection(
+    companyId: number,
+    query: Partial<PaginationOptions> = {},
+  ): Promise<WorkersSelectionResponse> {
+    const page = query.page ?? DEFAULT_PAGE.page;
+    const limit = query.limit ?? DEFAULT_PAGE.limit;
+
     const access = await this.entitlements.getAccessResponse(companyId);
-    const candidates = await this.workers.find({
+    const [candidates, total] = await this.workers.findAndCount({
       where: { companyId, ...BOOKABLE, planSuspended: false },
       relations: ['worker'],
       order: { id: 'ASC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
     const pending = await this.pendingAppointments(
       candidates.map((cw) => cw.id),
@@ -87,6 +106,14 @@ export class WorkersSelectionService {
           : '',
         pendingAppointments: pending.get(cw.id) ?? 0,
       })),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
     };
   }
 
@@ -162,6 +189,20 @@ export class WorkersSelectionService {
           { id: In(toSuspend) },
           { planSuspended: true },
         );
+
+        // Los INACTIVOS (sin borrar) también: no eran candidatos —no reciben
+        // citas—, pero quedarse fuera del plan es lo mismo para ellos. Así se
+        // ven igual que los demás ("Suspendido") y no se activan con el botón.
+        // Al pagar el Full vuelven a su estado de antes: inactivos.
+        await manager
+          .createQueryBuilder()
+          .update(CompanyWorker)
+          .set({ planSuspended: true })
+          .where('company_id = :companyId', { companyId })
+          .andWhere('(is_active IS NULL OR is_active <> 1)')
+          .andWhere('temporarily_deleted = 0 AND permanently_deleted = 0')
+          .andWhere('plan_suspended = 0')
+          .execute();
         return toSuspend;
       },
     );
@@ -193,6 +234,18 @@ export class WorkersSelectionService {
     this.entitlements.invalidate(companyId);
     const access = await this.entitlements.getAccessResponse(companyId);
     if (!access.canOperate || access.planId !== FULL_PLAN_ID) return [];
+
+    // Los inactivos suspendidos vuelven siempre, y vuelven INACTIVOS: no
+    // ocupan lugar del tope. Si después el dueño los activa, el tope se mira
+    // ahí, como con cualquier otro.
+    await this.workers
+      .createQueryBuilder()
+      .update(CompanyWorker)
+      .set({ planSuspended: false })
+      .where('company_id = :companyId', { companyId })
+      .andWhere('(is_active IS NULL OR is_active <> 1)')
+      .andWhere('plan_suspended = 1')
+      .execute();
 
     const free = access.limits.maxWorkers - access.limits.workersInUse;
     if (free <= 0) return [];

@@ -230,6 +230,15 @@ function access(overrides: Partial<AccessResponse> = {}): AccessResponse {
   } as AccessResponse;
 }
 
+/** El UPDATE por QueryBuilder (inactivos), con sus llamadas a la vista. */
+function updateQb() {
+  const qb: Record<string, jest.Mock> = {};
+  for (const m of ['update', 'set', 'where', 'andWhere'])
+    qb[m] = jest.fn(() => qb);
+  qb.execute = jest.fn().mockResolvedValue({ affected: 1 });
+  return qb;
+}
+
 function selection(
   options: {
     access?: AccessResponse;
@@ -242,9 +251,12 @@ function selection(
     workerId: id + 100,
     worker: { name: `T${id}` },
   }));
+  const txQb = updateQb();
+  const repoQb = updateQb();
   const tx = {
     find: jest.fn().mockResolvedValue(candidates),
     update: jest.fn().mockResolvedValue(undefined),
+    createQueryBuilder: jest.fn(() => txQb),
   };
   const repo = {
     find: jest
@@ -256,7 +268,16 @@ function selection(
             : candidates,
         ),
       ),
+    findAndCount: jest
+      .fn()
+      .mockImplementation(({ skip, take }: { skip: number; take: number }) =>
+        Promise.resolve([
+          candidates.slice(skip, skip + take),
+          candidates.length,
+        ]),
+      ),
     update: jest.fn().mockResolvedValue(undefined),
+    createQueryBuilder: jest.fn(() => repoQb),
     manager: {
       transaction: jest.fn((cb: (m: unknown) => unknown) => cb(tx)),
       getRepository: jest.fn(() => ({
@@ -285,8 +306,32 @@ function selection(
     ent as unknown as EntitlementsService,
     { getFileUrl: jest.fn() } as unknown as FileUploadService,
   );
-  return { service, tx, repo, ent };
+  return { service, tx, repo, ent, txQb, repoQb };
 }
+
+describe('la lista de candidatos viene por páginas', () => {
+  it('trae la página pedida y dice si hay más', async () => {
+    const { service } = selection();
+
+    const first = await service.getSelection(7, { page: 1, limit: 2 });
+    expect(first.workers.map((w) => w.companyWorkerId)).toEqual([10, 11]);
+    expect(first.meta).toMatchObject({ total: 5, hasNext: true });
+
+    const last = await service.getSelection(7, { page: 3, limit: 2 });
+    expect(last.workers.map((w) => w.companyWorkerId)).toEqual([14]);
+    expect(last.meta).toMatchObject({ total: 5, hasNext: false });
+  });
+
+  it('sin página pedida trae las primeras 20', async () => {
+    const { service, repo } = selection();
+
+    await service.getSelection(7);
+
+    expect(repo.findAndCount).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 0, take: 20, order: { id: 'ASC' } }),
+    );
+  });
+});
 
 describe('escoger con quiénes se queda', () => {
   it('suspende a todos los que no escogió y nadie se borra', async () => {
@@ -303,6 +348,18 @@ describe('escoger con quiénes se queda', () => {
     expect(criteria.id._value).toEqual([10, 12, 14]);
     expect(values).toEqual({ planSuspended: true });
     expect(ent.invalidate).toHaveBeenCalledWith(7);
+  });
+
+  it('los inactivos (sin borrar) también quedan suspendidos', async () => {
+    const { service, txQb } = selection();
+
+    await service.select(7, [11, 13]);
+
+    expect(txQb.set).toHaveBeenCalledWith({ planSuspended: true });
+    expect(txQb.andWhere).toHaveBeenCalledWith(
+      '(is_active IS NULL OR is_active <> 1)',
+    );
+    expect(txQb.execute).toHaveBeenCalledTimes(1);
   });
 
   it('tiene que escoger exactamente el tope', async () => {
@@ -374,6 +431,25 @@ describe('vuelven solos al pagar el Full', () => {
     expect(repo.update).toHaveBeenCalledWith(expect.anything(), {
       planSuspended: false,
     });
+  });
+
+  it('pagar el Full también devuelve a los inactivos, que vuelven inactivos', async () => {
+    const { service, repoQb } = selection({
+      access: access({
+        planId: 'full',
+        planName: 'Full',
+        workersSelectionRequired: false,
+        limits: { maxWorkers: 20, workersInUse: 20, canAddWorker: false },
+      }),
+    });
+
+    await service.restoreSuspended(7);
+
+    // Aunque el tope esté lleno: los inactivos no ocupan lugar.
+    expect(repoQb.set).toHaveBeenCalledWith({ planSuspended: false });
+    expect(repoQb.andWhere).toHaveBeenCalledWith(
+      '(is_active IS NULL OR is_active <> 1)',
+    );
   });
 
   it('renovar el Básico no trae a nadie, aunque haya un hueco', async () => {

@@ -225,16 +225,19 @@ export class SubscriptionController {
    *
    * Siempre permitido: es justo la pantalla que se le muestra mientras el
    * resto de la operación responde 403 con `workers_selection_required`.
+   *
+   * Paginado (`page`, `limit`): la pantalla carga más al llegar al final.
    */
   @Roles('adm')
   @Get('workers-selection')
   async getWorkersSelection(
     @Req() req: AuthenticatedRequest,
+    @Query() query: PaginationDto,
   ): Promise<WorkersSelectionResponse> {
     const companyId = await this.entitlements.resolveCompanyIdForAdmin(
       req.user.sub,
     );
-    return this.workersSelection.getSelection(companyId);
+    return this.workersSelection.getSelection(companyId, query);
   }
 
   /**
