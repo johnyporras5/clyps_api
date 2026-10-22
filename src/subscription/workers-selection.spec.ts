@@ -36,6 +36,8 @@ function entitlements(options: {
   currentPeriodEnd?: Date | null;
   graceEndsAt?: Date | null;
   pendingReports?: number;
+  /** El plan del último pago verificado. Sin él, manda la suscripción. */
+  paidPlanId?: PlanId;
 }): EntitlementsService {
   const subscription = {
     id: 1,
@@ -57,6 +59,11 @@ function entitlements(options: {
     } as unknown as Repository<Subscription>,
     {
       countBy: jest.fn().mockResolvedValue(options.pendingReports ?? 0),
+      findOne: jest
+        .fn()
+        .mockResolvedValue(
+          options.paidPlanId ? { id: 1, planId: options.paidPlanId } : null,
+        ),
     } as unknown as Repository<PaymentReport>,
     {
       countBy: jest.fn().mockResolvedValue(options.workers),
@@ -186,6 +193,66 @@ describe('cuándo hay que escoger trabajadores', () => {
       blockedFor: 'wrk',
       reason: 'workers_selection_required',
     });
+  });
+});
+
+describe('elegir un plan no cambia nada; pagarlo sí', () => {
+  it('en gracia con el Básico, elegir el Full NO le da el Full hasta pagarlo', async () => {
+    const service = entitlements({
+      planId: 'full', // lo que eligió para el próximo cobro
+      paidPlanId: 'basico', // lo último que pagó
+      workers: 2,
+      currentPeriodEnd: days(-1),
+      graceEndsAt: days(4),
+    });
+
+    const access = await service.getAccessResponse(7);
+    expect(access.planId).toBe('basico');
+    expect(access.limits.maxWorkers).toBe(2);
+    expect(access.features.payroll).toBe(false);
+    expect(access.purchasedPlanId).toBe('basico');
+    expect(access.nextPlanId).toBe('full');
+  });
+
+  it('si no paga y se acaba la gracia, se bloquea con su plan anterior', async () => {
+    const service = entitlements({
+      planId: 'full',
+      paidPlanId: 'basico',
+      workers: 2,
+      currentPeriodEnd: days(-10),
+    });
+
+    const access = await service.getAccessResponse(7);
+    expect(access.canOperate).toBe(false);
+    expect(access.planId).toBe('basico');
+  });
+
+  it('verificado el pago del Full, pasa al Full', async () => {
+    const service = entitlements({
+      planId: 'full',
+      paidPlanId: 'full',
+      workers: 2,
+    });
+
+    const access = await service.getAccessResponse(7);
+    expect(access.planId).toBe('full');
+    expect(access.features.payroll).toBe(true);
+    expect(access.nextPlanId).toBeNull();
+  });
+
+  it('bajar del Full al Básico tampoco: sigue en Full y no pide escoger hasta pagar', async () => {
+    const service = entitlements({
+      planId: 'basico',
+      paidPlanId: 'full',
+      workers: 5,
+      currentPeriodEnd: days(-1),
+      graceEndsAt: days(4),
+    });
+
+    const access = await service.getAccessResponse(7);
+    expect(access.planId).toBe('full');
+    expect(access.workersSelectionRequired).toBe(false);
+    expect(access.nextPlanId).toBe('basico');
   });
 });
 

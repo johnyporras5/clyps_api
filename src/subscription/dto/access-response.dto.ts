@@ -30,6 +30,14 @@ export interface AccessResponse {
   purchasedPlanId: PlanId | null;
   purchasedPlanName: string | null;
   /**
+   * El plan que eligió para el PRÓXIMO cobro, si es distinto del que tiene
+   * pagado (`null` = sigue con el mismo). Elegirlo no cambia nada: las
+   * funciones y el tope siguen siendo los del plan pagado hasta que el pago
+   * del nuevo se verifique. Para decir "Desde tu próximo pago: Full".
+   */
+  nextPlanId: PlanId | null;
+  nextPlanName: string | null;
+  /**
    * La prueba sigue corriendo. Sigue en `true` aunque ya haya pagado: pagar no
    * la termina. Es lo que sostiene el distintivo de "te quedan N días", que
    * antes desaparecía en cuanto el pago se verificaba.

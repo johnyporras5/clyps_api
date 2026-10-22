@@ -54,6 +54,8 @@ function buildService(options: {
   const subscriptions = { findOne: jest.fn().mockResolvedValue(subscription) };
   const reports = {
     countBy: jest.fn().mockResolvedValue(options.pendingReports ?? 0),
+    // Sin pagos verificados: el plan sale de la suscripción, como antes.
+    findOne: jest.fn().mockResolvedValue(null),
   };
   const workers = {
     countBy: jest.fn().mockResolvedValue(options.workers ?? 0),
@@ -822,6 +824,7 @@ describe('la IA suelta del cliente', () => {
       subscriptions as unknown as Repository<Subscription>,
       {
         countBy: jest.fn().mockResolvedValue(0),
+        findOne: jest.fn().mockResolvedValue(null),
       } as unknown as Repository<PaymentReport>,
       {
         countBy: jest.fn().mockResolvedValue(0),
@@ -948,7 +951,10 @@ describe('la caché del acceso', () => {
         billingExempt: false,
       } as Subscription),
     };
-    const reports = { countBy: jest.fn().mockResolvedValue(0) };
+    const reports = {
+      countBy: jest.fn().mockResolvedValue(0),
+      findOne: jest.fn().mockResolvedValue(null),
+    };
     const workers = { countBy: jest.fn().mockResolvedValue(0) };
     const companies = { findOne: jest.fn().mockResolvedValue({ id: 7 }) };
     const service = new EntitlementsService(
