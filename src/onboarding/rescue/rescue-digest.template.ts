@@ -66,7 +66,7 @@ function tenantCard(tenant: StuckTenant): string {
 
         <div style="font-size:13px;color:#3a3a3a;line-height:1.5;padding-top:4px;">
           ${esc(STEP_LABELS[tenant.step])}
-          <span style="color:${MUTED};">&middot; ${tenant.completedSteps} de 5 completos</span>
+          <span style="color:${MUTED};">&middot; ${tenant.completedSteps} de ${ONBOARDING_STEP_KEYS.length} completos</span>
         </div>
 
         <div style="font-size:13px;color:${MUTED};line-height:1.6;padding-top:2px;">

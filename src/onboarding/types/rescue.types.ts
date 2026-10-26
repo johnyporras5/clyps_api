@@ -32,7 +32,7 @@ export interface StuckTenant {
   step: OnboardingStepKey;
   /** Días completos sin que ningún paso cambiara. */
   daysStalled: number;
-  /** Cuántos de los 5 pasos lleva completos. */
+  /** Cuántos pasos lleva completos (de `ONBOARDING_STEP_KEYS.length`). */
   completedSteps: number;
   level: RescueLevel;
   /** Última vez que avanzó (el `updated_at` de ONB-1). */
