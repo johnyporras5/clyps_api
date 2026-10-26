@@ -18,6 +18,8 @@ import { EmailService } from '../../email/email.service';
 import { NotificationService } from '../../notification/notification.service';
 import { buildNavigationData } from '../../notification/entities/notification.entity';
 import { buildRescueDigestHtml, STEP_LABELS } from './rescue-digest.template';
+import { buildOwnerRescueEmail } from './owner-rescue-email.template';
+import { WEB_APP_URL } from '../../subscription/config/app-links.config';
 
 /** Fila cruda del barrido, antes de clasificar. */
 interface StuckRow {
@@ -36,6 +38,8 @@ interface StuckRow {
 export interface SweepResult {
   scanned: number;
   ownerReminders: number;
+  /** Correos de acompañamiento al dueño (4 y 7 días). */
+  ownerEmails: number;
   digestTenants: number;
   digestSent: boolean;
   skippedAlreadyNotified: number;
@@ -50,9 +54,11 @@ export interface SweepResult {
  * es el tiempo sin moverse.
  *
  * Un cron diario clasifica por días sin avanzar y escala: recordatorio al dueño
- * → alerta al consultor → en riesgo. El anti-spam vive en
- * `onboarding_rescue_notification`: mientras exista la fila (company, paso,
- * nivel) no se repite el aviso; solo se vuelve a notificar al ESCALAR.
+ * → alerta al consultor → en riesgo. Desde la alerta, además del digest al
+ * consultor, el dueño recibe su propio correo de acompañamiento. El anti-spam
+ * vive en `onboarding_rescue_notification`: mientras exista la fila (company,
+ * paso, nivel, canal) no se repite el aviso; solo se vuelve a notificar al
+ * ESCALAR.
  */
 @Injectable()
 export class OnboardingRescueService {
@@ -90,6 +96,20 @@ export class OnboardingRescueService {
       .get<string>('ONBOARDING_CONSULTANT_EMAIL', '')
       ?.trim();
     return value ? value : null;
+  }
+
+  /** WhatsApp de CLYPS para los correos al dueño. Vacío = sin ese botón. */
+  get supportWhatsapp(): string | null {
+    const value = this.config.get<string>('CLYPS_SUPPORT_WHATSAPP', '')?.trim();
+    return value ? value : null;
+  }
+
+  /** Base pública de las imágenes de correo (logo). Igual que `EmailService`. */
+  get assetsBaseUrl(): string {
+    return (
+      this.config.get<string>('ASSETS_BASE_URL') ||
+      'http://localhost:4000/assets'
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -184,8 +204,8 @@ export class OnboardingRescueService {
 
   /**
    * Reclama el aviso de forma atómica: INSERT IGNORE contra el UNIQUE
-   * (company, paso, nivel). Devuelve true si lo reclamó (→ hay que avisar) o
-   * false si ya se había avisado por esa misma combinación.
+   * (company, paso, nivel, canal). Devuelve true si lo reclamó (→ hay que
+   * avisar) o false si ya se había avisado por esa misma combinación.
    */
   private async claim(tenant: StuckTenant, channel: string): Promise<boolean> {
     const result: { affectedRows?: number } = await this.rescueRepo.query(
@@ -203,12 +223,17 @@ export class OnboardingRescueService {
     return (result?.affectedRows ?? 0) > 0;
   }
 
-  /** Suelta el reclamo cuando el envío falló, para reintentar mañana. */
-  private async release(tenant: StuckTenant): Promise<void> {
+  /**
+   * Suelta el reclamo cuando el envío falló, para reintentar mañana. Solo el de
+   * ESE canal: si falla el digest, el correo que el dueño ya recibió sigue
+   * contando y no se le repite.
+   */
+  private async release(tenant: StuckTenant, channel: string): Promise<void> {
     await this.rescueRepo.delete({
       companyId: tenant.companyId,
       step: tenant.step,
       level: tenant.level,
+      channel,
     });
   }
 
@@ -225,6 +250,7 @@ export class OnboardingRescueService {
     const result = await this.runSweep();
     this.logger.log(
       `Rescate: ${result.scanned} atascados · ${result.ownerReminders} recordatorios al dueño · ` +
+        `${result.ownerEmails} correos al dueño · ` +
         `${result.digestTenants} en el digest (enviado: ${result.digestSent}) · ` +
         `${result.skippedAlreadyNotified} omitidos por anti-spam`,
     );
@@ -237,6 +263,7 @@ export class OnboardingRescueService {
     const result: SweepResult = {
       scanned: stuck.length,
       ownerReminders: 0,
+      ownerEmails: 0,
       digestTenants: 0,
       digestSent: false,
       skippedAlreadyNotified: 0,
@@ -250,7 +277,22 @@ export class OnboardingRescueService {
       }
       const sent = await this.remindOwner(tenant);
       if (sent) result.ownerReminders++;
-      else await this.release(tenant);
+      else await this.release(tenant, 'owner_notification');
+    }
+
+    // Umbrales altos: el dueño recibe su correo de acompañamiento. Va aparte del
+    // digest: que uno falle no frena ni repite al otro.
+    for (const tenant of stuck.filter((s) => s.level !== 'reminder')) {
+      // Sin correo (cuentas por cédula, CLYP-374) no hay a quién escribirle; no
+      // se reclama, así que si mañana agrega uno le llega.
+      if (!tenant.ownerEmail) continue;
+      if (!(await this.claim(tenant, 'owner_email'))) {
+        result.skippedAlreadyNotified++;
+        continue;
+      }
+      const sent = await this.emailOwner(tenant);
+      if (sent) result.ownerEmails++;
+      else await this.release(tenant, 'owner_email');
     }
 
     // Umbrales altos: un solo correo-digest agrupado, no uno por dueño.
@@ -268,7 +310,8 @@ export class OnboardingRescueService {
       result.digestSent = await this.sendDigest(forDigest);
       // Si el correo no salió se sueltan los reclamos y mañana se reintenta.
       if (!result.digestSent) {
-        for (const tenant of forDigest) await this.release(tenant);
+        for (const tenant of forDigest)
+          await this.release(tenant, 'consultant_digest');
       }
     }
 
@@ -290,8 +333,8 @@ export class OnboardingRescueService {
     try {
       await this.notifications.createNotification(tenant.ownerUserId, {
         type: 'reminder',
-        title: 'Te falta poco para terminar tu configuración',
-        body: `Sigue pendiente: ${STEP_LABELS[tenant.step]}. Termínalo y empieza a cobrar con CLYPS.`,
+        title: '¡Tu negocio está casi listo! ✨',
+        body: `Solo te falta: ${STEP_LABELS[tenant.step]}. Te toma unos minutos y empiezas a disfrutar CLYPS.`,
         // `type: 'reminder'` lo comparten los recordatorios de cita, así que se
         // marca el origen y el paso: con eso el front distingue el aviso y sabe
         // a qué pantalla del checklist llevar al dueño.
@@ -310,6 +353,21 @@ export class OnboardingRescueService {
       );
       return false;
     }
+  }
+
+  /**
+   * Correo de acompañamiento al dueño: a los 4 días le agradece y le dice qué
+   * sigue; a los 7 le ofrece hacerlo juntos. El botón lleva a la web, donde
+   * inicia sesión normal y sigue donde lo dejó.
+   */
+  private async emailOwner(tenant: StuckTenant): Promise<boolean> {
+    const email = buildOwnerRescueEmail(tenant, {
+      webUrl: WEB_APP_URL,
+      assetsBaseUrl: this.assetsBaseUrl,
+      supportWhatsapp: this.supportWhatsapp,
+    });
+    if (!email || !tenant.ownerEmail) return false;
+    return this.email.sendEmail(tenant.ownerEmail, email.subject, email.html);
   }
 
   /**
