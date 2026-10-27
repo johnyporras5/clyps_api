@@ -10,6 +10,7 @@ import {
  */
 export const PAYMENT_METHODS = [
   'cash',
+  'cash_bs',
   'mobile_payment',
   'transfer',
   'card',

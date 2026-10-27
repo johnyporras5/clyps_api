@@ -27,6 +27,7 @@ import { SessionProduct } from '../product/entities/session_product.entity';
 import { toMinor, pct, fromMinor } from '../payroll/payroll-money.util';
 import { FeedbacksService } from '../feedbacks/feedbacks.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { CashClosingLockService } from '../cash_closing/cash-closing-lock.service';
 import { EntitlementsService } from '../subscription/entitlements.service';
 import { WORKER_PLAN_SUSPENDED } from './session-detail.subscriber';
 import { CreateSessionDto } from './dto/create-session.dto';
@@ -130,6 +131,7 @@ export class SessionService {
     private feedbacksService: FeedbacksService,
     private readonly onboardingService: OnboardingService,
     private readonly entitlements: EntitlementsService,
+    private readonly cashClosingLock: CashClosingLockService,
   ) {}
 
   async create(
@@ -4251,6 +4253,9 @@ export class SessionService {
     if (paidAt.getTime() > Date.now() + 60_000) {
       throw new BadRequestException('La fecha de cobro no puede ser futura.');
     }
+    if (!dto.pendingCollection) {
+      await this.cashClosingLock.assertInstantOpen(adminCompany.id, paidAt);
+    }
 
     // Resolver el período destino de la comisión según la fecha del cobro. Si cae
     // en un período que NO está abierto, se exige confirmación (se recongelará).
@@ -5124,6 +5129,10 @@ export class SessionService {
     if (!owns) {
       throw new ForbiddenException('No tienes permiso sobre esta cita');
     }
+    await this.cashClosingLock.assertInstantOpen(
+      adminCompany.id,
+      payment.collectedAt,
+    );
 
     // Snapshot del cobro (para auditoría): guardamos el MISMO payload que el
     // recibo (servicios, comisiones/propinas por persona, productos, descuentos,
@@ -5599,7 +5608,9 @@ export class SessionService {
         alreadyCollected: true,
       };
     }
-    payment.collectedAt = new Date();
+    const collectedAt = new Date();
+    await this.cashClosingLock.assertInstantOpen(company.id, collectedAt);
+    payment.collectedAt = collectedAt;
     await this.sessionPaymentRepository.save(payment);
     return {
       sessionId,
