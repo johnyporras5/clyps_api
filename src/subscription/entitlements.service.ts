@@ -506,6 +506,14 @@ export class EntitlementsService {
    * para nadie, esté al día o no. Antes iban pegados en un solo método, así que
    * un rol exento del bloqueo se llevaba de regalo las funciones del Full.
    */
+  async planIncludes(
+    companyId: number,
+    feature: PlanFeature,
+  ): Promise<boolean> {
+    const context = await this.context(companyId);
+    return context.limits[feature];
+  }
+
   async assertPlanIncludes(
     companyId: number,
     feature: PlanFeature,
