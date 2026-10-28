@@ -21,6 +21,7 @@ import type {
   OnboardingSkipResponse,
   OnboardingStateResponse,
 } from './dto/onboarding-state-response.dto';
+import { EntitlementsService } from '../subscription/entitlements.service';
 
 /** Resultado del recálculo de un paso contra el estado real del sistema. */
 interface StepEvaluation {
@@ -49,7 +50,10 @@ export interface MissingServiceData {
 export class OnboardingService {
   private readonly logger = new Logger(OnboardingService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly entitlements: EntitlementsService,
+  ) {}
 
   private manager(manager?: EntityManager): EntityManager {
     return manager ?? this.dataSource.manager;
@@ -462,6 +466,9 @@ export class OnboardingService {
     companyId: number,
     em: EntityManager,
   ): Promise<StepEvaluation> {
+    if (!(await this.entitlements.planIncludes(companyId, 'payroll'))) {
+      return { status: 'completed' };
+    }
     const rows: Array<{ total: number }> = await em.query(
       `SELECT (
          EXISTS(SELECT 1 FROM payroll_config WHERE company_id = ?)
