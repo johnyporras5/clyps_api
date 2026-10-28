@@ -249,3 +249,49 @@ export function totalsByCurrency(lines: ClosingLine[]): Array<{
       a.currency.localeCompare(b.currency),
   );
 }
+
+function toArray(raw: unknown): Array<Record<string, unknown>> {
+  let value = raw;
+  if (typeof raw === 'string') {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+}
+
+export function tipsFromAttributions(raw: unknown): Array<{
+  currency: string;
+  amountMinor: number;
+  amountBsMinor: number | null;
+}> {
+  return toArray(raw)
+    .filter((item) => item.kind === 'tip')
+    .map((item) => {
+      const currency =
+        typeof item.currency === 'string' ? item.currency.toUpperCase() : 'VES';
+      const amountMinor = Math.round(Number(item.amountItemMinor) || 0);
+      const rate = currency === 'VES' ? 1 : Number(item.exchangeRate);
+      return {
+        currency,
+        amountMinor,
+        amountBsMinor:
+          Number.isFinite(rate) && rate > 0
+            ? Math.round(amountMinor * rate)
+            : null,
+      };
+    })
+    .filter((tip) => tip.amountMinor > 0);
+}
+
+export function leftoverTipBsMinor(
+  totalBsMinor: number | null,
+  lineBsMinors: Array<number | null>,
+): number {
+  if (totalBsMinor == null || lineBsMinors.some((v) => v == null)) return 0;
+  const linesSum = lineBsMinors.reduce<number>((sum, v) => sum + (v ?? 0), 0);
+  const leftover = totalBsMinor - linesSum;
+  return leftover > 1 ? leftover : 0;
+}

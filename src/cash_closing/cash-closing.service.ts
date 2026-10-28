@@ -23,7 +23,9 @@ import {
   countedCashByCurrency,
   findDuplicateCell,
   paidEntry,
+  leftoverTipBsMinor,
   splitProductPortion,
+  tipsFromAttributions,
   totalsByCurrency,
   type ClosingEntry,
   type CurrencyAmount,
@@ -325,6 +327,7 @@ export class CashClosingService {
       tipCurrency: string | null;
       tipBs: string | null;
       adjustmentBs: string | null;
+      attributions: unknown;
     }> = await this.closingRepository.query(
       `SELECT sp.id AS id,
               sp.session_id AS sessionId,
@@ -332,7 +335,8 @@ export class CashClosingService {
               sp.tip AS tip,
               sp.tip_currency AS tipCurrency,
               sp.tip_bs AS tipBs,
-              sp.company_adjustment_bs AS adjustmentBs
+              sp.company_adjustment_bs AS adjustmentBs,
+              sp.attributions AS attributions
          FROM session_payments sp
         WHERE sp.collected_at BETWEEN ? AND ?
           AND EXISTS (
@@ -347,55 +351,28 @@ export class CashClosingService {
     const paymentIds = payments.map((p) => Number(p.id));
     const sessionIds = payments.map((p) => Number(p.sessionId));
 
-    const [lines, flexTips]: [
-      Array<{
-        paymentId: number;
-        currency: string;
-        subtotal: string | null;
-        subtotalBs: string | null;
-        method: string | null;
-      }>,
-      Array<{
-        sessionId: number;
-        currency: string;
-        amountMinor: string;
-        amountBsMinor: string | null;
-      }>,
-    ] = await Promise.all([
-      this.closingRepository.query(
-        `SELECT l.payment_id AS paymentId,
-                UPPER(l.currency) AS currency,
-                l.subtotal AS subtotal,
-                l.subtotal_bs AS subtotalBs,
-                l.method AS method
-           FROM session_payment_lines l
-          WHERE l.payment_id IN (?)`,
-        [paymentIds],
-      ),
-      this.closingRepository.query(
-        `SELECT CAST(JSON_EXTRACT(pc.metadata, '$.appointmentId') AS UNSIGNED) AS sessionId,
-                UPPER(pc.currency) AS currency,
-                pc.amount_minor AS amountMinor,
-                pc.amount_bs_minor AS amountBsMinor
-           FROM payroll_concept pc
-          WHERE pc.company_id = ?
-            AND pc.type = 'tip'
-            AND pc.source_type NOT IN ('manual', 'direct_sale')
-            AND JSON_EXTRACT(pc.metadata, '$.attribution') = true
-            AND CAST(JSON_EXTRACT(pc.metadata, '$.appointmentId') AS UNSIGNED) IN (?)`,
-        [companyId, sessionIds],
-      ),
-    ]);
+    const lines: Array<{
+      paymentId: number;
+      currency: string;
+      subtotal: string | null;
+      subtotalBs: string | null;
+      method: string | null;
+    }> = await this.closingRepository.query(
+      `SELECT l.payment_id AS paymentId,
+              UPPER(l.currency) AS currency,
+              l.subtotal AS subtotal,
+              l.subtotal_bs AS subtotalBs,
+              l.method AS method
+         FROM session_payment_lines l
+        WHERE l.payment_id IN (?)`,
+      [paymentIds],
+    );
 
     const linesByPayment = new Map<number, typeof lines>();
     for (const l of lines) {
       const id = Number(l.paymentId);
       linesByPayment.set(id, [...(linesByPayment.get(id) ?? []), l]);
     }
-    const paymentBySession = new Map(
-      payments.map((p) => [Number(p.sessionId), p]),
-    );
-
     const entries: ClosingEntry[] = [];
     const methodOf = (p: (typeof payments)[number]): string | null =>
       p.method ??
@@ -485,18 +462,18 @@ export class CashClosingService {
       }
     }
 
-    for (const t of flexTips) {
-      const payment = paymentBySession.get(Number(t.sessionId));
-      if (!payment) continue;
-      entries.push(
-        paidEntry(
-          methodOf(payment),
-          upper(t.currency, 'VES'),
-          Math.round(num(t.amountMinor)),
-          t.amountBsMinor != null ? Math.round(num(t.amountBsMinor)) : null,
-          'tips',
-        ),
-      );
+    for (const p of payments) {
+      for (const tip of tipsFromAttributions(p.attributions)) {
+        entries.push(
+          paidEntry(
+            methodOf(p),
+            tip.currency,
+            tip.amountMinor,
+            tip.amountBsMinor,
+            'tips',
+          ),
+        );
+      }
     }
 
     return entries;
@@ -512,11 +489,13 @@ export class CashClosingService {
       method: string | null;
       saleLines: unknown;
       adjustmentBs: string | null;
+      totalBs: string | null;
     }> = await this.closingRepository.query(
       `SELECT ds.id AS id,
               ds.method AS method,
               ds.\`lines\` AS saleLines,
-              ds.company_adjustment_bs AS adjustmentBs
+              ds.company_adjustment_bs AS adjustmentBs,
+              ds.total_bs AS totalBs
          FROM direct_sale ds
         WHERE ds.company_id = ?
           AND ds.collected_at BETWEEN ? AND ?`,
@@ -546,8 +525,23 @@ export class CashClosingService {
     const entries: ClosingEntry[] = [];
     const saleById = new Map(sales.map((s) => [Number(s.id), s]));
 
+    const salesWithPayrollTips = new Set(tips.map((t) => Number(t.saleId)));
+
     for (const sale of sales) {
-      for (const line of parseJsonArray(sale.saleLines)) {
+      const saleLines = parseJsonArray(sale.saleLines);
+      if (!salesWithPayrollTips.has(Number(sale.id))) {
+        const leftover = leftoverTipBsMinor(
+          sale.totalBs != null ? toMinor(sale.totalBs) : null,
+          saleLines.map((line) => {
+            const bs = line.subtotalBs as string | number | null | undefined;
+            return bs != null ? toMinor(bs) : null;
+          }),
+        );
+        if (leftover > 0) {
+          entries.push(paidEntry(sale.method, 'VES', leftover, null, 'tips'));
+        }
+      }
+      for (const line of saleLines) {
         const currency =
           typeof line.currency === 'string' ? line.currency : 'VES';
         const subtotalBs = line.subtotalBs as string | number | null;

@@ -4,8 +4,10 @@ import {
   buildClosingLines,
   countedCashByCurrency,
   findDuplicateCell,
+  leftoverTipBsMinor,
   paidEntry,
   splitProductPortion,
+  tipsFromAttributions,
   totalsByCurrency,
   type ClosingEntry,
 } from './cash-closing.util';
@@ -254,5 +256,55 @@ describe('splitProductPortion', () => {
       productMinor: 500,
       restMinor: 0,
     });
+  });
+});
+
+describe('tipsFromAttributions', () => {
+  it('toma solo las propinas del cobro, con su equivalente en Bs', () => {
+    const attributions = [
+      {
+        kind: 'commission',
+        currency: 'EUR',
+        amountItemMinor: 250,
+        exchangeRate: 1000,
+      },
+      {
+        kind: 'tip',
+        currency: 'EUR',
+        amountItemMinor: 500,
+        exchangeRate: 1000,
+      },
+    ];
+    expect(tipsFromAttributions(attributions)).toEqual([
+      { currency: 'EUR', amountMinor: 500, amountBsMinor: 500000 },
+    ]);
+  });
+
+  it('lee el JSON guardado como texto y una propina en Bs no lleva tasa', () => {
+    expect(
+      tipsFromAttributions(
+        JSON.stringify([
+          { kind: 'tip', currency: 'VES', amountItemMinor: 10000 },
+        ]),
+      ),
+    ).toEqual([{ currency: 'VES', amountMinor: 10000, amountBsMinor: 10000 }]);
+  });
+
+  it('sin atribuciones no hay propinas', () => {
+    expect(tipsFromAttributions(null)).toEqual([]);
+  });
+});
+
+describe('leftoverTipBsMinor', () => {
+  it('la propina de una venta es lo cobrado en Bs por encima de las líneas', () => {
+    expect(leftoverTipBsMinor(584060, [444060, 100000])).toBe(40000);
+  });
+
+  it('si el total coincide con las líneas no hay propina', () => {
+    expect(leftoverTipBsMinor(544060, [444060, 100000])).toBe(0);
+  });
+
+  it('sin el equivalente en Bs de alguna línea no se adivina', () => {
+    expect(leftoverTipBsMinor(584060, [null, 100000])).toBe(0);
   });
 });
