@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import { BUSINESS_TIMEZONE } from '../common/utils/business-time.util';
+import { DeactivatedCompaniesService } from '../company_deactivation/deactivated-companies.service';
 
 /**
  * Un servicio dentro del correo de una cita. Una cita puede tener varios, y va
@@ -41,7 +42,10 @@ export class EmailService {
   private resend: Resend;
   private readonly fromEmail: string;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private readonly deactivatedCompanies: DeactivatedCompaniesService,
+  ) {
     const apiKey = this.configService.get('RESEND_API_KEY');
     const domain = this.configService.get('RESEND_DOMAIN', 'example.com');
 
@@ -111,6 +115,29 @@ export class EmailService {
     return userType === 'adm';
   }
 
+  /**
+   * Red de seguridad de los salones desactivados: el dueño y los trabajadores
+   * de un salón desactivado no reciben NINGÚN correo, venga de donde venga.
+   * Los cron ya los filtran en origen; esto atrapa lo que se escape, incluido
+   * cualquier correo nuevo que se agregue mañana sin acordarse del filtro.
+   *
+   * Pasa por aquí cada envío a Resend de este archivo; uno nuevo tiene que
+   * llamarlo también. Si la consulta falla, el correo sale: perder un correo
+   * legítimo por un fallo de la base es peor que mandar uno de más.
+   */
+  private async isSilenced(to: string): Promise<boolean> {
+    try {
+      if (!(await this.deactivatedCompanies.isEmailSilenced(to))) return false;
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo comprobar si ${to} está desactivado; se envía igual: ${(error as Error).message}`,
+      );
+      return false;
+    }
+    this.logger.log(`Correo a ${to} omitido: su salón está desactivado`);
+    return true;
+  }
+
   async sendVerificationCode(
     email: string,
     code: string,
@@ -156,6 +183,8 @@ export class EmailService {
         return false;
       }
 
+      if (await this.isSilenced(email)) return false;
+
       this.logger.log(`Enviando código ${code} a ${email}`);
 
       const { error } = await this.resend.emails.send({
@@ -191,6 +220,8 @@ export class EmailService {
         return false;
       }
 
+      if (await this.isSilenced(email)) return false;
+
       this.logger.log(
         `Enviando notificación de cambio de contraseña a ${email}`,
       );
@@ -222,6 +253,8 @@ export class EmailService {
         );
         return false;
       }
+
+      if (await this.isSilenced(to)) return false;
 
       this.logger.log(`Enviando email a ${to} con asunto: ${subject}`);
 
@@ -1932,6 +1965,8 @@ export class EmailService {
         );
         return false;
       }
+
+      if (await this.isSilenced(email)) return false;
 
       this.logger.log(
         `Enviando credenciales a ${email} para la compañía ${companyName}`,

@@ -11,6 +11,8 @@ import { createHash, randomBytes } from 'crypto';
 import { User } from '../../user/entities/user.entity';
 import { WebHandoffTicket } from '../entities/web_handoff_ticket.entity';
 import { AuthService } from '../auth.service';
+import { DeactivatedCompaniesService } from '../../company_deactivation/deactivated-companies.service';
+import { companyDeactivatedError } from '../../company_deactivation/company-deactivation.util';
 
 const DEFAULT_TICKET_TTL_SECONDS = 60;
 
@@ -24,6 +26,7 @@ export class WebHandoffService {
     private readonly jwtService: JwtService,
     private readonly authService: AuthService,
     private readonly config: ConfigService,
+    private readonly deactivatedCompanies: DeactivatedCompaniesService,
   ) {}
 
   private ticketTtlSeconds(): number {
@@ -77,6 +80,10 @@ export class WebHandoffService {
       throw new ForbiddenException(
         'Solo el administrador del salón puede abrir su cuenta en la web.',
       );
+    }
+    // El vale pudo pedirse justo antes de que se desactivara el salón.
+    if (await this.deactivatedCompanies.isUserSilenced(user.id)) {
+      throw companyDeactivatedError();
     }
 
     const companyClaims = await this.authService.buildCompanyClaims(user);

@@ -82,6 +82,27 @@ export class Company {
   @Column({ name: 'allow_negative_stock', type: 'tinyint', default: 0 })
   allowNegativeStock: boolean;
 
+  /**
+   * Salón desactivado por el administrador de la plataforma. NULL = activo.
+   * Con fecha, el dueño y sus trabajadores no entran, nadie reserva y no les
+   * llega ni correo ni push. Solo lo cambian los endpoints `padm` de
+   * `admin/companies`: no está en ningún DTO de edición del salón.
+   */
+  @Column({ name: 'deactivated_at', type: 'datetime', nullable: true })
+  deactivatedAt: Date | null;
+
+  /** El `padm` que lo desactivó. */
+  @Column({ name: 'deactivated_by', type: 'int', nullable: true })
+  deactivatedBy: number | null;
+
+  @Column({
+    name: 'deactivation_reason',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  deactivationReason: string | null;
+
   @OneToMany(() => CalendarCompany, (calendar) => calendar.company, {
     cascade: true,
   })

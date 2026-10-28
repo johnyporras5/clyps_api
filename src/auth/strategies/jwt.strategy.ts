@@ -5,12 +5,15 @@ import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { TokenBlacklistService } from '../services/token_blacklist.service';
 import type { JwtPayload } from '../types/authenticated-request';
+import { DeactivatedCompaniesService } from '../../company_deactivation/deactivated-companies.service';
+import { companyDeactivatedError } from '../../company_deactivation/company-deactivation.util';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private configService: ConfigService,
     private tokenBlacklistService: TokenBlacklistService,
+    private deactivatedCompanies: DeactivatedCompaniesService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -31,6 +34,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       if (isBlacklisted) {
         throw new UnauthorizedException('Token inválido o sesión expirada');
       }
+    }
+
+    // Salón desactivado desde el panel. Va aquí y no solo en el login porque
+    // el token dura horas: sin esto, quien ya estaba dentro seguiría operando
+    // hasta que le caducara. Incluye los tokens de suplantación, que llevan
+    // el `companyId` del salón al que se entró.
+    if (
+      await this.deactivatedCompanies.isSessionBlocked({
+        sub: payload.sub,
+        userType: payload.userType,
+        companyId: payload.companyId ?? null,
+      })
+    ) {
+      throw companyDeactivatedError();
     }
 
     // OJO: lo que se devuelve aquí es EXACTAMENTE lo que verá `req.user`, y es

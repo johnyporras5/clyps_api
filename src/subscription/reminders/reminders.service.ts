@@ -142,6 +142,9 @@ export class RemindersService {
    * Suscripciones que podrían tener aviso hoy: las que vencen en los próximos
    * 8 días o vencieron dentro de la ventana de gracia. Los exentos quedan fuera
    * — a quien no se le cobra no se le recuerda pagar.
+   *
+   * Tampoco los salones desactivados desde el panel. Se filtran aquí y no al
+   * enviar para que no ocupen sitio en el lote de SWEEP_BATCH.
    */
   private async candidates(now: Date): Promise<Subscription[]> {
     const from = new Date(now.getTime() - (this.graceDays + 7) * DAY_MS);
@@ -153,6 +156,9 @@ export class RemindersService {
       .andWhere(
         '(s.currentPeriodEnd BETWEEN :from AND :to OR s.trialEndsAt BETWEEN :from AND :to)',
         { from, to },
+      )
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM company co WHERE co.id = s.company_id AND co.deactivated_at IS NOT NULL)',
       )
       .orderBy('s.id', 'ASC')
       .take(SWEEP_BATCH)

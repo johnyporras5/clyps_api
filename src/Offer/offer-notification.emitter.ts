@@ -69,7 +69,13 @@ export class OfferNotificationEmitter {
              FROM offer
             WHERE status = 1
               AND end_date >= (CURDATE() + INTERVAL 1 DAY)
-              AND end_date <= (CURDATE() + INTERVAL 2 DAY)`,
+              AND end_date <= (CURDATE() + INTERVAL 2 DAY)
+              -- Un salón desactivado no anuncia ofertas a nadie.
+              AND NOT EXISTS (
+                    SELECT 1 FROM company co
+                     WHERE co.id = offer.company_id
+                       AND co.deactivated_at IS NOT NULL
+                  )`,
         );
 
       for (const offer of offers) {

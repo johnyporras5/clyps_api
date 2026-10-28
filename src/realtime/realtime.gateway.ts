@@ -17,6 +17,8 @@ import { TokenBlacklistService } from '../auth/services/token_blacklist.service'
 import { AuthService } from '../auth/auth.service';
 import type { JwtPayload } from '../auth/types/authenticated-request';
 import { RealtimeService } from './realtime.service';
+import { DeactivatedCompaniesService } from '../company_deactivation/deactivated-companies.service';
+import { COMPANY_DEACTIVATED_MESSAGE } from '../company_deactivation/company-deactivation.util';
 import {
   userRoom,
   clientRoom,
@@ -54,6 +56,7 @@ export class RealtimeGateway
     private readonly tokenBlacklistService: TokenBlacklistService,
     private readonly authService: AuthService,
     private readonly realtimeService: RealtimeService,
+    private readonly deactivatedCompanies: DeactivatedCompaniesService,
   ) {}
 
   // ==================== INIT ====================
@@ -164,6 +167,17 @@ export class RealtimeGateway
       });
       companyId = claims.companyId;
       companyWorkerId = claims.companyWorkerId;
+    }
+
+    // Salón desactivado: mismo criterio que JwtStrategy en las peticiones REST.
+    if (
+      await this.deactivatedCompanies.isSessionBlocked({
+        sub: payload.sub,
+        userType,
+        companyId,
+      })
+    ) {
+      throw new Error(COMPANY_DEACTIVATED_MESSAGE);
     }
 
     return {

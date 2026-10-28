@@ -41,7 +41,12 @@ export class CompanyController {
     private readonly realtime: RealtimeService,
   ) {}
 
+  // Lista de TODOS los salones con su correo, teléfono y estado de
+  // desactivación (con el motivo): solo para el panel de la plataforma. Antes
+  // cualquier usuario logueado podía pedirla; la app no la usa.
   @Get()
+  @UseGuards(RolesGuard)
+  @Roles('padm')
   async findAll(
     @Query() paginationDto: PaginationDto,
   ): Promise<PaginationResult<CompanyWithLogoUrl>> {
@@ -125,12 +130,22 @@ export class CompanyController {
     return this.companyService.findByUserId(userId);
   }
 
+  // Crear, editar y BORRAR un salón cualquiera por id: solo el administrador
+  // de la plataforma. Antes bastaba con estar logueado, así que cualquier
+  // cliente o trabajador podía editar o borrar el salón de otro. Ni la app ni
+  // el panel usan estas tres rutas: el dueño edita lo suyo por
+  // `PUT /companys/admin/profile` y el alta va por el registro.
+  // `@Roles` va en cada método: el RolesGuard solo lee el del handler.
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles('padm')
   async create(@Body() createCompanyDto: CreateCompanyDto): Promise<Company> {
     return this.companyService.create(createCompanyDto);
   }
 
   @Put(':id')
+  @UseGuards(RolesGuard)
+  @Roles('padm')
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateCompanyDto: UpdateCompanyDto,
@@ -139,6 +154,8 @@ export class CompanyController {
   }
 
   @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles('padm')
   async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return this.companyService.remove(id);
   }
