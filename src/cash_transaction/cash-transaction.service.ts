@@ -15,6 +15,7 @@ import { QueryCashTransactionsDto } from './dto/query-cash-transactions.dto';
 import { assertPositiveAmountMinor, toBsMinor } from './cash-transaction.util';
 import { normalizeSupplierName } from './cash-supplier.util';
 import { categoryAllowsKind } from '../cash_category/cash-category.enums';
+import { CashClosingLockService } from '../cash_closing/cash-closing-lock.service';
 import type {
   CashTransactionKind,
   CashPaymentMethod,
@@ -33,6 +34,7 @@ export class CashTransactionService {
     private readonly categoryRepository: Repository<CashCategory>,
     @InjectRepository(Company)
     private readonly companyRepository: Repository<Company>,
+    private readonly cashClosingLock: CashClosingLockService,
   ) {}
 
   private async getCompanyOrFail(adminId: number): Promise<Company> {
@@ -54,6 +56,7 @@ export class CashTransactionService {
     assertPositiveAmountMinor(dto.amountMinor);
     await this.assertCategoryFits(company.id, dto.categoryId, dto.kind, true);
     assertPaymentReferenceFits(dto.paymentMethod, dto.paymentReference);
+    await this.cashClosingLock.assertDayOpen(company.id, dto.date);
 
     const currency = dto.currency ?? 'VES';
     const exchangeRate = dto.exchangeRate ?? null;
@@ -169,6 +172,10 @@ export class CashTransactionService {
   ): Promise<CashTransaction> {
     const company = await this.getCompanyOrFail(adminId);
     const transaction = await this.findOwnedOrFail(id, company.id);
+    await this.cashClosingLock.assertDayOpen(company.id, transaction.date);
+    if (dto.date !== undefined && dto.date !== transaction.date) {
+      await this.cashClosingLock.assertDayOpen(company.id, dto.date);
+    }
 
     // Las reglas se revalidan contra el estado FINAL, no contra lo que llegó:
     // cambiar solo el kind también puede romper el encaje con la categoría.
@@ -236,6 +243,7 @@ export class CashTransactionService {
   async remove(id: number, adminId: number): Promise<void> {
     const company = await this.getCompanyOrFail(adminId);
     const transaction = await this.findOwnedOrFail(id, company.id);
+    await this.cashClosingLock.assertDayOpen(company.id, transaction.date);
     await this.transactionRepository.delete(transaction.id);
   }
 

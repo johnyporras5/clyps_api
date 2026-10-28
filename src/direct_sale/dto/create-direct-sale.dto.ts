@@ -37,6 +37,10 @@ export class DirectSaleLineDto {
   @IsNumber()
   @Min(0)
   subtotalBs?: number | null;
+
+  @IsOptional()
+  @IsIn([...PAYMENT_METHODS])
+  method?: string | null;
 }
 
 export class DirectSaleProductDto {

@@ -15,6 +15,9 @@ import { BlacklistedToken } from './entities/blacklisted_token.entity';
 import { TokenBlacklistService } from './services/token_blacklist.service';
 import { ImpersonationSession } from './entities/impersonation_session.entity';
 import { ImpersonationService } from './services/impersonation.service';
+import { WebHandoffTicket } from './entities/web_handoff_ticket.entity';
+import { WebHandoffService } from './services/web-handoff.service';
+import { WebHandoffController } from './web-handoff.controller';
 import {
   AdminImpersonationController,
   ImpersonationController,
@@ -47,6 +50,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
       Client,
       BlacklistedToken,
       ImpersonationSession,
+      WebHandoffTicket,
       Company,
       CompanyWorker,
       CalendarCompany,
@@ -93,12 +97,14 @@ import { RealtimeModule } from '../realtime/realtime.module';
     AuthController,
     AdminImpersonationController,
     ImpersonationController,
+    WebHandoffController,
   ],
   providers: [
     AuthService,
     JwtStrategy,
     TokenBlacklistService,
     ImpersonationService,
+    WebHandoffService,
     CompanyService,
   ],
   exports: [

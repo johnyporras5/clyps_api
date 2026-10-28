@@ -18,6 +18,7 @@ import {
 } from '../payroll/payroll-earnings.service';
 import { pct } from '../payroll/payroll-money.util';
 import { CreateDirectSaleDto } from './dto/create-direct-sale.dto';
+import { CashClosingLockService } from '../cash_closing/cash-closing-lock.service';
 
 @Injectable()
 export class DirectSaleService {
@@ -32,6 +33,7 @@ export class DirectSaleService {
     private readonly clientRepository: Repository<Client>,
     private readonly sessionProductService: SessionProductService,
     private readonly payrollEarningsService: PayrollEarningsService,
+    private readonly cashClosingLock: CashClosingLockService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -70,6 +72,9 @@ export class DirectSaleService {
 
     const now = new Date();
     const paidAt = now;
+    if (!dto.pendingCollection) {
+      await this.cashClosingLock.assertInstantOpen(company.id, paidAt);
+    }
 
     // 1) Venta + cabecera, atómico.
     const { sale, savedProducts } = await this.dataSource.transaction(
@@ -199,7 +204,9 @@ export class DirectSaleService {
     if (sale.collectedAt) {
       return { id: sale.id, collectedAt: sale.collectedAt };
     }
-    sale.collectedAt = new Date();
+    const collectedAt = new Date();
+    await this.cashClosingLock.assertInstantOpen(company.id, collectedAt);
+    sale.collectedAt = collectedAt;
     await this.directSaleRepository.save(sale);
     return { id: sale.id, collectedAt: sale.collectedAt };
   }

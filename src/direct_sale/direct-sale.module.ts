@@ -7,12 +7,14 @@ import { DirectSaleService } from './direct-sale.service';
 import { DirectSaleController } from './direct-sale.controller';
 import { ProductModule } from '../product/product.module';
 import { PayrollModule } from '../payroll/payroll.module';
+import { CashClosingModule } from '../cash_closing/cash-closing.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([DirectSale, Company, Client]),
     ProductModule,
     PayrollModule,
+    CashClosingModule,
   ],
   controllers: [DirectSaleController],
   providers: [DirectSaleService],
