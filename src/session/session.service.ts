@@ -89,6 +89,33 @@ export interface RippleMovedDetail {
   newStart: Date;
 }
 
+interface AttributionRecord {
+  kind?: string;
+  label?: string;
+  currency?: string;
+  amountItemMinor?: number | string;
+  companyWorkerId?: number | string;
+  sourceType?: string;
+  sourceId?: number | string;
+}
+
+function attributionTipTotals(
+  attributions: unknown[] | null,
+): Array<{ currency: string; amount: number }> {
+  const totals = new Map<string, number>();
+  for (const raw of attributions ?? []) {
+    const a = raw as AttributionRecord;
+    const amountMinor = Math.round(Number(a?.amountItemMinor) || 0);
+    if (a?.kind !== 'tip' || amountMinor <= 0) continue;
+    const currency = (a.currency || 'VES').toUpperCase();
+    totals.set(currency, (totals.get(currency) ?? 0) + amountMinor);
+  }
+  return [...totals].map(([currency, minor]) => ({
+    currency,
+    amount: minor / 100,
+  }));
+}
+
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
@@ -5060,9 +5087,54 @@ export class SessionService {
       })),
       services,
       products,
-      concepts,
+      concepts: await this.withAttributionTips(payment, concepts),
+      attributionTips: attributionTipTotals(payment.attributions),
       discounts,
     };
+  }
+
+  private async withAttributionTips<
+    T extends { type: string; sourceType: string | null },
+  >(payment: SessionPayment, concepts: T[]) {
+    const tips = (payment.attributions ?? [])
+      .map((raw) => raw as AttributionRecord)
+      .filter((a) => a?.kind === 'tip' && Number(a.amountItemMinor) > 0);
+    if (tips.length === 0 || concepts.some((c) => c.type === 'tip')) {
+      return concepts;
+    }
+
+    const workerIds = [...new Set(tips.map((t) => Number(t.companyWorkerId)))];
+    const names: Array<{ id: number; name: string | null }> =
+      await this.sessionPaymentRepository.query(
+        `SELECT cw.id AS id, w.name AS name
+           FROM company_worker cw
+           JOIN worker w ON w.id = cw.worker_id
+          WHERE cw.id IN (?)`,
+        [workerIds],
+      );
+    const nameById = new Map(names.map((n) => [Number(n.id), n.name]));
+    const isCash = (payment.method ?? '').toLowerCase() === 'cash';
+
+    return [
+      ...concepts,
+      ...tips.map((t) => {
+        const nativeCurrency = (t.currency || 'VES').toUpperCase();
+        const nativeAmountMinor = Math.round(Number(t.amountItemMinor));
+        return {
+          type: 'tip',
+          label: t.label ?? 'Propina',
+          personName: nameById.get(Number(t.companyWorkerId)) ?? 'Trabajador',
+          companyWorkerId: Number(t.companyWorkerId),
+          amountMinor: nativeAmountMinor,
+          currency: isCash && nativeCurrency !== 'VES' ? nativeCurrency : 'VES',
+          amountBsMinor: null,
+          nativeAmountMinor,
+          nativeCurrency,
+          sourceType: t.sourceType ?? null,
+          sourceId: t.sourceId != null ? Number(t.sourceId) : null,
+        };
+      }),
+    ];
   }
 
   /**
