@@ -30,10 +30,17 @@ import { generateSimplePassword } from '../auth/password.util';
 import { normalizeCompanyCalendarDetail } from '../common/utils/company-calendar.util';
 import { isWithinOpenHours } from './booking-hours.util';
 import { generateUniqueWorkerSlug } from '../company_worker/company-worker-slug.util';
+import { FileUploadService } from '../common/services/file_upload.service';
+import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 import {
   CreatePublicBookingDto,
   PublicAvailabilityQueryDto,
 } from './dto/create-public-booking.dto';
+import { CompanyBookingSettings } from './entities/company-booking-settings.entity';
+import { PublicBookingRequest } from './entities/public-booking-request.entity';
+import { toSettingsView } from './booking-requests.service';
+import { validatePersonName } from './person-name.util';
+import type { BookingRequestStatus } from './booking-modes.enums';
 
 /** Menos que esto llenando el formulario es un bot, no una persona. */
 const MIN_FORM_ELAPSED_MS = 3000;
@@ -75,6 +82,13 @@ export class PublicBookingService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Client)
     private readonly clientRepository: Repository<Client>,
+    @InjectRepository(SessionDetail)
+    private readonly sessionDetailRepository: Repository<SessionDetail>,
+    @InjectRepository(CompanyBookingSettings)
+    private readonly settingsRepository: Repository<CompanyBookingSettings>,
+    @InjectRepository(PublicBookingRequest)
+    private readonly requestRepository: Repository<PublicBookingRequest>,
+    private readonly fileUploadService: FileUploadService,
     private readonly serviceService: ServiceService,
     private readonly offerService: OfferService,
     private readonly portfolioService: PortfolioPicturesService,
@@ -92,7 +106,7 @@ export class PublicBookingService {
 
     // Las reseñas NO se publican aquí: el comentario es texto libre del
     // cliente y puede traer datos personales. Solo va el promedio (rating).
-    const [booking, offers, portfolio, bookable] = await Promise.all([
+    const [booking, offers, portfolio, bookable, settings] = await Promise.all([
       this.serviceService.findAllByCompanyIdWithWorkers(
         company.id,
         { page: 1, limit: 500 },
@@ -105,9 +119,17 @@ export class PublicBookingService {
         .findAllByCompany(company.id, { page: 1, limit: PORTFOLIO_LIMIT })
         .catch(() => ({ data: [] as any[] })),
       this.entitlements.canOperate(company.id),
+      this.settingsRepository.findOne({ where: { companyId: company.id } }),
     ]);
 
     const info = booking.company ?? {};
+    const view = toSettingsView(settings);
+    const bookingSettings = {
+      mode: view.mode,
+      leadMinutes: view.leadMinutes,
+      holdHours: view.holdHours,
+      deposit: view.deposit,
+    };
 
     return {
       company: {
@@ -126,6 +148,7 @@ export class PublicBookingService {
         rating: info.rating ?? { average: 0, total: 0 },
       },
       bookable,
+      bookingSettings,
       services: (booking.data ?? []).map((s: any) => this.toPublicService(s)),
       offers: (offers ?? []).map((o: any) => ({
         offerId: o.offerId,
@@ -336,7 +359,11 @@ export class PublicBookingService {
 
   // ─────────────────────────── Crear la reserva ───────────────────────────
 
-  async createBooking(slug: string, dto: CreatePublicBookingDto) {
+  async createBooking(
+    slug: string,
+    dto: CreatePublicBookingDto,
+    paymentProof?: Express.Multer.File,
+  ) {
     // Anti-bots: el campo oculto lleno o un formulario llenado en menos de 3 s.
     if (
       (dto.website && dto.website.trim() !== '') ||
@@ -357,7 +384,49 @@ export class PublicBookingService {
       });
     }
 
-    await this.validateDetails(company.id, dto);
+    const nameError = validatePersonName(dto.name);
+    if (nameError) throw new BadRequestException(nameError);
+    if (!dto.phone) {
+      throw new BadRequestException(
+        'Escribe tu número de WhatsApp con el código del país.',
+      );
+    }
+
+    const settings = toSettingsView(
+      await this.settingsRepository.findOne({
+        where: { companyId: company.id },
+      }),
+    );
+    const isDeposit = settings.mode === 'deposit' && !!settings.deposit;
+    if (isDeposit) {
+      if (!dto.payment && !paymentProof) {
+        throw new ConflictException(
+          'La forma de reservar cambió. Recarga la página.',
+        );
+      }
+      if (!dto.payment?.reference) {
+        throw new BadRequestException(
+          'Escribe el número de referencia del pago.',
+        );
+      }
+      if (!paymentProof) {
+        throw new BadRequestException('Sube el capture del pago.');
+      }
+    }
+
+    await this.validateDetails(company.id, dto, settings.leadMinutes);
+
+    const proofUrl =
+      isDeposit && paymentProof
+        ? (
+            await this.fileUploadService.saveFile(
+              paymentProof,
+              'payment_proof',
+              'link-booking',
+              company.id,
+            )
+          ).fileUrl
+        : null;
 
     const { user, client, isNewUser, password } = await this.resolveGuestClient(
       dto,
@@ -382,6 +451,7 @@ export class PublicBookingService {
           })),
         },
         user.id,
+        { sendConfirmationEmails: settings.mode === 'free' },
       );
     } catch (error) {
       // Si la cuenta se creó solo para esta reserva y la cita no salió (p. ej.
@@ -399,10 +469,61 @@ export class PublicBookingService {
       );
     }
 
+    const status: BookingRequestStatus =
+      settings.mode === 'free'
+        ? 'confirmed'
+        : isDeposit
+          ? 'pending_payment'
+          : 'pending_approval';
+    const expiresAt =
+      status === 'confirmed'
+        ? null
+        : new Date(Date.now() + settings.holdHours * 60 * 60_000);
+    const deposit = isDeposit
+      ? await this.depositFor(sessionId, settings.deposit!)
+      : null;
+
+    await this.requestRepository.save(
+      this.requestRepository.create({
+        sessionId,
+        companyId: company.id,
+        status,
+        guestName: dto.name,
+        guestEmail: dto.email,
+        guestPhone: dto.phone,
+        expiresAt,
+        depositAmount: deposit ? deposit.amount.toFixed(2) : null,
+        depositCurrency: deposit?.currency ?? null,
+        paymentReference: isDeposit ? (dto.payment?.reference ?? null) : null,
+        paymentProofUrl: proofUrl,
+      }),
+    );
+
+    if (!client.phone) {
+      await this.clientRepository.update(client.id, { phone: dto.phone });
+    }
+
     // Mismo efecto que una cita creada desde la app: agenda en tiempo real y
     // push al negocio. El actor es el cliente (no se le notifica a sí mismo).
     await this.realtimeEmitter.emitCreated(sessionId);
-    await this.notificationEmitter.notifyCreated(sessionId, user.id);
+    if (status === 'confirmed') {
+      await this.notificationEmitter.notifyCreated(sessionId, user.id);
+    } else {
+      await this.notificationEmitter.notifyLinkBookingPending(
+        sessionId,
+        status === 'pending_payment',
+      );
+      this.sendReceivedEmail(
+        company,
+        dto,
+        sessionDatetime,
+        status,
+        expiresAt,
+        deposit,
+      ).catch((err) =>
+        this.logger.error('Error enviando el aviso de solicitud recibida', err),
+      );
+    }
 
     if (isNewUser && password) {
       this.emailService
@@ -422,7 +543,70 @@ export class PublicBookingService {
       publicCode: session?.publicCode ?? null,
       email: user.email,
       isNewAccount: isNewUser,
+      status,
+      expiresAt,
+      deposit,
     };
+  }
+
+  private async depositFor(
+    sessionId: number,
+    config: NonNullable<ReturnType<typeof toSettingsView>['deposit']>,
+  ): Promise<{ amount: number; currency: string }> {
+    if (config.type === 'fixed') {
+      return {
+        amount: Number(config.amount ?? 0),
+        currency: config.currency ?? 'USD',
+      };
+    }
+    const details = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    const total = details.reduce((sum, d) => sum + (Number(d.cost) || 0), 0);
+    const firstService = details[0]
+      ? await this.serviceRepository.findOne({
+          where: { id: details[0].serviceId },
+        })
+      : null;
+    return {
+      amount: Math.round(total * (config.percent ?? 0)) / 100,
+      currency: firstService?.currency ?? 'USD',
+    };
+  }
+
+  private async sendReceivedEmail(
+    company: Company,
+    dto: CreatePublicBookingDto,
+    start: Date,
+    status: 'pending_approval' | 'pending_payment',
+    expiresAt: Date | null,
+    deposit: { amount: number; currency: string } | null,
+  ) {
+    const services = await this.serviceRepository.find({
+      where: { id: In([...new Set(dto.details.map((d) => d.serviceId))]) },
+    });
+    const nameById = new Map(services.map((s) => [s.id, s.name]));
+    const when = this.emailService.formatSessionDate(start);
+    const until = expiresAt
+      ? this.emailService.formatSessionDate(expiresAt)
+      : null;
+    await this.emailService.sendLinkBookingReceivedToClient(
+      dto.email,
+      dto.name,
+      {
+        date: when.date,
+        time: when.time,
+        services: dto.details.map((d) => nameById.get(d.serviceId) ?? ''),
+        status,
+        expiresAt: until ? `${until.date} a las ${until.time}` : null,
+        deposit,
+      },
+      {
+        name: company.name,
+        email: company.email ?? '',
+        address: company.location ?? '',
+      },
+    );
   }
 
   /**
@@ -434,6 +618,7 @@ export class PublicBookingService {
   private async validateDetails(
     companyId: number,
     dto: CreatePublicBookingDto,
+    leadMinutes: number,
   ): Promise<void> {
     const serviceIds = [...new Set(dto.details.map((d) => d.serviceId))];
     const workerIds = [...new Set(dto.details.map((d) => d.companyWorkerId))];
@@ -485,11 +670,14 @@ export class PublicBookingService {
       if (Number.isNaN(start.getTime())) {
         throw new BadRequestException('La fecha de la cita no es válida.');
       }
-      // El cliente de la app ve slots desde ahora + 1 h; se deja 5 min de
-      // margen por la diferencia de relojes.
-      if (start.getTime() < now + 55 * 60_000) {
+      if (start.getTime() < now) {
         throw new BadRequestException(
           'Ese horario ya no está disponible. Elige otro.',
+        );
+      }
+      if (start.getTime() < now + (leadMinutes - 5) * 60_000) {
+        throw new BadRequestException(
+          `Debes reservar con al menos ${formatLead(leadMinutes)} de anticipación.`,
         );
       }
       if (start.getTime() > maxAhead) {
@@ -633,6 +821,18 @@ export class PublicBookingService {
     }
     return company;
   }
+}
+
+function formatLead(minutes: number): string {
+  if (minutes % 1440 === 0) {
+    const days = minutes / 1440;
+    return days === 1 ? '1 día' : `${days} días`;
+  }
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours === 1 ? '1 hora' : `${hours} horas`;
+  }
+  return `${minutes} minutos`;
 }
 
 function splitName(fullName: string): { firstName: string; lastName: string } {

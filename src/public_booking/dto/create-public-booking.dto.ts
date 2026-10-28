@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
   ValidateNested,
@@ -40,6 +41,14 @@ export class PublicBookingDetailDto {
   offerId?: number;
 }
 
+export class PublicBookingPaymentDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @IsNotEmpty({ message: 'Escribe el número de referencia del pago.' })
+  @MaxLength(60)
+  reference: string;
+}
+
 export class CreatePublicBookingDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
@@ -53,6 +62,20 @@ export class CreatePublicBookingDto {
   @IsEmail({}, { message: 'El correo no es válido' })
   @MaxLength(145)
   email: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.replace(/[^\d+]/g, '') : value,
+  )
+  @Matches(/^\+\d{8,15}$/, {
+    message: 'Escribe tu número de WhatsApp con el código del país.',
+  })
+  phone?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PublicBookingPaymentDto)
+  payment?: PublicBookingPaymentDto;
 
   @IsArray()
   @ArrayMinSize(1)

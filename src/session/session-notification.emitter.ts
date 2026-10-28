@@ -69,6 +69,34 @@ export class SessionNotificationEmitter {
     });
   }
 
+  async notifyLinkBookingPending(
+    sessionId: number,
+    awaitingPayment: boolean,
+  ): Promise<void> {
+    await this.safe('appointment.link_booking_pending', async () => {
+      const session = await this.sessionService.findOneWithDetails(sessionId);
+      const { adminUserId, workerUserIds } =
+        await this.resolveRecipients(session);
+
+      const fecha = this.formatDate(session.sessionDatetime);
+      await this.notifications.createNotificationForUsers(
+        this.exclude([adminUserId, ...workerUserIds]),
+        {
+          type: 'appointment',
+          title: awaitingPayment
+            ? 'Reserva por enlace: verifica el pago'
+            : 'Reserva por enlace por aprobar',
+          body: `${this.clientName(session)} pidió una cita para el ${fecha}`,
+          data: buildNavigationData(
+            'appointment',
+            session.id,
+            session.companyId,
+          ),
+        },
+      );
+    });
+  }
+
   /** Cambio de status → cliente + admin + workers (− actor), con texto por rol. */
   async notifyStatusChanged(
     sessionId: number,

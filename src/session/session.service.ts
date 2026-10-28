@@ -2355,6 +2355,9 @@ export class SessionService {
       cancellationReason: session.cancellationReason ?? null,
       cancelledBy: session.cancelledBy ?? null,
       cancelledByText: this.getCancelledByText(session.cancelledBy),
+      linkBookingStatus:
+        (await this.getLinkBookingStatusMap([session.id])).get(session.id) ??
+        null,
       createdAt: (session as any).createdAt || null,
       updatedAt: (session as any).updatedAt || null,
       // B1: estado de calificación del cliente para esta cita (aditivo). La
@@ -2726,6 +2729,28 @@ export class SessionService {
    *
    * Best-effort: nunca rompe la creación de la cita.
    */
+  async sendConfirmationEmailsForSession(sessionId: number): Promise<void> {
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) return;
+    const details = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    const workerId = details.find((d) => d.companyWorkerId)?.companyWorkerId;
+    if (!workerId) return;
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: { id: workerId },
+    });
+    if (!companyWorker) return;
+    await this.sendConfirmationEmails(
+      session,
+      details,
+      session.clientId,
+      companyWorker.companyId,
+    );
+  }
+
   private async sendConfirmationEmails(
     session: Session,
     details: SessionDetail[],
@@ -3159,6 +3184,9 @@ export class SessionService {
       const paymentStatusMap = await this.getPaymentStatusMap(
         sessions.map((s) => s.id),
       );
+      const linkBookingStatusMap = await this.getLinkBookingStatusMap(
+        sessions.map((s) => s.id),
+      );
 
       // 5. Enriquecer los datos (resto del código permanece igual)
       const enrichedSessions = await Promise.all(
@@ -3345,6 +3373,7 @@ export class SessionService {
             pendingCollection:
               paymentStatusMap.get(session.id)?.pendingCollection ?? false,
             collectedAt: paymentStatusMap.get(session.id)?.collectedAt ?? null,
+            linkBookingStatus: linkBookingStatusMap.get(session.id) ?? null,
             createdAt: session['createdAt'] || null,
             updatedAt: session['updatedAt'] || null,
           };
@@ -3522,6 +3551,9 @@ export class SessionService {
     const paymentStatusMap = await this.getPaymentStatusMap(
       sessions.map((s) => s.id),
     );
+    const linkBookingStatusMap = await this.getLinkBookingStatusMap(
+      sessions.map((s) => s.id),
+    );
 
     // 4. Enriquecimiento (mismo formato que findAllSessionsSimple)
     const enrichedSessions = await Promise.all(
@@ -3626,6 +3658,7 @@ export class SessionService {
           pendingCollection:
             paymentStatusMap.get(session.id)?.pendingCollection ?? false,
           collectedAt: paymentStatusMap.get(session.id)?.collectedAt ?? null,
+          linkBookingStatus: linkBookingStatusMap.get(session.id) ?? null,
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
         };
@@ -5337,6 +5370,25 @@ export class SessionService {
       concepts: r.conceptsSnapshot,
       products: r.productsSnapshot,
     }));
+  }
+
+  private async getLinkBookingStatusMap(
+    sessionIds: number[],
+  ): Promise<Map<number, 'pending_approval' | 'pending_payment'>> {
+    const map = new Map<number, 'pending_approval' | 'pending_payment'>();
+    if (sessionIds.length === 0) return map;
+    const rows: Array<{
+      sessionId: number;
+      status: 'pending_approval' | 'pending_payment';
+    }> = await this.sessionRepository.query(
+      `SELECT session_id AS sessionId, status
+         FROM public_booking_request
+        WHERE session_id IN (?)
+          AND status IN ('pending_approval','pending_payment')`,
+      [sessionIds],
+    );
+    for (const r of rows) map.set(Number(r.sessionId), r.status);
+    return map;
   }
 
   /**
@@ -7973,6 +8025,7 @@ export class SessionService {
   async createSessionByClient(
     createSessionWithDetailDto: CreateSessionWithDetailDto,
     clientUserId: number,
+    options: { sendConfirmationEmails?: boolean } = {},
   ): Promise<{
     message: string;
     isNew: boolean;
@@ -8596,16 +8649,18 @@ export class SessionService {
     }
 
     // Correos de la cita (uno solo, con todos los servicios) en segundo plano.
-    this.sendConfirmationEmails(
-      session,
-      createdDetails,
-      clientId,
-      companyId,
-    ).catch((error) => {
-      this.logger.error(
-        `Error enviando correos de confirmación: ${(error as Error).message}`,
-      );
-    });
+    if (options.sendConfirmationEmails !== false) {
+      this.sendConfirmationEmails(
+        session,
+        createdDetails,
+        clientId,
+        companyId,
+      ).catch((error) => {
+        this.logger.error(
+          `Error enviando correos de confirmación: ${(error as Error).message}`,
+        );
+      });
+    }
 
     // 11. Verificar y actualizar las compañías del cliente
     let wasAlreadyAssociated = false;

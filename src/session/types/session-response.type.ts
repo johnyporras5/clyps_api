@@ -128,6 +128,7 @@ export interface SessionDetailResponse {
   cancelReason?: string | null;
   cancelledBy?: string | null;
   cancelledByText?: string | null;
+  linkBookingStatus?: 'pending_approval' | 'pending_payment' | null;
 }
 
 // Mismo shape que cada sesión del listado de admin (findAllSessionsSimple).
@@ -177,4 +178,5 @@ export interface SessionResponse {
   cancellationReason?: string | null;
   cancelledBy?: string | null;
   cancelledByText?: string | null;
+  linkBookingStatus?: 'pending_approval' | 'pending_payment' | null;
 }

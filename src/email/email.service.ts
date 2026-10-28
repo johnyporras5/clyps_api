@@ -614,6 +614,177 @@ export class EmailService {
     );
   }
 
+  async sendLinkBookingReceivedToClient(
+    clientEmail: string,
+    clientName: string,
+    data: {
+      date: string;
+      time: string;
+      services: string[];
+      status: 'pending_approval' | 'pending_payment';
+      expiresAt: string | null;
+      deposit: { amount: number; currency: string } | null;
+    },
+    companyInfo: { name: string; email?: string; address?: string },
+  ): Promise<boolean> {
+    const isPayment = data.status === 'pending_payment';
+    const intro = isPayment
+      ? `Recibimos tu solicitud de cita y el comprobante de tu adelanto${
+          data.deposit
+            ? ` de <strong>${this.formatMoney(data.deposit.amount, data.deposit.currency)}</strong>`
+            : ''
+        }. <strong>${escapeHtml(companyInfo.name)}</strong> verificará el pago`
+      : `Recibimos tu solicitud de cita. <strong>${escapeHtml(companyInfo.name)}</strong> la revisará`;
+    const html = this.getLinkBookingTemplate({
+      clientName,
+      title: isPayment ? 'Pago en verificación' : 'Solicitud recibida',
+      accent: '#d97706',
+      accentSoft: '#fffbeb',
+      cardTitle: '⏳ Cita por confirmar',
+      message: `${intro} y te confirmará la cita por <strong>WhatsApp</strong> y por <strong>correo</strong>.`,
+      date: data.date,
+      time: data.time,
+      services: data.services,
+      footnote: data.expiresAt
+        ? `Guardamos tu horario hasta el ${escapeHtml(data.expiresAt)}. Si no se confirma antes, se libera.`
+        : null,
+      companyInfo,
+    });
+    return this.sendEmail(
+      clientEmail,
+      `⏳ Solicitud de cita recibida - ${data.date}`,
+      html,
+    );
+  }
+
+  async sendLinkBookingNotConfirmedToClient(
+    clientEmail: string,
+    clientName: string,
+    data: {
+      date: string;
+      time: string;
+      services: string[];
+      reason: string | null;
+      expired: boolean;
+    },
+    companyInfo: { name: string; email?: string; address?: string },
+  ): Promise<boolean> {
+    const company = escapeHtml(companyInfo.name);
+    const html = this.getLinkBookingTemplate({
+      clientName,
+      title: 'Cita no confirmada',
+      accent: '#dc2626',
+      accentSoft: '#fef2f2',
+      cardTitle: '❌ Cita no confirmada',
+      message: data.expired
+        ? `Tu solicitud de cita en <strong>${company}</strong> no se confirmó a tiempo, así que el horario quedó libre. Si aún quieres la cita, puedes reservar de nuevo.`
+        : `<strong>${company}</strong> no pudo confirmar tu solicitud de cita.${
+            data.reason ? ` Motivo: <em>${escapeHtml(data.reason)}</em>.` : ''
+          }`,
+      date: data.date,
+      time: data.time,
+      services: data.services,
+      footnote: null,
+      companyInfo,
+    });
+    return this.sendEmail(
+      clientEmail,
+      `❌ Cita no confirmada - ${data.date}`,
+      html,
+    );
+  }
+
+  private getLinkBookingTemplate(p: {
+    clientName: string;
+    title: string;
+    accent: string;
+    accentSoft: string;
+    cardTitle: string;
+    message: string;
+    date: string;
+    time: string;
+    services: string[];
+    footnote: string | null;
+    companyInfo: { name: string; email?: string; address?: string };
+  }): string {
+    const font =
+      "font-family:'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;";
+    const detail = (label: string, value: string) => `
+                <tr>
+                  <td style="padding:0 0 12px 0;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;border:1px solid #e2e8f0;border-radius:8px;">
+                      <tr>
+                        <td style="padding:14px 18px;${font}">
+                          <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:1px;font-weight:600;margin:0 0 6px 0;">${label}</div>
+                          <div style="font-size:17px;font-weight:600;color:#1e293b;">${value}</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+    const services = p.services.filter(Boolean).map(escapeHtml).join(', ');
+    const company = escapeHtml(p.companyInfo.name);
+
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${p.title} - CLYPS</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f8fafc;${font}color:#334155;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;">
+    <tr>
+      <td align="center" style="padding:30px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:580px;background-color:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td align="center" style="background-color:#0b1f3a;padding:32px 24px;${font}">
+              <div style="font-size:34px;font-weight:700;letter-spacing:2px;color:#ffffff;margin:0 0 6px 0;">CLYPS</div>
+              <div style="font-size:15px;color:#e8d5a3;">${p.title}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="height:4px;background-color:${p.accent};font-size:0;line-height:0;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td style="padding:32px 28px;${font}">
+              <div style="font-size:21px;font-weight:600;color:#1e293b;padding:0 0 14px 0;margin:0 0 18px 0;border-bottom:2px solid #f1f5f9;">Hola ${escapeHtml(p.clientName)},</div>
+              <div style="font-size:15px;line-height:1.7;color:#475569;margin:0 0 24px 0;">${p.message}</div>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${p.accentSoft};border:1px solid #e2e8f0;border-radius:10px;">
+                <tr>
+                  <td style="padding:22px 20px 10px 20px;${font}">
+                    <div style="font-size:18px;font-weight:600;color:${p.accent};text-align:center;margin:0 0 18px 0;">${p.cardTitle}</div>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      ${detail('📅 Fecha', p.date)}
+                      ${detail('🕐 Hora', p.time)}
+                      ${services ? detail(p.services.length === 1 ? '✂️ Servicio' : '✂️ Servicios', services) : ''}
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              ${p.footnote ? `<div style="font-size:14px;line-height:1.6;color:#64748b;margin:20px 0 0 0;">${p.footnote}</div>` : ''}
+
+              <div style="font-size:15px;line-height:1.6;color:#475569;margin:24px 0 8px 0;">Si tienes dudas, contacta a <strong>${company}</strong>.</div>
+              ${p.companyInfo.email ? `<div style="font-size:14px;color:#475569;margin:0 0 4px 0;">✉️ ${escapeHtml(p.companyInfo.email)}</div>` : ''}
+              ${p.companyInfo.address ? `<div style="font-size:14px;color:#475569;">📍 ${escapeHtml(p.companyInfo.address)}</div>` : ''}
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="background-color:#f8fafc;border-top:1px solid #e2e8f0;padding:20px 24px;font-size:12px;color:#64748b;${font}">
+              Este es un mensaje automático, por favor no respondas a este correo.<br>
+              © ${new Date().getFullYear()} CLYPS. Todos los derechos reservados.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
   private getSessionReactivationClientTemplate(
     clientName: string,
     sessionData: { date: string; time: string },
@@ -4366,4 +4537,13 @@ export class EmailService {
 </html>
   `;
   }
+}
+
+function escapeHtml(value: string): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
