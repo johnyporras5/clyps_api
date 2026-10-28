@@ -364,6 +364,78 @@ export class CobrixInvoiceService {
   }
 
   /**
+   * Anula TODOS los cobros abiertos de un salón. Lo usa la desactivación del
+   * salón desde el panel: Cobrix manda sus propios correos (el recibo al
+   * pagar) al correo del salón, por fuera de nuestro servidor, así que la única
+   * forma de que no le llegue nada es que no quede ninguna factura que pagar.
+   *
+   * Se miran todas las `open`, también las vencidas por fecha: del lado de
+   * Cobrix pueden seguir vivas.
+   *
+   * Excepción: la factura que ya tiene un pago REPORTADO esperando
+   * verificación no se toca. Ahí el dinero ya se movió; anularla dejaría ese
+   * pago sin documento contra el que conciliar —plata que entra y no se aplica
+   * a nada—. Se devuelve aparte para que se resuelva a mano.
+   */
+  async releaseAllForCompany(
+    companyId: number,
+    reason: string,
+  ): Promise<{
+    /** Anuladas en Cobrix y cerradas aquí. */
+    released: string[];
+    /** Cerradas aquí, pero Cobrix no confirmó: hay que anularlas a mano. */
+    unconfirmed: string[];
+    /** Con un pago en revisión: no se tocaron. */
+    skippedWithPayment: string[];
+  }> {
+    const open = await this.invoices.find({
+      where: { companyId, status: 'open' },
+      order: { id: 'ASC' },
+    });
+    const result = {
+      released: [] as string[],
+      unconfirmed: [] as string[],
+      skippedWithPayment: [] as string[],
+    };
+    if (open.length === 0) return result;
+
+    // El filtro del chequeo automático va en código y no en el WHERE: un
+    // `NOT IN` en SQL deja fuera los NULL, y un reporte sin chequeo automático
+    // también es un pago en revisión.
+    const reported = await this.reports.find({
+      where: {
+        companyId,
+        status: 'reported',
+        invoiceId: In(open.map((i) => i.id)),
+      },
+      select: { id: true, invoiceId: true, autoCheckStatus: true },
+    });
+    const withPayment = new Set(
+      reported
+        .filter(
+          (r) =>
+            r.autoCheckStatus !== 'rejected' && r.autoCheckStatus !== 'expired',
+        )
+        .map((r) => r.invoiceId),
+    );
+
+    for (const invoice of open) {
+      if (withPayment.has(invoice.id)) {
+        this.logger.warn(
+          `[cobrix] Factura ${invoice.providerReference} de la company ${companyId} NO se anuló: tiene un pago en revisión. (${reason})`,
+        );
+        result.skippedWithPayment.push(invoice.providerReference);
+        continue;
+      }
+      const confirmed = await this.release(invoice, reason);
+      (confirmed ? result.released : result.unconfirmed).push(
+        invoice.providerReference,
+      );
+    }
+    return result;
+  }
+
+  /**
    * Cierra las facturas que vencieron sin pagarse.
    *
    * No es una decisión sobre el dinero: si el pago entra tarde, el webhook la

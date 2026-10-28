@@ -60,6 +60,10 @@ function buildService(
     cancelOk?: boolean;
     testAmount?: string;
     testCompanyIds?: string;
+    /** Facturas `open` del salón (para `releaseAllForCompany`). */
+    openInvoices?: SubscriptionInvoice[];
+    /** Reportes `reported` del salón contra esas facturas. */
+    reported?: Array<Pick<PaymentReport, 'invoiceId' | 'autoCheckStatus'>>;
   } = {},
 ) {
   // `findOne` sirve a dos consultas distintas y el orden importa: primero la
@@ -89,6 +93,7 @@ function buildService(
         Object.assign(new SubscriptionInvoice(), draft),
       ),
     update: jest.fn().mockResolvedValue({ affected: 0 }),
+    find: jest.fn().mockResolvedValue(options.openInvoices ?? []),
   };
   const subscriptions = {
     findOne: jest
@@ -101,6 +106,7 @@ function buildService(
   };
   const reports = {
     findOne: jest.fn().mockResolvedValue(options.pendingReport ?? null),
+    find: jest.fn().mockResolvedValue(options.reported ?? []),
   };
   const companies = {
     findOne: jest
@@ -444,5 +450,94 @@ describe('soltar la factura', () => {
     expect(client.cancelInvoice).not.toHaveBeenCalled();
     expect(invoices.save).not.toHaveBeenCalled();
     expect(invoice.status).toBe('paid');
+  });
+});
+
+/**
+ * Salón desactivado desde el panel: no puede quedarle ningún cobro que pagar,
+ * porque Cobrix manda su recibo por correo por fuera de nuestro servidor. Pero
+ * el cobro que ya tiene un pago en revisión NO se anula: el dinero ya se movió.
+ */
+describe('anular los cobros de un salón desactivado', () => {
+  it('anula en Cobrix todas sus facturas abiertas, también las vencidas', async () => {
+    const vencida = invoiceFixture({
+      id: 1,
+      providerInvoiceId: 'inv_1',
+      providerReference: 'clyps-7-1',
+      expiresAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+    const viva = invoiceFixture({
+      id: 2,
+      providerInvoiceId: 'inv_2',
+      providerReference: 'clyps-7-2',
+    });
+    const { service, client } = buildService({ openInvoices: [vencida, viva] });
+
+    const res = await service.releaseAllForCompany(7, 'salón desactivado');
+
+    expect(client.cancelInvoice).toHaveBeenCalledWith('inv_1');
+    expect(client.cancelInvoice).toHaveBeenCalledWith('inv_2');
+    expect(res.released).toEqual(['clyps-7-1', 'clyps-7-2']);
+    expect(vencida.status).toBe('expired');
+    expect(viva.status).toBe('expired');
+  });
+
+  it('no toca la factura que tiene un pago en revisión', async () => {
+    const pagada = invoiceFixture({
+      id: 3,
+      providerInvoiceId: 'inv_3',
+      providerReference: 'clyps-7-3',
+    });
+    const { service, client } = buildService({
+      openInvoices: [pagada],
+      // Sin chequeo automático (NULL) también es un pago en revisión.
+      reported: [{ invoiceId: 3, autoCheckStatus: null }],
+    });
+
+    const res = await service.releaseAllForCompany(7, 'salón desactivado');
+
+    expect(client.cancelInvoice).not.toHaveBeenCalled();
+    expect(pagada.status).toBe('open');
+    expect(res.skippedWithPayment).toEqual(['clyps-7-3']);
+  });
+
+  it('un pago ya rechazado no la protege: se anula', async () => {
+    const factura = invoiceFixture({ id: 4, providerInvoiceId: 'inv_4' });
+    const { service, client } = buildService({
+      openInvoices: [factura],
+      reported: [{ invoiceId: 4, autoCheckStatus: 'rejected' }],
+    });
+
+    await service.releaseAllForCompany(7, 'salón desactivado');
+
+    expect(client.cancelInvoice).toHaveBeenCalledWith('inv_4');
+  });
+
+  it('si Cobrix no confirma, la devuelve para revisar a mano', async () => {
+    const factura = invoiceFixture({
+      id: 5,
+      providerInvoiceId: 'inv_5',
+      providerReference: 'clyps-7-5',
+    });
+    const { service } = buildService({
+      openInvoices: [factura],
+      cancelOk: false,
+    });
+
+    const res = await service.releaseAllForCompany(7, 'salón desactivado');
+
+    expect(res.unconfirmed).toEqual(['clyps-7-5']);
+    expect(res.released).toEqual([]);
+  });
+
+  it('sin facturas abiertas no consulta reportes ni llama a Cobrix', async () => {
+    const { service, client } = buildService({ openInvoices: [] });
+    const res = await service.releaseAllForCompany(7, 'salón desactivado');
+    expect(client.cancelInvoice).not.toHaveBeenCalled();
+    expect(res).toEqual({
+      released: [],
+      unconfirmed: [],
+      skippedWithPayment: [],
+    });
   });
 });

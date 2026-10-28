@@ -4,6 +4,7 @@ import { CompanyDeactivationService } from './company-deactivation.service';
 import type { DeactivatedCompaniesService } from './deactivated-companies.service';
 import type { ImpersonationService } from '../auth/services/impersonation.service';
 import type { RealtimeService } from '../realtime/realtime.service';
+import type { CobrixInvoiceService } from '../subscription/cobrix/cobrix-invoice.service';
 import { Company } from '../company/entities/company.entity';
 import { Session } from '../session/entities/session.entity';
 import { SessionDetail } from '../session_detail/entities/session_detail.entity';
@@ -20,6 +21,12 @@ function build(options: {
   claimed?: number;
   /** Ids de citas pendientes del salón. */
   pending?: number[];
+  /** Qué devuelve Cobrix al anular los cobros del salón. */
+  charges?: {
+    released: string[];
+    unconfirmed: string[];
+    skippedWithPayment: string[];
+  };
 }) {
   const exists = options.exists ?? true;
   const updates: Array<{ entity: unknown; set: unknown; where?: string }> = [];
@@ -91,6 +98,13 @@ function build(options: {
   const revokeForCompany = jest.fn().mockResolvedValue(1);
   const disconnectRoom = jest.fn();
   const refresh = jest.fn().mockResolvedValue(new Set([12]));
+  const releaseAllForCompany = jest.fn().mockResolvedValue(
+    options.charges ?? {
+      released: [],
+      unconfirmed: [],
+      skippedWithPayment: [],
+    },
+  );
 
   const service = new CompanyDeactivationService(
     dataSource,
@@ -98,9 +112,17 @@ function build(options: {
     { revokeForCompany } as unknown as ImpersonationService,
     { emitToRooms: jest.fn(), disconnectRoom } as unknown as RealtimeService,
     { refresh } as unknown as DeactivatedCompaniesService,
+    { releaseAllForCompany } as unknown as CobrixInvoiceService,
   );
 
-  return { service, updates, revokeForCompany, disconnectRoom, refresh };
+  return {
+    service,
+    updates,
+    revokeForCompany,
+    disconnectRoom,
+    refresh,
+    releaseAllForCompany,
+  };
 }
 
 describe('CompanyDeactivationService.deactivate', () => {
@@ -160,6 +182,51 @@ describe('CompanyDeactivationService.deactivate', () => {
     expect(updates.find((u) => u.entity === Company)?.set).toMatchObject({
       deactivationReason: null,
     });
+  });
+
+  it('anula los cobros abiertos de Cobrix del salón', async () => {
+    const { service, releaseAllForCompany } = build({
+      charges: {
+        released: ['clyps-12-1'],
+        unconfirmed: [],
+        skippedWithPayment: [],
+      },
+    });
+    const res = await service.deactivate(12, 528);
+    expect(releaseAllForCompany).toHaveBeenCalledWith(12, expect.any(String));
+    expect(res.cancelledInvoices).toEqual(['clyps-12-1']);
+    expect(res.invoicesToReview).toEqual([]);
+    expect(res.message).toMatch(/anuló su cobro pendiente en Cobrix/);
+  });
+
+  it('lo que Cobrix no anuló o tenía un pago en revisión se pide revisar a mano', async () => {
+    const { service } = build({
+      charges: {
+        released: [],
+        unconfirmed: ['clyps-12-1'],
+        skippedWithPayment: ['clyps-12-2'],
+      },
+    });
+    const res = await service.deactivate(12, 528);
+    expect(res.invoicesToReview).toEqual(['clyps-12-1', 'clyps-12-2']);
+    expect(res.message).toMatch(
+      /Revisa a mano en Cobrix: clyps-12-1, clyps-12-2/,
+    );
+  });
+
+  it('si Cobrix revienta, el salón queda desactivado igual', async () => {
+    const { service, releaseAllForCompany, disconnectRoom } = build({});
+    releaseAllForCompany.mockRejectedValueOnce(new Error('Cobrix caído'));
+    const res = await service.deactivate(12, 528);
+    expect(res.active).toBe(false);
+    expect(res.invoicesToReview).toHaveLength(1);
+    expect(disconnectRoom).toHaveBeenCalled();
+  });
+
+  it('el segundo clic no vuelve a llamar a Cobrix', async () => {
+    const { service, releaseAllForCompany } = build({ claimed: 0 });
+    await service.deactivate(12, 528);
+    expect(releaseAllForCompany).not.toHaveBeenCalled();
   });
 
   it('un salón que no existe da 404', async () => {

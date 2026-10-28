@@ -8,6 +8,7 @@ import { Service } from '../service/entities/service.entity';
 import { ImpersonationService } from '../auth/services/impersonation.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { companyRoom } from '../realtime/rooms';
+import { CobrixInvoiceService } from '../subscription/cobrix/cobrix-invoice.service';
 import { DeactivatedCompaniesService } from './deactivated-companies.service';
 import {
   CANCELLABLE_SESSION_STATUSES,
@@ -26,6 +27,13 @@ export interface CompanyDeactivationResponse {
   deactivationReason: string | null;
   /** Citas canceladas en ESTA llamada (0 si ya estaba desactivado). */
   cancelledSessions: number;
+  /** Cobros de Cobrix anulados en esta llamada (referencias). */
+  cancelledInvoices: string[];
+  /**
+   * Cobros de Cobrix que siguen vivos y hay que mirar a mano: o Cobrix no
+   * confirmó la anulación, o tenían un pago en revisión y no se tocaron.
+   */
+  invoicesToReview: string[];
   message: string;
 }
 
@@ -39,12 +47,16 @@ export interface CompanyDeactivationResponse {
  *   2. Cancela en silencio las citas que todavía no empezaron
  *      (`CANCELLABLE_SESSION_STATUSES`). Sin correo ni push a nadie: se hace
  *      con UPDATE directo, que no pasa por los avisos de cancelación.
- *   3. Saca a quien estaba dentro: cierra los accesos de suplantación abiertos
+ *   3. Anula sus cobros abiertos en Cobrix. Cobrix manda sus propios correos
+ *      (el recibo al pagar) por fuera de nuestro servidor; sin factura que
+ *      pagar, no hay recibo que mandar.
+ *   4. Saca a quien estaba dentro: cierra los accesos de suplantación abiertos
  *      y desconecta los WebSockets del salón.
  *
  * 1 y 2 van en la misma transacción: o queda desactivado con sus citas
- * canceladas, o no queda nada a medias. 3 va después y es de mejor esfuerzo:
- * si falla, JwtStrategy los rechaza igual en su próxima petición.
+ * canceladas, o no queda nada a medias. 3 y 4 van después y son de mejor
+ * esfuerzo: si Cobrix no responde, el salón queda desactivado igual y la
+ * factura se devuelve en `invoicesToReview` para anularla a mano.
  */
 @Injectable()
 export class CompanyDeactivationService {
@@ -57,6 +69,7 @@ export class CompanyDeactivationService {
     private readonly impersonation: ImpersonationService,
     private readonly realtime: RealtimeService,
     private readonly deactivated: DeactivatedCompaniesService,
+    private readonly cobrixInvoices: CobrixInvoiceService,
   ) {}
 
   async deactivate(
@@ -92,23 +105,68 @@ export class CompanyDeactivationService {
 
     if (cancelled === null) {
       const company = await this.findOrFail(companyId);
-      return this.toResponse(company, 0, 'El salón ya estaba desactivado.');
+      return this.toResponse(company, {}, 'El salón ya estaba desactivado.');
     }
 
+    const charges = await this.cancelOpenCharges(companyId);
     await this.kickOut(companyId);
 
     const company = await this.findOrFail(companyId);
     this.logger.warn(
       `Salón ${companyId} desactivado por el usuario ${actorUserId}` +
-        ` (${cancelled} citas canceladas). Motivo: ${cleanReason ?? '—'}`,
+        ` (${cancelled} citas canceladas, ${charges.cancelledInvoices.length} cobros anulados).` +
+        ` Motivo: ${cleanReason ?? '—'}`,
     );
-    return this.toResponse(
-      company,
-      cancelled,
+
+    const parts = [
       cancelled > 0
         ? `Salón desactivado. Se cancelaron ${cancelled} citas pendientes sin avisar a nadie.`
         : 'Salón desactivado. No tenía citas pendientes.',
+    ];
+    if (charges.cancelledInvoices.length > 0)
+      parts.push('Se anuló su cobro pendiente en Cobrix.');
+    if (charges.invoicesToReview.length > 0)
+      parts.push(
+        `Revisa a mano en Cobrix: ${charges.invoicesToReview.join(', ')}.`,
+      );
+
+    return this.toResponse(
+      company,
+      { cancelledSessions: cancelled, ...charges },
+      parts.join(' '),
     );
+  }
+
+  /**
+   * Anula en Cobrix los cobros abiertos del salón (ver
+   * `CobrixInvoiceService.releaseAllForCompany`). Si Cobrix falla, el salón
+   * queda desactivado igual: lo que no se pudo anular vuelve en
+   * `invoicesToReview` y queda un ERROR en el log.
+   */
+  private async cancelOpenCharges(companyId: number): Promise<{
+    cancelledInvoices: string[];
+    invoicesToReview: string[];
+  }> {
+    try {
+      const result = await this.cobrixInvoices.releaseAllForCompany(
+        companyId,
+        'salón desactivado desde el panel',
+      );
+      return {
+        cancelledInvoices: result.released,
+        invoicesToReview: [...result.unconfirmed, ...result.skippedWithPayment],
+      };
+    } catch (error) {
+      this.logger.error(
+        `No se pudieron anular los cobros de Cobrix del salón ${companyId}: ${(error as Error).message}`,
+      );
+      return {
+        cancelledInvoices: [],
+        invoicesToReview: [
+          'no se pudo consultar; revisa sus facturas abiertas',
+        ],
+      };
+    }
   }
 
   /**
@@ -138,7 +196,7 @@ export class CompanyDeactivationService {
     }
     return this.toResponse(
       company,
-      0,
+      {},
       result.affected
         ? 'Salón reactivado. El dueño y sus trabajadores ya pueden entrar.'
         : 'El salón ya estaba activo.',
@@ -247,7 +305,15 @@ export class CompanyDeactivationService {
 
   private toResponse(
     company: Company,
-    cancelledSessions: number,
+    {
+      cancelledSessions = 0,
+      cancelledInvoices = [],
+      invoicesToReview = [],
+    }: {
+      cancelledSessions?: number;
+      cancelledInvoices?: string[];
+      invoicesToReview?: string[];
+    },
     message: string,
   ): CompanyDeactivationResponse {
     return {
@@ -258,6 +324,8 @@ export class CompanyDeactivationService {
       deactivatedBy: company.deactivatedBy ?? null,
       deactivationReason: company.deactivationReason ?? null,
       cancelledSessions,
+      cancelledInvoices,
+      invoicesToReview,
       message,
     };
   }
