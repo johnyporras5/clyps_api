@@ -139,6 +139,8 @@ export class OnboardingRescueService {
          LEFT JOIN user u ON u.id = co.user_id
         WHERE os.global_status = 'in_progress'
           AND os.updated_at <= (NOW() - INTERVAL ? DAY)
+          -- Desactivado: ni correo al dueño ni sitio en el digest del consultor.
+          AND co.deactivated_at IS NULL
         ORDER BY daysStalled DESC, os.company_id ASC`,
       [floor],
     );

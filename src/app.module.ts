@@ -39,6 +39,8 @@ import { OnboardingRescueModule } from './onboarding/rescue/onboarding-rescue.mo
 import { SubscriptionModule } from './subscription/subscription.module';
 import { GeocodingModule } from './geocoding/geocoding.module';
 import { PublicBookingModule } from './public_booking/public-booking.module';
+import { DeactivatedCompaniesModule } from './company_deactivation/deactivated-companies.module';
+import { CompanyDeactivationModule } from './company_deactivation/company-deactivation.module';
 
 @Module({
   imports: [
@@ -147,6 +149,9 @@ import { PublicBookingModule } from './public_booking/public-booking.module';
     SubscriptionModule,
     GeocodingModule,
     PublicBookingModule,
+    // Salones desactivados desde el panel: la consulta (global) y el botón.
+    DeactivatedCompaniesModule,
+    CompanyDeactivationModule,
   ],
   controllers: [AppController],
   providers: [

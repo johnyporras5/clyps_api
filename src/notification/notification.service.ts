@@ -10,6 +10,7 @@ import { FcmToken, FcmPlatform } from './entities/fcm-token.entity';
 import { NotificationReminder } from './entities/notification-reminder.entity';
 import { NotificationRealtimeEmitter } from './notification-realtime.emitter';
 import { FirebaseService } from './firebase.service';
+import { DeactivatedCompaniesService } from '../company_deactivation/deactivated-companies.service';
 
 /** Payload que recibe createNotification (CLYP-260 / §4). */
 export interface CreateNotificationInput {
@@ -44,6 +45,7 @@ export class NotificationService {
     private readonly reminderRepo: Repository<NotificationReminder>,
     private readonly realtimeEmitter: NotificationRealtimeEmitter,
     private readonly firebase: FirebaseService,
+    private readonly deactivatedCompanies: DeactivatedCompaniesService,
   ) {}
 
   // ==================== IDEMPOTENCIA CRON (§7) ====================
@@ -103,7 +105,17 @@ export class NotificationService {
   async createNotification(
     userId: number,
     input: CreateNotificationInput,
-  ): Promise<Notification> {
+  ): Promise<Notification | null> {
+    // Dueño o trabajador de un salón desactivado: ni feed, ni socket, ni push.
+    // Es la red de seguridad: los cron ya los filtran en origen, esto atrapa
+    // lo que se escape. Si la consulta falla, la notificación sale igual.
+    if (await this.isSilenced(userId)) {
+      this.logger.log(
+        `Notificación "${input.title}" a user ${userId} omitida: su salón está desactivado`,
+      );
+      return null;
+    }
+
     // §5: `data.type` SIEMPRE debe coincidir con el type de la notificación.
     // Lo forzamos aquí para no depender de que el caller lo recuerde.
     const data: NotificationData | null = input.data
@@ -155,6 +167,17 @@ export class NotificationService {
           `No se pudo crear notificación para user ${userId}: ${this.reason(error)}`,
         );
       }
+    }
+  }
+
+  private async isSilenced(userId: number): Promise<boolean> {
+    try {
+      return await this.deactivatedCompanies.isUserSilenced(userId);
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo comprobar si el user ${userId} está desactivado: ${this.reason(error)}`,
+      );
+      return false;
     }
   }
 

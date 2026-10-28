@@ -626,7 +626,9 @@ export class PublicBookingService {
     const company = normalized
       ? await this.companyRepository.findOne({ where: { slug: normalized } })
       : null;
-    if (!company) {
+    // Un salón desactivado responde igual que uno que no existe: el link deja
+    // de funcionar (perfil, disponibilidad y reserva) sin contar por qué.
+    if (!company || company.deactivatedAt) {
       throw new NotFoundException('No encontramos este negocio.');
     }
     return company;

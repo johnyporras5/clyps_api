@@ -6,7 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import { Company } from './entities/company.entity';
 import { User } from '../user/entities/user.entity';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -150,7 +150,10 @@ export class CompanyService {
 
   async findOne(id: number, viewerType?: string): Promise<any> {
     const company = await this.companyRepository.findOne({ where: { id } });
-    if (!company) {
+    // Desactivado: solo el administrador de la plataforma lo sigue viendo. Para
+    // el cliente que lo tenía en favoritos o en una pantalla abierta, el salón
+    // "no existe" (los dueños y trabajadores ya no llegan aquí: JwtStrategy).
+    if (!company || (company.deactivatedAt && viewerType !== 'padm')) {
       throw new NotFoundException(`Company with id ${id} not found`);
     }
 
@@ -952,7 +955,10 @@ export class CompanyService {
   async findByFilters(
     dto: GetCompaniesFilterDto,
   ): Promise<PaginationResult<CompanyWithLogoUrl>> {
-    const query = this.companyRepository.createQueryBuilder('company');
+    const query = this.companyRepository
+      .createQueryBuilder('company')
+      // Los salones desactivados no se listan en ninguna búsqueda.
+      .where('company.deactivatedAt IS NULL');
 
     if (dto.categoryName) {
       query.innerJoin('company.categories', 'cat', 'cat.name LIKE :catName', {
@@ -1276,7 +1282,10 @@ export class CompanyService {
       // Comportamiento original: paginación directa sin filtros.
       const skip = (page - 1) * limit;
       [companies, total] = await this.companyRepository.findAndCount({
-        where: visibleCompanyIds ? { id: In(visibleCompanyIds) } : {},
+        // Los salones desactivados no salen en el directorio de nadie.
+        where: visibleCompanyIds
+          ? { id: In(visibleCompanyIds), deactivatedAt: IsNull() }
+          : { deactivatedAt: IsNull() },
         take: limit,
         skip,
         order: { id: 'ASC' },
@@ -1345,7 +1354,9 @@ export class CompanyService {
     slots?: string[];
     restrictToCompanyIds?: number[] | null;
   }): Promise<Company[]> {
-    const query = this.companyRepository.createQueryBuilder('company');
+    const query = this.companyRepository
+      .createQueryBuilder('company')
+      .where('company.deactivatedAt IS NULL');
 
     // Cliente: solo sus negocios. `null`/undefined = sin restricción.
     if (filter.restrictToCompanyIds) {
@@ -1427,6 +1438,7 @@ export class CompanyService {
       .select('company.location', 'location')
       .where('company.location IS NOT NULL')
       .andWhere("TRIM(company.location) <> ''")
+      .andWhere('company.deactivatedAt IS NULL')
       .getRawMany<{ location: string }>();
 
     const byKey = new Map<string, string>();

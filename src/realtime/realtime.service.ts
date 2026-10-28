@@ -104,4 +104,14 @@ export class RealtimeService {
     };
     this.emitToRooms(rooms, params.type, payload);
   }
+
+  /**
+   * Echa de los WebSockets a todos los que están dentro de una room. Se usa al
+   * desactivar un salón: dueño y trabajadores quedan fuera al instante, sin
+   * esperar a su próxima petición. Al reconectar, el handshake los rechaza.
+   */
+  disconnectRoom(room: string): void {
+    if (!this.server) return;
+    this.server.in(room).disconnectSockets(true);
+  }
 }

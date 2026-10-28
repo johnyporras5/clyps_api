@@ -163,10 +163,18 @@ export class ImpersonationService {
 
     const company = await this.companies.findOne({
       where: { id: companyId },
-      select: { id: true, name: true, userId: true },
+      select: { id: true, name: true, userId: true, deactivatedAt: true },
     });
     if (!company) {
       throw new NotFoundException('El salón no existe.');
+    }
+    // Un salón desactivado no tiene acceso, tampoco por esta puerta. El token
+    // que se firmaría lo rechazaría igual JwtStrategy en la primera petición;
+    // decirlo aquí evita abrir una pestaña que solo enseña un error.
+    if (company.deactivatedAt) {
+      throw new ConflictException(
+        'Ese salón está desactivado. Reactívalo antes de entrar.',
+      );
     }
     if (!company.userId) {
       throw new ConflictException(
@@ -409,6 +417,19 @@ export class ImpersonationService {
     const session = await this.sessions.findOne({ where: { id: sessionId } });
     if (!session) throw new NotFoundException('Esa sesión no existe.');
     return this.finish(session, 'revoked');
+  }
+
+  /**
+   * Corta TODO acceso abierto a un salón: los ya canjeados y los vales que
+   * todavía no se usaron. Lo llama la desactivación del salón. Devuelve
+   * cuántos cerró.
+   */
+  async revokeForCompany(companyId: number): Promise<number> {
+    const open = await this.sessions.find({
+      where: { companyId, endedAt: IsNull() },
+    });
+    for (const session of open) await this.finish(session, 'revoked');
+    return open.length;
   }
 
   /**

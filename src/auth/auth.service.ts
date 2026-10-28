@@ -58,6 +58,12 @@ import { SubscriptionService } from '../subscription/subscription.service';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 import type { AuthenticatedUser } from './types/authenticated-request';
 import { generateSimplePassword } from './password.util';
+import { DeactivatedCompaniesService } from '../company_deactivation/deactivated-companies.service';
+import {
+  companyDeactivatedError,
+  companyDeactivatedForbidden,
+  preferActiveCompany,
+} from '../company_deactivation/company-deactivation.util';
 
 @Injectable()
 export class AuthService {
@@ -84,6 +90,7 @@ export class AuthService {
     private readonly onboardingService: OnboardingService,
     private readonly entitlements: EntitlementsService,
     private readonly subscriptions: SubscriptionService,
+    private readonly deactivatedCompanies: DeactivatedCompaniesService,
   ) {}
 
   /**
@@ -117,17 +124,28 @@ export class AuthService {
     companyId: number | null;
     companyWorkerId: number | null;
   }> {
+    // Con más de un salón, se elige uno que siga ACTIVO: si el token quedara
+    // atado al desactivado, JwtStrategy lo rechazaría y la persona no podría
+    // trabajar en el salón que sí funciona (preferActiveCompany).
+    const deactivated = await this.deactivatedCompanies.deactivatedIds();
+
     if (user.userType === 'adm') {
-      const company = await this.companyRepository.findOne({
+      const owned = await this.companyRepository.find({
         where: { userId: user.id },
+        select: { id: true },
       });
-      return { companyId: company?.id ?? null, companyWorkerId: null };
+      const company = preferActiveCompany(
+        owned.map((c) => ({ companyId: c.id })),
+        deactivated,
+      );
+      return { companyId: company?.companyId ?? null, companyWorkerId: null };
     }
 
     if (user.userType === 'wrk') {
-      const companyWorker = await this.companyWorkerRepository.findOne({
+      const rows = await this.companyWorkerRepository.find({
         where: { userId: user.id, isActive: 1 },
       });
+      const companyWorker = preferActiveCompany(rows, deactivated);
       return {
         companyId: companyWorker?.companyId ?? null,
         companyWorkerId: companyWorker?.id ?? null,
@@ -1722,6 +1740,13 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
+    // Salón desactivado: va DESPUÉS de la contraseña (a quien no la sabe no se
+    // le cuenta que la cuenta existe y está desactivada) y ANTES de la
+    // verificación de correo, que si no le mandaría un código.
+    if (await this.deactivatedCompanies.isUserSilenced(user.id)) {
+      throw companyDeactivatedError();
+    }
+
     // Si el usuario no está verificado
     if (user.emailVerified === 0) {
       const codeStatus =
@@ -1830,6 +1855,11 @@ export class AuthService {
     // Si ya está verificado, no enviar código
     if (user.emailVerified === 1) {
       throw new BadRequestException('El email ya está verificado');
+    }
+
+    // Salón desactivado: no se le manda nada, tampoco un código.
+    if (await this.deactivatedCompanies.isUserSilenced(user.id)) {
+      throw companyDeactivatedForbidden();
     }
 
     // Primero, verificar si ya existe un código activo
@@ -1990,6 +2020,12 @@ export class AuthService {
       throw new NotFoundException(
         'No existe un usuario registrado con este email',
       );
+    }
+
+    // Salón desactivado: cambiar la contraseña no le serviría para entrar, y
+    // el código sería un correo más que no tiene que recibir.
+    if (await this.deactivatedCompanies.isUserSilenced(user.id)) {
+      throw companyDeactivatedForbidden();
     }
 
     // No se exige el email verificado: el código va a ese mismo correo, así que

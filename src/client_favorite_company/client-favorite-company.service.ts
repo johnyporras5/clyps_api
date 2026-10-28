@@ -53,7 +53,7 @@ export class ClientFavoriteCompanyService {
     const company = await this.companyRepository.findOne({
       where: { id: companyId },
     });
-    if (!company) {
+    if (!company || company.deactivatedAt) {
       throw new NotFoundException(`Company with id ${companyId} not found`);
     }
 
@@ -93,6 +93,8 @@ export class ClientFavoriteCompanyService {
         .createQueryBuilder('favorite')
         .leftJoinAndSelect('favorite.company', 'company')
         .where('favorite.clientId = :clientId', { clientId })
+        // Un salón desactivado desaparece también de los favoritos.
+        .andWhere('company.deactivatedAt IS NULL')
         .orderBy('favorite.createdAt', 'DESC');
 
     // Se excluyen antes de paginar para que meta.total siga cuadrando.

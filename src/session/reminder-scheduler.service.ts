@@ -118,6 +118,7 @@ export class ReminderSchedulerService {
           `SELECT DISTINCT w.id AS id, w.name AS name
              FROM worker w
              JOIN company_worker cw ON cw.worker_id = w.id AND cw.is_active = 1
+             JOIN company co ON co.id = cw.company_id AND co.deactivated_at IS NULL
             WHERE w.birthdate IS NOT NULL
               AND ${ReminderSchedulerService.birthdayIsToday('w.birthdate')}`,
         );
@@ -139,6 +140,7 @@ export class ReminderSchedulerService {
             WHERE cw.worker_id = ?
               AND cw.is_active = 1
               AND co.user_id IS NOT NULL
+              AND co.deactivated_at IS NULL
               -- Blindaje: esta notificación es solo para el staff. Nunca puede
               -- acabar en la bandeja de un cliente.
               AND u.user_type IN ('adm', 'wrk')`,
@@ -234,6 +236,7 @@ export class ReminderSchedulerService {
          JOIN client cl ON cl.id = ?
          JOIN user u ON u.id = co.user_id
         WHERE co.user_id IS NOT NULL
+          AND co.deactivated_at IS NULL
           AND u.user_type IN ('adm', 'wrk')
           AND JSON_CONTAINS(COALESCE(cl.companies, JSON_ARRAY()), CAST(co.id AS JSON))`,
       [clientId],
@@ -243,6 +246,7 @@ export class ReminderSchedulerService {
       `SELECT DISTINCT cw.user_id AS uid
          FROM company_worker cw
          JOIN user u ON u.id = cw.user_id
+         JOIN company co ON co.id = cw.company_id AND co.deactivated_at IS NULL
         WHERE cw.is_active = 1
           AND cw.user_id IS NOT NULL
           AND u.user_type IN ('adm', 'wrk')
@@ -279,7 +283,16 @@ export class ReminderSchedulerService {
       `SELECT id FROM session
         WHERE session_status IN (?, ?)
           AND session_datetime >= DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)
-          AND session_datetime <  DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)`,
+          AND session_datetime <  DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)
+          -- Nada de recordatorios de un salón desactivado (ni al cliente).
+          AND NOT EXISTS (
+                SELECT 1
+                  FROM session_detail sd
+                  JOIN service se ON se.id = sd.service_id
+                  JOIN company co ON co.id = se.company_id
+                 WHERE sd.session_id = session.id
+                   AND co.deactivated_at IS NOT NULL
+              )`,
       [
         ReminderSchedulerService.ACTIVE_STATUSES[0],
         ReminderSchedulerService.ACTIVE_STATUSES[1],

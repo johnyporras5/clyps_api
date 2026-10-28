@@ -8125,6 +8125,15 @@ export class SessionService {
 
     const companyName = company.name;
 
+    // 3.a Salón desactivado por Clyps. Mismo mensaje neutro que el del bloqueo
+    // por pago: al cliente no se le explica el motivo.
+    if (company.deactivatedAt) {
+      throw new ForbiddenException({
+        message: `${companyName} no está recibiendo reservas en este momento.`,
+        reason: 'company_not_bookable',
+      });
+    }
+
     // 3.b El salón puede haber desactivado a este cliente. Ocultarlo del
     // directorio no alcanza: el cliente puede llegar igual por favoritos, por
     // una pantalla que ya tenía abierta o por un link directo. Se corta aquí.
