@@ -55,6 +55,7 @@ export function isBolivarMethod(raw: string | null | undefined): boolean {
 export type ClosingSource =
   | 'opening'
   | 'sessions'
+  | 'products'
   | 'directSales'
   | 'tips'
   | 'adjustments'
@@ -64,6 +65,7 @@ export type ClosingSource =
 export const CLOSING_SOURCES: ClosingSource[] = [
   'opening',
   'sessions',
+  'products',
   'directSales',
   'tips',
   'adjustments',

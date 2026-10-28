@@ -30,6 +30,40 @@ export function paidEntry(
   return { currency: cur, method, source, amountMinor };
 }
 
+export function splitProductPortion(
+  amountMinor: number,
+  amountBsMinor: number | null,
+  productsAvailableMinor: number,
+): {
+  productMinor: number;
+  productBsMinor: number | null;
+  restMinor: number;
+  restBsMinor: number | null;
+} {
+  const productMinor = Math.max(
+    0,
+    Math.min(amountMinor, productsAvailableMinor),
+  );
+  const restMinor = amountMinor - productMinor;
+  if (amountBsMinor == null || amountMinor === 0) {
+    return {
+      productMinor,
+      productBsMinor: amountBsMinor == null ? null : 0,
+      restMinor,
+      restBsMinor: amountBsMinor,
+    };
+  }
+  const productBsMinor = Math.round(
+    (amountBsMinor * productMinor) / amountMinor,
+  );
+  return {
+    productMinor,
+    productBsMinor,
+    restMinor,
+    restBsMinor: amountBsMinor - productBsMinor,
+  };
+}
+
 export interface CurrencyAmount {
   currency: string;
   amountMinor: number;

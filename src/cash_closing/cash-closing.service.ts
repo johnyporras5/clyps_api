@@ -23,6 +23,7 @@ import {
   countedCashByCurrency,
   findDuplicateCell,
   paidEntry,
+  splitProductPortion,
   totalsByCurrency,
   type ClosingEntry,
   type CurrencyAmount,
@@ -401,17 +402,64 @@ export class CashClosingService {
       linesByPayment.get(Number(p.id))?.find((l) => l.method)?.method ??
       null;
 
+    const productRows: Array<{
+      sessionId: number;
+      currency: string;
+      amountMinor: string | number;
+    }> = await this.closingRepository.query(
+      `SELECT sp.session_id AS sessionId,
+              UPPER(COALESCE(sp.currency, 'USD')) AS currency,
+              SUM(sp.unit_price_minor * sp.quantity) AS amountMinor
+         FROM session_product sp
+        WHERE sp.session_id IN (?)
+          AND sp.sale_type = 'client'
+        GROUP BY sp.session_id, UPPER(COALESCE(sp.currency, 'USD'))`,
+      [sessionIds],
+    );
+    const productsBySession = new Map<number, Map<string, number>>();
+    for (const r of productRows) {
+      const id = Number(r.sessionId);
+      const byCurrency = productsBySession.get(id) ?? new Map<string, number>();
+      byCurrency.set(r.currency, Math.round(num(r.amountMinor)));
+      productsBySession.set(id, byCurrency);
+    }
+
     for (const p of payments) {
+      const productsLeft =
+        productsBySession.get(Number(p.sessionId)) ?? new Map<string, number>();
       for (const l of linesByPayment.get(Number(p.id)) ?? []) {
-        entries.push(
-          paidEntry(
-            l.method ?? p.method,
-            l.currency,
-            toMinor(l.subtotal),
-            l.subtotalBs != null ? toMinor(l.subtotalBs) : null,
-            'sessions',
-          ),
+        const method = l.method ?? p.method;
+        const split = splitProductPortion(
+          toMinor(l.subtotal),
+          l.subtotalBs != null ? toMinor(l.subtotalBs) : null,
+          productsLeft.get(l.currency) ?? 0,
         );
+        productsLeft.set(
+          l.currency,
+          (productsLeft.get(l.currency) ?? 0) - split.productMinor,
+        );
+        if (split.restMinor > 0 || split.productMinor === 0) {
+          entries.push(
+            paidEntry(
+              method,
+              l.currency,
+              split.restMinor,
+              split.restBsMinor,
+              'sessions',
+            ),
+          );
+        }
+        if (split.productMinor > 0) {
+          entries.push(
+            paidEntry(
+              method,
+              l.currency,
+              split.productMinor,
+              split.productBsMinor,
+              'products',
+            ),
+          );
+        }
       }
       if (num(p.tip) > 0) {
         entries.push(

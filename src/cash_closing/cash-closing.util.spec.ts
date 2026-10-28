@@ -5,6 +5,7 @@ import {
   countedCashByCurrency,
   findDuplicateCell,
   paidEntry,
+  splitProductPortion,
   totalsByCurrency,
   type ClosingEntry,
 } from './cash-closing.util';
@@ -226,5 +227,32 @@ describe('findDuplicateCell', () => {
     expect(
       findDuplicateCell([{ currency: 'USD', method: 'cash', amountMinor: 1 }]),
     ).toBeNull();
+  });
+});
+
+describe('splitProductPortion', () => {
+  it('separa el producto de la línea y reparte el Bs con la misma tasa', () => {
+    expect(splitProductPortion(20100, 17851212, 100)).toEqual({
+      productMinor: 100,
+      productBsMinor: 88812,
+      restMinor: 20000,
+      restBsMinor: 17762400,
+    });
+  });
+
+  it('sin productos deja todo como cita', () => {
+    expect(splitProductPortion(1500, 1332180, 0)).toEqual({
+      productMinor: 0,
+      productBsMinor: 0,
+      restMinor: 1500,
+      restBsMinor: 1332180,
+    });
+  });
+
+  it('nunca separa más que lo cobrado en la línea', () => {
+    expect(splitProductPortion(500, null, 900)).toMatchObject({
+      productMinor: 500,
+      restMinor: 0,
+    });
   });
 });
