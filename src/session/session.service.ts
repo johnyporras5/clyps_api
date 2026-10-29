@@ -7917,6 +7917,14 @@ export class SessionService {
       sessionData.assignedServicesCount += 1;
     }
 
+    const workerLinkBookingStatusMap = await this.getLinkBookingStatusMap(
+      Array.from(sessionMap.keys()).map(Number),
+    );
+    for (const [id, data] of sessionMap.entries()) {
+      data.linkBookingStatus =
+        workerLinkBookingStatusMap.get(Number(id)) ?? null;
+    }
+
     // ---------------------------------------------------------------------
     // CALCULAR ESTADO CONSOLIDADO DEL TRABAJADOR POR SESIÓN
     // ---------------------------------------------------------------------
@@ -11644,6 +11652,11 @@ export class SessionService {
         companyWorkerIds,
       })
       .andWhere('session.client_id IS NOT NULL')
+      .andWhere(
+        `NOT EXISTS (SELECT 1 FROM public_booking_request pbr
+                      WHERE pbr.session_id = session.id
+                        AND pbr.status <> 'confirmed')`,
+      )
       .groupBy('session.client_id')
       .getRawMany();
 
