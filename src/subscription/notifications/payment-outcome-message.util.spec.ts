@@ -48,7 +48,7 @@ describe('pago verificado', () => {
   it('usa el armazón de los demás correos', () => {
     expect(message.html).toContain('<!DOCTYPE html>');
     expect(message.html).toContain('CLYPS');
-    expect(message.html).toContain('Gestión Profesional de Citas');
+    expect(message.html).not.toContain('<style');
     expect(message.html).toContain('Todos los derechos reservados');
   });
 });

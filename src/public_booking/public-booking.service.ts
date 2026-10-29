@@ -30,10 +30,18 @@ import { generateSimplePassword } from '../auth/password.util';
 import { normalizeCompanyCalendarDetail } from '../common/utils/company-calendar.util';
 import { isWithinOpenHours } from './booking-hours.util';
 import { generateUniqueWorkerSlug } from '../company_worker/company-worker-slug.util';
+import { FileUploadService } from '../common/services/file_upload.service';
+import { SessionDetail } from '../session_detail/entities/session_detail.entity';
 import {
   CreatePublicBookingDto,
   PublicAvailabilityQueryDto,
 } from './dto/create-public-booking.dto';
+import { CompanyBookingSettings } from './entities/company-booking-settings.entity';
+import { PublicBookingRequest } from './entities/public-booking-request.entity';
+import { toSettingsView } from './booking-requests.service';
+import { validatePersonName } from './person-name.util';
+import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
+import type { BookingRequestStatus } from './booking-modes.enums';
 
 /** Menos que esto llenando el formulario es un bot, no una persona. */
 const MIN_FORM_ELAPSED_MS = 3000;
@@ -75,6 +83,13 @@ export class PublicBookingService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Client)
     private readonly clientRepository: Repository<Client>,
+    @InjectRepository(SessionDetail)
+    private readonly sessionDetailRepository: Repository<SessionDetail>,
+    @InjectRepository(CompanyBookingSettings)
+    private readonly settingsRepository: Repository<CompanyBookingSettings>,
+    @InjectRepository(PublicBookingRequest)
+    private readonly requestRepository: Repository<PublicBookingRequest>,
+    private readonly fileUploadService: FileUploadService,
     private readonly serviceService: ServiceService,
     private readonly offerService: OfferService,
     private readonly portfolioService: PortfolioPicturesService,
@@ -92,7 +107,7 @@ export class PublicBookingService {
 
     // Las reseñas NO se publican aquí: el comentario es texto libre del
     // cliente y puede traer datos personales. Solo va el promedio (rating).
-    const [booking, offers, portfolio, bookable] = await Promise.all([
+    const [booking, offers, portfolio, bookable, settings] = await Promise.all([
       this.serviceService.findAllByCompanyIdWithWorkers(
         company.id,
         { page: 1, limit: 500 },
@@ -105,9 +120,18 @@ export class PublicBookingService {
         .findAllByCompany(company.id, { page: 1, limit: PORTFOLIO_LIMIT })
         .catch(() => ({ data: [] as any[] })),
       this.entitlements.canOperate(company.id),
+      this.settingsRepository.findOne({ where: { companyId: company.id } }),
     ]);
 
     const info = booking.company ?? {};
+    const view = toSettingsView(settings);
+    const bookingSettings = {
+      mode: view.mode,
+      leadMinutes: view.leadMinutes,
+      holdHours: view.holdHours,
+      deposit: view.deposit,
+      requiresIdentification: !isLegacyIdentityCompany(company.id),
+    };
 
     return {
       company: {
@@ -126,6 +150,7 @@ export class PublicBookingService {
         rating: info.rating ?? { average: 0, total: 0 },
       },
       bookable,
+      bookingSettings,
       services: (booking.data ?? []).map((s: any) => this.toPublicService(s)),
       offers: (offers ?? []).map((o: any) => ({
         offerId: o.offerId,
@@ -336,7 +361,11 @@ export class PublicBookingService {
 
   // ─────────────────────────── Crear la reserva ───────────────────────────
 
-  async createBooking(slug: string, dto: CreatePublicBookingDto) {
+  async createBooking(
+    slug: string,
+    dto: CreatePublicBookingDto,
+    paymentProof?: Express.Multer.File,
+  ) {
     // Anti-bots: el campo oculto lleno o un formulario llenado en menos de 3 s.
     if (
       (dto.website && dto.website.trim() !== '') ||
@@ -357,12 +386,60 @@ export class PublicBookingService {
       });
     }
 
-    await this.validateDetails(company.id, dto);
+    const nameError = validatePersonName(dto.name);
+    if (nameError) throw new BadRequestException(nameError);
+    if (!dto.phone) {
+      throw new BadRequestException(
+        'Escribe tu número de WhatsApp con el código del país.',
+      );
+    }
+    if (isLegacyIdentityCompany(company.id)) {
+      dto.identification = null;
+    } else if (!dto.identification) {
+      throw new BadRequestException(
+        'Escribe tu cédula con su letra: V-12345678.',
+      );
+    }
 
-    const { user, client, isNewUser, password } = await this.resolveGuestClient(
-      dto,
-      company,
+    const settings = toSettingsView(
+      await this.settingsRepository.findOne({
+        where: { companyId: company.id },
+      }),
     );
+    const isDeposit = settings.mode === 'deposit' && !!settings.deposit;
+    if (isDeposit) {
+      if (!dto.payment && !paymentProof) {
+        throw new ConflictException(
+          'La forma de reservar cambió. Recarga la página.',
+        );
+      }
+      if (!dto.payment?.reference) {
+        throw new BadRequestException(
+          'Escribe el número de referencia del pago.',
+        );
+      }
+      if (!paymentProof) {
+        throw new BadRequestException('Sube el capture del pago.');
+      }
+    }
+
+    await this.validateDetails(company.id, dto, settings.leadMinutes);
+
+    const proofUrl =
+      isDeposit && paymentProof
+        ? (
+            await this.fileUploadService.saveFile(
+              paymentProof,
+              'payment_proof',
+              'link-booking',
+              company.id,
+            )
+          ).fileUrl
+        : null;
+
+    const isFree = settings.mode === 'free';
+    const guest = await this.resolveGuestClient(dto, company);
+    const { user, client, isNewUser, password } = guest;
 
     const startTimes = dto.details.map((d) =>
       new Date(d.detailStartDatetime).getTime(),
@@ -382,29 +459,83 @@ export class PublicBookingService {
           })),
         },
         user.id,
+        { sendConfirmationEmails: isFree, linkClientToCompany: isFree },
       );
     } catch (error) {
       // Si la cuenta se creó solo para esta reserva y la cita no salió (p. ej.
       // otro tomó el horario), se deshace: no se deja una cuenta huérfana ni se
       // le mandan credenciales de algo que no reservó.
-      if (isNewUser) await this.rollbackGuest(user.id, client.id);
+      if (isNewUser) await this.rollbackGuest(guest);
       throw error;
     }
 
     const sessionId = result?.createdDetails?.[0]?.sessionId;
     if (!result?.isNew || !sessionId) {
-      if (isNewUser) await this.rollbackGuest(user.id, client.id);
+      if (isNewUser) await this.rollbackGuest(guest);
       throw new ConflictException(
         'Ya tienes una cita reservada con estos mismos datos.',
       );
     }
 
+    const status: BookingRequestStatus =
+      settings.mode === 'free'
+        ? 'confirmed'
+        : isDeposit
+          ? 'pending_payment'
+          : 'pending_approval';
+    const expiresAt =
+      status === 'confirmed'
+        ? null
+        : new Date(Date.now() + settings.holdHours * 60 * 60_000);
+    const deposit = isDeposit
+      ? await this.depositFor(sessionId, settings.deposit!)
+      : null;
+
+    await this.requestRepository.save(
+      this.requestRepository.create({
+        sessionId,
+        companyId: company.id,
+        status,
+        guestName: dto.name,
+        guestEmail: dto.email,
+        guestPhone: dto.phone,
+        guestIdentification: dto.identification ?? null,
+        isNewAccount: isNewUser && !isFree,
+        expiresAt,
+        depositAmount: deposit ? deposit.amount.toFixed(2) : null,
+        depositCurrency: deposit?.currency ?? null,
+        paymentReference: isDeposit ? (dto.payment?.reference ?? null) : null,
+        paymentProofUrl: proofUrl,
+      }),
+    );
+
+    if (!client.phone) {
+      await this.clientRepository.update(client.id, { phone: dto.phone });
+    }
+
     // Mismo efecto que una cita creada desde la app: agenda en tiempo real y
     // push al negocio. El actor es el cliente (no se le notifica a sí mismo).
     await this.realtimeEmitter.emitCreated(sessionId);
-    await this.notificationEmitter.notifyCreated(sessionId, user.id);
+    if (status === 'confirmed') {
+      await this.notificationEmitter.notifyCreated(sessionId, user.id);
+    } else {
+      await this.notificationEmitter.notifyLinkBookingPending(
+        sessionId,
+        status === 'pending_payment',
+      );
+      this.sendReceivedEmail(
+        company,
+        dto,
+        sessionDatetime,
+        status,
+        expiresAt,
+        deposit,
+      ).catch((err) =>
+        this.logger.error('Error enviando el aviso de solicitud recibida', err),
+      );
+    }
 
-    if (isNewUser && password) {
+    if (isFree && isNewUser && password) {
       this.emailService
         .sendClientCredentials(user.email, user.username, password)
         .catch((err) =>
@@ -420,9 +551,72 @@ export class PublicBookingService {
     return {
       sessionId,
       publicCode: session?.publicCode ?? null,
-      email: user.email,
+      email: dto.email,
       isNewAccount: isNewUser,
+      status,
+      expiresAt,
+      deposit,
     };
+  }
+
+  private async depositFor(
+    sessionId: number,
+    config: NonNullable<ReturnType<typeof toSettingsView>['deposit']>,
+  ): Promise<{ amount: number; currency: string }> {
+    if (config.type === 'fixed') {
+      return {
+        amount: Number(config.amount ?? 0),
+        currency: config.currency ?? 'USD',
+      };
+    }
+    const details = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    const total = details.reduce((sum, d) => sum + (Number(d.cost) || 0), 0);
+    const firstService = details[0]
+      ? await this.serviceRepository.findOne({
+          where: { id: details[0].serviceId },
+        })
+      : null;
+    return {
+      amount: Math.round(total * (config.percent ?? 0)) / 100,
+      currency: firstService?.currency ?? 'USD',
+    };
+  }
+
+  private async sendReceivedEmail(
+    company: Company,
+    dto: CreatePublicBookingDto,
+    start: Date,
+    status: 'pending_approval' | 'pending_payment',
+    expiresAt: Date | null,
+    deposit: { amount: number; currency: string } | null,
+  ) {
+    const services = await this.serviceRepository.find({
+      where: { id: In([...new Set(dto.details.map((d) => d.serviceId))]) },
+    });
+    const nameById = new Map(services.map((s) => [s.id, s.name]));
+    const when = this.emailService.formatSessionDate(start);
+    const until = expiresAt
+      ? this.emailService.formatSessionDate(expiresAt)
+      : null;
+    await this.emailService.sendLinkBookingReceivedToClient(
+      dto.email,
+      dto.name,
+      {
+        date: when.date,
+        time: when.time,
+        services: dto.details.map((d) => nameById.get(d.serviceId) ?? ''),
+        status,
+        expiresAt: until ? `${until.date} a las ${until.time}` : null,
+        deposit,
+      },
+      {
+        name: company.name,
+        email: company.email ?? '',
+        address: company.location ?? '',
+      },
+    );
   }
 
   /**
@@ -434,6 +628,7 @@ export class PublicBookingService {
   private async validateDetails(
     companyId: number,
     dto: CreatePublicBookingDto,
+    leadMinutes: number,
   ): Promise<void> {
     const serviceIds = [...new Set(dto.details.map((d) => d.serviceId))];
     const workerIds = [...new Set(dto.details.map((d) => d.companyWorkerId))];
@@ -485,11 +680,14 @@ export class PublicBookingService {
       if (Number.isNaN(start.getTime())) {
         throw new BadRequestException('La fecha de la cita no es válida.');
       }
-      // El cliente de la app ve slots desde ahora + 1 h; se deja 5 min de
-      // margen por la diferencia de relojes.
-      if (start.getTime() < now + 55 * 60_000) {
+      if (start.getTime() < now) {
         throw new BadRequestException(
           'Ese horario ya no está disponible. Elige otro.',
+        );
+      }
+      if (start.getTime() < now + (leadMinutes - 5) * 60_000) {
+        throw new BadRequestException(
+          `Debes reservar con al menos ${formatLead(leadMinutes)} de anticipación.`,
         );
       }
       if (start.getTime() > maxAhead) {
@@ -517,27 +715,31 @@ export class PublicBookingService {
     }
   }
 
-  /**
-   * Cliente por correo: si ya existe se reutiliza (y `createSessionByClient`
-   * lo vincula al negocio); si no, se crea con username automático y una
-   * contraseña que se le envía por correo SOLO si la cita se confirma.
-   */
   private async resolveGuestClient(
     dto: CreatePublicBookingDto,
     company: Company,
-  ): Promise<{
-    user: User;
-    client: Client;
-    isNewUser: boolean;
-    password?: string;
-  }> {
+  ): Promise<GuestAccount> {
     const email = dto.email;
     const { firstName, lastName } = splitName(dto.name);
 
-    const existingUser = await this.userRepository
-      .createQueryBuilder('u')
-      .where('LOWER(u.email) = :email', { email })
-      .getOne();
+    const byIdentification = dto.identification
+      ? await this.clientRepository.findOne({
+          where: {
+            identification: dto.identification,
+            permanentlyDeleted: false,
+          },
+          order: { id: 'ASC' },
+        })
+      : null;
+
+    const existingUser = byIdentification?.userId
+      ? await this.userRepository.findOne({
+          where: { id: byIdentification.userId },
+        })
+      : await this.userRepository
+          .createQueryBuilder('u')
+          .where('LOWER(u.email) = :email', { email })
+          .getOne();
 
     if (existingUser) {
       if (existingUser.userType !== 'cli') {
@@ -546,14 +748,30 @@ export class PublicBookingService {
         );
       }
 
-      let client = await this.clientRepository.findOne({
-        where: { userId: existingUser.id },
-      });
+      let client =
+        byIdentification?.userId === existingUser.id
+          ? byIdentification
+          : await this.clientRepository.findOne({
+              where: { userId: existingUser.id },
+            });
 
       if (client && isClientInactiveForCompany(client, company.id)) {
         throw new ForbiddenException(
-          `No es posible reservar en ${company.name} con este correo. Contacta directamente al negocio.`,
+          `No es posible reservar en ${company.name} con estos datos. Contacta directamente al negocio.`,
         );
+      }
+
+      if (
+        !byIdentification &&
+        dto.identification &&
+        client?.identification &&
+        client.identification !== dto.identification
+      ) {
+        throw new ConflictException({
+          message:
+            'Este correo ya está registrado con otra cédula. Usa otro correo.',
+          code: 'EMAIL_HAS_OTHER_IDENTIFICATION',
+        });
       }
 
       if (!client) {
@@ -562,20 +780,37 @@ export class PublicBookingService {
             name: firstName,
             lastName,
             email,
+            identification: dto.identification ?? null,
             isActive: 1,
             companies: [],
             userId: existingUser.id,
           }),
         );
-      } else if (!client.name) {
-        // Completa el nombre si su ficha no lo tenía; nunca pisa uno existente.
-        await this.clientRepository.update(client.id, {
-          name: firstName,
-          lastName: client.lastName || lastName,
-        });
+      } else {
+        const patch: Partial<Client> = {};
+        if (!client.name) {
+          patch.name = firstName;
+          patch.lastName = client.lastName || lastName;
+        }
+        if (!client.identification && dto.identification) {
+          patch.identification = dto.identification;
+        }
+        if (Object.keys(patch).length) {
+          await this.clientRepository.update(client.id, patch);
+          Object.assign(client, patch);
+        }
       }
 
       return { user: existingUser, client, isNewUser: false };
+    }
+
+    if (
+      byIdentification &&
+      isClientInactiveForCompany(byIdentification, company.id)
+    ) {
+      throw new ForbiddenException(
+        `No es posible reservar en ${company.name} con estos datos. Contacta directamente al negocio.`,
+      );
     }
 
     const password = generateSimplePassword();
@@ -593,13 +828,27 @@ export class PublicBookingService {
       }),
     );
 
-    // `companies` arranca vacío: createSessionByClient agrega el negocio y
-    // registra la fecha de primera cita al crear la sesión.
+    if (byIdentification) {
+      await this.clientRepository.update(byIdentification.id, {
+        userId: user.id,
+        email: byIdentification.email || email,
+      });
+      byIdentification.userId = user.id;
+      return {
+        user,
+        client: byIdentification,
+        isNewUser: true,
+        password,
+        attachedToExistingClient: true,
+      };
+    }
+
     const client = await this.clientRepository.save(
       this.clientRepository.create({
         name: firstName,
         lastName,
         email,
+        identification: dto.identification ?? null,
         isActive: 1,
         companies: [],
         userId: user.id,
@@ -609,13 +858,17 @@ export class PublicBookingService {
     return { user, client, isNewUser: true, password };
   }
 
-  private async rollbackGuest(userId: number, clientId: number) {
+  private async rollbackGuest(guest: GuestAccount) {
     try {
-      await this.clientRepository.delete(clientId);
-      await this.userRepository.delete(userId);
+      if (guest.attachedToExistingClient) {
+        await this.clientRepository.update(guest.client.id, { userId: null });
+      } else {
+        await this.clientRepository.delete(guest.client.id);
+      }
+      await this.userRepository.delete(guest.user.id);
     } catch (err) {
       this.logger.error(
-        `No se pudo deshacer la cuenta invitada (user ${userId})`,
+        `No se pudo deshacer la cuenta invitada (user ${guest.user.id})`,
         err as Error,
       );
     }
@@ -633,6 +886,26 @@ export class PublicBookingService {
     }
     return company;
   }
+}
+
+interface GuestAccount {
+  user: User;
+  client: Client;
+  isNewUser: boolean;
+  password?: string;
+  attachedToExistingClient?: boolean;
+}
+
+function formatLead(minutes: number): string {
+  if (minutes % 1440 === 0) {
+    const days = minutes / 1440;
+    return days === 1 ? '1 día' : `${days} días`;
+  }
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours === 1 ? '1 hora' : `${hours} horas`;
+  }
+  return `${minutes} minutos`;
 }
 
 function splitName(fullName: string): { firstName: string; lastName: string } {

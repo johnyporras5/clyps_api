@@ -2326,6 +2326,7 @@ export class SessionService {
       clientId: session.clientId,
       clientName: `${client.name || ''} ${client.lastName || ''}`.trim(),
       clientLastName: client.lastName || '',
+      clientPhone: client.phone || null,
       clientPicture: client.picture
         ? this.fileUploadService.getFileUrl('client_photo', client.picture)
         : null,
@@ -2355,6 +2356,9 @@ export class SessionService {
       cancellationReason: session.cancellationReason ?? null,
       cancelledBy: session.cancelledBy ?? null,
       cancelledByText: this.getCancelledByText(session.cancelledBy),
+      linkBookingStatus:
+        (await this.getLinkBookingStatusMap([session.id])).get(session.id) ??
+        null,
       createdAt: (session as any).createdAt || null,
       updatedAt: (session as any).updatedAt || null,
       // B1: estado de calificación del cliente para esta cita (aditivo). La
@@ -2726,6 +2730,28 @@ export class SessionService {
    *
    * Best-effort: nunca rompe la creación de la cita.
    */
+  async sendConfirmationEmailsForSession(sessionId: number): Promise<void> {
+    const session = await this.sessionRepository.findOne({
+      where: { id: sessionId },
+    });
+    if (!session) return;
+    const details = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    const workerId = details.find((d) => d.companyWorkerId)?.companyWorkerId;
+    if (!workerId) return;
+    const companyWorker = await this.companyWorkerRepository.findOne({
+      where: { id: workerId },
+    });
+    if (!companyWorker) return;
+    await this.sendConfirmationEmails(
+      session,
+      details,
+      session.clientId,
+      companyWorker.companyId,
+    );
+  }
+
   private async sendConfirmationEmails(
     session: Session,
     details: SessionDetail[],
@@ -3159,6 +3185,9 @@ export class SessionService {
       const paymentStatusMap = await this.getPaymentStatusMap(
         sessions.map((s) => s.id),
       );
+      const linkBookingStatusMap = await this.getLinkBookingStatusMap(
+        sessions.map((s) => s.id),
+      );
 
       // 5. Enriquecer los datos (resto del código permanece igual)
       const enrichedSessions = await Promise.all(
@@ -3345,6 +3374,7 @@ export class SessionService {
             pendingCollection:
               paymentStatusMap.get(session.id)?.pendingCollection ?? false,
             collectedAt: paymentStatusMap.get(session.id)?.collectedAt ?? null,
+            linkBookingStatus: linkBookingStatusMap.get(session.id) ?? null,
             createdAt: session['createdAt'] || null,
             updatedAt: session['updatedAt'] || null,
           };
@@ -3522,6 +3552,9 @@ export class SessionService {
     const paymentStatusMap = await this.getPaymentStatusMap(
       sessions.map((s) => s.id),
     );
+    const linkBookingStatusMap = await this.getLinkBookingStatusMap(
+      sessions.map((s) => s.id),
+    );
 
     // 4. Enriquecimiento (mismo formato que findAllSessionsSimple)
     const enrichedSessions = await Promise.all(
@@ -3626,6 +3659,7 @@ export class SessionService {
           pendingCollection:
             paymentStatusMap.get(session.id)?.pendingCollection ?? false,
           collectedAt: paymentStatusMap.get(session.id)?.collectedAt ?? null,
+          linkBookingStatus: linkBookingStatusMap.get(session.id) ?? null,
           createdAt: session['createdAt'] || null,
           updatedAt: session['updatedAt'] || null,
         };
@@ -3706,6 +3740,11 @@ export class SessionService {
     if (!session) {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
+
+    await this.assertLinkBookingConfirmed(
+      sessionId,
+      updateSessionStatusDto.sessionStatus,
+    );
 
     // 2. Buscar los detalles de la sesión
     const sessionDetails = await this.sessionDetailRepository.find({
@@ -5339,6 +5378,44 @@ export class SessionService {
     }));
   }
 
+  private async assertLinkBookingConfirmed(
+    sessionId: number,
+    nextStatus: number | undefined,
+  ): Promise<void> {
+    if (nextStatus === undefined || ![2, 3, 4, 6].includes(Number(nextStatus)))
+      return;
+    const pending = (await this.getLinkBookingStatusMap([sessionId])).get(
+      sessionId,
+    );
+    if (!pending) return;
+    throw new ConflictException({
+      message:
+        pending === 'pending_payment'
+          ? 'Esta reserva por enlace está esperando que verifiques el pago. Confírmala antes de comenzar el servicio.'
+          : 'Esta reserva por enlace está por aprobar. Apruébala antes de comenzar el servicio.',
+      code: 'LINK_BOOKING_PENDING',
+    });
+  }
+
+  private async getLinkBookingStatusMap(
+    sessionIds: number[],
+  ): Promise<Map<number, 'pending_approval' | 'pending_payment'>> {
+    const map = new Map<number, 'pending_approval' | 'pending_payment'>();
+    if (sessionIds.length === 0) return map;
+    const rows: Array<{
+      sessionId: number;
+      status: 'pending_approval' | 'pending_payment';
+    }> = await this.sessionRepository.query(
+      `SELECT session_id AS sessionId, status
+         FROM public_booking_request
+        WHERE session_id IN (?)
+          AND status IN ('pending_approval','pending_payment')`,
+      [sessionIds],
+    );
+    for (const r of rows) map.set(Number(r.sessionId), r.status);
+    return map;
+  }
+
   /**
    * Estado de cobro por cita, en batch (evita N+1 en los listados). Devuelve un
    * Map sessionId → { isPaid, pendingCollection, collectedAt }.
@@ -5840,6 +5917,11 @@ export class SessionService {
         `Detalle de sesión con ID ${detailId} no encontrado`,
       );
     }
+
+    await this.assertLinkBookingConfirmed(
+      detail.sessionId,
+      updateDetailStatusDto.status,
+    );
 
     const parentSession = await this.sessionRepository.findOne({
       where: { id: detail.sessionId },
@@ -7835,6 +7917,14 @@ export class SessionService {
       sessionData.assignedServicesCount += 1;
     }
 
+    const workerLinkBookingStatusMap = await this.getLinkBookingStatusMap(
+      Array.from(sessionMap.keys()).map(Number),
+    );
+    for (const [id, data] of sessionMap.entries()) {
+      data.linkBookingStatus =
+        workerLinkBookingStatusMap.get(Number(id)) ?? null;
+    }
+
     // ---------------------------------------------------------------------
     // CALCULAR ESTADO CONSOLIDADO DEL TRABAJADOR POR SESIÓN
     // ---------------------------------------------------------------------
@@ -7973,6 +8063,10 @@ export class SessionService {
   async createSessionByClient(
     createSessionWithDetailDto: CreateSessionWithDetailDto,
     clientUserId: number,
+    options: {
+      sendConfirmationEmails?: boolean;
+      linkClientToCompany?: boolean;
+    } = {},
   ): Promise<{
     message: string;
     isNew: boolean;
@@ -8596,16 +8690,18 @@ export class SessionService {
     }
 
     // Correos de la cita (uno solo, con todos los servicios) en segundo plano.
-    this.sendConfirmationEmails(
-      session,
-      createdDetails,
-      clientId,
-      companyId,
-    ).catch((error) => {
-      this.logger.error(
-        `Error enviando correos de confirmación: ${(error as Error).message}`,
-      );
-    });
+    if (options.sendConfirmationEmails !== false) {
+      this.sendConfirmationEmails(
+        session,
+        createdDetails,
+        clientId,
+        companyId,
+      ).catch((error) => {
+        this.logger.error(
+          `Error enviando correos de confirmación: ${(error as Error).message}`,
+        );
+      });
+    }
 
     // 11. Verificar y actualizar las compañías del cliente
     let wasAlreadyAssociated = false;
@@ -8639,7 +8735,10 @@ export class SessionService {
       : companiesBefore;
     companiesAfter = updatedCompanies;
 
-    if (isNewCompany || !hasFirstAppointment) {
+    if (
+      options.linkClientToCompany !== false &&
+      (isNewCompany || !hasFirstAppointment)
+    ) {
       await this.clientRepository.update(client.id, {
         companies: updatedCompanies,
         companyFirstAppointments: updatedFirstAppointments,
@@ -11553,6 +11652,11 @@ export class SessionService {
         companyWorkerIds,
       })
       .andWhere('session.client_id IS NOT NULL')
+      .andWhere(
+        `NOT EXISTS (SELECT 1 FROM public_booking_request pbr
+                      WHERE pbr.session_id = session.id
+                        AND pbr.status <> 'confirmed')`,
+      )
       .groupBy('session.client_id')
       .getRawMany();
 

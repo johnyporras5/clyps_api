@@ -142,13 +142,12 @@ export function buildPaymentRejectedMessage(
   // cuerpo, porque dentro de la app del teléfono no se pueden mostrar.
   const paymentLines: string[] = [];
   if (instructions.phone && instructions.bank) {
-    paymentLines.push(
-      `Pago Móvil: ${instructions.phone} · ${instructions.bank}` +
-        (instructions.identification
-          ? ` · ${instructions.identification}`
-          : '') +
-        (instructions.holder ? ` · ${instructions.holder}` : ''),
-    );
+    paymentLines.push(`Pago Móvil: ${instructions.phone}`);
+    paymentLines.push(`Banco: ${instructions.bank}`);
+    if (instructions.identification)
+      paymentLines.push(`C.I./RIF: ${instructions.identification}`);
+    if (instructions.holder)
+      paymentLines.push(`A nombre de: ${instructions.holder}`);
   }
 
   return {
