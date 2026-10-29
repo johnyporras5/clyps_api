@@ -584,7 +584,10 @@ export class BookingRequestsService {
                   amount: Number(r.depositAmount),
                   currency: r.depositCurrency ?? 'USD',
                   reference: r.paymentReference,
-                  proofUrl: r.paymentProofUrl,
+                  proofUrl:
+                    user.userType === 'adm' || !!settings?.workersCanApprove
+                      ? r.paymentProofUrl
+                      : null,
                 }
               : null,
           rejectionReason: r.rejectionReason,
