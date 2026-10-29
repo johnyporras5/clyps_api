@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -7,13 +8,19 @@ import {
   Param,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
+  ValidationPipe,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import { PublicBookingService } from './public-booking.service';
 import {
   CreatePublicBookingDto,
   PublicAvailabilityQueryDto,
 } from './dto/create-public-booking.dto';
+
+const PROOF_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
  * Enlace público de reservas (/reservar/<slug> en la web). SIN autenticación
@@ -51,10 +58,49 @@ export class PublicBookingController {
   @Post(':slug/sessions')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  createBooking(
+  @UseInterceptors(
+    FileInterceptor('paymentProof', {
+      limits: { fileSize: PROOF_MAX_BYTES, files: 1 },
+    }),
+  )
+  async createBooking(
     @Param('slug') slug: string,
-    @Body() dto: CreatePublicBookingDto,
+    @Body() body: Record<string, unknown>,
+    @UploadedFile() paymentProof?: Express.Multer.File,
   ) {
-    return this.publicBookingService.createBooking(slug, dto);
+    const dto = await parseBookingBody(body);
+    if (
+      paymentProof &&
+      !/^image\/(jpeg|png|jpg|webp)$/.test(paymentProof.mimetype)
+    ) {
+      throw new BadRequestException(
+        'El comprobante debe ser una imagen (JPG, PNG o WEBP).',
+      );
+    }
+    return this.publicBookingService.createBooking(slug, dto, paymentProof);
   }
+}
+
+const bodyPipe = new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  transform: true,
+  transformOptions: { enableImplicitConversion: true },
+});
+
+async function parseBookingBody(
+  body: Record<string, unknown>,
+): Promise<CreatePublicBookingDto> {
+  let plain: unknown = body;
+  if (typeof body?.data === 'string') {
+    try {
+      plain = JSON.parse(body.data);
+    } catch {
+      throw new BadRequestException('Los datos de la reserva no son válidos.');
+    }
+  }
+  return bodyPipe.transform(plain, {
+    type: 'body',
+    metatype: CreatePublicBookingDto,
+  }) as Promise<CreatePublicBookingDto>;
 }
