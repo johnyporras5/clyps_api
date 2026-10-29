@@ -31,6 +31,17 @@ export class PublicBookingRequest {
   @Column({ name: 'guest_phone', type: 'varchar', length: 20, nullable: true })
   guestPhone: string | null;
 
+  @Column({
+    name: 'guest_identification',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  guestIdentification: string | null;
+
+  @Column({ name: 'is_new_account', type: 'boolean', default: false })
+  isNewAccount: boolean;
+
   @Column({ name: 'expires_at', type: 'datetime', nullable: true })
   expiresAt: Date | null;
 

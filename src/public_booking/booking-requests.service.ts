@@ -18,6 +18,9 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
 import { Company } from '../company/entities/company.entity';
 import { Worker } from '../worker/entities/worker.entity';
 import { User } from '../user/entities/user.entity';
+import { Client } from '../client/entities/client.entity';
+import * as bcrypt from 'bcrypt';
+import { generateSimplePassword } from '../auth/password.util';
 import { SessionService } from '../session/session.service';
 import { SessionRealtimeEmitter } from '../session/session-realtime.emitter';
 import { SessionNotificationEmitter } from '../session/session-notification.emitter';
@@ -74,6 +77,8 @@ export class BookingRequestsService {
     private readonly workerRepository: Repository<Worker>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Client)
+    private readonly clientRepository: Repository<Client>,
     private readonly sessionService: SessionService,
     private readonly realtimeEmitter: SessionRealtimeEmitter,
     private readonly notificationEmitter: SessionNotificationEmitter,
@@ -208,7 +213,16 @@ export class BookingRequestsService {
     request.reviewedAt = new Date();
     await this.requestRepository.save(request);
 
+    await this.linkClientToCompany(request);
     await this.realtimeEmitter.emitStatusChanged(sessionId);
+    if (request.isNewAccount) {
+      this.sendNewAccountCredentials(request).catch((err) =>
+        this.logger.error(
+          `Error enviando credenciales de la reserva ${sessionId}`,
+          err as Error,
+        ),
+      );
+    }
     this.sessionService
       .sendConfirmationEmailsForSession(sessionId)
       .catch((err) =>
@@ -296,6 +310,64 @@ export class BookingRequestsService {
         `Error enviando el aviso de reserva no confirmada ${request.sessionId}`,
         err as Error,
       ),
+    );
+  }
+
+  private async linkClientToCompany(request: PublicBookingRequest) {
+    const session = await this.sessionRepository.findOne({
+      where: { id: request.sessionId },
+    });
+    if (!session) return;
+    const client = await this.clientRepository.findOne({
+      where: { id: session.clientId },
+    });
+    if (!client) return;
+
+    const companies = Array.isArray(client.companies) ? client.companies : [];
+    const firstAppointments = Array.isArray(client.companyFirstAppointments)
+      ? client.companyFirstAppointments
+      : [];
+    const isNewCompany = !companies.includes(request.companyId);
+    const hasFirst = firstAppointments.some(
+      (fa) => Number(fa.companyId) === request.companyId,
+    );
+    if (!isNewCompany && hasFirst) return;
+
+    await this.clientRepository.update(client.id, {
+      companies: isNewCompany ? [...companies, request.companyId] : companies,
+      companyFirstAppointments: hasFirst
+        ? firstAppointments
+        : [
+            ...firstAppointments,
+            {
+              companyId: request.companyId,
+              firstAppointmentDate:
+                session.startDatetime ?? session.sessionDatetime,
+            },
+          ],
+    });
+  }
+
+  private async sendNewAccountCredentials(request: PublicBookingRequest) {
+    const session = await this.sessionRepository.findOne({
+      where: { id: request.sessionId },
+    });
+    const client = session
+      ? await this.clientRepository.findOne({ where: { id: session.clientId } })
+      : null;
+    const user = client?.userId
+      ? await this.userRepository.findOne({ where: { id: client.userId } })
+      : null;
+    if (!user?.email) return;
+
+    const password = generateSimplePassword();
+    await this.userRepository.update(user.id, {
+      password: await bcrypt.hash(password, 10),
+    });
+    await this.emailService.sendClientCredentials(
+      user.email,
+      user.username,
+      password,
     );
   }
 
@@ -454,6 +526,11 @@ export class BookingRequestsService {
     ]);
 
     const sessionById = new Map(sessions.map((s) => [s.id, s]));
+    const clientIds = [...new Set(sessions.map((s) => s.clientId))];
+    const clients = clientIds.length
+      ? await this.clientRepository.find({ where: { id: In(clientIds) } })
+      : [];
+    const clientById = new Map(clients.map((c) => [c.id, c]));
     const serviceById = new Map(services.map((s) => [s.id, s]));
     const workerById = new Map(companyWorkers.map((cw) => [cw.id, cw]));
 
@@ -481,7 +558,12 @@ export class BookingRequestsService {
             name: r.guestName,
             email: r.guestEmail,
             phone: r.guestPhone,
+            identification: r.guestIdentification,
           },
+          systemName: systemNameFor(
+            clientById.get(session?.clientId ?? 0),
+            r.guestName,
+          ),
           services: own.map((d) => {
             const service = serviceById.get(d.serviceId);
             const cw = workerById.get(d.companyWorkerId);
@@ -530,6 +612,17 @@ export class BookingRequestsService {
     }
     return names;
   }
+}
+
+function systemNameFor(
+  client: Client | undefined,
+  guestName: string,
+): string | null {
+  if (!client) return null;
+  const name = [client.name, client.lastName].filter(Boolean).join(' ').trim();
+  if (!name) return null;
+  const norm = (v: string) => v.trim().toLowerCase().replace(/s+/g, ' ');
+  return norm(name) === norm(guestName) ? null : name;
 }
 
 export function toSettingsView(

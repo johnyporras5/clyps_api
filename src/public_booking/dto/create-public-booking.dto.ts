@@ -15,6 +15,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { IdentificationField } from '../../common/utils/identification.util';
 
 /**
  * Un servicio de la reserva pública. A diferencia del DTO interno, aquí el
@@ -71,6 +72,9 @@ export class CreatePublicBookingDto {
     message: 'Escribe tu número de WhatsApp con el código del país.',
   })
   phone?: string;
+
+  @IdentificationField()
+  identification?: string | null;
 
   @IsOptional()
   @ValidateNested()

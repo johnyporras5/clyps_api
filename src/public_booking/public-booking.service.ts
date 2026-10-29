@@ -40,6 +40,7 @@ import { CompanyBookingSettings } from './entities/company-booking-settings.enti
 import { PublicBookingRequest } from './entities/public-booking-request.entity';
 import { toSettingsView } from './booking-requests.service';
 import { validatePersonName } from './person-name.util';
+import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
 import type { BookingRequestStatus } from './booking-modes.enums';
 
 /** Menos que esto llenando el formulario es un bot, no una persona. */
@@ -129,6 +130,7 @@ export class PublicBookingService {
       leadMinutes: view.leadMinutes,
       holdHours: view.holdHours,
       deposit: view.deposit,
+      requiresIdentification: !isLegacyIdentityCompany(company.id),
     };
 
     return {
@@ -391,6 +393,13 @@ export class PublicBookingService {
         'Escribe tu número de WhatsApp con el código del país.',
       );
     }
+    if (isLegacyIdentityCompany(company.id)) {
+      dto.identification = null;
+    } else if (!dto.identification) {
+      throw new BadRequestException(
+        'Escribe tu cédula con su letra: V-12345678.',
+      );
+    }
 
     const settings = toSettingsView(
       await this.settingsRepository.findOne({
@@ -428,10 +437,9 @@ export class PublicBookingService {
           ).fileUrl
         : null;
 
-    const { user, client, isNewUser, password } = await this.resolveGuestClient(
-      dto,
-      company,
-    );
+    const isFree = settings.mode === 'free';
+    const guest = await this.resolveGuestClient(dto, company);
+    const { user, client, isNewUser, password } = guest;
 
     const startTimes = dto.details.map((d) =>
       new Date(d.detailStartDatetime).getTime(),
@@ -451,19 +459,19 @@ export class PublicBookingService {
           })),
         },
         user.id,
-        { sendConfirmationEmails: settings.mode === 'free' },
+        { sendConfirmationEmails: isFree, linkClientToCompany: isFree },
       );
     } catch (error) {
       // Si la cuenta se creó solo para esta reserva y la cita no salió (p. ej.
       // otro tomó el horario), se deshace: no se deja una cuenta huérfana ni se
       // le mandan credenciales de algo que no reservó.
-      if (isNewUser) await this.rollbackGuest(user.id, client.id);
+      if (isNewUser) await this.rollbackGuest(guest);
       throw error;
     }
 
     const sessionId = result?.createdDetails?.[0]?.sessionId;
     if (!result?.isNew || !sessionId) {
-      if (isNewUser) await this.rollbackGuest(user.id, client.id);
+      if (isNewUser) await this.rollbackGuest(guest);
       throw new ConflictException(
         'Ya tienes una cita reservada con estos mismos datos.',
       );
@@ -491,6 +499,8 @@ export class PublicBookingService {
         guestName: dto.name,
         guestEmail: dto.email,
         guestPhone: dto.phone,
+        guestIdentification: dto.identification ?? null,
+        isNewAccount: isNewUser && !isFree,
         expiresAt,
         depositAmount: deposit ? deposit.amount.toFixed(2) : null,
         depositCurrency: deposit?.currency ?? null,
@@ -525,7 +535,7 @@ export class PublicBookingService {
       );
     }
 
-    if (isNewUser && password) {
+    if (isFree && isNewUser && password) {
       this.emailService
         .sendClientCredentials(user.email, user.username, password)
         .catch((err) =>
@@ -541,7 +551,7 @@ export class PublicBookingService {
     return {
       sessionId,
       publicCode: session?.publicCode ?? null,
-      email: user.email,
+      email: dto.email,
       isNewAccount: isNewUser,
       status,
       expiresAt,
@@ -705,27 +715,31 @@ export class PublicBookingService {
     }
   }
 
-  /**
-   * Cliente por correo: si ya existe se reutiliza (y `createSessionByClient`
-   * lo vincula al negocio); si no, se crea con username automático y una
-   * contraseña que se le envía por correo SOLO si la cita se confirma.
-   */
   private async resolveGuestClient(
     dto: CreatePublicBookingDto,
     company: Company,
-  ): Promise<{
-    user: User;
-    client: Client;
-    isNewUser: boolean;
-    password?: string;
-  }> {
+  ): Promise<GuestAccount> {
     const email = dto.email;
     const { firstName, lastName } = splitName(dto.name);
 
-    const existingUser = await this.userRepository
-      .createQueryBuilder('u')
-      .where('LOWER(u.email) = :email', { email })
-      .getOne();
+    const byIdentification = dto.identification
+      ? await this.clientRepository.findOne({
+          where: {
+            identification: dto.identification,
+            permanentlyDeleted: false,
+          },
+          order: { id: 'ASC' },
+        })
+      : null;
+
+    const existingUser = byIdentification?.userId
+      ? await this.userRepository.findOne({
+          where: { id: byIdentification.userId },
+        })
+      : await this.userRepository
+          .createQueryBuilder('u')
+          .where('LOWER(u.email) = :email', { email })
+          .getOne();
 
     if (existingUser) {
       if (existingUser.userType !== 'cli') {
@@ -734,14 +748,30 @@ export class PublicBookingService {
         );
       }
 
-      let client = await this.clientRepository.findOne({
-        where: { userId: existingUser.id },
-      });
+      let client =
+        byIdentification?.userId === existingUser.id
+          ? byIdentification
+          : await this.clientRepository.findOne({
+              where: { userId: existingUser.id },
+            });
 
       if (client && isClientInactiveForCompany(client, company.id)) {
         throw new ForbiddenException(
-          `No es posible reservar en ${company.name} con este correo. Contacta directamente al negocio.`,
+          `No es posible reservar en ${company.name} con estos datos. Contacta directamente al negocio.`,
         );
+      }
+
+      if (
+        !byIdentification &&
+        dto.identification &&
+        client?.identification &&
+        client.identification !== dto.identification
+      ) {
+        throw new ConflictException({
+          message:
+            'Este correo ya está registrado con otra cédula. Usa otro correo.',
+          code: 'EMAIL_HAS_OTHER_IDENTIFICATION',
+        });
       }
 
       if (!client) {
@@ -750,20 +780,37 @@ export class PublicBookingService {
             name: firstName,
             lastName,
             email,
+            identification: dto.identification ?? null,
             isActive: 1,
             companies: [],
             userId: existingUser.id,
           }),
         );
-      } else if (!client.name) {
-        // Completa el nombre si su ficha no lo tenía; nunca pisa uno existente.
-        await this.clientRepository.update(client.id, {
-          name: firstName,
-          lastName: client.lastName || lastName,
-        });
+      } else {
+        const patch: Partial<Client> = {};
+        if (!client.name) {
+          patch.name = firstName;
+          patch.lastName = client.lastName || lastName;
+        }
+        if (!client.identification && dto.identification) {
+          patch.identification = dto.identification;
+        }
+        if (Object.keys(patch).length) {
+          await this.clientRepository.update(client.id, patch);
+          Object.assign(client, patch);
+        }
       }
 
       return { user: existingUser, client, isNewUser: false };
+    }
+
+    if (
+      byIdentification &&
+      isClientInactiveForCompany(byIdentification, company.id)
+    ) {
+      throw new ForbiddenException(
+        `No es posible reservar en ${company.name} con estos datos. Contacta directamente al negocio.`,
+      );
     }
 
     const password = generateSimplePassword();
@@ -781,13 +828,27 @@ export class PublicBookingService {
       }),
     );
 
-    // `companies` arranca vacío: createSessionByClient agrega el negocio y
-    // registra la fecha de primera cita al crear la sesión.
+    if (byIdentification) {
+      await this.clientRepository.update(byIdentification.id, {
+        userId: user.id,
+        email: byIdentification.email || email,
+      });
+      byIdentification.userId = user.id;
+      return {
+        user,
+        client: byIdentification,
+        isNewUser: true,
+        password,
+        attachedToExistingClient: true,
+      };
+    }
+
     const client = await this.clientRepository.save(
       this.clientRepository.create({
         name: firstName,
         lastName,
         email,
+        identification: dto.identification ?? null,
         isActive: 1,
         companies: [],
         userId: user.id,
@@ -797,13 +858,17 @@ export class PublicBookingService {
     return { user, client, isNewUser: true, password };
   }
 
-  private async rollbackGuest(userId: number, clientId: number) {
+  private async rollbackGuest(guest: GuestAccount) {
     try {
-      await this.clientRepository.delete(clientId);
-      await this.userRepository.delete(userId);
+      if (guest.attachedToExistingClient) {
+        await this.clientRepository.update(guest.client.id, { userId: null });
+      } else {
+        await this.clientRepository.delete(guest.client.id);
+      }
+      await this.userRepository.delete(guest.user.id);
     } catch (err) {
       this.logger.error(
-        `No se pudo deshacer la cuenta invitada (user ${userId})`,
+        `No se pudo deshacer la cuenta invitada (user ${guest.user.id})`,
         err as Error,
       );
     }
@@ -821,6 +886,14 @@ export class PublicBookingService {
     }
     return company;
   }
+}
+
+interface GuestAccount {
+  user: User;
+  client: Client;
+  isNewUser: boolean;
+  password?: string;
+  attachedToExistingClient?: boolean;
 }
 
 function formatLead(minutes: number): string {

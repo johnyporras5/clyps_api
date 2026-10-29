@@ -8025,7 +8025,10 @@ export class SessionService {
   async createSessionByClient(
     createSessionWithDetailDto: CreateSessionWithDetailDto,
     clientUserId: number,
-    options: { sendConfirmationEmails?: boolean } = {},
+    options: {
+      sendConfirmationEmails?: boolean;
+      linkClientToCompany?: boolean;
+    } = {},
   ): Promise<{
     message: string;
     isNew: boolean;
@@ -8694,7 +8697,10 @@ export class SessionService {
       : companiesBefore;
     companiesAfter = updatedCompanies;
 
-    if (isNewCompany || !hasFirstAppointment) {
+    if (
+      options.linkClientToCompany !== false &&
+      (isNewCompany || !hasFirstAppointment)
+    ) {
       await this.clientRepository.update(client.id, {
         companies: updatedCompanies,
         companyFirstAppointments: updatedFirstAppointments,
