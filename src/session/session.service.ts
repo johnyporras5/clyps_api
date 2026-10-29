@@ -3741,6 +3741,11 @@ export class SessionService {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
 
+    await this.assertLinkBookingConfirmed(
+      sessionId,
+      updateSessionStatusDto.sessionStatus,
+    );
+
     // 2. Buscar los detalles de la sesión
     const sessionDetails = await this.sessionDetailRepository.find({
       where: { sessionId: sessionId },
@@ -5373,6 +5378,25 @@ export class SessionService {
     }));
   }
 
+  private async assertLinkBookingConfirmed(
+    sessionId: number,
+    nextStatus: number | undefined,
+  ): Promise<void> {
+    if (nextStatus === undefined || ![2, 3, 4, 6].includes(Number(nextStatus)))
+      return;
+    const pending = (await this.getLinkBookingStatusMap([sessionId])).get(
+      sessionId,
+    );
+    if (!pending) return;
+    throw new ConflictException({
+      message:
+        pending === 'pending_payment'
+          ? 'Esta reserva por enlace está esperando que verifiques el pago. Confírmala antes de comenzar el servicio.'
+          : 'Esta reserva por enlace está por aprobar. Apruébala antes de comenzar el servicio.',
+      code: 'LINK_BOOKING_PENDING',
+    });
+  }
+
   private async getLinkBookingStatusMap(
     sessionIds: number[],
   ): Promise<Map<number, 'pending_approval' | 'pending_payment'>> {
@@ -5893,6 +5917,11 @@ export class SessionService {
         `Detalle de sesión con ID ${detailId} no encontrado`,
       );
     }
+
+    await this.assertLinkBookingConfirmed(
+      detail.sessionId,
+      updateDetailStatusDto.status,
+    );
 
     const parentSession = await this.sessionRepository.findOne({
       where: { id: detail.sessionId },
