@@ -640,7 +640,7 @@ export class EmailService {
       title: isPayment ? 'Pago en verificación' : 'Solicitud recibida',
       accent: '#d97706',
       accentSoft: '#fffbeb',
-      cardTitle: '⏳ Cita por confirmar',
+      cardTitle: '⏳ Cita por aprobar',
       message: `${intro} y te confirmará la cita por <strong>WhatsApp</strong> y por <strong>correo</strong>.`,
       date: data.date,
       time: data.time,
