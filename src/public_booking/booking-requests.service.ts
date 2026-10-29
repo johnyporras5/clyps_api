@@ -90,7 +90,7 @@ export class BookingRequestsService {
       throw new ForbiddenException('No perteneces a ningún negocio.');
     }
     const row = await this.settingsRepository.findOne({ where: { companyId } });
-    return toSettingsView(row);
+    return toSettingsView(row, true);
   }
 
   async updateSettings(
@@ -138,11 +138,20 @@ export class BookingRequestsService {
         deposit.type === 'fixed' ? (deposit.currency ?? null) : null;
       row.paymentInstructions = deposit.instructions;
     } else if (dto.deposit) {
-      row.paymentInstructions =
-        dto.deposit.instructions || row.paymentInstructions;
+      const deposit = dto.deposit;
+      row.depositType = deposit.type;
+      if (deposit.type === 'fixed') {
+        if (Number(deposit.amount) > 0) {
+          row.depositAmount = Number(deposit.amount).toFixed(2);
+        }
+        if (deposit.currency) row.depositCurrency = deposit.currency;
+      } else if (deposit.percent) {
+        row.depositPercent = Number(deposit.percent);
+      }
+      row.paymentInstructions = deposit.instructions || row.paymentInstructions;
     }
 
-    return toSettingsView(await this.settingsRepository.save(row));
+    return toSettingsView(await this.settingsRepository.save(row), true);
   }
 
   async list(user: AuthenticatedUser, query: QueryBookingRequestsDto) {
@@ -630,6 +639,7 @@ function systemNameFor(
 
 export function toSettingsView(
   row: CompanyBookingSettings | null,
+  includeInactiveDeposit = false,
 ): BookingSettingsView {
   if (!row) {
     return {
@@ -646,7 +656,7 @@ export function toSettingsView(
     holdHours: row.holdHours,
     workersCanApprove: !!row.workersCanApprove,
     deposit:
-      row.mode === 'deposit' && row.depositType
+      (includeInactiveDeposit || row.mode === 'deposit') && row.depositType
         ? {
             type: row.depositType,
             amount:
