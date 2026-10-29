@@ -139,6 +139,7 @@ export interface SessionResponse {
   clientId: number;
   clientName: string;
   clientLastName: string;
+  clientPhone?: string | null;
   clientPicture: string | null;
   companyId: number;
   companyName: string;

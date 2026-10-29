@@ -2326,6 +2326,7 @@ export class SessionService {
       clientId: session.clientId,
       clientName: `${client.name || ''} ${client.lastName || ''}`.trim(),
       clientLastName: client.lastName || '',
+      clientPhone: client.phone || null,
       clientPicture: client.picture
         ? this.fileUploadService.getFileUrl('client_photo', client.picture)
         : null,
