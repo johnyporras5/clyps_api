@@ -12,10 +12,12 @@ import {
   buildInitialSteps,
 } from './types/onboarding.types';
 import type {
+  OnboardingStartChoice,
   OnboardingStepKey,
   OnboardingStepState,
   OnboardingStepStatus,
   OnboardingSteps,
+  OnboardingWizardStepKey,
 } from './types/onboarding.types';
 import type {
   OnboardingSkipResponse,
@@ -132,6 +134,8 @@ export class OnboardingService {
           ? { missing: steps[key].missing }
           : {}),
       })),
+      wizardStep: state.wizardStep ?? null,
+      startChoice: state.startChoice ?? null,
       firstChargeAt: state.firstChargeAt
         ? new Date(state.firstChargeAt).toISOString()
         : null,
@@ -318,6 +322,30 @@ export class OnboardingService {
       await this.dataSource.getRepository(OnboardingState).save(state);
     }
     return { globalStatus: 'skipped' };
+  }
+
+  async setWizardStep(
+    companyId: number,
+    step: OnboardingWizardStepKey,
+  ): Promise<{ wizardStep: OnboardingWizardStepKey }> {
+    await this.getOrCreateState(companyId);
+    await this.dataSource.query(
+      'UPDATE `onboarding_state` SET `wizard_step` = ?, `updated_at` = `updated_at` WHERE `company_id` = ?',
+      [step, companyId],
+    );
+    return { wizardStep: step };
+  }
+
+  async setStartChoice(
+    companyId: number,
+    choice: OnboardingStartChoice,
+  ): Promise<{ startChoice: OnboardingStartChoice }> {
+    await this.getOrCreateState(companyId);
+    await this.dataSource.query(
+      'UPDATE `onboarding_state` SET `start_choice` = ?, `updated_at` = `updated_at` WHERE `company_id` = ?',
+      [choice, companyId],
+    );
+    return { startChoice: choice };
   }
 
   /**
