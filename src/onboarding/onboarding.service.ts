@@ -24,6 +24,10 @@ import type {
   OnboardingStateResponse,
 } from './dto/onboarding-state-response.dto';
 import { EntitlementsService } from '../subscription/entitlements.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom } from '../realtime/rooms';
+
+const REALTIME_EMIT_DELAY_MS = 300;
 
 /** Resultado del recálculo de un paso contra el estado real del sistema. */
 interface StepEvaluation {
@@ -51,11 +55,29 @@ export interface MissingServiceData {
 @Injectable()
 export class OnboardingService {
   private readonly logger = new Logger(OnboardingService.name);
+  private readonly pendingEmits = new Map<number, NodeJS.Timeout>();
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly entitlements: EntitlementsService,
+    private readonly realtime: RealtimeService,
   ) {}
+
+  private notifyStateChanged(companyId: number): void {
+    const pending = this.pendingEmits.get(companyId);
+    if (pending) clearTimeout(pending);
+    const timer = setTimeout(() => {
+      this.pendingEmits.delete(companyId);
+      this.realtime.emitEntity(companyRoom(companyId), {
+        type: 'onboarding.updated',
+        entityId: companyId,
+        companyId,
+        data: null,
+      });
+    }, REALTIME_EMIT_DELAY_MS);
+    timer.unref();
+    this.pendingEmits.set(companyId, timer);
+  }
 
   private manager(manager?: EntityManager): EntityManager {
     return manager ?? this.dataSource.manager;
@@ -303,6 +325,7 @@ export class OnboardingService {
 
     state.steps = steps;
     await repo.save(state);
+    this.notifyStateChanged(companyId);
     return state;
   }
 
@@ -320,6 +343,7 @@ export class OnboardingService {
     if (state.globalStatus !== 'skipped') {
       state.globalStatus = 'skipped';
       await this.dataSource.getRepository(OnboardingState).save(state);
+      this.notifyStateChanged(companyId);
     }
     return { globalStatus: 'skipped' };
   }
@@ -333,6 +357,7 @@ export class OnboardingService {
       'UPDATE `onboarding_state` SET `wizard_step` = ?, `updated_at` = `updated_at` WHERE `company_id` = ?',
       [step, companyId],
     );
+    this.notifyStateChanged(companyId);
     return { wizardStep: step };
   }
 
@@ -345,6 +370,7 @@ export class OnboardingService {
       'UPDATE `onboarding_state` SET `start_choice` = ?, `updated_at` = `updated_at` WHERE `company_id` = ?',
       [choice, companyId],
     );
+    this.notifyStateChanged(companyId);
     return { startChoice: choice };
   }
 

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OnboardingService } from './onboarding.service';
 import { OnboardingTemplateService } from './onboarding-template.service';
@@ -11,6 +11,7 @@ import { SiteCategory } from '../site_category/entities/site_category.entity';
 import { ServiceCategory } from '../service_category/entities/service_category.entity';
 import { Service } from '../service/entities/service.entity';
 import { CompanyWorker } from '../company_worker/entities/company_worker.entity';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 /**
  * ONB-1 + ONB-2 + ONB-3. Los servicios leen y escriben con repositorios propios
@@ -28,6 +29,7 @@ import { CompanyWorker } from '../company_worker/entities/company_worker.entity'
       Service,
       CompanyWorker,
     ]),
+    forwardRef(() => RealtimeModule),
   ],
   providers: [
     OnboardingService,
