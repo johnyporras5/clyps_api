@@ -11,7 +11,9 @@ import {
 import { Company } from '../../company/entities/company.entity';
 import type {
   OnboardingGlobalStatus,
+  OnboardingStartChoice,
   OnboardingSteps,
+  OnboardingWizardStepKey,
 } from '../types/onboarding.types';
 
 /**
@@ -42,6 +44,12 @@ export class OnboardingState {
   /** { "create_profile": { status, updatedAt, missing? }, ... } */
   @Column({ name: 'steps', type: 'json' })
   steps: OnboardingSteps;
+
+  @Column({ name: 'wizard_step', type: 'varchar', length: 32, nullable: true })
+  wizardStep: OnboardingWizardStepKey | null;
+
+  @Column({ name: 'start_choice', type: 'varchar', length: 16, nullable: true })
+  startChoice: OnboardingStartChoice | null;
 
   /** Cuándo cobró su primera cita (el "ajá"); null hasta que ocurre. */
   @Column({ name: 'first_charge_at', type: 'datetime', nullable: true })

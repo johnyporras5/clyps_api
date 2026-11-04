@@ -1,7 +1,9 @@
 import type {
   OnboardingGlobalStatus,
+  OnboardingStartChoice,
   OnboardingStepKey,
   OnboardingStepStatus,
+  OnboardingWizardStepKey,
 } from '../types/onboarding.types';
 
 /** Un paso tal como lo consume el checklist del frontend. */
@@ -19,6 +21,8 @@ export interface OnboardingStateResponse {
   progress: { completed: number; total: number };
   /** En orden de presentación. */
   steps: OnboardingStepResponse[];
+  wizardStep: OnboardingWizardStepKey | null;
+  startChoice: OnboardingStartChoice | null;
   firstChargeAt: string | null;
 }
 
