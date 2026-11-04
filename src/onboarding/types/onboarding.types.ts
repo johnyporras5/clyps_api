@@ -18,6 +18,20 @@ export const ONBOARDING_STEP_KEYS = [
 
 export type OnboardingStepKey = (typeof ONBOARDING_STEP_KEYS)[number];
 
+export const ONBOARDING_WIZARD_STEP_KEYS = [
+  'add_team',
+  'confirm_services',
+  'configure_payroll',
+  'first_appointment',
+] as const;
+
+export type OnboardingWizardStepKey =
+  (typeof ONBOARDING_WIZARD_STEP_KEYS)[number];
+
+export const ONBOARDING_START_CHOICES = ['templates', 'scratch'] as const;
+
+export type OnboardingStartChoice = (typeof ONBOARDING_START_CHOICES)[number];
+
 /**
  * pendiente → incompleto → completado.
  * Solo `confirm_services` usa `incomplete` (es el único con datos parciales);
