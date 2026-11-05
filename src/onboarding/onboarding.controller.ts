@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -27,6 +28,12 @@ import { OnboardingServicesService } from './onboarding-services.service';
 import { ConfirmServicesDto } from './dto/confirm-services.dto';
 import type { ConfirmServicesResponse } from './dto/confirm-services-response.dto';
 import type { DefaultCategoryResponse } from './dto/default-category-response.dto';
+import { UpdateWizardStepDto } from './dto/update-wizard-step.dto';
+import { UpdateStartChoiceDto } from './dto/update-start-choice.dto';
+import type {
+  OnboardingStartChoice,
+  OnboardingWizardStepKey,
+} from './types/onboarding.types';
 
 /**
  * ONB-1 / ONB-2 / ONB-3. Todo va scoped a la company del token (el admin dueño).
@@ -129,6 +136,30 @@ export class OnboardingController {
       req.user.sub,
     );
     return this.onboardingService.getState(companyId);
+  }
+
+  @Roles('adm')
+  @Put('wizard-step')
+  async setWizardStep(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: UpdateWizardStepDto,
+  ): Promise<{ wizardStep: OnboardingWizardStepKey }> {
+    const companyId = await this.onboardingService.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.onboardingService.setWizardStep(companyId, dto.step);
+  }
+
+  @Roles('adm')
+  @Put('start-choice')
+  async setStartChoice(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: UpdateStartChoiceDto,
+  ): Promise<{ startChoice: OnboardingStartChoice }> {
+    const companyId = await this.onboardingService.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.onboardingService.setStartChoice(companyId, dto.choice);
   }
 
   /** El dueño elige "explorar por mi cuenta". No bloquea; puede retomar. */

@@ -12,16 +12,22 @@ import {
   buildInitialSteps,
 } from './types/onboarding.types';
 import type {
+  OnboardingStartChoice,
   OnboardingStepKey,
   OnboardingStepState,
   OnboardingStepStatus,
   OnboardingSteps,
+  OnboardingWizardStepKey,
 } from './types/onboarding.types';
 import type {
   OnboardingSkipResponse,
   OnboardingStateResponse,
 } from './dto/onboarding-state-response.dto';
 import { EntitlementsService } from '../subscription/entitlements.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { companyRoom } from '../realtime/rooms';
+
+const REALTIME_EMIT_DELAY_MS = 300;
 
 /** Resultado del recálculo de un paso contra el estado real del sistema. */
 interface StepEvaluation {
@@ -49,11 +55,29 @@ export interface MissingServiceData {
 @Injectable()
 export class OnboardingService {
   private readonly logger = new Logger(OnboardingService.name);
+  private readonly pendingEmits = new Map<number, NodeJS.Timeout>();
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly entitlements: EntitlementsService,
+    private readonly realtime: RealtimeService,
   ) {}
+
+  private notifyStateChanged(companyId: number): void {
+    const pending = this.pendingEmits.get(companyId);
+    if (pending) clearTimeout(pending);
+    const timer = setTimeout(() => {
+      this.pendingEmits.delete(companyId);
+      this.realtime.emitEntity(companyRoom(companyId), {
+        type: 'onboarding.updated',
+        entityId: companyId,
+        companyId,
+        data: null,
+      });
+    }, REALTIME_EMIT_DELAY_MS);
+    timer.unref();
+    this.pendingEmits.set(companyId, timer);
+  }
 
   private manager(manager?: EntityManager): EntityManager {
     return manager ?? this.dataSource.manager;
@@ -132,6 +156,8 @@ export class OnboardingService {
           ? { missing: steps[key].missing }
           : {}),
       })),
+      wizardStep: state.wizardStep ?? null,
+      startChoice: state.startChoice ?? null,
       firstChargeAt: state.firstChargeAt
         ? new Date(state.firstChargeAt).toISOString()
         : null,
@@ -299,6 +325,7 @@ export class OnboardingService {
 
     state.steps = steps;
     await repo.save(state);
+    this.notifyStateChanged(companyId);
     return state;
   }
 
@@ -316,8 +343,35 @@ export class OnboardingService {
     if (state.globalStatus !== 'skipped') {
       state.globalStatus = 'skipped';
       await this.dataSource.getRepository(OnboardingState).save(state);
+      this.notifyStateChanged(companyId);
     }
     return { globalStatus: 'skipped' };
+  }
+
+  async setWizardStep(
+    companyId: number,
+    step: OnboardingWizardStepKey,
+  ): Promise<{ wizardStep: OnboardingWizardStepKey }> {
+    await this.getOrCreateState(companyId);
+    await this.dataSource.query(
+      'UPDATE `onboarding_state` SET `wizard_step` = ?, `updated_at` = `updated_at` WHERE `company_id` = ?',
+      [step, companyId],
+    );
+    this.notifyStateChanged(companyId);
+    return { wizardStep: step };
+  }
+
+  async setStartChoice(
+    companyId: number,
+    choice: OnboardingStartChoice,
+  ): Promise<{ startChoice: OnboardingStartChoice }> {
+    await this.getOrCreateState(companyId);
+    await this.dataSource.query(
+      'UPDATE `onboarding_state` SET `start_choice` = ?, `updated_at` = `updated_at` WHERE `company_id` = ?',
+      [choice, companyId],
+    );
+    this.notifyStateChanged(companyId);
+    return { startChoice: choice };
   }
 
   /**
