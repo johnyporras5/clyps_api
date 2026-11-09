@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Company } from '../company/entities/company.entity';
@@ -43,8 +48,9 @@ export interface AdminBillingResponse {
  *     recordatorios. Conserva SU plan (ver la migración 065).
  *   - Quitar VIP: vuelve a cobrársele, con 15 días de prueba desde hoy para
  *     que no quede bloqueado en el acto.
- *   - +15 días de prueba: a cualquier salón, lo decide el administrador. Se
- *     suman a lo más lejano entre hoy y su fin de prueba (nunca quita días).
+ *   - +15 días de prueba: a cualquier salón que no sea VIP, lo decide el
+ *     administrador. Se suman a lo más lejano entre hoy y su fin de prueba
+ *     (nunca quita días).
  *
  * Cada cambio lee la fila con `pessimistic_write` dentro de su transacción: dos
  * clics o dos operadores a la vez se hacen en fila, y el segundo ve lo que dejó
@@ -210,6 +216,12 @@ export class AdminBillingService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!sub) throw new NotFoundException('El salón no tiene suscripción.');
+      // Un VIP no paga ni vence: días de prueba no le cambian nada. Se revisa
+      // dentro del bloqueo, por si lo hicieron VIP justo antes de este clic.
+      if (sub.billingExempt)
+        throw new ConflictException(
+          'El salón es VIP: no vence, no necesita días de prueba. Quítale el VIP primero si quieres darle prueba.',
+        );
 
       const trialEnd = extendedTrialEnd(sub.trialEndsAt, now);
       sub.trialEndsAt = trialEnd;
