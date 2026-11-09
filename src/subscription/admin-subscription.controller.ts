@@ -10,7 +10,7 @@ import { Repository } from 'typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { EntitlementsService } from './entitlements.service';
+import { AdminBillingService } from './admin-billing.service';
 import { Company } from '../company/entities/company.entity';
 import type { AccessResponse } from './dto/access-response.dto';
 
@@ -27,6 +27,11 @@ export interface AdminUserSubscriptionResponse {
   companyName: string | null;
   /** null cuando el usuario no tiene salón. */
   access: AccessResponse | null;
+  /**
+   * Pagó alguna vez. false también cuando no tiene salón. Su presencia es
+   * además la señal para el panel de que este backend ya tiene VIP y +15 días.
+   */
+  everPaid: boolean;
 }
 
 /**
@@ -46,7 +51,7 @@ export interface AdminUserSubscriptionResponse {
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AdminSubscriptionController {
   constructor(
-    private readonly entitlements: EntitlementsService,
+    private readonly billing: AdminBillingService,
     @InjectRepository(Company)
     private readonly companies: Repository<Company>,
   ) {}
@@ -76,17 +81,20 @@ export class AdminSubscriptionController {
         companyId: null,
         companyName: null,
         access: null,
+        everPaid: false,
       };
     }
 
+    // Recalcula el estado con la hora de ahora: no se fía de la columna
+    // `status`, que es una caché que escribe el cron.
+    const { access, everPaid } = await this.billing.state(company.id);
     return {
       userId: id,
       hasCompany: true,
       companyId: company.id,
       companyName: company.name ?? null,
-      // Recalcula el estado con la hora de ahora: no se fía de la columna
-      // `status`, que es una caché que escribe el cron.
-      access: await this.entitlements.getAccessResponse(company.id),
+      access,
+      everPaid,
     };
   }
 }
