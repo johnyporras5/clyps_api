@@ -10,6 +10,8 @@ import { SubscriptionAccessGuard } from './guards/subscription-access.guard';
 import { SubscriptionController } from './subscription.controller';
 import { AdminPaymentsController } from './admin-payments.controller';
 import { AdminSubscriptionController } from './admin-subscription.controller';
+import { AdminBillingController } from './admin-billing.controller';
+import { AdminBillingService } from './admin-billing.service';
 import { CobrixConfig } from './cobrix/cobrix.config';
 import { CobrixClient } from './cobrix/cobrix.client';
 import { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
@@ -90,6 +92,8 @@ import { EmailModule } from '../email/email.module';
     // Con qué trabajadores se queda un salón cuyo equipo no cabe en su plan, y
     // su vuelta al pagar el Full.
     WorkersSelectionService,
+    // VIP y días extra de prueba desde el panel de plataforma.
+    AdminBillingService,
     ExchangeRateService,
     SubscriptionAccessGuard,
     // SUB-10. El job de conciliación vive aquí y no en `src/tasks` para que el
@@ -124,6 +128,8 @@ import { EmailModule } from '../email/email.module';
     AdminPaymentsController,
     // Consulta de suscripcion por usuario, para el panel de plataforma.
     AdminSubscriptionController,
+    // VIP y +15 días de prueba, para el panel de plataforma.
+    AdminBillingController,
     CobrixWebhookController,
     AdminRemindersController,
   ],
