@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import type { DataSource, Repository } from 'typeorm';
 import { AdminBillingService } from './admin-billing.service';
 import type { Subscription } from './entities/subscription.entity';
@@ -205,10 +205,12 @@ describe('AdminBillingService.extendTrial', () => {
     expect(t.saved[0].status).toBe('active');
   });
 
-  it('también a un VIP: sigue siendo VIP', async () => {
+  it('a un VIP no: 409 y no se guarda nada', async () => {
     const t = build({ sub: { billingExempt: true } });
-    await t.service.extendTrial(12, 528);
-    expect(t.saved[0].billingExempt).toBe(true);
+    await expect(t.service.extendTrial(12, 528)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(t.saved).toHaveLength(0);
   });
 
   it('sin suscripción: se le abre la prueba normal, sin sumar otros 15', async () => {
