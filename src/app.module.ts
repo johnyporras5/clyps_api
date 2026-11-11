@@ -41,6 +41,7 @@ import { GeocodingModule } from './geocoding/geocoding.module';
 import { PublicBookingModule } from './public_booking/public-booking.module';
 import { DeactivatedCompaniesModule } from './company_deactivation/deactivated-companies.module';
 import { CompanyDeactivationModule } from './company_deactivation/company-deactivation.module';
+import { AdminPanelHiddenModule } from './admin_panel_hidden/admin-panel-hidden.module';
 
 @Module({
   imports: [
@@ -152,6 +153,7 @@ import { CompanyDeactivationModule } from './company_deactivation/company-deacti
     // Salones desactivados desde el panel: la consulta (global) y el botón.
     DeactivatedCompaniesModule,
     CompanyDeactivationModule,
+    AdminPanelHiddenModule,
   ],
   controllers: [AppController],
   providers: [
