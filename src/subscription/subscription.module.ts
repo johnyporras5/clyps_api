@@ -26,6 +26,7 @@ import { EmailReminderChannel } from './reminders/email-reminder.channel';
 import { REMINDER_CHANNELS } from './reminders/reminder-delivery';
 import { AdminRemindersController } from './reminders/admin-reminders.controller';
 import { PaymentOutcomeService } from './notifications/payment-outcome.service';
+import { AdminBillingNotifierService } from './notifications/admin-billing-notifier.service';
 import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
 import { SubscriptionEvent } from './entities/subscription-event.entity';
@@ -94,6 +95,7 @@ import { EmailModule } from '../email/email.module';
     WorkersSelectionService,
     // VIP y días extra de prueba desde el panel de plataforma.
     AdminBillingService,
+    AdminBillingNotifierService,
     ExchangeRateService,
     SubscriptionAccessGuard,
     // SUB-10. El job de conciliación vive aquí y no en `src/tasks` para que el

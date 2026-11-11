@@ -6,6 +6,7 @@ import type { Company } from '../company/entities/company.entity';
 import type { SubscriptionService } from './subscription.service';
 import type { EntitlementsService } from './entitlements.service';
 import type { CobrixInvoiceService } from './cobrix/cobrix-invoice.service';
+import type { AdminBillingNotifierService } from './notifications/admin-billing-notifier.service';
 
 /**
  * Lo que importa: que cada botón sea idempotente (dos clics no regalan 30 días
@@ -72,6 +73,12 @@ function build(options: {
         skippedWithPayment: ['INV-2'],
       });
   const cobrix = { releaseAllForCompany } as unknown as CobrixInvoiceService;
+  const vipGranted = jest.fn().mockResolvedValue(undefined);
+  const trialExtended = jest.fn().mockResolvedValue(undefined);
+  const notifier = {
+    vipGranted,
+    trialExtended,
+  } as unknown as AdminBillingNotifierService;
 
   const service = new AdminBillingService(
     dataSource,
@@ -80,6 +87,7 @@ function build(options: {
     subscriptionService,
     entitlements,
     cobrix,
+    notifier,
   );
   return {
     service,
@@ -88,6 +96,8 @@ function build(options: {
     invalidate,
     releaseAllForCompany,
     ensureSubscription,
+    vipGranted,
+    trialExtended,
     row,
   };
 }
@@ -102,6 +112,8 @@ describe('AdminBillingService.grantVip', () => {
     expect(t.releaseAllForCompany).toHaveBeenCalledWith(12, expect.any(String));
     expect(res.invoicesToReview).toEqual(['INV-2']);
     expect(t.invalidate).toHaveBeenCalledWith(12);
+    expect(t.vipGranted).toHaveBeenCalledTimes(1);
+    expect(t.vipGranted).toHaveBeenCalledWith(12, expect.any(Date));
     // Los bloqueos son lo que evita la carrera de dos clics.
     expect(t.manager.findOne).toHaveBeenCalledWith(
       expect.anything(),
@@ -116,6 +128,8 @@ describe('AdminBillingService.grantVip', () => {
     expect(res.changed).toBe(false);
     expect(t.saved).toHaveLength(0);
     expect(t.releaseAllForCompany).not.toHaveBeenCalled();
+    // Un segundo clic no le manda otro correo de bienvenida VIP.
+    expect(t.vipGranted).not.toHaveBeenCalled();
   });
 
   it('si Cobrix falla, queda VIP igual y pide revisar a mano', async () => {
@@ -124,6 +138,14 @@ describe('AdminBillingService.grantVip', () => {
 
     expect(res.changed).toBe(true);
     expect(res.invoicesToReview).toHaveLength(1);
+    expect(t.vipGranted).toHaveBeenCalledTimes(1);
+  });
+
+  it('el panel no espera al correo: responde aunque el envío siga colgado', async () => {
+    const t = build({});
+    t.vipGranted.mockReturnValue(new Promise(() => undefined));
+    const res = await t.service.grantVip(12, 528);
+    expect(res.changed).toBe(true);
   });
 
   it('404 si el salón no existe', async () => {
@@ -161,6 +183,13 @@ describe('AdminBillingService.revokeVip', () => {
     expect(res.changed).toBe(false);
     expect(t.saved).toHaveLength(0);
   });
+
+  it('quitar el VIP no manda ninguno de estos correos', async () => {
+    const t = build({ sub: { billingExempt: true } });
+    await t.service.revokeVip(12, 528);
+    expect(t.vipGranted).not.toHaveBeenCalled();
+    expect(t.trialExtended).not.toHaveBeenCalled();
+  });
 });
 
 describe('AdminBillingService.extendTrial', () => {
@@ -183,6 +212,12 @@ describe('AdminBillingService.extendTrial', () => {
     await t.service.extendTrial(12, 528);
 
     expect(t.saved[0].trialEndsAt!.getTime()).toBe(end.getTime() + 15 * DAY);
+    // El correo lleva la fecha NUEVA y dice "15 más", no "te activamos".
+    expect(t.trialExtended).toHaveBeenCalledWith(
+      12,
+      new Date(end.getTime() + 15 * DAY),
+      false,
+    );
   });
 
   it('también a quien ya pagó: su mes pagado no se toca', async () => {
@@ -211,15 +246,20 @@ describe('AdminBillingService.extendTrial', () => {
       ConflictException,
     );
     expect(t.saved).toHaveLength(0);
+    expect(t.trialExtended).not.toHaveBeenCalled();
   });
 
   it('sin suscripción: se le abre la prueba normal, sin sumar otros 15', async () => {
     const t = build({ sub: null });
+    const trialEndsAt = new Date(Date.now() + 15 * DAY);
+    t.ensureSubscription.mockResolvedValueOnce({ trialEndsAt });
     const res = await t.service.extendTrial(12, 528);
 
     expect(t.ensureSubscription).toHaveBeenCalledWith(12);
     expect(t.saved).toHaveLength(0);
     expect(res.message).toMatch(/se le abrió su prueba/);
+    // Correo de "te activamos", con la fecha de la prueba recién abierta.
+    expect(t.trialExtended).toHaveBeenCalledWith(12, trialEndsAt, true);
   });
 
   it('404 si el salón no existe', async () => {

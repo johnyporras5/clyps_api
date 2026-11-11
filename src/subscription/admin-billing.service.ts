@@ -18,6 +18,7 @@ import {
   trialAfterVipRevoked,
 } from './admin-billing.util';
 import type { AccessResponse } from './dto/access-response.dto';
+import { AdminBillingNotifierService } from './notifications/admin-billing-notifier.service';
 
 /** Lo que el panel necesita del cobro de un salón, además del acceso. */
 export interface AdminBillingState {
@@ -69,6 +70,7 @@ export class AdminBillingService {
     private readonly subscriptionService: SubscriptionService,
     private readonly entitlements: EntitlementsService,
     private readonly cobrixInvoices: CobrixInvoiceService,
+    private readonly notifier: AdminBillingNotifierService,
   ) {}
 
   /** El estado de cobro que pinta el panel. */
@@ -120,6 +122,9 @@ export class AdminBillingService {
       `Salón ${companyId} marcado VIP (exento de cobro) por el usuario ${actorUserId}.` +
         ` Cobros anulados: ${charges.released.length}, por revisar: ${charges.toReview.length}.`,
     );
+
+    // Sin `await`: el panel no espera al correo, y el notificador nunca lanza.
+    void this.notifier.vipGranted(companyId, new Date());
 
     const parts = ['El salón ahora es VIP: no se le cobra.'];
     if (charges.released.length > 0)
@@ -193,8 +198,12 @@ export class AdminBillingService {
     // es justo lo pedido. Sumarle otros 15 encima serían 30.
     const existed = await this.subscriptions.exists({ where: { companyId } });
     if (!existed) {
-      await this.subscriptionService.ensureSubscription(companyId);
+      const opened =
+        await this.subscriptionService.ensureSubscription(companyId);
       this.entitlements.invalidate(companyId);
+      // Se le ABRIÓ la prueba: el correo dice "te activamos", no "15 más".
+      if (opened?.trialEndsAt)
+        void this.notifier.trialExtended(companyId, opened.trialEndsAt, true);
       this.logger.warn(
         `Salón ${companyId}: no tenía suscripción; se le abrió la prueba de ${EXTRA_TRIAL_DAYS} días` +
           ` (usuario ${actorUserId}).`,
@@ -243,6 +252,7 @@ export class AdminBillingService {
       `Salón ${companyId}: +${EXTRA_TRIAL_DAYS} días de prueba (hasta ${newTrialEnd.toISOString()})` +
         ` por el usuario ${actorUserId}.`,
     );
+    void this.notifier.trialExtended(companyId, newTrialEnd, false);
 
     return this.respond(
       companyId,
