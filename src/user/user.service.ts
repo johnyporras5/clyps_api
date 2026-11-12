@@ -2,47 +2,45 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
+
+/** La cuenta sin el hash de la contraseña: lo único que sale por la API. */
+export type PublicUser = Omit<User, 'password'>;
+
+/**
+ * Columnas que se leen. `password` NO está: el hash nunca debe salir en una
+ * respuesta, ni siquiera a un `padm` (un hash filtrado se puede atacar offline).
+ */
+const PUBLIC_COLUMNS: (keyof User)[] = [
+  'id',
+  'username',
+  'email',
+  'userType',
+  'lastLogin',
+  'lastLogout',
+  'createdAt',
+  'updatedAt',
+  'emailVerified',
+];
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User)
-    private UserRepository: Repository<User>,
+    private readonly userRepository: Repository<User>,
   ) {}
 
-  async findAll(): Promise<User[]> {
-    return await this.UserRepository.find();
+  async findAll(): Promise<PublicUser[]> {
+    return this.userRepository.find({ select: PUBLIC_COLUMNS });
   }
 
-  async findOne(id: number): Promise<User> {
-    const User = await this.UserRepository.findOne({ where: { id } });
-    if (!User) {
+  async findOne(id: number): Promise<PublicUser> {
+    const user = await this.userRepository.findOne({
+      where: { id },
+      select: PUBLIC_COLUMNS,
+    });
+    if (!user) {
       throw new NotFoundException(`User with id ${id} not found`);
     }
-    return User;
-  }
-
-  async create(createUserDto: CreateUserDto): Promise<User> {
-    const User = this.UserRepository.create(createUserDto);
-    return await this.UserRepository.save(User);
-  }
-
-  async update(id: number, updateUserDto: UpdateUserDto): Promise<User> {
-    const User = await this.UserRepository.findOne({ where: { id } });
-    if (!User) {
-      throw new NotFoundException(`User with id ${id} not found`);
-    }
-
-    Object.assign(User, updateUserDto);
-    return await this.UserRepository.save(User);
-  }
-
-  async remove(id: number): Promise<void> {
-    const result = await this.UserRepository.delete(id);
-    if (result.affected === 0) {
-      throw new NotFoundException(`User with id ${id} not found`);
-    }
+    return user;
   }
 }

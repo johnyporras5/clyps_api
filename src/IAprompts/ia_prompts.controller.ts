@@ -92,12 +92,19 @@ export class IAPromptsController {
     return this.iaPromptsService.findOne(id);
   }
 
+  // Crear, editar y borrar prompts: SOLO `padm`. Antes eran públicos (sin
+  // login): cualquiera podía reescribir los textos que la IA le muestra a los
+  // clientes. Leer (GET) sigue igual porque la app lista los prompts.
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('padm')
   async create(@Body() createDto: CreateIAPromptDto): Promise<IAPrompts> {
     return this.iaPromptsService.create(createDto);
   }
 
   @Put(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('padm')
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateDto: UpdateIAPromptDto,
@@ -106,6 +113,8 @@ export class IAPromptsController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('padm')
   async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return this.iaPromptsService.remove(id);
   }

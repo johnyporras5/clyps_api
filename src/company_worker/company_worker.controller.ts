@@ -66,9 +66,13 @@ export class CompanyWorkerController {
   @Roles('adm')
   @HttpCode(HttpStatus.CREATED)
   async create(
+    @Req() req: AuthenticatedRequest,
     @Body() createCompanyWorkerDto: CreateCompanyWorkerDto,
   ): Promise<CompanyWorker> {
-    return this.companyWorkerService.create(createCompanyWorkerDto);
+    return this.companyWorkerService.create(
+      createCompanyWorkerDto,
+      req.user.sub,
+    );
   }
 
   /**

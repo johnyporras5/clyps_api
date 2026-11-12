@@ -126,18 +126,31 @@ export class CompanyWorkerService {
     return companyWorker;
   }
 
+  /**
+   * POST /company-workers. El salón SIEMPRE es el del dueño que llama: el
+   * `companyId` del cuerpo se ignora. Antes se guardaba tal cual y un dueño
+   * podía meter a su propio trabajador en el salón de otro (y con ese token
+   * ver sus clientes y su agenda).
+   */
   async create(
     createCompanyWorkerDto: CreateCompanyWorkerDto,
+    adminId: number,
   ): Promise<CompanyWorker> {
+    const company = await this.companyRepository.findOne({
+      where: { userId: adminId },
+    });
+    if (!company) {
+      throw new UnauthorizedException('No tienes una compañía asignada');
+    }
+
     // SUB-5: el tope de trabajadores es del plan. Se pregunta antes de crear;
     // los que ya existen nunca se tocan.
-    await this.entitlements.assertCanAddWorker(
-      createCompanyWorkerDto.companyId,
-    );
+    await this.entitlements.assertCanAddWorker(company.id);
 
-    const companyWorker = this.companyWorkerRepository.create(
-      createCompanyWorkerDto,
-    );
+    const companyWorker = this.companyWorkerRepository.create({
+      ...createCompanyWorkerDto,
+      companyId: company.id,
+    });
     const saved = await this.companyWorkerRepository.save(companyWorker);
 
     // ONB-1: crear/activar trabajador dispara el recálculo de add_team.

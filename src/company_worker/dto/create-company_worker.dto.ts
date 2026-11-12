@@ -5,9 +5,13 @@ export class CreateCompanyWorkerDto {
   @IsNumber()
   workerId: number;
 
-  @IsNotEmpty()
+  /**
+   * IGNORADO: el salón sale del token del dueño. Se sigue aceptando para no
+   * romper a quien lo mande, pero no decide nada.
+   */
+  @IsOptional()
   @IsNumber()
-  companyId: number;
+  companyId?: number;
 
   @IsOptional()
   @IsNumber()
