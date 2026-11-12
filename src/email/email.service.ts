@@ -290,6 +290,43 @@ export class EmailService {
   }
 
   /**
+   * Correo de PROMOCIÓN (campañas). Igual que `sendEmail`, más las cabeceras de
+   * baja: con ellas Gmail y Outlook muestran su propio botón "Anular
+   * suscripción" y no mandan a spam un envío masivo. `List-Unsubscribe-Post`
+   * habilita la baja de un clic (RFC 8058), que hace un POST al mismo enlace.
+   *
+   * Devuelve el motivo del fallo en vez de un booleano: la campaña lo guarda
+   * por destinatario.
+   */
+  async sendCampaignEmail(
+    to: string,
+    subject: string,
+    html: string,
+    unsubscribeUrl: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.resend)
+      return { ok: false, error: 'Resend no está inicializado' };
+    try {
+      if (await this.isSilenced(to))
+        return { ok: false, error: 'Salón desactivado' };
+      const { error } = await this.resend.emails.send({
+        from: this.fromEmail,
+        to,
+        subject,
+        html,
+        headers: {
+          'List-Unsubscribe': `<${unsubscribeUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        },
+      });
+      if (error) return { ok: false, error: String(error.message ?? error) };
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  }
+
+  /**
    * Aviso al cliente de que la HORA de su cita se modificó (arrastre / ripple).
    * Usa la MISMA plantilla que la confirmación (variante "reschedule"), con el
    * nuevo horario ya localizado a la zona del negocio, para que el cliente vea
