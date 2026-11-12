@@ -260,6 +260,23 @@ export class CobrixWebhookService {
       (await this.findReport(invoice)) ??
       (await this.createReportFor(invoice, event, paidAt));
 
+    // Promo duplicada (ver `saveCobrixReport`): el dinero entró, pero darle
+    // otros 3 meses lo decide una persona, no el webhook.
+    if (
+      (report.kind === 'promo' || report.kind === 'promo_upgrade') &&
+      !report.offerId
+    ) {
+      const reason =
+        'Promo duplicada: ya tenía otra promo viva. Revisar a mano.';
+      await this.payments.flagForManualReview(report, 'unsupported', reason, {
+        gatewayPaymentId: event.paymentId,
+      });
+      invoice.status = 'paid';
+      invoice.paidAt = paidAt;
+      await this.invoices.save(invoice);
+      return this.finish(row, 'manual_review', reason, report.id);
+    }
+
     const subscription = await this.payments.verifyFromGateway(report, {
       gatewayPaymentId: event.paymentId,
       at: paidAt,
@@ -424,17 +441,55 @@ export class CobrixWebhookService {
    * Así lo recoge el mismo `invoice.paid` cuando llegue, y si no llega nunca lo
    * escala a la cola manual el conciliador de respaldo.
    */
+  /**
+   * Guarda el reporte que nace de un cobro de Cobrix.
+   *
+   * Si la factura era de la promo y el salón ya tiene OTRA promo viva (por
+   * ejemplo, reportó un pago móvil de la promo y además pagó el enlace), el
+   * índice único rechazaría el insert y se perdería el registro de un pago que
+   * SÍ entró. En ese caso se guarda sin `offer_id` (fuera del candado), con sus
+   * meses y precio, y una nota para que el admin lo revise a mano.
+   */
+  private async saveCobrixReport(
+    report: PaymentReport,
+  ): Promise<PaymentReport> {
+    try {
+      return await this.reports.save(report);
+    } catch (error) {
+      if (
+        !(error instanceof QueryFailedError) ||
+        !error.message.includes('UQ_payment_report_company_promo_slot')
+      )
+        throw error;
+      this.logger.error(
+        `[cobrix] La company ${report.companyId} pagó por Cobrix una promo que ya tenía tomada (${report.offerId}). Se guarda para revisión manual.`,
+      );
+      return this.reports.save({
+        ...report,
+        offerId: null,
+        note: 'PROMO DUPLICADA: ya tenía otra promo viva. Revisar antes de verificar.',
+        autoCheckStatus: 'unsupported',
+        autoCheckReason: 'Promo duplicada: revisar a mano.',
+      });
+    }
+  }
+
   private async createPendingReport(
     invoice: SubscriptionInvoice,
     payload: unknown,
     at: Date = new Date(),
   ): Promise<PaymentReport> {
     const isVes = invoice.currency === CURRENCY_VES;
-    return this.reports.save(
+    return this.saveCobrixReport(
       this.reports.create({
         companyId: invoice.companyId,
         subscriptionId: invoice.subscriptionId,
+        // La promo se decidió al EMITIR la factura: el reporte la hereda.
         planId: invoice.planId,
+        kind: invoice.kind,
+        offerId: invoice.offerId,
+        months: invoice.months,
+        priceUsdMinor: invoice.priceUsdMinor,
         method: 'pago_movil',
         amountVesMinor: isVes ? invoice.amountMinor : null,
         amountUsdMinor: isVes ? null : invoice.amountMinor,
@@ -573,11 +628,16 @@ export class CobrixWebhookService {
     paidAt: Date,
   ): Promise<PaymentReport> {
     const isVes = invoice.currency === CURRENCY_VES;
-    return this.reports.save(
+    return this.saveCobrixReport(
       this.reports.create({
         companyId: invoice.companyId,
         subscriptionId: invoice.subscriptionId,
+        // La promo se decidió al EMITIR la factura: el reporte la hereda.
         planId: invoice.planId,
+        kind: invoice.kind,
+        offerId: invoice.offerId,
+        months: invoice.months,
+        priceUsdMinor: invoice.priceUsdMinor,
         method: 'pago_movil',
         amountVesMinor: isVes ? invoice.amountMinor : null,
         amountUsdMinor: isVes ? null : invoice.amountMinor,

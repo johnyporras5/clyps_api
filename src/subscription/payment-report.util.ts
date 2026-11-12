@@ -80,9 +80,11 @@ export function paymentReference(dto: ReportPaymentDto): string {
 export function frozenQuoteOf(
   dto: ReportPaymentDto,
   planId: PlanId,
+  priceUsdMinor?: number,
 ): FrozenQuote {
   return {
     planId,
+    priceUsdMinor,
     amountVesMinor: dto.amountVesMinor ?? 0,
     frozenRate: dto.frozenRate ?? 0,
     quotedAt: new Date(dto.quotedAt ?? ''),

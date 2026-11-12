@@ -61,6 +61,11 @@ export interface AccessResponse {
    */
   billingExempt: boolean;
   /**
+   * Tiene un mes pagado corriendo: puede VER los planes, pero no cambiarlo
+   * hasta su próxima renovación (`PATCH /subscription/plan` respondería 400).
+   */
+  planLocked: boolean;
+  /**
    * Tiene más trabajadores de los que admite su plan y todavía no escogió con
    * cuáles se queda. Mientras sea `true` el front muestra SOLO la pantalla de
    * selección (`GET/POST /subscription/workers-selection`): el resto de la

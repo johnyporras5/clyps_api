@@ -73,6 +73,11 @@ interface EntitlementContext {
    */
   everPaid: boolean;
   /**
+   * Tiene un período PAGADO corriendo: no puede cambiar de plan hasta la
+   * próxima renovación. Es la misma regla con la que `choosePlan` responde 400.
+   */
+  planLocked: boolean;
+  /**
    * El plan que COMPRÓ, tal cual está guardado (null = todavía no eligió).
    *
    * Va aparte de `planId` porque no son lo mismo mientras corre la prueba:
@@ -272,6 +277,9 @@ export class EntitlementsService {
       limits,
       billingExempt,
       everPaid: subscription?.currentPeriodEnd != null,
+      planLocked:
+        subscription?.currentPeriodEnd != null &&
+        subscription.currentPeriodEnd.getTime() > now.getTime(),
       purchasedPlanId,
       nextPlanId:
         chosenPlanId !== null && chosenPlanId !== purchasedPlanId
@@ -654,6 +662,7 @@ export class EntitlementsService {
       hasPendingReport,
       activeWorkers: workersInUse,
       workersSelectionRequired,
+      planLocked,
     } = await this.context(companyId);
     const plan = getPlan(planId);
 
@@ -684,6 +693,7 @@ export class EntitlementsService {
       graceEndsAt: access.graceEndsAt?.toISOString() ?? null,
       hasPendingReport,
       billingExempt,
+      planLocked,
       workersSelectionRequired,
       features,
       limits: {

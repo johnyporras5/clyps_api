@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsDateString,
   IsEmail,
   IsIn,
@@ -12,7 +13,8 @@ import {
   MaxLength,
   ValidateIf,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import { OFFER_IDS, type OfferId } from '../config/offers.config';
 import { PAYMENT_METHODS, type PaymentMethod } from '../subscription.enums';
 
 /** true cuando el reporte es de Pago Móvil (monto en Bs). */
@@ -37,6 +39,23 @@ const isUsdMethod = (dto: ReportPaymentDto): boolean =>
 export class ReportPaymentDto {
   @IsIn([...PAYMENT_METHODS])
   method: PaymentMethod;
+
+  /**
+   * Promo Black Friday: qué oferta se quiere. Solo el id —el precio lo pone el
+   * servidor—. Se revisa que el salón tenga derecho (`PromoService`).
+   */
+  @IsOptional()
+  @IsIn([...OFFER_IDS])
+  offerId?: OfferId;
+
+  /** Pasarse de la promo Básico a Full pagando la diferencia. */
+  @IsOptional()
+  @Transform(
+    ({ value }: { value: unknown }) =>
+      value === true || value === 'true' || value === '1',
+  )
+  @IsBoolean()
+  upgrade?: boolean;
 
   // ---------------------------------------------------------------------------
   // Pago Móvil — el monto en Bs viene congelado de la cotización (SUB-2)

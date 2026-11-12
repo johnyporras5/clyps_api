@@ -18,7 +18,6 @@ import { RATE_DEFAULTS } from './config/rate.config';
 import { getPlan, type PlanId } from './config/plans.config';
 import { CURRENCY_VES, formatVesMinor } from './subscription-money.util';
 import {
-  quoteAmountVesMinor,
   quoteValidUntil,
   validateFrozenQuote,
   type FrozenQuote,
@@ -54,6 +53,14 @@ import {
   SUBSCRIPTION_PAYMENT_REJECTED,
   type SubscriptionPaymentRejectedEvent,
 } from './notifications/payment-outcome.events';
+import { PromoService, type ChargeRequest } from './promo.service';
+import {
+  chargeColumns,
+  chargeLabel,
+  monthsOf,
+  type ChargeColumns,
+} from './payment-charge';
+import { usdMinorToVesMinor } from './subscription-money.util';
 
 /**
  * Pagos de la suscripción: cotizar (SUB-2 / CLYP-334) y reportar (SUB-3 /
@@ -80,6 +87,7 @@ export class PaymentsService {
     private readonly cobrixInvoices: CobrixInvoiceService,
     private readonly events: EventEmitter2,
     private readonly entitlements: EntitlementsService,
+    private readonly promo: PromoService,
   ) {}
 
   private num(key: string, fallback: number): number {
@@ -170,18 +178,34 @@ export class PaymentsService {
   async computeQuote(
     companyId: number,
     requestedPlanId?: PlanId,
+    promo: Omit<ChargeRequest, 'planId'> = {},
   ): Promise<QuoteResponse> {
-    const planId = requestedPlanId ?? (await this.currentPlanId(companyId));
-    const plan = getPlan(planId);
+    // Sin plan ni promo: el de la suscripción (la renovación de siempre).
+    const planId =
+      promo.offerId || promo.upgrade
+        ? undefined
+        : (requestedPlanId ?? (await this.currentPlanId(companyId)));
+    // El precio sale SIEMPRE de aquí: el front solo dice qué quiere.
+    const charge = await this.promo.resolveCharge(
+      companyId,
+      { planId, ...promo },
+      'quote',
+    );
 
     const fetched = await this.rates.fetchRate();
     const quotedAt = fetched.fetchedAt;
-    const amountVesMinor = quoteAmountVesMinor(plan.id, fetched.rate);
+    const amountVesMinor = usdMinorToVesMinor(
+      charge.priceUsdMinor,
+      fetched.rate,
+    );
 
     return {
-      planId: plan.id,
-      planName: plan.name,
-      priceUsdMinor: plan.priceUsdMinor,
+      planId: charge.planId,
+      planName: charge.label,
+      priceUsdMinor: charge.priceUsdMinor,
+      kind: charge.kind,
+      offerId: charge.offerId,
+      months: charge.months,
       amountVesMinor,
       amountVesFormatted: formatVesMinor(amountVesMinor),
       currency: CURRENCY_VES,
@@ -235,9 +259,22 @@ export class PaymentsService {
     const reference = paymentReference(dto);
     await this.assertReferenceIsNew(companyId, reference);
 
+    // Qué está pagando: el mes de su plan, la promo o la mejora. Con promo, las
+    // reglas (ventana, una vez, VIP) se revisan aquí otra vez: el front no
+    // decide nada.
+    const charge = await this.promo.resolveCharge(
+      companyId,
+      {
+        planId: billablePlanId(subscription.planId),
+        offerId: dto.offerId,
+        upgrade: dto.upgrade,
+      },
+      'report',
+    );
+
     if (dto.method === 'pago_movil') {
       await this.assertFrozenQuoteAcceptable(
-        frozenQuoteOf(dto, billablePlanId(subscription.planId)),
+        frozenQuoteOf(dto, charge.planId, charge.priceUsdMinor),
       );
     }
 
@@ -267,7 +304,7 @@ export class PaymentsService {
       {
         companyId,
         subscriptionId: subscription.id,
-        planId: billablePlanId(subscription.planId),
+        planId: charge.planId,
         reportedAt: new Date(),
         autoCheckStatus: autoCheck.status,
         autoCheckReason: autoCheck.reason,
@@ -276,13 +313,17 @@ export class PaymentsService {
       },
     );
 
-    const saved = await this.save(draft);
+    const saved = await this.save({ ...draft, ...chargeColumns(charge) });
 
     return {
       id: saved.id,
       status: saved.status,
       method: saved.method,
       planId: saved.planId,
+      kind: saved.kind,
+      offerId: saved.offerId,
+      months: saved.months,
+      chargeLabel: chargeLabel(saved),
       amountVesMinor: saved.amountVesMinor,
       amountVesFormatted:
         saved.amountVesMinor === null
@@ -350,7 +391,7 @@ export class PaymentsService {
    * índice.
    */
   private async save(
-    draft: ReturnType<typeof buildPaymentReportDraft>,
+    draft: ReturnType<typeof buildPaymentReportDraft> & ChargeColumns,
   ): Promise<PaymentReport> {
     try {
       const saved = await this.reports.save(this.reports.create(draft));
@@ -367,6 +408,21 @@ export class PaymentsService {
         throw new ConflictException(
           `Ese pago ya está reportado (referencia ${draft.reference}).`,
         );
+      }
+      // Dos reportes de la promo a la vez: la consulta previa deja pasar a los
+      // dos, el índice único de la base solo a uno.
+      if (
+        error instanceof QueryFailedError &&
+        error.message.includes('UQ_payment_report_company_promo_slot')
+      ) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'PROMO_ALREADY_TAKEN',
+          message:
+            draft.kind === 'promo_upgrade'
+              ? 'Ya pediste pasarte a Full.'
+              : 'Ya aprovechaste la promoción de Black Friday en este salón.',
+        });
       }
       throw error;
     }
@@ -729,6 +785,14 @@ export class PaymentsService {
       company: { id: report.companyId, name: companyName },
       planId: report.planId,
       planName: getPlan(report.planId).name,
+      // Qué compró: el admin tiene que ver "Black Friday · Full 3 meses" para
+      // no extrañarse de que pagaran $60 por un plan de $28.
+      charge: {
+        kind: report.kind,
+        offerId: report.offerId,
+        months: monthsOf(report),
+        label: chargeLabel(report),
+      },
       amountMinor: discrepancy.reportedMinor,
       currency: report.currency,
       amountVesFormatted:

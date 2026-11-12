@@ -23,6 +23,11 @@ export function quoteAmountVesMinor(planId: PlanId, rate: number): number {
 /** Lo que el cliente devuelve al reportar: la cotización que se le entregó. */
 export interface FrozenQuote {
   planId: PlanId;
+  /**
+   * Precio en USD que se cotizó. Lo decide el servidor (`PromoService`) al
+   * recibir el reporte, nunca el cliente. Sin él vale el precio del plan.
+   */
+  priceUsdMinor?: number;
   amountVesMinor: number;
   frozenRate: number;
   quotedAt: Date;
@@ -82,10 +87,11 @@ export function validateFrozenQuote(
 
   // El monto tiene que ser exactamente el que sale del plan y esa tasa: si no,
   // lo editaron en el camino.
-  if (
-    frozen.amountVesMinor !==
-    quoteAmountVesMinor(frozen.planId, frozen.frozenRate)
-  ) {
+  const expectedVes =
+    frozen.priceUsdMinor !== undefined
+      ? usdMinorToVesMinor(frozen.priceUsdMinor, frozen.frozenRate)
+      : quoteAmountVesMinor(frozen.planId, frozen.frozenRate);
+  if (frozen.amountVesMinor !== expectedVes) {
     return {
       ok: false,
       reason: 'amount_mismatch',

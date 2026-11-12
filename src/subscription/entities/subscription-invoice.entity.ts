@@ -1,6 +1,8 @@
 import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
 import { moneyTransformer, rateTransformer } from '../subscription-money.util';
 import type { PlanId } from '../config/plans.config';
+import type { OfferId } from '../config/offers.config';
+import type { PaymentKind } from '../payment-charge';
 
 /**
  * Estado del documento de cobro.
@@ -49,6 +51,22 @@ export class SubscriptionInvoice {
   /** Plan que se estaba pagando cuando se emitió. */
   @Column({ name: 'plan_id', type: 'varchar', length: 20 })
   planId: PlanId;
+
+  /**
+   * Qué se cobra (migración ...084). Se copia al reporte que nace cuando
+   * Cobrix confirma el pago: la promo se decide al EMITIR, no al cobrar.
+   */
+  @Column({ name: 'kind', type: 'varchar', length: 16, default: 'regular' })
+  kind: PaymentKind;
+
+  @Column({ name: 'offer_id', type: 'varchar', length: 32, nullable: true })
+  offerId: OfferId | null;
+
+  @Column({ name: 'months', type: 'tinyint', unsigned: true, default: 1 })
+  months: number;
+
+  @Column({ name: 'price_usd_minor', type: 'int', nullable: true })
+  priceUsdMinor: number | null;
 
   @Column({ name: 'provider', type: 'varchar', length: 16, default: 'cobrix' })
   provider: string;

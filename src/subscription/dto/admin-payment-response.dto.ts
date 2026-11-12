@@ -1,4 +1,6 @@
 import type { PlanId } from '../config/plans.config';
+import type { OfferId } from '../config/offers.config';
+import type { PaymentKind } from '../payment-charge';
 import type { AmountDiscrepancy } from '../payment-discrepancy.util';
 import type {
   AutoCheckStatus,
@@ -42,6 +44,13 @@ export interface AdminPaymentItem {
   company: { id: number; name: string | null };
   planId: PlanId;
   planName: string;
+  /** Qué compró este pago (mes normal, promo o mejora). */
+  charge: {
+    kind: PaymentKind;
+    offerId: OfferId | null;
+    months: number;
+    label: string;
+  };
   /** Monto reportado, en la moneda del método. */
   amountMinor: number;
   currency: string;

@@ -44,6 +44,8 @@ import type {
 } from './dto/access-response.dto';
 import type { PaymentInstructionsResponse } from './dto/payment-instructions-response.dto';
 import type { CheckoutResponse } from './dto/checkout-response.dto';
+import type { OffersResponse } from './dto/offers-response.dto';
+import { PromoService } from './promo.service';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import type {
   BillingHistoryDetail,
@@ -67,6 +69,7 @@ export class SubscriptionController {
     private readonly checkout: CobrixInvoiceService,
     private readonly billingHistory: BillingHistoryService,
     private readonly workersSelection: WorkersSelectionService,
+    private readonly promo: PromoService,
   ) {}
 
   /** Planes disponibles con sus límites, más los días de prueba y gracia. */
@@ -74,6 +77,20 @@ export class SubscriptionController {
   @Get('plans')
   getPlans(): PlansResponse {
     return this.subscriptionService.getPlans();
+  }
+
+  /**
+   * Promo Black Friday: las ofertas que este salón puede tomar AHORA y, si le
+   * corresponde, la mejora Básico → Full. Fuera de la semana de la promo, o si
+   * ya la tomó, `offers` viene vacío: la pantalla no tiene que decidir nada.
+   */
+  @Roles('adm')
+  @Get('offers')
+  async getOffers(@Req() req: AuthenticatedRequest): Promise<OffersResponse> {
+    const companyId = await this.paymentsService.resolveCompanyIdForAdmin(
+      req.user.sub,
+    );
+    return this.promo.status(companyId);
   }
 
   /**
@@ -167,7 +184,10 @@ export class SubscriptionController {
     const companyId = await this.paymentsService.resolveCompanyIdForAdmin(
       req.user.sub,
     );
-    return this.paymentsService.computeQuote(companyId, query.planId);
+    return this.paymentsService.computeQuote(companyId, query.planId, {
+      offerId: query.offerId,
+      upgrade: query.upgrade,
+    });
   }
 
   /**

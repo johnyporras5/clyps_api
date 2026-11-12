@@ -27,6 +27,8 @@ import { REMINDER_CHANNELS } from './reminders/reminder-delivery';
 import { AdminRemindersController } from './reminders/admin-reminders.controller';
 import { PaymentOutcomeService } from './notifications/payment-outcome.service';
 import { AdminBillingNotifierService } from './notifications/admin-billing-notifier.service';
+import { PromoService } from './promo.service';
+import { PublicPromoController } from './public-promo.controller';
 import { Subscription } from './entities/subscription.entity';
 import { PaymentReport } from './entities/payment-report.entity';
 import { SubscriptionEvent } from './entities/subscription-event.entity';
@@ -96,6 +98,8 @@ import { EmailModule } from '../email/email.module';
     // VIP y días extra de prueba desde el panel de plataforma.
     AdminBillingService,
     AdminBillingNotifierService,
+    // Promo Black Friday: qué ofertas ve cada salón y qué se le cobra.
+    PromoService,
     ExchangeRateService,
     SubscriptionAccessGuard,
     // SUB-10. El job de conciliación vive aquí y no en `src/tasks` para que el
@@ -134,6 +138,8 @@ import { EmailModule } from '../email/email.module';
     AdminBillingController,
     CobrixWebhookController,
     AdminRemindersController,
+    // Promo Black Friday para la landing pública.
+    PublicPromoController,
   ],
   exports: [
     SubscriptionService,
@@ -143,6 +149,7 @@ import { EmailModule } from '../email/email.module';
     SubscriptionAccessGuard,
     CobrixInvoiceService,
     RemindersService,
+    PromoService,
   ],
 })
 export class SubscriptionModule {}

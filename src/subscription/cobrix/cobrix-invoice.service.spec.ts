@@ -13,6 +13,17 @@ import type { CobrixClient } from './cobrix.client';
 import { CobrixConfig } from './cobrix.config';
 import { CobrixInvoiceService } from './cobrix-invoice.service';
 import type { SubscriptionService } from '../subscription.service';
+import type { PromoService } from '../promo.service';
+import { regularCharge } from '../payment-charge';
+
+/**
+ * Doble de PromoService: sin promo, cobra el mes del plan pedido (o Full), que
+ * es exactamente lo que hacía el servicio antes de la promo.
+ */
+const regularPromo = {
+  resolveCharge: (_c: number, req: { planId?: 'basico' | 'full' }) =>
+    Promise.resolve(regularCharge(req.planId ?? 'full')),
+} as unknown as PromoService;
 
 /**
  * La emisión del documento de cobro (SUB-10).
@@ -167,6 +178,7 @@ function buildService(
           () => subscriptions.findOne() as Promise<Subscription>,
         ),
     } as unknown as SubscriptionService,
+    regularPromo,
   );
 
   return { service, invoices, client, rates };

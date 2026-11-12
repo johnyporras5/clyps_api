@@ -1,5 +1,6 @@
 import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsNotEmpty,
   IsOptional,
@@ -8,6 +9,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { PLAN_IDS, type PlanId } from '../config/plans.config';
+import { OFFER_IDS, type OfferId } from '../config/offers.config';
 import { IDENTIFICATION_FORMAT_MESSAGE } from '../../common/utils/identification.util';
 
 /**
@@ -22,6 +24,23 @@ export class StartCheckoutDto {
   @IsOptional()
   @IsIn([...PLAN_IDS])
   planId?: PlanId;
+
+  /**
+   * Promo Black Friday: qué oferta se quiere. Solo el id —el precio lo pone el
+   * servidor—. Se revisa que el salón tenga derecho (`PromoService`).
+   */
+  @IsOptional()
+  @IsIn([...OFFER_IDS])
+  offerId?: OfferId;
+
+  /** Pasarse de la promo Básico a Full pagando la diferencia. */
+  @IsOptional()
+  @Transform(
+    ({ value }: { value: unknown }) =>
+      value === true || value === 'true' || value === '1',
+  )
+  @IsBoolean()
+  upgrade?: boolean;
 
   /**
    * Cédula o RIF del que paga. Cobrix resuelve al cliente por identidad fiscal

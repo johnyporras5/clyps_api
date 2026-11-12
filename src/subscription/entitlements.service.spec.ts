@@ -210,6 +210,21 @@ describe('el eje del estado', () => {
 });
 
 describe('la foto para el frontend', () => {
+  it('planLocked: con un mes pagado corriendo puede ver los planes pero no cambiarlo', async () => {
+    const pagando = buildService({
+      planId: 'basico',
+      currentPeriodEnd: days(20),
+    });
+    expect((await pagando.getAccessResponse(7)).planLocked).toBe(true);
+
+    // Vencido (gracia o bloqueado): sí puede cambiar, que es su salida.
+    const vencido = buildService({
+      planId: 'basico',
+      currentPeriodEnd: days(-3),
+    });
+    expect((await vencido.getAccessResponse(7)).planLocked).toBe(false);
+  });
+
   it('marca en false lo que el plan no incluye, con el tenant al día', async () => {
     const service = buildService({ planId: 'basico', workers: 1 });
 

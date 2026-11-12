@@ -1,4 +1,5 @@
-import { getPlan, type PlanId } from './config/plans.config';
+import type { PlanId } from './config/plans.config';
+import { expectedPriceUsdMinor } from './payment-charge';
 import { usdMinorToVesMinor } from './subscription-money.util';
 import type { PaymentMethod } from './subscription.enums';
 
@@ -17,6 +18,8 @@ export const DEFAULT_AMOUNT_TOLERANCE_BPS = 100;
 /** Lo que hace falta del reporte para juzgar el monto. */
 export interface DiscrepancyInput {
   planId: PlanId;
+  /** Precio congelado en el pago (promo). Sin él, el del plan. */
+  priceUsdMinor?: number | null;
   method: PaymentMethod;
   amountVesMinor: number | null;
   amountUsdMinor: number | null;
@@ -47,14 +50,14 @@ export interface AmountDiscrepancy {
  * - Binance / PayPal: el precio del plan en USD, sin tasa de por medio.
  */
 export function expectedAmountMinor(input: DiscrepancyInput): number {
-  const plan = getPlan(input.planId);
-  if (input.method !== 'pago_movil') return plan.priceUsdMinor;
+  const priceUsdMinor = expectedPriceUsdMinor(input);
+  if (input.method !== 'pago_movil') return priceUsdMinor;
   // Sin tasa congelada no hay contra qué comparar: se toma lo reportado como
   // esperado para no marcar una discrepancia inventada.
   if (!input.frozenRate || input.frozenRate <= 0) {
     return input.amountVesMinor ?? 0;
   }
-  return usdMinorToVesMinor(plan.priceUsdMinor, input.frozenRate);
+  return usdMinorToVesMinor(priceUsdMinor, input.frozenRate);
 }
 
 /** Lo que el dueño reportó, en la moneda que le corresponde al método. */

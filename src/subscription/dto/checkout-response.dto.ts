@@ -1,4 +1,6 @@
 import type { PlanId } from '../config/plans.config';
+import type { OfferId } from '../config/offers.config';
+import type { PaymentKind } from '../payment-charge';
 
 /**
  * Respuesta de POST /subscription/payments/checkout (SUB-10).
@@ -20,6 +22,9 @@ export interface CheckoutResponse {
   paymentLink: string | null;
   planId: PlanId;
   planName: string;
+  kind: PaymentKind;
+  offerId: OfferId | null;
+  months: number;
   /** Monto facturado en unidades mínimas de `currency`. */
   amountMinor: number;
   /** El mismo monto ya legible ("22.259,77"). */
