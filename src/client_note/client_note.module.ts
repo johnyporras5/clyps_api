@@ -5,10 +5,11 @@ import { ClientNoteController } from './client_note.controller';
 import { ClientNote } from './entities/client_note.entity';
 import { Client } from '../client/entities/client.entity';
 import { Company } from '../company/entities/company.entity';
+import { FileUploadService } from '../common/services/file_upload.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([ClientNote, Client, Company])],
-  providers: [ClientNoteService],
+  providers: [ClientNoteService, FileUploadService],
   controllers: [ClientNoteController],
   exports: [ClientNoteService],
 })

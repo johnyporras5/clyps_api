@@ -55,6 +55,10 @@ export class ClientNote {
   /** Hidratado en runtime: nombre de la compañía autora (para el front). */
   companyName?: string | null;
 
+  companyLogoUrl?: string | null;
+
+  companyLocation?: string | null;
+
   /** Hidratado en runtime: true si la nota pertenece al admin que consulta. */
   mine?: boolean;
 }
