@@ -1,4 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type {
+  VisitFrequencyReminderItem,
+  VisitFrequencyStage,
+} from '../client/visit-frequency.util';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import { BUSINESS_TIMEZONE } from '../common/utils/business-time.util';
@@ -660,6 +664,152 @@ export class EmailService {
       `✅ Cita reactivada - ${sessionData.date}`,
       html,
     );
+  }
+
+  async sendVisitFrequencyReminderToClient(
+    clientEmail: string,
+    clientName: string,
+    item: VisitFrequencyReminderItem,
+    companyInfo: { name: string; email?: string; address?: string },
+  ): Promise<boolean> {
+    const company = escapeHtml(item.companyName);
+    const copy: Record<
+      VisitFrequencyStage,
+      {
+        subject: string;
+        title: string;
+        accent: string;
+        accentSoft: string;
+        message: string;
+        cardTitle: string;
+      }
+    > = {
+      soon: {
+        subject: `📅 Se acerca tu próxima cita en ${item.companyName}`,
+        title: 'Se acerca tu próxima cita',
+        accent: '#2563eb',
+        accentSoft: '#eff6ff',
+        message: `Sueles visitar <strong>${company}</strong> cada <strong>${item.frequencyDays} días</strong> y en ${item.frequencyDays - item.daysSinceLastVisit === 1 ? '1 día' : `${item.frequencyDays - item.daysSinceLastVisit} días`} te toca volver. Agenda con tiempo para asegurar tu horario.`,
+        cardTitle: '📅 Tu próxima visita',
+      },
+      due: {
+        subject: `📅 Ya te toca tu cita en ${item.companyName}`,
+        title: 'Ya te toca tu cita',
+        accent: '#b8860b',
+        accentSoft: '#fbf7ec',
+        message: `Ya pasaron <strong>${item.daysSinceLastVisit} días</strong> desde tu última visita a <strong>${company}</strong>, que es lo que sueles esperar entre cita y cita. ¡Agenda la próxima!`,
+        cardTitle: '📅 Te toca volver',
+      },
+      overdue: {
+        subject: `💛 Te extrañamos en ${item.companyName}`,
+        title: 'Te extrañamos',
+        accent: '#d97706',
+        accentSoft: '#fffbeb',
+        message: `Ya pasaron <strong>${item.daysSinceLastVisit} días</strong> desde tu última visita a <strong>${company}</strong>, más de lo que sueles esperar. Agenda tu próxima cita cuando quieras.`,
+        cardTitle: '💛 Te esperamos',
+      },
+    };
+    const c = copy[item.stage];
+    const html = this.renderEmail({
+      title: c.title,
+      accent: c.accent,
+      greeting: `Hola ${escapeHtml(clientName)},`,
+      message: c.message,
+      preheader: c.subject,
+      blocks: [
+        this.emailCard({
+          title: c.cardTitle,
+          accent: c.accent,
+          accentSoft: c.accentSoft,
+          rows: [
+            { label: '🏪 Negocio', value: company },
+            {
+              label: '🔁 Sueles venir',
+              value: `Cada ${item.frequencyDays} días`,
+            },
+            {
+              label: '📅 Última visita',
+              value: escapeHtml(item.lastVisitLabel),
+            },
+          ],
+        }),
+        this.emailApp({
+          title: 'Agenda desde la app',
+          text: `Busca <strong>${company}</strong> en CLYPS y elige el día y la hora que prefieras.`,
+          userType: 'cli',
+        }),
+        this.emailContact(companyInfo),
+      ],
+    });
+    return this.sendEmail(clientEmail, c.subject, html);
+  }
+
+  async sendVisitFrequencyDigestToStaff(
+    staffEmail: string,
+    staffName: string,
+    items: VisitFrequencyReminderItem[],
+    userType: string,
+  ): Promise<boolean> {
+    if (items.length === 0) return false;
+    const sections: {
+      stage: VisitFrequencyStage;
+      title: string;
+      accent: string;
+    }[] = [
+      { stage: 'due', title: '📅 Hoy les toca volver', accent: '#b8860b' },
+      {
+        stage: 'soon',
+        title: '⏳ Les toca en los próximos días',
+        accent: '#2563eb',
+      },
+      { stage: 'overdue', title: '⚠️ Están atrasados', accent: '#d97706' },
+    ];
+    const line = (i: VisitFrequencyReminderItem) =>
+      [
+        `<strong>${escapeHtml(i.clientName)}</strong>`,
+        `cada ${i.frequencyDays} días`,
+        `última visita ${escapeHtml(i.lastVisitLabel)} (hace ${i.daysSinceLastVisit} días)`,
+        i.phone ? `📞 ${escapeHtml(i.phone)}` : '',
+        this.hasSeveralCompanies(items) ? escapeHtml(i.companyName) : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    const blocks = sections
+      .map((section) => {
+        const list = items.filter((i) => i.stage === section.stage);
+        if (list.length === 0) return '';
+        return this.emailNote({
+          title: `${section.title} (${list.length})`,
+          body: this.emailList(list.map(line)),
+          accent: section.accent,
+        });
+      })
+      .filter(Boolean);
+    const subject =
+      items.length === 1
+        ? `📋 ${items[0].clientName}: le toca volver`
+        : `📋 ${items.length} clientes por volver`;
+    const html = this.renderEmail({
+      title: 'Clientes por volver',
+      accent: '#b8860b',
+      greeting: `Hola ${escapeHtml(staffName)},`,
+      message:
+        'Según la frecuencia con la que vienen, estos clientes ya deberían volver y <strong>no tienen cita agendada</strong>. Es un buen momento para escribirles.',
+      preheader: subject,
+      blocks: [
+        ...blocks,
+        this.emailApp({
+          title: 'Agéndales desde CLYPS',
+          text: 'Abre la ficha del cliente para ver su frecuencia de visitas y agendarle su próxima cita.',
+          userType,
+        }),
+      ],
+    });
+    return this.sendEmail(staffEmail, subject, html);
+  }
+
+  private hasSeveralCompanies(items: VisitFrequencyReminderItem[]): boolean {
+    return new Set(items.map((i) => i.companyId)).size > 1;
   }
 
   async sendLinkBookingReceivedToClient(

@@ -1,7 +1,9 @@
 import {
+  calendarDaysBetween,
   estimateVisitFrequencyDays,
   upsertVisitFrequency,
   visitFrequencyFor,
+  visitFrequencyStage,
 } from './visit-frequency.util';
 
 const day = (n: number) => new Date(Date.UTC(2026, 0, 1 + n, 14, 0));
@@ -103,5 +105,39 @@ describe('visitFrequencyFor', () => {
       visitFrequencyDays: null,
       visitFrequencySource: null,
     });
+  });
+});
+
+describe('visitFrequencyStage', () => {
+  it('avisa unos días antes', () => {
+    expect(visitFrequencyStage(17, 15)).toBe('soon');
+    expect(visitFrequencyStage(17, 16)).toBe('soon');
+    expect(visitFrequencyStage(17, 14)).toBeNull();
+  });
+
+  it('no avisa antes si la frecuencia es muy corta', () => {
+    expect(visitFrequencyStage(5, 4)).toBeNull();
+  });
+
+  it('avisa el día que le toca y los días siguientes', () => {
+    expect(visitFrequencyStage(17, 17)).toBe('due');
+    expect(visitFrequencyStage(17, 21)).toBe('due');
+  });
+
+  it('avisa cuando está atrasado y deja de avisar pasado el margen', () => {
+    expect(visitFrequencyStage(17, 22)).toBe('overdue');
+    expect(visitFrequencyStage(17, 47)).toBe('overdue');
+    expect(visitFrequencyStage(17, 48)).toBeNull();
+  });
+});
+
+describe('calendarDaysBetween', () => {
+  it('cuenta días de calendario en la zona del negocio', () => {
+    const lateNight = new Date('2026-11-01T03:30:00Z');
+    const nextMorning = new Date('2026-11-01T13:00:00Z');
+    expect(calendarDaysBetween(lateNight, nextMorning, 'America/Caracas')).toBe(
+      1,
+    );
+    expect(calendarDaysBetween(lateNight, nextMorning, 'UTC')).toBe(0);
   });
 });

@@ -32,6 +32,7 @@ import { OnboardingModule } from '../onboarding/onboarding.module';
 import { CashClosingModule } from '../cash_closing/cash-closing.module';
 import { SessionNotificationEmitter } from './session-notification.emitter';
 import { ReminderSchedulerService } from './reminder-scheduler.service';
+import { VisitFrequencyReminderService } from './visit-frequency-reminder.service';
 import { AppointmentBeforeAfter } from './entities/appointment-before-after.entity';
 import { AppointmentBeforeAfterController } from './appointment-before-after.controller';
 import { AppointmentBeforeAfterService } from './appointment-before-after.service';
@@ -76,6 +77,7 @@ import { SessionDetailSubscriber } from './session-detail.subscriber';
     SessionRealtimeEmitter,
     SessionNotificationEmitter,
     ReminderSchedulerService,
+    VisitFrequencyReminderService,
     AppointmentBeforeAfterService,
     SessionSubscriber,
     SessionDetailSubscriber,

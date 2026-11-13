@@ -59,3 +59,61 @@ export function visitFrequencyFor(
     visitFrequencySource: entry?.source ?? null,
   };
 }
+
+export type VisitFrequencyStage = 'soon' | 'due' | 'overdue';
+
+export const VISIT_FREQUENCY_SOON_DAYS = 2;
+export const VISIT_FREQUENCY_MIN_DAYS_FOR_SOON = 7;
+export const VISIT_FREQUENCY_OVERDUE_DAYS = 5;
+export const VISIT_FREQUENCY_OVERDUE_WINDOW_DAYS = 30;
+
+function calendarDayIndex(date: Date, timeZone: string): number {
+  const [y, m, d] = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+    .format(date)
+    .split('-')
+    .map(Number);
+  return Math.round(Date.UTC(y, m - 1, d) / DAY_MS);
+}
+
+export function calendarDaysBetween(
+  from: Date,
+  to: Date,
+  timeZone: string,
+): number {
+  return calendarDayIndex(to, timeZone) - calendarDayIndex(from, timeZone);
+}
+
+export function visitFrequencyStage(
+  frequencyDays: number,
+  daysSinceLastVisit: number,
+): VisitFrequencyStage | null {
+  if (!frequencyDays || frequencyDays < 1) return null;
+  const untilDue = frequencyDays - daysSinceLastVisit;
+  if (untilDue > 0) {
+    return untilDue <= VISIT_FREQUENCY_SOON_DAYS &&
+      frequencyDays >= VISIT_FREQUENCY_MIN_DAYS_FOR_SOON
+      ? 'soon'
+      : null;
+  }
+  const daysLate = -untilDue;
+  if (daysLate < VISIT_FREQUENCY_OVERDUE_DAYS) return 'due';
+  if (daysLate <= VISIT_FREQUENCY_OVERDUE_WINDOW_DAYS) return 'overdue';
+  return null;
+}
+
+export interface VisitFrequencyReminderItem {
+  stage: VisitFrequencyStage;
+  clientId: number;
+  clientName: string;
+  companyId: number;
+  companyName: string;
+  frequencyDays: number;
+  daysSinceLastVisit: number;
+  lastVisitLabel: string;
+  phone: string | null;
+}
