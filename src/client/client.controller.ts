@@ -21,6 +21,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Client } from './entities/client.entity';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
+import { SetVisitFrequencyDto } from './dto/set-visit-frequency.dto';
 import { FindAllClientsDto } from './dto/find-all-clients.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -144,6 +145,7 @@ export class ClientController {
       clientId,
       req.user.sub,
       req.user?.userType,
+      req.user?.companyId ?? null,
     );
   }
 
@@ -222,6 +224,27 @@ export class ClientController {
     }
 
     return result;
+  }
+
+  @Put('admin/:clientId/visit-frequency')
+  @Roles('adm', 'wrk')
+  @UseGuards(RolesGuard)
+  async setVisitFrequency(
+    @Request() req: AuthenticatedRequest,
+    @Param('clientId', ParseIntPipe) clientId: number,
+    @Body() dto: SetVisitFrequencyDto,
+  ): Promise<{
+    clientId: number;
+    visitFrequencyDays: number | null;
+    visitFrequencySource: 'auto' | 'manual' | null;
+  }> {
+    return this.clientService.setVisitFrequency(
+      clientId,
+      dto.days,
+      req.user.sub,
+      req.user?.userType,
+      req.user?.companyId ?? null,
+    );
   }
 
   /**

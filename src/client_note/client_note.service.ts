@@ -9,6 +9,7 @@ import { In, Repository } from 'typeorm';
 import { ClientNote } from './entities/client_note.entity';
 import { Client } from '../client/entities/client.entity';
 import { Company } from '../company/entities/company.entity';
+import { FileUploadService } from '../common/services/file_upload.service';
 import { CreateClientNoteDto } from './dto/create-client_note.dto';
 import { UpdateClientNoteDto } from './dto/update-client_note.dto';
 
@@ -21,6 +22,7 @@ export class ClientNoteService {
     private readonly clientRepository: Repository<Client>,
     @InjectRepository(Company)
     private readonly companyRepository: Repository<Company>,
+    private readonly fileUploadService: FileUploadService,
   ) {}
 
   /**
@@ -130,18 +132,23 @@ export class ClientNoteService {
           .filter((id): id is number => typeof id === 'number'),
       ),
     ];
-    const companyNameById = new Map<number, string | null>();
+    const companyById = new Map<number, Company>();
     if (companyIds.length > 0) {
       const companies = await this.companyRepository.find({
         where: { id: In(companyIds) },
-        select: ['id', 'name'],
+        select: ['id', 'name', 'logo', 'location'],
       });
-      for (const c of companies) companyNameById.set(c.id, c.name ?? null);
+      for (const c of companies) companyById.set(c.id, c);
     }
 
     for (const n of notes) {
-      n.companyName =
-        n.companyId != null ? (companyNameById.get(n.companyId) ?? null) : null;
+      const company =
+        n.companyId != null ? companyById.get(n.companyId) : undefined;
+      n.companyName = company?.name ?? null;
+      n.companyLogoUrl = company?.logo
+        ? this.fileUploadService.getFileUrl('company_logo', company.logo)
+        : null;
+      n.companyLocation = company?.location?.trim() || null;
       n.mine = n.createdByUserId === adminUserId;
     }
   }
