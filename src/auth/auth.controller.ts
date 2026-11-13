@@ -333,10 +333,18 @@ export class AuthController {
   }
 
   /**
-   * Cambiar contraseña sin autenticación
+   * Fijarle una contraseña nueva a una cuenta sabiendo solo su email.
    * POST /auth/change-password-without-auth
+   *
+   * SOLO `padm`. Antes era público y sin código: cualquiera tomaba la cuenta
+   * de cualquiera (incluida la de un padm) mandando su email. Pedir solo login
+   * no basta: un cliente logueado seguiría pudiendo cambiar la clave de otro.
+   * Ni la app ni el panel lo usan; el dueño que olvidó su clave usa
+   * request-password-reset → verify-reset-code → reset-password.
    */
   @Post('change-password-without-auth')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('padm')
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async changePasswordWithoutAuth(

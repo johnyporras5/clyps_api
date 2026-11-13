@@ -3,7 +3,12 @@ import type { PlanId } from '../config/plans.config';
 import type { SubscriptionStatus } from '../subscription.enums';
 
 /** Qué provocó el cambio en la suscripción. */
-export type SubscriptionEventType = 'payment_verified';
+/**
+ * - `payment_verified`: un pago extendió el período (1 mes, o los de la promo).
+ * - `plan_upgraded`: la mejora Básico → Full de la promo; cambia el plan sin
+ *   mover la fecha.
+ */
+export type SubscriptionEventType = 'payment_verified' | 'plan_upgraded';
 
 /**
  * Bitácora de los cambios de la suscripción (SUB-6 / CLYP-337).

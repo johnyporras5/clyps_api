@@ -11,6 +11,7 @@ import {
 } from './config/plans.config';
 import { CURRENCY_USD } from './subscription-money.util';
 import { periodCoverage } from './subscription-period.util';
+import { monthsOf } from './payment-charge';
 import { Subscription } from './entities/subscription.entity';
 import { SubscriptionEvent } from './entities/subscription-event.entity';
 import { PaymentReport } from './entities/payment-report.entity';
@@ -200,11 +201,18 @@ export class SubscriptionService {
     // El ciclo COMPLETO, no solo su fecha de fin: el inicio es lo que el
     // historial (SUB-13) necesita para decir "te cubrió del 5/10 al 5/11", y
     // después de un segundo pago ya no habría forma de reconstruirlo.
-    const covered = periodCoverage(
-      now,
-      previousPeriodEnd,
-      subscription.trialEndsAt,
-    );
+    // Promo Black Friday: un pago puede comprar varios meses de una vez, y la
+    // mejora Básico → Full no compra tiempo — solo cambia el plan desde hoy
+    // hasta la fecha que ya tenía.
+    const isUpgrade = report.kind === 'promo_upgrade';
+    const covered = isUpgrade
+      ? { from: now, to: previousPeriodEnd ?? now }
+      : periodCoverage(
+          now,
+          previousPeriodEnd,
+          subscription.trialEndsAt,
+          monthsOf(report),
+        );
     const newPeriodEnd = covered.to;
 
     try {
@@ -227,7 +235,7 @@ export class SubscriptionService {
             companyId: subscription.companyId,
             subscriptionId: subscription.id,
             paymentReportId: report.id,
-            type: 'payment_verified',
+            type: isUpgrade ? 'plan_upgraded' : 'payment_verified',
             planId: report.planId,
             previousStatus,
             newStatus: 'active',

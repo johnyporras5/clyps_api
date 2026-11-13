@@ -2514,8 +2514,110 @@ export class SessionService {
       await queryRunner.release();
     }
   }
+  /**
+   * Los salones a los que pertenece una cita. La cita no guarda su salón: se
+   * saca de sus detalles, por el SERVICIO (siempre está, aunque la cita aún no
+   * tenga trabajador) y por el trabajador asignado, si lo hay.
+   */
+  private async sessionCompanyIds(sessionId: number): Promise<Set<number>> {
+    const details = await this.sessionDetailRepository.find({
+      where: { sessionId },
+    });
+    const ids = new Set<number>();
+    if (details.length === 0) return ids;
+
+    const serviceIds = [...new Set(details.map((d) => d.serviceId))];
+    const services = await this.serviceRepository.find({
+      where: { id: In(serviceIds) },
+    });
+    services.forEach((s) => s.companyId && ids.add(s.companyId));
+
+    const cwIds = [
+      ...new Set(details.map((d) => d.companyWorkerId).filter((id) => id)),
+    ];
+    if (cwIds.length > 0) {
+      const cws = await this.companyWorkerRepository.find({
+        where: { id: In(cwIds) },
+      });
+      cws.forEach((cw) => cw.companyId && ids.add(cw.companyId));
+    }
+    return ids;
+  }
+
+  /**
+   * Lanza 403 si el usuario no puede tocar o ver esta cita:
+   * - adm: la cita es de SU salón.
+   * - wrk: la cita es de un salón donde trabaja (ve también las de sus
+   *   compañeros, como en la agenda del negocio; no las de otros salones).
+   * - cli: la cita es SUYA.
+   * - padm: puede.
+   */
+  private async assertCanAccessSession(
+    session: Session,
+    user: { sub: number; userType: string },
+    action: 'ver' | 'eliminar',
+  ): Promise<void> {
+    const denied = () =>
+      new ForbiddenException(`No tienes permiso para ${action} esta sesión`);
+
+    if (user.userType === 'padm') return;
+
+    if (user.userType === 'cli') {
+      const client = await this.clientRepository.findOne({
+        where: { userId: user.sub },
+      });
+      if (!client || session.clientId !== client.id) throw denied();
+      return;
+    }
+
+    let userCompanyIds: number[] = [];
+    if (user.userType === 'adm') {
+      const company = await this.companyRepository.findOne({
+        where: { userId: user.sub },
+      });
+      if (company) userCompanyIds = [company.id];
+    } else if (user.userType === 'wrk') {
+      const worker = await this.workerRepository.findOne({
+        where: { userId: user.sub },
+      });
+      if (worker) {
+        const memberships = await this.companyWorkerRepository.find({
+          where: { workerId: worker.id },
+        });
+        userCompanyIds = memberships.map((cw) => cw.companyId);
+      }
+    }
+    if (userCompanyIds.length === 0) throw denied();
+
+    const sessionCompanies = await this.sessionCompanyIds(session.id);
+    if (!userCompanyIds.some((id) => sessionCompanies.has(id))) throw denied();
+  }
+
+  /**
+   * GET /sessions/:id. Devuelve lo mismo que antes (`findOneWithDetails`),
+   * pero solo si quien pide puede ver la cita. Antes cualquier usuario con
+   * sesión veía cualquier cita de la plataforma (cliente, teléfono, montos).
+   */
+  async findOneForUser(
+    id: number,
+    user: { sub: number; userType: string },
+  ): Promise<SessionResponse> {
+    const session = await this.sessionRepository.findOne({ where: { id } });
+    if (!session) {
+      throw new NotFoundException(`Sesión con ID ${id} no encontrada`);
+    }
+    await this.assertCanAccessSession(session, user, 'ver');
+    return this.findOneWithDetails(id);
+  }
+
+  /**
+   * DELETE /sessions/:id. Borra la cita y sus detalles, SOLO si es del salón
+   * del dueño que llama. Antes no miraba de quién era: cualquier usuario con
+   * sesión (también un cliente) borraba citas de cualquier salón.
+   */
   async removeSessionWithDetails(
     sessionId: number,
+    adminId: number,
   ): Promise<{ message: string }> {
     const session = await this.sessionRepository.findOne({
       where: { id: sessionId },
@@ -2524,6 +2626,12 @@ export class SessionService {
     if (!session) {
       throw new NotFoundException(`Sesión con ID ${sessionId} no encontrada`);
     }
+
+    await this.assertCanAccessSession(
+      session,
+      { sub: adminId, userType: 'adm' },
+      'eliminar',
+    );
 
     await this.sessionDetailRepository
       .createQueryBuilder()

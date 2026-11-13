@@ -1,5 +1,7 @@
 import type { PlanId } from '../config/plans.config';
 import type { RateSourceId, RateType } from '../config/rate.config';
+import type { OfferId } from '../config/offers.config';
+import type { PaymentKind } from '../payment-charge';
 
 /**
  * Respuesta de GET /subscription/quote. NO se persiste nada: el cliente muestra
@@ -10,6 +12,11 @@ export interface QuoteResponse {
   planName: string;
   /** Base de precio del plan, en centavos de USD. */
   priceUsdMinor: number;
+  /** Qué se cotizó: el mes del plan, una promo o la mejora a Full. */
+  kind: PaymentKind;
+  offerId: OfferId | null;
+  /** Meses que suma al verificarse (0 = la mejora). */
+  months: number;
   /** Lo que hay que pagar, en céntimos de Bs. Es el monto que manda. */
   amountVesMinor: number;
   /**

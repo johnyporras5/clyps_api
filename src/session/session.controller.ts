@@ -138,8 +138,8 @@ export class SessionController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return this.sessionService.findOneWithDetails(+id);
+  async findOne(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.sessionService.findOneForUser(+id, req.user);
   }
   /**
    * Obtiene los detalles de una sesión (cita) con validación de permisos.
@@ -396,8 +396,9 @@ export class SessionController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.sessionService.removeSessionWithDetails(+id);
+  @Roles('adm')
+  remove(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.sessionService.removeSessionWithDetails(+id, req.user.sub);
   }
 
   /**

@@ -1,4 +1,6 @@
 import type { PlanId } from '../config/plans.config';
+import type { OfferId } from '../config/offers.config';
+import type { PaymentKind } from '../payment-charge';
 import type {
   AutoCheckStatus,
   PaymentMethod,
@@ -16,6 +18,11 @@ export interface PaymentReportResponse {
   status: PaymentReportStatus;
   method: PaymentMethod;
   planId: PlanId;
+  kind: PaymentKind;
+  offerId: OfferId | null;
+  months: number;
+  /** "Full", "Black Friday · Full 3 meses"… */
+  chargeLabel: string;
   /** Céntimos de Bs, solo Pago Móvil. */
   amountVesMinor: number | null;
   /** El mismo monto legible ("22.259,77"). null si el pago fue en USD. */

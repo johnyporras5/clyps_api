@@ -1,4 +1,4 @@
-import { getPlan } from './config/plans.config';
+import { chargeLabel, monthsOf } from './payment-charge';
 import { CURRENCY_VES, formatVesMinor } from './subscription-money.util';
 import { periodCoverage } from './subscription-period.util';
 import type { PaymentReport } from './entities/payment-report.entity';
@@ -43,6 +43,7 @@ export interface CycleContext {
 export function billingCycleOf(
   report: Pick<PaymentReport, 'status' | 'reportedAt' | 'coveredFrom'> & {
     coveredTo: Date | null;
+    months?: number | null;
   },
   context: CycleContext,
 ): BillingCycle {
@@ -57,6 +58,7 @@ export function billingCycleOf(
     report.reportedAt,
     context.currentPeriodEnd,
     context.trialEndsAt,
+    monthsOf(report),
   );
   return {
     from: projected.from.toISOString(),
@@ -86,7 +88,7 @@ export function toHistoryItem(
     status: report.status,
     method: report.method,
     planId: report.planId,
-    planName: getPlan(report.planId).name,
+    planName: chargeLabel(report),
     amountMinor: amountMinorOf(report),
     currency: report.currency,
     amountVesFormatted:

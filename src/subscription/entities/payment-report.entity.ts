@@ -4,6 +4,8 @@ import {
   rateTransformer,
 } from '../subscription-money.util';
 import type { PlanId } from '../config/plans.config';
+import type { OfferId } from '../config/offers.config';
+import type { PaymentKind } from '../payment-charge';
 import type {
   AutoCheckStatus,
   PaymentMethod,
@@ -46,6 +48,30 @@ export class PaymentReport {
   /** Plan que se estaba pagando. Se copia: el tenant puede cambiar de plan. */
   @Column({ name: 'plan_id', type: 'varchar', length: 20 })
   planId: PlanId;
+
+  // -------------------------------------------------------------------------
+  // Qué compra este pago (promo Black Friday, migración ...084)
+  // -------------------------------------------------------------------------
+  // El candado "una promo por salón" tampoco se declara aquí: es el índice
+  // único sobre la columna generada `promo_slot`, que vive solo en la migración.
+
+  /** 'regular' (un mes), 'promo' (oferta de varios meses) o 'promo_upgrade'. */
+  @Column({ name: 'kind', type: 'varchar', length: 16, default: 'regular' })
+  kind: PaymentKind;
+
+  @Column({ name: 'offer_id', type: 'varchar', length: 32, nullable: true })
+  offerId: OfferId | null;
+
+  /** Meses que suma al verificarse. 0 en la mejora a Full. */
+  @Column({ name: 'months', type: 'tinyint', unsigned: true, default: 1 })
+  months: number;
+
+  /**
+   * Precio cobrado, congelado al abrir el pago. NULL en los pagos anteriores a
+   * la promo: para ellos vale el precio del plan (`expectedPriceUsdMinor`).
+   */
+  @Column({ name: 'price_usd_minor', type: 'int', nullable: true })
+  priceUsdMinor: number | null;
 
   @Column({
     name: 'method',

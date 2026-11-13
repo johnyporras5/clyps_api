@@ -18,6 +18,17 @@ import { addMonths } from './subscription-period.util';
 import { Subscription } from './entities/subscription.entity';
 import type { SubscriptionEvent } from './entities/subscription-event.entity';
 import type { ReportPaymentDto } from './dto/report-payment.dto';
+import type { PromoService } from './promo.service';
+import { regularCharge } from './payment-charge';
+
+/**
+ * Doble de PromoService: sin promo, cobra el mes del plan pedido (o Full), que
+ * es exactamente lo que hacía el servicio antes de la promo.
+ */
+const regularPromo = {
+  resolveCharge: (_c: number, req: { planId?: 'basico' | 'full' }) =>
+    Promise.resolve(regularCharge(req.planId ?? 'full')),
+} as unknown as PromoService;
 
 // El servicio de archivos arrastra `uuid` (ESM puro) y jest no lo transforma.
 // Aquí no se sube nada, así que se corta la dependencia con un doble vacío.
@@ -204,6 +215,7 @@ function buildService(options: {
     // Solo se le pide olvidar la caché del acceso cuando un pago cambia de
     // estado (SUB-12); aquí no se prueba eso, así que basta con el espía.
     { invalidate: jest.fn() } as unknown as EntitlementsService,
+    regularPromo,
   );
 
   return { service, reports, subscriptions, manager, events, cobrixInvoices };
@@ -569,6 +581,7 @@ describe('a dónde paga el dueño', () => {
       } as never,
       {} as never,
       {} as never,
+      regularPromo,
     );
   };
 

@@ -12,8 +12,7 @@ import { Subscription } from '../entities/subscription.entity';
 import { PaymentReport } from '../entities/payment-report.entity';
 import { SubscriptionInvoice } from '../entities/subscription-invoice.entity';
 import { ExchangeRateService } from '../rate/exchange-rate.service';
-import { getPlan, type PlanId } from '../config/plans.config';
-import { quoteAmountVesMinor } from '../subscription-quote.util';
+import type { PlanId } from '../config/plans.config';
 import { billablePlanId } from '../entitlements.util';
 import {
   IDENTIFICATION_FORMAT_MESSAGE,
@@ -24,6 +23,14 @@ import { CURRENCY_VES, formatVesMinor } from '../subscription-money.util';
 import { CobrixConfig } from './cobrix.config';
 import { CobrixClient } from './cobrix.client';
 import type { CheckoutResponse } from '../dto/checkout-response.dto';
+import { PromoService } from '../promo.service';
+import type { OfferId } from '../config/offers.config';
+import {
+  chargeColumns,
+  chargeLabel,
+  type PaymentCharge,
+} from '../payment-charge';
+import { usdMinorToVesMinor } from '../subscription-money.util';
 
 /**
  * Emisión del documento de cobro en Cobrix (SUB-10).
@@ -57,6 +64,7 @@ export class CobrixInvoiceService {
     private readonly client: CobrixClient,
     private readonly config: CobrixConfig,
     private readonly trials: SubscriptionService,
+    private readonly promo: PromoService,
   ) {}
 
   /**
@@ -67,7 +75,12 @@ export class CobrixInvoiceService {
    */
   async startCheckout(
     companyId: number,
-    input: { planId?: PlanId; identification?: string } = {},
+    input: {
+      planId?: PlanId;
+      identification?: string;
+      offerId?: OfferId;
+      upgrade?: boolean;
+    } = {},
   ): Promise<CheckoutResponse> {
     if (!this.config.enabled) {
       this.logger.error(
@@ -86,7 +99,21 @@ export class CobrixInvoiceService {
 
     await this.assertNothingPending(subscription);
 
-    const planId = input.planId ?? billablePlanId(subscription.planId);
+    // Qué se cobra (mes normal, promo o mejora): lo decide el servidor, con la
+    // ventana EXACTA de la promo — la factura es lo que congela el precio.
+    const charge = await this.promo.resolveCharge(
+      companyId,
+      {
+        planId:
+          input.offerId || input.upgrade
+            ? undefined
+            : (input.planId ?? billablePlanId(subscription.planId)),
+        offerId: input.offerId,
+        upgrade: input.upgrade,
+      },
+      'quote',
+    );
+    const planId = charge.planId;
     const company = await this.companies.findOne({
       where: { id: companyId },
       select: { id: true, name: true, email: true },
@@ -138,7 +165,12 @@ export class CobrixInvoiceService {
       Boolean(input.identification?.trim()) &&
       Boolean(live) &&
       live!.payerIdentification.toUpperCase() !== identification;
-    const changesPlan = Boolean(live) && live!.planId !== planId;
+    // Cambiar de plan, o de mes normal a promo, es otro monto: otra factura.
+    const changesPlan =
+      Boolean(live) &&
+      (live!.planId !== planId ||
+        (live!.kind ?? 'regular') !== charge.kind ||
+        (live!.offerId ?? null) !== charge.offerId);
 
     if (live && !changesIdentification && !changesPlan) {
       this.logger.log(
@@ -160,7 +192,7 @@ export class CobrixInvoiceService {
     const invoice = await this.emit(
       companyId,
       subscription.id,
-      planId,
+      charge,
       identification,
       company?.name?.trim() || `Salón ${companyId}`,
       email,
@@ -177,12 +209,11 @@ export class CobrixInvoiceService {
   private async emit(
     companyId: number,
     subscriptionId: number,
-    planId: PlanId,
+    charge: PaymentCharge,
     identification: string,
     name: string,
     email: string,
   ): Promise<SubscriptionInvoice> {
-    const plan = getPlan(planId);
     const fetched = await this.rates.fetchRate();
 
     // La API pública de facturas NO lleva campo de moneda: manda un número y
@@ -190,8 +221,8 @@ export class CobrixInvoiceService {
     // bolívares y se le mandan los dólares del plan, factura "VES 20,25".
     const isVes = this.config.currency === CURRENCY_VES;
     const listPriceMinor = isVes
-      ? quoteAmountVesMinor(plan.id, fetched.rate)
-      : plan.priceUsdMinor;
+      ? usdMinorToVesMinor(charge.priceUsdMinor, fetched.rate)
+      : charge.priceUsdMinor;
 
     // ⚠️ Andamio de pruebas: factura un monto simbólico en vez del precio del
     // plan. Cada uso deja rastro en el log a propósito — es la única red que
@@ -229,7 +260,7 @@ export class CobrixInvoiceService {
       this.invoices.create({
         companyId,
         subscriptionId,
-        planId,
+        ...chargeColumns(charge),
         provider: this.config.provider,
         providerReference,
         providerInvoiceId: created.invoiceId,
@@ -497,7 +528,10 @@ export class CobrixInvoiceService {
       providerReference: invoice.providerReference,
       paymentLink: invoice.checkoutUrl,
       planId: invoice.planId,
-      planName: getPlan(invoice.planId).name,
+      planName: chargeLabel(invoice),
+      kind: invoice.kind,
+      offerId: invoice.offerId,
+      months: invoice.months,
       amountMinor: invoice.amountMinor,
       amountFormatted:
         invoice.currency === CURRENCY_VES
