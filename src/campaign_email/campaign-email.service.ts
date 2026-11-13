@@ -216,6 +216,7 @@ export class CampaignEmailService {
       payUrl: PAY_URL,
       unsubscribeUrl: unsubscribeUrl(this.apiBase, to, this.unsubscribeSecret),
       assetsBaseUrl: this.str('ASSETS_BASE_URL'),
+      windowStart: this.promo.window.start,
       windowEnd: this.promo.window.end,
     };
   }

@@ -58,22 +58,33 @@ describe('correos de campaña', () => {
     payUrl: 'https://sistemaclyps.com/pay',
     unsubscribeUrl: 'https://api.x.com/public/email/unsubscribe?e=a&t=b',
     assetsBaseUrl: 'https://cdn.x.com/assets',
-    windowEnd: new Date('2026-12-04T04:00:00Z'),
+    windowStart: new Date('2026-11-23T04:00:00Z'),
+    windowEnd: new Date('2026-12-05T04:00:00Z'),
   };
 
-  it('intriga: no revela precios y lleva la baja', () => {
+  it('intriga: anuncia el día que abre, sin precios y con la baja', () => {
     const mail = buildTeaserEmail(input);
     expect(mail.subject).toContain('Salón Bella');
+    expect(mail.html).toContain('Este lunes 23 de noviembre');
+    expect(mail.html).toContain('llega este lunes 23.');
     expect(mail.html).not.toMatch(/\$\d/);
     expect(mail.html).toContain('No quiero recibir promociones');
   });
 
-  it('promo: precios, último día INCLUIDO (3 de diciembre) y la baja', () => {
+  it('intriga: si la promo se mueve, el día del correo se mueve con ella', () => {
+    const mail = buildTeaserEmail({
+      ...input,
+      windowStart: new Date('2026-11-27T04:00:00Z'),
+    });
+    expect(mail.html).toContain('Este viernes 27 de noviembre');
+  });
+
+  it('promo: precios, último día INCLUIDO (4 de diciembre) y la baja', () => {
     const mail = buildLaunchEmail(input);
     expect(mail.html).toContain('$30');
     expect(mail.html).toContain('$60');
     expect(mail.html).toContain('Ahorras $15');
-    expect(mail.html).toContain('3 de diciembre');
+    expect(mail.html).toContain('4 de diciembre');
     expect(mail.html).toContain('https://sistemaclyps.com/pay');
     expect(mail.html).toContain('No quiero recibir promociones');
   });
@@ -90,16 +101,22 @@ describe('correos de campaña', () => {
 
 describe('cuándo salen solas', () => {
   const window = {
-    start: new Date('2026-11-27T04:00:00Z'),
-    end: new Date('2026-12-04T04:00:00Z'),
+    start: new Date('2026-11-23T04:00:00Z'),
+    end: new Date('2026-12-05T04:00:00Z'),
   };
   const teaser = resolveScheduledAt('bf2026_teaser', undefined);
   const launch = resolveScheduledAt('bf2026_launch', undefined);
   const at = (iso: string) => new Date(iso);
+  const phase = (c: 'bf2026_teaser' | 'bf2026_launch', iso: string) =>
+    campaignPhase(c, c === 'bf2026_teaser' ? teaser : launch, window, at(iso));
 
-  it('por defecto: intriga martes 24 a las 10 a. m. y promo viernes 27 a las 8 a. m. (Caracas)', () => {
-    expect(teaser.toISOString()).toBe('2026-11-24T14:00:00.000Z');
-    expect(launch.toISOString()).toBe('2026-11-27T12:00:00.000Z');
+  it('por defecto: intriga viernes 20 a las 10 a. m. y promo lunes 23 a las 8 a. m. (Caracas)', () => {
+    expect(teaser.toISOString()).toBe('2026-11-20T14:00:00.000Z');
+    expect(launch.toISOString()).toBe('2026-11-23T12:00:00.000Z');
+  });
+
+  it('la intriga sale ANTES de que abra la promo (si no, se saltaría)', () => {
+    expect(teaser.getTime()).toBeLessThan(window.start.getTime());
   });
 
   it('una fecha mal escrita en el .env no adelanta el envío', () => {
@@ -107,56 +124,14 @@ describe('cuándo salen solas', () => {
   });
 
   it('intriga: antes de su hora no, después sí, y con la promo abierta ya no', () => {
-    expect(
-      campaignPhase(
-        'bf2026_teaser',
-        teaser,
-        window,
-        at('2026-11-24T13:59:00Z'),
-      ),
-    ).toBe('scheduled');
-    expect(
-      campaignPhase(
-        'bf2026_teaser',
-        teaser,
-        window,
-        at('2026-11-24T14:05:00Z'),
-      ),
-    ).toBe('due');
-    expect(
-      campaignPhase(
-        'bf2026_teaser',
-        teaser,
-        window,
-        at('2026-11-27T05:00:00Z'),
-      ),
-    ).toBe('closed');
+    expect(phase('bf2026_teaser', '2026-11-20T13:59:00Z')).toBe('scheduled');
+    expect(phase('bf2026_teaser', '2026-11-20T14:05:00Z')).toBe('due');
+    expect(phase('bf2026_teaser', '2026-11-23T05:00:00Z')).toBe('closed');
   });
 
   it('promo: sale a su hora y deja de salir cuando la promo cierra', () => {
-    expect(
-      campaignPhase(
-        'bf2026_launch',
-        launch,
-        window,
-        at('2026-11-27T11:00:00Z'),
-      ),
-    ).toBe('scheduled');
-    expect(
-      campaignPhase(
-        'bf2026_launch',
-        launch,
-        window,
-        at('2026-11-27T12:10:00Z'),
-      ),
-    ).toBe('due');
-    expect(
-      campaignPhase(
-        'bf2026_launch',
-        launch,
-        window,
-        at('2026-12-04T05:00:00Z'),
-      ),
-    ).toBe('closed');
+    expect(phase('bf2026_launch', '2026-11-23T11:00:00Z')).toBe('scheduled');
+    expect(phase('bf2026_launch', '2026-11-23T12:10:00Z')).toBe('due');
+    expect(phase('bf2026_launch', '2026-12-05T05:00:00Z')).toBe('closed');
   });
 });

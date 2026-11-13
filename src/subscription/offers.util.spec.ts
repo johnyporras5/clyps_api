@@ -46,13 +46,13 @@ describe('catálogo de ofertas', () => {
 });
 
 describe('ventana', () => {
-  it('por defecto: una semana, del 27/11 al 03/12 incluido en hora de Caracas', () => {
-    expect(isWindowOpen(W, at('2026-11-27T03:59:59Z'))).toBe(false); // 26/11 23:59 VET
-    expect(isWindowOpen(W, at('2026-11-27T04:00:00Z'))).toBe(true); // 27/11 00:00 VET
-    expect(isWindowOpen(W, at('2026-11-30T15:00:00Z'))).toBe(true); // lunes 30
-    expect(isWindowOpen(W, at('2026-12-04T03:59:59Z'))).toBe(true); // 03/12 23:59 VET
-    expect(isWindowOpen(W, at('2026-12-04T04:00:00Z'))).toBe(false); // 04/12 00:00 VET
-    expect(W.end.getTime() - W.start.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+  it('por defecto: del 23/11 al 04/12 incluido en hora de Caracas (12 días)', () => {
+    expect(isWindowOpen(W, at('2026-11-23T03:59:59Z'))).toBe(false); // 22/11 23:59 VET
+    expect(isWindowOpen(W, at('2026-11-23T04:00:00Z'))).toBe(true); // 23/11 00:00 VET
+    expect(isWindowOpen(W, at('2026-11-27T15:00:00Z'))).toBe(true); // Black Friday
+    expect(isWindowOpen(W, at('2026-12-05T03:59:59Z'))).toBe(true); // 04/12 23:59 VET
+    expect(isWindowOpen(W, at('2026-12-05T04:00:00Z'))).toBe(false); // 05/12 00:00 VET
+    expect(W.end.getTime() - W.start.getTime()).toBe(12 * 24 * 60 * 60 * 1000);
   });
 
   it('se mueve por variable de entorno (p. ej. cortarla antes)', () => {
@@ -101,7 +101,7 @@ describe('quién puede tomar la oferta', () => {
   });
 
   it('fuera de la ventana no ve nada', () => {
-    expect(offerBlockReason({ ...base, now: at('2026-11-26T15:00:00Z') })).toBe(
+    expect(offerBlockReason({ ...base, now: at('2026-11-22T15:00:00Z') })).toBe(
       'window_closed',
     );
     expect(

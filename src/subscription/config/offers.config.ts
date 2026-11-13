@@ -12,8 +12,8 @@ import type { PlanId } from './plans.config';
  *   - Full   3 meses: $60 (normal $84)
  *
  * Reglas (ver `offers.util.ts`):
- *   - Solo dentro de la ventana de la campaña: por defecto UNA SEMANA desde el
- *     Black Friday, del 27/11/2026 al 03/12/2026 incluido, hora de Venezuela.
+ *   - Solo dentro de la ventana de la campaña: por defecto del lunes 23/11/2026
+ *     al viernes 04/12/2026 incluido (12 días), hora de Venezuela.
  *     Se mueve por variable de entorno, sin deploy.
  *   - Para cualquier salón que pague (no VIP), en prueba, pagando o bloqueado.
  *   - UNA sola vez por salón (cuenta una pendiente o verificada; una
@@ -81,13 +81,14 @@ export const PROMO_UPGRADE: {
 };
 
 /**
- * Ventana por defecto: una semana desde el Black Friday. Del viernes
- * 27/11/2026 00:00 al jueves 03/12/2026 23:59:59 en Caracas (UTC-4, sin horario
- * de verano): 7 días completos. El fin es EXCLUSIVO (04/12 00:00).
+ * Ventana por defecto: del lunes 23/11/2026 00:00 al viernes 04/12/2026
+ * 23:59:59 en Caracas (UTC-4, sin horario de verano). El fin es EXCLUSIVO
+ * (05/12 00:00). En producción NO hace falta poner PROMO_BF_*: estas son las
+ * fechas reales.
  */
 export const DEFAULT_BF2026_WINDOW = {
-  start: new Date('2026-11-27T04:00:00.000Z'),
-  end: new Date('2026-12-04T04:00:00.000Z'),
+  start: new Date('2026-11-23T04:00:00.000Z'),
+  end: new Date('2026-12-05T04:00:00.000Z'),
 };
 
 /** Variables de entorno que mueven la ventana sin deploy de código. */

@@ -10,10 +10,10 @@ import type { CampaignId } from './campaign-email.template';
 
 /** Por defecto, hora de Caracas (UTC-4, sin horario de verano). */
 export const DEFAULT_CAMPAIGN_SCHEDULE: Record<CampaignId, Date> = {
-  // Martes 24/11 a las 10:00 a. m.
-  bf2026_teaser: new Date('2026-11-24T14:00:00.000Z'),
-  // Viernes 27/11 a las 8:00 a. m. (la promo ya abrió a las 00:00).
-  bf2026_launch: new Date('2026-11-27T12:00:00.000Z'),
+  // Viernes 20/11 a las 10:00 a. m. (la promo abre el lunes 23).
+  bf2026_teaser: new Date('2026-11-20T14:00:00.000Z'),
+  // Lunes 23/11 a las 8:00 a. m.: el mismo día que abre la promo.
+  bf2026_launch: new Date('2026-11-23T12:00:00.000Z'),
 };
 
 /** Variables de entorno que mueven cada fecha sin deploy de código. */

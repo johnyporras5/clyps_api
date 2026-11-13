@@ -40,7 +40,9 @@ export interface CampaignEmailInput {
   /** Enlace firmado para darse de baja de las promociones. */
   unsubscribeUrl: string;
   assetsBaseUrl: string | null;
-  /** Fin de la promo (exclusivo), para "hasta el jueves 3 de diciembre". */
+  /** Inicio de la promo, para "este lunes 23 de noviembre" (intriga). */
+  windowStart: Date;
+  /** Fin de la promo (exclusivo), para "hasta el viernes 4 de diciembre". */
   windowEnd: Date;
 }
 
@@ -103,16 +105,29 @@ function offerBox(): string {
           </table>`;
 }
 
+/** "lunes 23 de noviembre": el día que abre la promo, sin año. */
+function opensOn(windowStart: Date): string {
+  // "Lunes, 23 de noviembre de 2026" → "lunes 23 de noviembre"
+  return formatLongDate(windowStart)
+    .replace(/ de \d{4}$/, '')
+    .replace(',', '')
+    .toLowerCase();
+}
+
 export function buildTeaserEmail(input: CampaignEmailInput): CampaignEmail {
   const plain = plainName(input.companyName);
   const name = escapeHtml(plain);
+  // La fecha sale de la ventana real de la promo: si se mueve, el correo no
+  // queda anunciando un día viejo.
+  const day = opensOn(input.windowStart);
+  const dayShort = day.replace(/ de [a-záéíóú]+$/, '');
   return {
     subject: `👀 ${plain}, se acerca el Black Friday… y tenemos una sorpresa`,
     html: renderEmail({
       title: 'Se acerca el Black Friday 🖤',
       accent: GOLD,
       logoUrl: logoUrl(input.assetsBaseUrl),
-      preheader: 'Algo especial llega este viernes 27. Atento a tu correo.',
+      preheader: `Algo especial llega este ${dayShort}. Atento a tu correo.`,
       greeting: `¡Hola, ${name}! 👀`,
       message:
         'Se acerca el <strong>Black Friday</strong> y estamos preparando algo especial para los salones de CLYPS.<br><br>No te podemos contar mucho todavía… solo que <strong>vale la pena esperarlo</strong>.',
@@ -125,7 +140,9 @@ export function buildTeaserEmail(input: CampaignEmailInput): CampaignEmail {
             {
               label: 'Cuándo',
               value:
-                'Este viernes 27 de noviembre<div style="font-size:14px;font-weight:400;color:#64748b;margin:6px 0 0 0;">Te escribimos ese día con todos los detalles.</div>',
+                'Este ' +
+                day +
+                '<div style="font-size:14px;font-weight:400;color:#64748b;margin:6px 0 0 0;">Te escribimos ese día con todos los detalles.</div>',
             },
           ],
         }),
@@ -193,6 +210,7 @@ export function campaignSubjectSample(campaign: CampaignId): string {
     payUrl: 'https://example.com',
     unsubscribeUrl: 'https://example.com',
     assetsBaseUrl: null,
+    windowStart: new Date(),
     windowEnd: new Date(),
   }).subject;
 }
