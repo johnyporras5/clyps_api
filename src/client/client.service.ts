@@ -24,6 +24,11 @@ import {
 } from '../common/services/file_upload.service';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
+import { ClientVisitFrequencyService } from './client-visit-frequency.service';
+import {
+  upsertVisitFrequency,
+  visitFrequencyFor,
+} from './visit-frequency.util';
 import { FindAllClientsDto } from './dto/find-all-clients.dto';
 import { isEmailUnavailable } from '../auth/dto/register-client-by-admin.dto';
 import {
@@ -89,6 +94,7 @@ export class ClientService {
     @InjectRepository(Offer)
     private offerRepository: Repository<Offer>,
     private fileUploadService: FileUploadService,
+    private readonly clientVisitFrequency: ClientVisitFrequencyService,
   ) {}
 
   private normalizeBirthdate(updateClientDto: UpdateClientDto): void {
@@ -558,6 +564,10 @@ export class ClientService {
         visibilityReason,
         sharedCompaniesCount: sharedCompanies.length,
         lastAppointmentDate: lastAppointmentByClient.get(client.id) ?? null,
+        ...visitFrequencyFor(
+          client.companyVisitFrequencies,
+          sharedCompanies.map((c) => c.id),
+        ),
         // Información adicional útil
         hasAccess: client.userId === adminId || sharedCompanies.length > 0,
         accessibleToAdmin:
@@ -866,6 +876,7 @@ export class ClientService {
     clientId: number,
     callerId?: number,
     callerRole?: string,
+    callerCompanyId?: number | null,
   ): Promise<Client & { photoUrl: string }> {
     // Si viene el usuario autenticado, se valida que el cliente sea suyo o de
     // su compañía (aplica a admin y a trabajador).
@@ -914,6 +925,17 @@ export class ClientService {
       photoUrl,
       lastAppointment,
       nextAppointment,
+      ...(await this.resolveVisitFrequency(
+        client,
+        callerId
+          ? await this.resolveActivationTargets(
+              client,
+              callerId,
+              callerRole,
+              callerCompanyId,
+            )
+          : [],
+      )),
     } as any;
   }
 
@@ -1078,6 +1100,79 @@ export class ClientService {
     }
 
     return shared;
+  }
+
+  private async resolveVisitFrequency(
+    client: Client,
+    companyIds: number[],
+  ): Promise<ReturnType<typeof visitFrequencyFor>> {
+    const current = visitFrequencyFor(
+      client.companyVisitFrequencies,
+      companyIds,
+    );
+    if (current.visitFrequencyDays !== null || companyIds.length === 0) {
+      return current;
+    }
+    try {
+      const days = await this.clientVisitFrequency.recalculate(
+        client.id,
+        companyIds[0],
+      );
+      if (days !== null) {
+        return { visitFrequencyDays: days, visitFrequencySource: 'auto' };
+      }
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo calcular la frecuencia de visitas del cliente ${client.id}: ${(error as Error).message}`,
+      );
+    }
+    return current;
+  }
+
+  async setVisitFrequency(
+    clientId: number,
+    days: number | null,
+    callerId: number,
+    callerRole?: string,
+    callerCompanyId?: number | null,
+  ): Promise<{
+    clientId: number;
+    visitFrequencyDays: number | null;
+    visitFrequencySource: 'auto' | 'manual' | null;
+  }> {
+    await this.assertCanAccessClient(clientId, callerId, callerRole);
+
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+    });
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    const targets = await this.resolveActivationTargets(
+      client,
+      callerId,
+      callerRole,
+      callerCompanyId,
+    );
+    if (targets.length === 0) {
+      throw new BadRequestException(
+        'El cliente no pertenece a ninguno de tus negocios',
+      );
+    }
+
+    let entries = client.companyVisitFrequencies ?? [];
+    for (const companyId of targets) {
+      entries = upsertVisitFrequency(entries, companyId, days, 'manual');
+    }
+    await this.clientRepository.update(clientId, {
+      companyVisitFrequencies: entries,
+    });
+
+    return {
+      clientId,
+      ...visitFrequencyFor(entries, targets),
+    };
   }
 
   /**

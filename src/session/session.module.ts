@@ -22,6 +22,7 @@ import { ChatGPTService } from '../chatgpt/chatgpt.service';
 import { ServiceOffer } from 'src/Offer/entities/service-offer.entity';
 import { Offer } from 'src/Offer/entities/offer.entity';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { ClientModule } from '../client/client.module';
 import { SessionRealtimeEmitter } from './session-realtime.emitter';
 import { NotificationModule } from '../notification/notification.module';
 import { PayrollModule } from '../payroll/payroll.module';
@@ -65,6 +66,7 @@ import { SessionDetailSubscriber } from './session-detail.subscriber';
     FeedbacksModule,
     OnboardingModule,
     CashClosingModule,
+    ClientModule,
   ],
   providers: [
     SessionService,
