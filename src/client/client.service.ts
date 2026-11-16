@@ -1132,6 +1132,7 @@ export class ClientService {
   async setVisitFrequency(
     clientId: number,
     days: number | null,
+    auto: boolean,
     callerId: number,
     callerRole?: string,
     callerCompanyId?: number | null,
@@ -1159,6 +1160,22 @@ export class ClientService {
       throw new BadRequestException(
         'El cliente no pertenece a ninguno de tus negocios',
       );
+    }
+
+    if (auto || days === null) {
+      for (const companyId of targets) {
+        await this.clientVisitFrequency.recalculate(clientId, companyId, {
+          overrideManual: true,
+        });
+      }
+      const refreshed = await this.clientRepository.findOne({
+        where: { id: clientId },
+        select: { id: true, companyVisitFrequencies: true },
+      });
+      return {
+        clientId,
+        ...visitFrequencyFor(refreshed?.companyVisitFrequencies, targets),
+      };
     }
 
     let entries = client.companyVisitFrequencies ?? [];

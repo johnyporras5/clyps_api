@@ -240,7 +240,8 @@ export class ClientController {
   }> {
     return this.clientService.setVisitFrequency(
       clientId,
-      dto.days,
+      dto.days ?? null,
+      dto.auto === true,
       req.user.sub,
       req.user?.userType,
       req.user?.companyId ?? null,
