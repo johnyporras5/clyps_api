@@ -235,13 +235,14 @@ export class VisitFrequencyReminderService {
       const chunk = clientIds.slice(i, i + CHUNK_SIZE);
       const rows: VisitRow[] = await this.dataSource.query(
         `SELECT DISTINCT s.client_id AS clientId,
-                COALESCE(cw.company_id, o.company_id) AS companyId,
+                COALESCE(cw.company_id, o.company_id, sv.company_id) AS companyId,
                 s.id AS sessionId,
                 s.session_datetime AS visitedAt
            FROM session s
            JOIN session_detail d ON d.session_id = s.id
            LEFT JOIN company_worker cw ON cw.id = d.company_worker_id
            LEFT JOIN offer o ON o.id = d.offer_id
+           LEFT JOIN service sv ON sv.id = d.service_id
           WHERE s.client_id IN (?)
             AND s.session_status IN (?)
             AND s.session_datetime IS NOT NULL`,
@@ -292,10 +293,11 @@ export class VisitFrequencyReminderService {
          JOIN session_detail d ON d.session_id = s.id
          LEFT JOIN company_worker cw ON cw.id = d.company_worker_id
          LEFT JOIN offer o ON o.id = d.offer_id
+         LEFT JOIN service sv ON sv.id = d.service_id
         WHERE s.client_id = ?
           AND s.session_status IN (?)
           AND s.session_datetime >= (? - INTERVAL 1 DAY)
-          AND COALESCE(cw.company_id, o.company_id) = ?
+          AND COALESCE(cw.company_id, o.company_id, sv.company_id) = ?
         LIMIT 1`,
       [clientId, ACTIVE_SESSION_STATUSES, now, companyId],
     );
@@ -420,44 +422,25 @@ export class VisitFrequencyReminderService {
     }
   }
 
-  private staffCopy(items: VisitFrequencyReminderItem[]): {
+  private staffCopy(item: VisitFrequencyReminderItem): {
     title: string;
     body: string;
   } {
-    if (items.length === 1) {
-      const [item] = items;
-      const detail = `Suele venir cada ${item.frequencyDays} días y su última visita fue hace ${item.daysSinceLastVisit} días. No tiene cita agendada.`;
-      switch (item.stage) {
-        case 'soon':
-          return {
-            title: `Pronto le toca volver a ${item.clientName}`,
-            body: detail,
-          };
-        case 'due':
-          return {
-            title: `Hoy le toca volver a ${item.clientName}`,
-            body: detail,
-          };
-        default:
-          return { title: `${item.clientName} está atrasado`, body: detail };
-      }
+    const detail = `Suele venir cada ${item.frequencyDays} días y su última visita fue hace ${item.daysSinceLastVisit} días. No tiene cita agendada.`;
+    switch (item.stage) {
+      case 'soon':
+        return {
+          title: `Pronto le toca volver a ${item.clientName}`,
+          body: detail,
+        };
+      case 'due':
+        return {
+          title: `Hoy le toca volver a ${item.clientName}`,
+          body: detail,
+        };
+      default:
+        return { title: `${item.clientName} está atrasado`, body: detail };
     }
-    const count = (stage: VisitFrequencyStage) =>
-      items.filter((i) => i.stage === stage).length;
-    const parts = [
-      count('due') ? `hoy le toca a ${count('due')}` : '',
-      count('soon') ? `pronto a ${count('soon')}` : '',
-      count('overdue') === 1
-        ? '1 está atrasado'
-        : count('overdue')
-          ? `${count('overdue')} están atrasados`
-          : '',
-    ].filter(Boolean);
-    const summary = parts.join(', ');
-    return {
-      title: `${items.length} clientes por volver`,
-      body: `${summary.charAt(0).toUpperCase()}${summary.slice(1)}. Ninguno tiene cita agendada.`,
-    };
   }
 
   private async notifyClient(
@@ -486,7 +469,8 @@ export class VisitFrequencyReminderService {
       }
     }
 
-    const email = usableEmail(client.userEmail, client.email);
+    const email =
+      item.stage === 'due' ? usableEmail(client.userEmail, client.email) : null;
     if (email) {
       await this.emailService.sendVisitFrequencyReminderToClient(
         email,
@@ -502,24 +486,26 @@ export class VisitFrequencyReminderService {
   }
 
   private async notifyStaff(digest: StaffDigest): Promise<void> {
-    const copy = this.staffCopy(digest.items);
-    const single = digest.items.length === 1 ? digest.items[0] : null;
-    try {
-      await this.notifications.createNotification(digest.userId, {
-        type: 'reminder',
-        title: copy.title,
-        body: copy.body,
-        data: {
-          ...buildNavigationData('reminder', undefined, single?.companyId),
-          subtype: 'visit_frequency',
-          audience: 'staff',
-          ...(single ? { clientId: single.clientId, stage: single.stage } : {}),
-        },
-      });
-    } catch (error) {
-      this.logger.warn(
-        `No se pudo notificar al usuario ${digest.userId}: ${(error as Error).message}`,
-      );
+    for (const item of digest.items) {
+      const copy = this.staffCopy(item);
+      try {
+        await this.notifications.createNotification(digest.userId, {
+          type: 'reminder',
+          title: copy.title,
+          body: copy.body,
+          data: {
+            ...buildNavigationData('reminder', undefined, item.companyId),
+            subtype: 'visit_frequency',
+            audience: 'staff',
+            clientId: item.clientId,
+            stage: item.stage,
+          },
+        });
+      } catch (error) {
+        this.logger.warn(
+          `No se pudo notificar al usuario ${digest.userId}: ${(error as Error).message}`,
+        );
+      }
     }
 
     if (digest.email) {

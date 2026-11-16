@@ -6,6 +6,7 @@ import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { Offer } from 'src/Offer/entities/offer.entity';
+import { Service } from 'src/service/entities/service.entity';
 import {
   ATTENDED_SESSION_STATUSES,
   estimateVisitFrequencyDays,
@@ -47,12 +48,27 @@ export class ClientVisitFrequencyService {
   async recalculate(
     clientId: number,
     companyId: number,
+    options: { overrideManual?: boolean } = {},
   ): Promise<number | null> {
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+      select: { id: true, companyVisitFrequencies: true },
+    });
+    if (!client) return null;
+
+    const current = (client.companyVisitFrequencies ?? []).find(
+      (e) => Number(e.companyId) === Number(companyId),
+    );
+    if (current?.source === 'manual' && !options.overrideManual) {
+      return Number(current.days);
+    }
+
     const rows = await this.sessionRepository
       .createQueryBuilder('session')
       .innerJoin(SessionDetail, 'detail', 'detail.session_id = session.id')
       .leftJoin(CompanyWorker, 'cw', 'cw.id = detail.company_worker_id')
       .leftJoin(Offer, 'offer', 'offer.id = detail.offer_id')
+      .leftJoin(Service, 'sv', 'sv.id = detail.service_id')
       .select('session.id', 'id')
       .addSelect('session.session_datetime', 'visitedAt')
       .where('session.client_id = :clientId', { clientId })
@@ -60,22 +76,31 @@ export class ClientVisitFrequencyService {
         statuses: ATTENDED_SESSION_STATUSES,
       })
       .andWhere('session.session_datetime IS NOT NULL')
-      .andWhere('COALESCE(cw.company_id, offer.company_id) = :companyId', {
-        companyId,
-      })
+      .andWhere(
+        'COALESCE(cw.company_id, offer.company_id, sv.company_id) = :companyId',
+        {
+          companyId,
+        },
+      )
       .getRawMany<{ id: number; visitedAt: Date | string }>();
 
     const visitsBySession = new Map<number, Date | string>();
     for (const row of rows) visitsBySession.set(Number(row.id), row.visitedAt);
 
     const days = estimateVisitFrequencyDays([...visitsBySession.values()]);
-    if (days === null) return null;
-
-    const client = await this.clientRepository.findOne({
-      where: { id: clientId },
-      select: { id: true, companyVisitFrequencies: true },
-    });
-    if (!client) return null;
+    if (days === null) {
+      if (current) {
+        await this.clientRepository.update(clientId, {
+          companyVisitFrequencies: upsertVisitFrequency(
+            client.companyVisitFrequencies,
+            companyId,
+            null,
+            'auto',
+          ),
+        });
+      }
+      return null;
+    }
 
     await this.clientRepository.update(clientId, {
       companyVisitFrequencies: upsertVisitFrequency(
@@ -93,7 +118,11 @@ export class ClientVisitFrequencyService {
       .createQueryBuilder('detail')
       .leftJoin(CompanyWorker, 'cw', 'cw.id = detail.company_worker_id')
       .leftJoin(Offer, 'offer', 'offer.id = detail.offer_id')
-      .select('COALESCE(cw.company_id, offer.company_id)', 'companyId')
+      .leftJoin(Service, 'sv', 'sv.id = detail.service_id')
+      .select(
+        'COALESCE(cw.company_id, offer.company_id, sv.company_id)',
+        'companyId',
+      )
       .where('detail.session_id = :sessionId', { sessionId })
       .getRawMany<{ companyId: number | null }>();
 

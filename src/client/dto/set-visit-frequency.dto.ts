@@ -1,4 +1,11 @@
-import { IsInt, Max, Min, ValidateIf } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  Max,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 import { VISIT_FREQUENCY_MAX_DAYS } from '../visit-frequency.util';
 
@@ -8,9 +15,16 @@ export class SetVisitFrequencyDto {
       ? null
       : Number(value),
   )
-  @ValidateIf((o: SetVisitFrequencyDto) => o.days !== null)
+  @ValidateIf(
+    (o: SetVisitFrequencyDto) => o.days !== null && o.days !== undefined,
+  )
   @IsInt()
   @Min(1)
   @Max(VISIT_FREQUENCY_MAX_DAYS)
-  days: number | null;
+  days?: number | null;
+
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  auto?: boolean;
 }
