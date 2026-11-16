@@ -42,6 +42,7 @@ import { PublicBookingModule } from './public_booking/public-booking.module';
 import { DeactivatedCompaniesModule } from './company_deactivation/deactivated-companies.module';
 import { CompanyDeactivationModule } from './company_deactivation/company-deactivation.module';
 import { AdminPanelHiddenModule } from './admin_panel_hidden/admin-panel-hidden.module';
+import { AdminPanelContactsModule } from './admin_panel_contacts/admin-panel-contacts.module';
 import { CampaignEmailModule } from './campaign_email/campaign-email.module';
 
 @Module({
@@ -155,6 +156,7 @@ import { CampaignEmailModule } from './campaign_email/campaign-email.module';
     DeactivatedCompaniesModule,
     CompanyDeactivationModule,
     AdminPanelHiddenModule,
+    AdminPanelContactsModule,
     CampaignEmailModule,
   ],
   controllers: [AppController],
