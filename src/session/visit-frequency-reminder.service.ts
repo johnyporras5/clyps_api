@@ -486,7 +486,8 @@ export class VisitFrequencyReminderService {
       }
     }
 
-    const email = usableEmail(client.userEmail, client.email);
+    const email =
+      item.stage === 'due' ? usableEmail(client.userEmail, client.email) : null;
     if (email) {
       await this.emailService.sendVisitFrequencyReminderToClient(
         email,

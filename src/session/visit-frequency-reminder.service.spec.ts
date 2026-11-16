@@ -132,6 +132,29 @@ describe('VisitFrequencyReminderService', () => {
     expect(email.sendVisitFrequencyDigestToStaff).toHaveBeenCalledTimes(2);
   });
 
+  it('al cliente solo le manda correo el día que le toca', async () => {
+    const soon = setup({ visitedAt: '2026-11-05T15:00:00Z' });
+    await soon.service.run(NOW);
+    expect(
+      soon.email.sendVisitFrequencyReminderToClient,
+    ).not.toHaveBeenCalled();
+    expect(
+      soon.notifications.createNotification.mock.calls.some((c) => c[0] === 70),
+    ).toBe(true);
+    expect(soon.email.sendVisitFrequencyDigestToStaff).toHaveBeenCalled();
+
+    const overdue = setup({ visitedAt: '2026-10-25T15:00:00Z' });
+    await overdue.service.run(NOW);
+    expect(
+      overdue.email.sendVisitFrequencyReminderToClient,
+    ).not.toHaveBeenCalled();
+    expect(
+      overdue.notifications.createNotification.mock.calls.some(
+        (c) => c[0] === 70,
+      ),
+    ).toBe(true);
+  });
+
   it('avisa unos días antes y cuando está atrasado', async () => {
     const soon = setup({ visitedAt: '2026-11-05T15:00:00Z' });
     await soon.service.run(NOW);
