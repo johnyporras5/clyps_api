@@ -976,6 +976,15 @@ export class ClientService {
     // front y el backend no se despliegan a la vez, y una app vieja que todavía
     // los mande debe poder seguir usando el toggle. La respuesta devuelve el
     // cliente sin cambios, así que nadie ve un dato guardado que no se guardó.
+    const phoneToAdd =
+      typeof updateClientDto.phone === 'string'
+        ? updateClientDto.phone.trim()
+        : '';
+    const addsMissingPhone = !client.phone?.trim() && phoneToAdd.length > 0;
+    if (addsMissingPhone && phoneToAdd.replace(/\D/g, '').length < 7) {
+      throw new BadRequestException('El teléfono no es válido.');
+    }
+
     const ignoredPersonalFields = [
       'name',
       'lastName',
@@ -986,7 +995,11 @@ export class ClientService {
       'location',
       'picture',
       'username',
-    ].filter((field) => updateClientDto[field] !== undefined);
+    ].filter(
+      (field) =>
+        updateClientDto[field] !== undefined &&
+        !(field === 'phone' && addsMissingPhone),
+    );
 
     if (ignoredPersonalFields.length > 0 || photoFile) {
       this.logger.warn(
@@ -1052,6 +1065,10 @@ export class ClientService {
         updateClientDto.identification,
       );
       client.identification = updateClientDto.identification;
+    }
+
+    if (addsMissingPhone) {
+      client.phone = phoneToAdd;
     }
 
     const saved = await this.clientRepository.save(client);
