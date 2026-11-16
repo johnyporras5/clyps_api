@@ -206,8 +206,8 @@ describe('VisitFrequencyReminderService', () => {
     expect(email.sendVisitFrequencyDigestToStaff).toHaveBeenCalled();
   });
 
-  it('junta varios clientes en un solo resumen por persona', async () => {
-    const { service, notifications } = setup({
+  it('manda un aviso por cliente y un solo correo de resumen', async () => {
+    const { service, notifications, email } = setup({
       clients: [client(), client({ id: 8, name: 'Juan', companyAliases: [] })],
       workers: [],
     });
@@ -239,10 +239,15 @@ describe('VisitFrequencyReminderService', () => {
     const ownerCalls = notifications.createNotification.mock.calls.filter(
       (c) => c[0] === 30,
     );
-    expect(ownerCalls).toHaveLength(1);
-    expect(ownerCalls[0][1].title).toBe('2 clientes por volver');
-    expect(ownerCalls[0][1].body).toBe(
-      'Hoy le toca a 1, 1 está atrasado. Ninguno tiene cita agendada.',
+    expect(ownerCalls.map((c) => c[1].title)).toEqual([
+      'Hoy le toca volver a Mari',
+      'Juan Pérez está atrasado',
+    ]);
+    expect(ownerCalls.map((c) => c[1].data.clientId)).toEqual([7, 8]);
+    const ownerEmails = email.sendVisitFrequencyDigestToStaff.mock.calls.filter(
+      (c) => c[0] === 'owner@example.com',
     );
+    expect(ownerEmails).toHaveLength(1);
+    expect(ownerEmails[0][2]).toHaveLength(2);
   });
 });

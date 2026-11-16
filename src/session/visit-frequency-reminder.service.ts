@@ -420,44 +420,25 @@ export class VisitFrequencyReminderService {
     }
   }
 
-  private staffCopy(items: VisitFrequencyReminderItem[]): {
+  private staffCopy(item: VisitFrequencyReminderItem): {
     title: string;
     body: string;
   } {
-    if (items.length === 1) {
-      const [item] = items;
-      const detail = `Suele venir cada ${item.frequencyDays} días y su última visita fue hace ${item.daysSinceLastVisit} días. No tiene cita agendada.`;
-      switch (item.stage) {
-        case 'soon':
-          return {
-            title: `Pronto le toca volver a ${item.clientName}`,
-            body: detail,
-          };
-        case 'due':
-          return {
-            title: `Hoy le toca volver a ${item.clientName}`,
-            body: detail,
-          };
-        default:
-          return { title: `${item.clientName} está atrasado`, body: detail };
-      }
+    const detail = `Suele venir cada ${item.frequencyDays} días y su última visita fue hace ${item.daysSinceLastVisit} días. No tiene cita agendada.`;
+    switch (item.stage) {
+      case 'soon':
+        return {
+          title: `Pronto le toca volver a ${item.clientName}`,
+          body: detail,
+        };
+      case 'due':
+        return {
+          title: `Hoy le toca volver a ${item.clientName}`,
+          body: detail,
+        };
+      default:
+        return { title: `${item.clientName} está atrasado`, body: detail };
     }
-    const count = (stage: VisitFrequencyStage) =>
-      items.filter((i) => i.stage === stage).length;
-    const parts = [
-      count('due') ? `hoy le toca a ${count('due')}` : '',
-      count('soon') ? `pronto a ${count('soon')}` : '',
-      count('overdue') === 1
-        ? '1 está atrasado'
-        : count('overdue')
-          ? `${count('overdue')} están atrasados`
-          : '',
-    ].filter(Boolean);
-    const summary = parts.join(', ');
-    return {
-      title: `${items.length} clientes por volver`,
-      body: `${summary.charAt(0).toUpperCase()}${summary.slice(1)}. Ninguno tiene cita agendada.`,
-    };
   }
 
   private async notifyClient(
@@ -503,24 +484,26 @@ export class VisitFrequencyReminderService {
   }
 
   private async notifyStaff(digest: StaffDigest): Promise<void> {
-    const copy = this.staffCopy(digest.items);
-    const single = digest.items.length === 1 ? digest.items[0] : null;
-    try {
-      await this.notifications.createNotification(digest.userId, {
-        type: 'reminder',
-        title: copy.title,
-        body: copy.body,
-        data: {
-          ...buildNavigationData('reminder', undefined, single?.companyId),
-          subtype: 'visit_frequency',
-          audience: 'staff',
-          ...(single ? { clientId: single.clientId, stage: single.stage } : {}),
-        },
-      });
-    } catch (error) {
-      this.logger.warn(
-        `No se pudo notificar al usuario ${digest.userId}: ${(error as Error).message}`,
-      );
+    for (const item of digest.items) {
+      const copy = this.staffCopy(item);
+      try {
+        await this.notifications.createNotification(digest.userId, {
+          type: 'reminder',
+          title: copy.title,
+          body: copy.body,
+          data: {
+            ...buildNavigationData('reminder', undefined, item.companyId),
+            subtype: 'visit_frequency',
+            audience: 'staff',
+            clientId: item.clientId,
+            stage: item.stage,
+          },
+        });
+      } catch (error) {
+        this.logger.warn(
+          `No se pudo notificar al usuario ${digest.userId}: ${(error as Error).message}`,
+        );
+      }
     }
 
     if (digest.email) {
