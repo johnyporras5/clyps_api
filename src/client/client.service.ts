@@ -24,6 +24,11 @@ import {
 } from '../common/services/file_upload.service';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { SetCompanyAliasDto } from './dto/set-company-alias.dto';
+import { ClientVisitFrequencyService } from './client-visit-frequency.service';
+import {
+  upsertVisitFrequency,
+  visitFrequencyFor,
+} from './visit-frequency.util';
 import { FindAllClientsDto } from './dto/find-all-clients.dto';
 import { isEmailUnavailable } from '../auth/dto/register-client-by-admin.dto';
 import {
@@ -89,6 +94,7 @@ export class ClientService {
     @InjectRepository(Offer)
     private offerRepository: Repository<Offer>,
     private fileUploadService: FileUploadService,
+    private readonly clientVisitFrequency: ClientVisitFrequencyService,
   ) {}
 
   private normalizeBirthdate(updateClientDto: UpdateClientDto): void {
@@ -558,6 +564,10 @@ export class ClientService {
         visibilityReason,
         sharedCompaniesCount: sharedCompanies.length,
         lastAppointmentDate: lastAppointmentByClient.get(client.id) ?? null,
+        ...visitFrequencyFor(
+          client.companyVisitFrequencies,
+          sharedCompanies.map((c) => c.id),
+        ),
         // Información adicional útil
         hasAccess: client.userId === adminId || sharedCompanies.length > 0,
         accessibleToAdmin:
@@ -866,6 +876,7 @@ export class ClientService {
     clientId: number,
     callerId?: number,
     callerRole?: string,
+    callerCompanyId?: number | null,
   ): Promise<Client & { photoUrl: string }> {
     // Si viene el usuario autenticado, se valida que el cliente sea suyo o de
     // su compañía (aplica a admin y a trabajador).
@@ -914,6 +925,17 @@ export class ClientService {
       photoUrl,
       lastAppointment,
       nextAppointment,
+      ...(await this.resolveVisitFrequency(
+        client,
+        callerId
+          ? await this.resolveActivationTargets(
+              client,
+              callerId,
+              callerRole,
+              callerCompanyId,
+            )
+          : [],
+      )),
     } as any;
   }
 
@@ -954,6 +976,15 @@ export class ClientService {
     // front y el backend no se despliegan a la vez, y una app vieja que todavía
     // los mande debe poder seguir usando el toggle. La respuesta devuelve el
     // cliente sin cambios, así que nadie ve un dato guardado que no se guardó.
+    const phoneToAdd =
+      typeof updateClientDto.phone === 'string'
+        ? updateClientDto.phone.trim()
+        : '';
+    const addsMissingPhone = !client.phone?.trim() && phoneToAdd.length > 0;
+    if (addsMissingPhone && phoneToAdd.replace(/\D/g, '').length < 7) {
+      throw new BadRequestException('El teléfono no es válido.');
+    }
+
     const ignoredPersonalFields = [
       'name',
       'lastName',
@@ -964,7 +995,11 @@ export class ClientService {
       'location',
       'picture',
       'username',
-    ].filter((field) => updateClientDto[field] !== undefined);
+    ].filter(
+      (field) =>
+        updateClientDto[field] !== undefined &&
+        !(field === 'phone' && addsMissingPhone),
+    );
 
     if (ignoredPersonalFields.length > 0 || photoFile) {
       this.logger.warn(
@@ -1032,6 +1067,10 @@ export class ClientService {
       client.identification = updateClientDto.identification;
     }
 
+    if (addsMissingPhone) {
+      client.phone = phoneToAdd;
+    }
+
     const saved = await this.clientRepository.save(client);
 
     const photoUrl = saved.picture
@@ -1078,6 +1117,96 @@ export class ClientService {
     }
 
     return shared;
+  }
+
+  private async resolveVisitFrequency(
+    client: Client,
+    companyIds: number[],
+  ): Promise<ReturnType<typeof visitFrequencyFor>> {
+    const current = visitFrequencyFor(
+      client.companyVisitFrequencies,
+      companyIds,
+    );
+    if (current.visitFrequencyDays !== null || companyIds.length === 0) {
+      return current;
+    }
+    try {
+      const days = await this.clientVisitFrequency.recalculate(
+        client.id,
+        companyIds[0],
+      );
+      if (days !== null) {
+        return { visitFrequencyDays: days, visitFrequencySource: 'auto' };
+      }
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo calcular la frecuencia de visitas del cliente ${client.id}: ${(error as Error).message}`,
+      );
+    }
+    return current;
+  }
+
+  async setVisitFrequency(
+    clientId: number,
+    days: number | null,
+    auto: boolean,
+    callerId: number,
+    callerRole?: string,
+    callerCompanyId?: number | null,
+  ): Promise<{
+    clientId: number;
+    visitFrequencyDays: number | null;
+    visitFrequencySource: 'auto' | 'manual' | null;
+  }> {
+    await this.assertCanAccessClient(clientId, callerId, callerRole);
+
+    const client = await this.clientRepository.findOne({
+      where: { id: clientId },
+    });
+    if (!client) {
+      throw new NotFoundException(`Cliente con ID ${clientId} no encontrado`);
+    }
+
+    const targets = await this.resolveActivationTargets(
+      client,
+      callerId,
+      callerRole,
+      callerCompanyId,
+    );
+    if (targets.length === 0) {
+      throw new BadRequestException(
+        'El cliente no pertenece a ninguno de tus negocios',
+      );
+    }
+
+    if (auto || days === null) {
+      for (const companyId of targets) {
+        await this.clientVisitFrequency.recalculate(clientId, companyId, {
+          overrideManual: true,
+        });
+      }
+      const refreshed = await this.clientRepository.findOne({
+        where: { id: clientId },
+        select: { id: true, companyVisitFrequencies: true },
+      });
+      return {
+        clientId,
+        ...visitFrequencyFor(refreshed?.companyVisitFrequencies, targets),
+      };
+    }
+
+    let entries = client.companyVisitFrequencies ?? [];
+    for (const companyId of targets) {
+      entries = upsertVisitFrequency(entries, companyId, days, 'manual');
+    }
+    await this.clientRepository.update(clientId, {
+      companyVisitFrequencies: entries,
+    });
+
+    return {
+      clientId,
+      ...visitFrequencyFor(entries, targets),
+    };
   }
 
   /**

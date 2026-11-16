@@ -9,6 +9,15 @@ import {
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 
+export type VisitFrequencySource = 'auto' | 'manual';
+
+export interface CompanyVisitFrequency {
+  companyId: number;
+  days: number;
+  source: VisitFrequencySource;
+  updatedAt: string;
+}
+
 @Entity('client')
 export class Client {
   @PrimaryGeneratedColumn()
@@ -80,6 +89,9 @@ export class Client {
   // la primera sesión/cita del cliente con esa compañía: [{ companyId, firstAppointmentDate }]
   @Column({ name: 'company_first_appointments', type: 'json', nullable: true })
   companyFirstAppointments: { companyId: number; firstAppointmentDate: Date }[];
+
+  @Column({ name: 'company_visit_frequencies', type: 'json', nullable: true })
+  companyVisitFrequencies: CompanyVisitFrequency[] | null;
 
   @Column({ name: 'temporarily_deleted', type: 'boolean', default: false })
   temporarilyDeleted: boolean;

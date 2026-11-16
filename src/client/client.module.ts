@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClientService } from './client.service';
+import { ClientVisitFrequencyService } from './client-visit-frequency.service';
 import { ClientController } from './client.controller';
 import { Client } from './entities/client.entity';
 import { Company } from 'src/company/entities/company.entity';
@@ -27,8 +28,8 @@ import { RealtimeModule } from '../realtime/realtime.module';
       Offer,
     ]),
   ],
-  providers: [ClientService, FileUploadService],
+  providers: [ClientService, ClientVisitFrequencyService, FileUploadService],
   controllers: [ClientController],
-  exports: [ClientService],
+  exports: [ClientService, ClientVisitFrequencyService],
 })
 export class ClientModule {}

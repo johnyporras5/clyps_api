@@ -1,3 +1,5 @@
+import { ClientVisitFrequencyService } from '../client/client-visit-frequency.service';
+import { ATTENDED_SESSION_STATUSES } from '../client/visit-frequency.util';
 import type { UserRole } from '../auth/types/authenticated-request';
 import {
   Injectable,
@@ -159,6 +161,7 @@ export class SessionService {
     private readonly onboardingService: OnboardingService,
     private readonly entitlements: EntitlementsService,
     private readonly cashClosingLock: CashClosingLockService,
+    private readonly clientVisitFrequency: ClientVisitFrequencyService,
   ) {}
 
   async create(
@@ -4142,6 +4145,13 @@ export class SessionService {
       void this.sendReactivationEmails(updatedSession).catch(() => undefined);
     }
 
+    if (
+      ATTENDED_SESSION_STATUSES.includes(newStatus) ||
+      ATTENDED_SESSION_STATUSES.includes(previousStatus)
+    ) {
+      void this.clientVisitFrequency.recalculateForSession(sessionId);
+    }
+
     // Arrastre (ripple): al Comenzar (2) / Terminar (3) los bloques de la cita
     // se movieron/crecieron. Empujar las citas AGENDADAS siguientes de CADA
     // columna de worker de la cita (cada worker es independiente).
@@ -4602,6 +4612,8 @@ export class SessionService {
     this.logger.log(
       `💵 Cobro registrado para cita ${sessionId} (payment ${savedPayment.id}) por admin ${adminId}. Total Bs: ${dto.totalBs ?? 'n/a'}`,
     );
+
+    void this.clientVisitFrequency.recalculateForSession(sessionId);
 
     // Nómina (PAY-2 + PAY-3): al pagar, asegurar el periodo abierto y generar los
     // conceptos de comisión (uno por servicio, en Bs con la tasa del cobro).
@@ -6914,6 +6926,13 @@ export class SessionService {
       }
       await this.sessionRepository.save(session);
       updated = true;
+
+      if (
+        ATTENDED_SESSION_STATUSES.includes(newStatus) ||
+        ATTENDED_SESSION_STATUSES.includes(previousStatus)
+      ) {
+        void this.clientVisitFrequency.recalculateForSession(sessionId);
+      }
 
       // Reactivación por auto-sync (un servicio cancelado se reactivó y revivió
       // la cita): avisar por correo. Best-effort.
