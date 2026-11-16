@@ -235,13 +235,14 @@ export class VisitFrequencyReminderService {
       const chunk = clientIds.slice(i, i + CHUNK_SIZE);
       const rows: VisitRow[] = await this.dataSource.query(
         `SELECT DISTINCT s.client_id AS clientId,
-                COALESCE(cw.company_id, o.company_id) AS companyId,
+                COALESCE(cw.company_id, o.company_id, sv.company_id) AS companyId,
                 s.id AS sessionId,
                 s.session_datetime AS visitedAt
            FROM session s
            JOIN session_detail d ON d.session_id = s.id
            LEFT JOIN company_worker cw ON cw.id = d.company_worker_id
            LEFT JOIN offer o ON o.id = d.offer_id
+           LEFT JOIN service sv ON sv.id = d.service_id
           WHERE s.client_id IN (?)
             AND s.session_status IN (?)
             AND s.session_datetime IS NOT NULL`,
@@ -292,10 +293,11 @@ export class VisitFrequencyReminderService {
          JOIN session_detail d ON d.session_id = s.id
          LEFT JOIN company_worker cw ON cw.id = d.company_worker_id
          LEFT JOIN offer o ON o.id = d.offer_id
+         LEFT JOIN service sv ON sv.id = d.service_id
         WHERE s.client_id = ?
           AND s.session_status IN (?)
           AND s.session_datetime >= (? - INTERVAL 1 DAY)
-          AND COALESCE(cw.company_id, o.company_id) = ?
+          AND COALESCE(cw.company_id, o.company_id, sv.company_id) = ?
         LIMIT 1`,
       [clientId, ACTIVE_SESSION_STATUSES, now, companyId],
     );

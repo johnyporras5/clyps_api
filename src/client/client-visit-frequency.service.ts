@@ -6,6 +6,7 @@ import { Session } from 'src/session/entities/session.entity';
 import { SessionDetail } from 'src/session_detail/entities/session_detail.entity';
 import { CompanyWorker } from 'src/company_worker/entities/company_worker.entity';
 import { Offer } from 'src/Offer/entities/offer.entity';
+import { Service } from 'src/service/entities/service.entity';
 import {
   ATTENDED_SESSION_STATUSES,
   estimateVisitFrequencyDays,
@@ -67,6 +68,7 @@ export class ClientVisitFrequencyService {
       .innerJoin(SessionDetail, 'detail', 'detail.session_id = session.id')
       .leftJoin(CompanyWorker, 'cw', 'cw.id = detail.company_worker_id')
       .leftJoin(Offer, 'offer', 'offer.id = detail.offer_id')
+      .leftJoin(Service, 'sv', 'sv.id = detail.service_id')
       .select('session.id', 'id')
       .addSelect('session.session_datetime', 'visitedAt')
       .where('session.client_id = :clientId', { clientId })
@@ -74,9 +76,12 @@ export class ClientVisitFrequencyService {
         statuses: ATTENDED_SESSION_STATUSES,
       })
       .andWhere('session.session_datetime IS NOT NULL')
-      .andWhere('COALESCE(cw.company_id, offer.company_id) = :companyId', {
-        companyId,
-      })
+      .andWhere(
+        'COALESCE(cw.company_id, offer.company_id, sv.company_id) = :companyId',
+        {
+          companyId,
+        },
+      )
       .getRawMany<{ id: number; visitedAt: Date | string }>();
 
     const visitsBySession = new Map<number, Date | string>();
@@ -113,7 +118,11 @@ export class ClientVisitFrequencyService {
       .createQueryBuilder('detail')
       .leftJoin(CompanyWorker, 'cw', 'cw.id = detail.company_worker_id')
       .leftJoin(Offer, 'offer', 'offer.id = detail.offer_id')
-      .select('COALESCE(cw.company_id, offer.company_id)', 'companyId')
+      .leftJoin(Service, 'sv', 'sv.id = detail.service_id')
+      .select(
+        'COALESCE(cw.company_id, offer.company_id, sv.company_id)',
+        'companyId',
+      )
       .where('detail.session_id = :sessionId', { sessionId })
       .getRawMany<{ companyId: number | null }>();
 
