@@ -25,6 +25,14 @@ export class IdempotencyKey {
   @Column({ type: 'varchar', length: 12 })
   status: IdempotencyStatus;
 
+  /**
+   * Código HTTP con que se repite la respuesta. NULL = éxito (el código normal
+   * del endpoint). Un número = rechazo definitivo guardado, p. ej. 409
+   * SLOT_TAKEN (migración 089).
+   */
+  @Column({ name: 'response_status', type: 'smallint', nullable: true })
+  responseStatus: number | null;
+
   /** JSON de la respuesta, tal cual la devolvió el handler. */
   @Column({ name: 'response_body', type: 'mediumtext', nullable: true })
   responseBody: string | null;

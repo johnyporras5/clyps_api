@@ -12,7 +12,21 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, Between, Not, DeepPartial, Brackets } from 'typeorm';
+import {
+  Repository,
+  In,
+  Between,
+  Not,
+  DeepPartial,
+  Brackets,
+  EntityManager,
+} from 'typeorm';
+import {
+  PlannedDetail,
+  findSlotConflicts,
+  lockWorkers,
+  slotTakenException,
+} from './slot-conflict.util';
 import { Session } from './entities/session.entity';
 import { SessionPayment } from './entities/session-payment.entity';
 import { SessionPaymentLine } from './entities/session-payment-line.entity';
@@ -167,6 +181,8 @@ export class SessionService {
   async create(
     createSessionDto: CreateSessionDto,
     _adminId: number,
+    /** Si viene, la cita se guarda dentro de esa transacción. */
+    manager?: EntityManager,
   ): Promise<Session> {
     const existingSession = await this.checkExistingSession(createSessionDto);
 
@@ -205,8 +221,11 @@ export class SessionService {
       sessionData: sessionData,
     });
 
-    const session = this.sessionRepository.create(sessionData);
-    return await this.sessionRepository.save(session);
+    const repo = manager
+      ? manager.getRepository(Session)
+      : this.sessionRepository;
+    const session = repo.create(sessionData);
+    return await repo.save(session);
   }
 
   /* private calculatePercentages(
@@ -895,6 +914,72 @@ export class SessionService {
     };
   }
 
+  /**
+   * Guarda los servicios de una cita recién creada, dentro de la transacción
+   * de createSessionWithDetail: si uno falla, la transacción deshace la cita y
+   * los servicios ya guardados (antes se borraban a mano).
+   */
+  private async saveNewSessionDetails(
+    manager: EntityManager,
+    session: Session,
+    validations: Array<{
+      detail: SessionDetailItemDto;
+      service: Service;
+      calculatedAmounts: {
+        cost: number;
+        totalWorker: number;
+        totalCompany: number;
+      };
+      detailTime: number;
+    }>,
+    ranges: Array<{ start: Date | string; end: Date | null }>,
+    forcedPastStatus: number | null,
+  ): Promise<SessionDetail[]> {
+    const repo = manager.getRepository(SessionDetail);
+    const created: SessionDetail[] = [];
+
+    for (const [index, validation] of validations.entries()) {
+      const { detail, service, calculatedAmounts, detailTime } = validation;
+      const detailStart = ranges[index].start || session.startDatetime;
+      const detailEnd = ranges[index].end;
+
+      const sessionDetailData: DeepPartial<SessionDetail> = {
+        cost: calculatedAmounts.cost,
+        serviceId: detail.serviceId,
+        companyWorkerId: (detail.companyWorkerId ?? null) as unknown as number,
+        sessionId: session.id,
+        startDatetime: detailStart as Date,
+        totalTime: detailTime,
+        endDatetime: detailEnd,
+        // Hora agendada original: se fija aquí y no se mueve con Comenzar/
+        // Terminar ni con el arrastre (ripple).
+        originalStartDatetime: detailStart as Date,
+        originalEndDatetime: detailEnd,
+        totalWorker: calculatedAmounts.totalWorker,
+        totalCompany: calculatedAmounts.totalCompany,
+        // Cita con inicio pasado → cada servicio nace en el estado forzado
+        // (Completada si ya terminó, En proceso si sigue en curso).
+        status:
+          forcedPastStatus ??
+          (detail.detailStatus !== undefined ? detail.detailStatus : 1),
+        offerId: detail.offerId ?? undefined,
+        isCourtesy: detail.isCourtesy === true,
+        description: detail.description ?? undefined,
+        descriptionIA: detail.descriptionIA ?? undefined,
+      };
+
+      try {
+        created.push(await repo.save(repo.create(sessionDetailData)));
+      } catch (error) {
+        throw new BadRequestException(
+          `Error al crear el detalle para el servicio ${service.name}: ${(error as Error).message}`,
+        );
+      }
+    }
+
+    return created;
+  }
+
   async createSessionWithDetail(
     createSessionWithDetailDto: CreateSessionWithDetailDto,
     caller: AuthenticatedUser,
@@ -1141,30 +1226,8 @@ export class SessionService {
         companyPercentage = perc.companyPercentage;
         workerAssigned = perc.workerAssigned;
         detailTime = overrideMinutes ?? perc.time;
-
-        // Verificar si el trabajador ya tiene una cita que se solape con este horario
-        const detailStartDatetime =
-          detail.detailStartDatetime ||
-          createSessionWithDetailDto.startDatetime ||
-          createSessionWithDetailDto.sessionDatetime;
-        if (detailStartDatetime) {
-          const workerConflict =
-            await this.checkIfWorkerHasAppointmentAtSameTime(
-              detail.companyWorkerId as number,
-              detailStartDatetime,
-              detailTime,
-            );
-
-          if (workerConflict) {
-            const conflictStart = new Date(workerConflict.startDatetime);
-            const workerName = companyWorker.worker
-              ? (companyWorker.worker.name || '').trim()
-              : `Trabajador ID: ${companyWorker.id}`;
-            throw new BadRequestException(
-              `El trabajador "${workerName}" ya tiene una cita asignada que se solapa con el horario seleccionado (${conflictStart.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIMEZONE })}). Por favor, seleccione otro horario o trabajador.`,
-            );
-          }
-        }
+        // El choque de horario con otras citas de la trabajadora se valida más
+        // abajo, DENTRO de la transacción que crea la cita (BE-OFF-2).
       }
 
       // Cortesía: el detalle se presta sin cobrar. No se combina con oferta.
@@ -1383,71 +1446,65 @@ export class SessionService {
       };
     }
 
-    // 7. Crear la sesión (con los totales ya calculados)
-    const session = await this.create(sessionData, adminId);
-    const isNew = true;
-    const createdDetails: SessionDetail[] = [];
-
-    // 8. Crear los detalles de sesión
-    for (const validation of serviceValidations) {
-      const { detail, service, calculatedAmounts, detailTime } = validation;
-
-      // CLYP-311: persistir endDatetime (fin explícito o inicio + duración) para
-      // que el calendario tenga el fin de cada servicio.
-      const detailStart = detail.detailStartDatetime || session.startDatetime;
-      const detailEnd = this.resolveDetailEnd(
-        detailStart,
-        detail.detailEndDatetime,
-        detailTime,
-      );
-
-      const sessionDetailData: DeepPartial<SessionDetail> = {
-        cost: calculatedAmounts.cost,
-        serviceId: detail.serviceId,
-        companyWorkerId: (detail.companyWorkerId ?? null) as unknown as number,
-        sessionId: session.id,
-        startDatetime: detailStart,
-        totalTime: detailTime,
-        endDatetime: detailEnd,
-        // Hora agendada original: se fija aquí y no se mueve con Comenzar/
-        // Terminar ni con el arrastre (ripple).
-        originalStartDatetime: detailStart,
-        originalEndDatetime: detailEnd,
-        totalWorker: calculatedAmounts.totalWorker,
-        totalCompany: calculatedAmounts.totalCompany,
-        // Cita con inicio pasado → cada servicio nace en el estado forzado
-        // (Completada si ya terminó, En proceso si sigue en curso).
-        status:
-          forcedPastStatus ??
-          (detail.detailStatus !== undefined ? detail.detailStatus : 1),
-        offerId: detail.offerId ?? undefined,
-        isCourtesy: detail.isCourtesy === true,
-        description: detail.description ?? undefined,
-        descriptionIA: detail.descriptionIA ?? undefined,
+    // 7. Horario de cada servicio: el suyo, o el inicio de la cita.
+    // CLYP-311: el fin es el explícito o inicio + duración.
+    const sessionStart = sessionData.startDatetime as Date | string;
+    const plannedRanges = serviceValidations.map((validation) => {
+      const start = validation.detail.detailStartDatetime || sessionStart;
+      return {
+        start,
+        end: this.resolveDetailEnd(
+          start,
+          validation.detail.detailEndDatetime,
+          validation.detailTime,
+        ),
       };
+    });
 
-      try {
-        const sessionDetail =
-          this.sessionDetailRepository.create(sessionDetailData);
-        const savedSessionDetail =
-          await this.sessionDetailRepository.save(sessionDetail);
-        createdDetails.push(savedSessionDetail);
-      } catch (error) {
-        // Si falla algún detalle, eliminar todo lo creado
-        if (createdDetails.length > 0) {
-          await this.sessionDetailRepository.remove(createdDetails);
-        }
-
-        await this.sessionRepository.delete({
-          id: session.id,
-          clientId: session.clientId,
+    // 8. BE-OFF-2: validar el choque de horario y crear la cita con sus
+    // servicios en UNA transacción. Primero se bloquea a las trabajadoras de
+    // la cita (lockWorkers): si dos teléfonos sincronizan a la vez una cita
+    // para la misma trabajadora, la segunda espera a que la primera termine,
+    // ve su cita y recibe 409 SLOT_TAKEN. Si hay choque no se crea nada.
+    const { session, createdDetails } =
+      await this.sessionRepository.manager.transaction(async (manager) => {
+        const planned: PlannedDetail[] = [];
+        serviceValidations.forEach((validation, detailIndex) => {
+          const workerId = validation.detail.companyWorkerId;
+          const range = plannedRanges[detailIndex];
+          if (workerId === null || workerId === undefined || !range.end) {
+            return;
+          }
+          const start = new Date(range.start);
+          if (isNaN(start.getTime())) return;
+          planned.push({
+            detailIndex,
+            companyWorkerId: workerId,
+            start,
+            end: range.end,
+          });
         });
 
-        throw new BadRequestException(
-          `Error al crear el detalle para el servicio ${service.name}: ${(error as Error).message}`,
+        await lockWorkers(
+          manager,
+          planned.map((p) => p.companyWorkerId),
         );
-      }
-    }
+        const conflicts = await findSlotConflicts(manager, planned);
+        if (conflicts.length > 0) {
+          throw slotTakenException(conflicts);
+        }
+
+        const newSession = await this.create(sessionData, adminId, manager);
+        const details = await this.saveNewSessionDetails(
+          manager,
+          newSession,
+          serviceValidations,
+          plannedRanges,
+          forcedPastStatus,
+        );
+        return { session: newSession, createdDetails: details };
+      });
+    const isNew = true;
 
     // Correos de la cita (uno solo, con todos los servicios) en segundo plano.
     // Cita con inicio pasado (ya arrancó) → no se envía correo de "confirmación".

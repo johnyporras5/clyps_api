@@ -2,6 +2,7 @@ import {
   BadRequestException,
   CallHandler,
   ExecutionContext,
+  HttpException,
   Injectable,
   Logger,
   NestInterceptor,
@@ -14,6 +15,25 @@ import { IdempotencyService } from './idempotency.service';
 
 export const IDEMPOTENCY_HEADER = 'idempotency-key';
 export const REPLAYED_HEADER = 'Idempotent-Replayed';
+
+/**
+ * Rechazos que son la respuesta DEFINITIVA a esa operación y se guardan para
+ * la clave igual que un éxito (BE-OFF-2). SLOT_TAKEN: la primera cita que
+ * llegó ganó el horario; aunque después se libere, el reintento de la segunda
+ * sigue recibiendo el 409. Cualquier otro error libera la clave.
+ */
+export const STORED_ERROR_CODES: ReadonlySet<string> = new Set(['SLOT_TAKEN']);
+
+/** El error es un rechazo definitivo que se guarda en el recibo. */
+export const isStoredError = (error: unknown): error is HttpException => {
+  if (!(error instanceof HttpException)) return false;
+  const body = error.getResponse();
+  const code =
+    body && typeof body === 'object'
+      ? (body as { code?: unknown }).code
+      : undefined;
+  return typeof code === 'string' && STORED_ERROR_CODES.has(code);
+};
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -61,7 +81,8 @@ export const hashRequest = (
  *   (tampoco se repiten avisos realtime ni push: salen del handler).
  * - Clave en curso → 409 IDEMPOTENCY_IN_PROGRESS.
  * - Clave con otro contenido → 422 IDEMPOTENCY_KEY_REUSED.
- * - Si el handler falla, la clave se libera para que el reintento la ejecute.
+ * - Si el handler falla, la clave se libera para que el reintento la ejecute,
+ *   salvo un rechazo definitivo (409 SLOT_TAKEN), que se guarda y se repite.
  *
  * El recibo es del usuario del token: otro usuario con la misma clave no ve
  * nada ajeno, simplemente crea lo suyo.
@@ -110,6 +131,16 @@ export class IdempotencyInterceptor implements NestInterceptor {
       mergeMap((started) => {
         if (started.kind === 'replay') {
           response.setHeader(REPLAYED_HEADER, 'true');
+          // Rechazo guardado (409 SLOT_TAKEN): se repite el mismo error.
+          if (started.status !== null && started.status >= 400) {
+            return throwError(
+              () =>
+                new HttpException(
+                  started.body as Record<string, unknown>,
+                  started.status as number,
+                ),
+            );
+          }
           return of(started.body);
         }
 
@@ -126,16 +157,25 @@ export class IdempotencyInterceptor implements NestInterceptor {
               }),
             ).pipe(mergeMap(() => of(body))),
           ),
-          catchError((error: unknown) =>
-            from(
-              this.idempotency.release(started.id).catch((releaseError) => {
+          catchError((error: unknown) => {
+            // Rechazo definitivo (409 SLOT_TAKEN): queda guardado para la
+            // clave. Cualquier otro error libera la clave para el reintento.
+            const settle = isStoredError(error)
+              ? this.idempotency.complete(
+                  started.id,
+                  error.getResponse(),
+                  error.getStatus(),
+                )
+              : this.idempotency.release(started.id);
+            return from(
+              settle.catch((settleError) => {
                 this.logger.error(
-                  `No se pudo liberar el recibo ${started.id} (${endpoint}).`,
-                  releaseError,
+                  `No se pudo cerrar el recibo ${started.id} (${endpoint}).`,
+                  settleError,
                 );
               }),
-            ).pipe(mergeMap(() => throwError(() => error))),
-          ),
+            ).pipe(mergeMap(() => throwError(() => error)));
+          }),
         );
       }),
     );

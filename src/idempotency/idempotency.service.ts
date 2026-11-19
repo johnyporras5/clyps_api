@@ -21,7 +21,8 @@ export const RETENTION_DAYS = 30;
 
 export type BeginResult =
   | { kind: 'started'; id: number }
-  | { kind: 'replay'; body: unknown };
+  /** `status` null = éxito; un número = rechazo guardado (p. ej. 409). */
+  | { kind: 'replay'; body: unknown; status: number | null };
 
 export interface BeginInput {
   userId: number;
@@ -66,6 +67,7 @@ export class IdempotencyService {
             endpoint: input.endpoint,
             requestHash: input.requestHash,
             status: 'processing',
+            responseStatus: null,
             responseBody: null,
             createdAt: new Date(),
             completedAt: null,
@@ -100,6 +102,7 @@ export class IdempotencyService {
             existing.responseBody == null
               ? null
               : (JSON.parse(existing.responseBody) as unknown),
+          status: existing.responseStatus ?? null,
         };
       }
 
@@ -144,11 +147,20 @@ export class IdempotencyService {
     return (result.affected ?? 0) > 0;
   }
 
-  async complete(id: number, body: unknown): Promise<void> {
+  /**
+   * Guarda la respuesta final. `responseStatus` va solo para un rechazo
+   * definitivo (p. ej. 409 SLOT_TAKEN); en un éxito queda NULL.
+   */
+  async complete(
+    id: number,
+    body: unknown,
+    responseStatus: number | null = null,
+  ): Promise<void> {
     await this.keys.update(
       { id },
       {
         status: 'done',
+        responseStatus,
         responseBody: JSON.stringify(body ?? null),
         completedAt: new Date(),
       },

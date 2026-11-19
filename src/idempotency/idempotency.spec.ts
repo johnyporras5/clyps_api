@@ -11,6 +11,7 @@ import {
   CallHandler,
   ConflictException,
   ExecutionContext,
+  HttpException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { INTERCEPTORS_METADATA } from '@nestjs/common/constants';
@@ -99,6 +100,7 @@ describe('IdempotencyService', () => {
     await expect(t.service.begin(input)).resolves.toEqual({
       kind: 'replay',
       body: { id: 5012 },
+      status: null,
     });
     // Busca SIEMPRE por el usuario del token.
     expect(t.repo.findOne).toHaveBeenCalledWith({
@@ -307,6 +309,40 @@ describe('IdempotencyInterceptor', () => {
     ).rejects.toBe(boom);
     expect(t.service.release).toHaveBeenCalledWith(10);
     expect(t.service.complete).not.toHaveBeenCalled();
+  });
+
+  it('BE-OFF-2: un 409 SLOT_TAKEN queda guardado para la clave (no se libera)', async () => {
+    const t = buildInterceptor({ kind: 'started', id: 10 });
+    const body = {
+      statusCode: 409,
+      code: 'SLOT_TAKEN',
+      message: 'El trabajador ya tiene una cita en ese horario',
+      conflicts: [{ detailIndex: 0, conflictingSessionId: 754 }],
+    };
+    const slotTaken = new ConflictException(body);
+    const next = { handle: jest.fn(() => throwError(() => slotTaken)) };
+    await expect(
+      lastValueFrom(
+        t.interceptor.intercept(ctx({ 'idempotency-key': KEY }).context, next),
+      ),
+    ).rejects.toBe(slotTaken);
+    expect(t.service.complete).toHaveBeenCalledWith(10, body, 409);
+    expect(t.service.release).not.toHaveBeenCalled();
+  });
+
+  it('BE-OFF-2: el reintento recibe el mismo 409 sin ejecutar nada', async () => {
+    const body = { statusCode: 409, code: 'SLOT_TAKEN', conflicts: [] };
+    const t = buildInterceptor({ kind: 'replay', body, status: 409 });
+    const next = handler({ id: 9999 });
+    const c = ctx({ 'idempotency-key': KEY });
+    const error = await lastValueFrom(
+      t.interceptor.intercept(c.context, next),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HttpException);
+    expect((error as HttpException).getStatus()).toBe(409);
+    expect((error as HttpException).getResponse()).toEqual(body);
+    expect(next.handle).not.toHaveBeenCalled();
+    expect(c.setHeader).toHaveBeenCalledWith('Idempotent-Replayed', 'true');
   });
 
   it('si guardar el recibo falla, la respuesta sale igual', async () => {
