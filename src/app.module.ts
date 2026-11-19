@@ -44,6 +44,7 @@ import { CompanyDeactivationModule } from './company_deactivation/company-deacti
 import { AdminPanelHiddenModule } from './admin_panel_hidden/admin-panel-hidden.module';
 import { AdminPanelContactsModule } from './admin_panel_contacts/admin-panel-contacts.module';
 import { CampaignEmailModule } from './campaign_email/campaign-email.module';
+import { IdempotencyModule } from './idempotency/idempotency.module';
 
 @Module({
   imports: [
@@ -158,6 +159,8 @@ import { CampaignEmailModule } from './campaign_email/campaign-email.module';
     AdminPanelHiddenModule,
     AdminPanelContactsModule,
     CampaignEmailModule,
+    // BE-OFF-1: Idempotency-Key en crear cita y crear cliente (cola offline).
+    IdempotencyModule,
   ],
   controllers: [AppController],
   providers: [

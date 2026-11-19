@@ -11,6 +11,7 @@ import {
   Query,
   Put,
   BadRequestException,
+  UseInterceptors,
 } from '@nestjs/common';
 import { SessionService } from './session.service';
 import { CreateSessionDto } from './dto/create-session.dto';
@@ -38,6 +39,7 @@ import { SessionRealtimeEmitter } from './session-realtime.emitter';
 import { SessionNotificationEmitter } from './session-notification.emitter';
 import { SubscriptionAccessGuard } from '../subscription/guards/subscription-access.guard';
 import { RequiresOperationalSubscription } from '../subscription/guards/requires-feature.decorator';
+import { IdempotencyInterceptor } from '../idempotency/idempotency.interceptor';
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard, SubscriptionAccessGuard)
@@ -61,6 +63,9 @@ export class SessionController {
 
   @Post('create-with-detail')
   @Roles('adm', 'wrk')
+  // BE-OFF-1: la app reintenta desde su cola offline; un reintento con la
+  // misma Idempotency-Key devuelve la cita ya creada en vez de duplicarla.
+  @UseInterceptors(IdempotencyInterceptor)
   async createSessionWithDetail(
     @Request() req: AuthenticatedRequest,
     @Body() createSessionWithDetailDto: CreateSessionWithDetailDto,

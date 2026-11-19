@@ -24,6 +24,7 @@ import type { AuthenticatedRequest } from './types/authenticated-request';
 import { RegisterWorkerDto } from './dto/register-worker.dto';
 import { RegisterClientDto } from './dto/register-client.dto';
 import { RegisterClientByAdminDto } from './dto/register-client-by-admin.dto';
+import { IdempotencyInterceptor } from '../idempotency/idempotency.interceptor';
 import { AssignClientEmailDto } from './dto/assign-client-email.dto';
 import { AssignWorkerEmailDto } from './dto/assign-worker-email.dto';
 import { Roles } from './decorators/roles.decorator';
@@ -133,7 +134,9 @@ export class AuthController {
    */
   @Post('register/client-by-admin')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileInterceptor('picture'))
+  // BE-OFF-1: la app reintenta desde su cola offline. Va DESPUÉS de la foto
+  // para que el hash incluya el body y el archivo ya leídos.
+  @UseInterceptors(FileInterceptor('picture'), IdempotencyInterceptor)
   @HttpCode(HttpStatus.CREATED)
   async registerClientByAdmin(
     @Body() registerDto: RegisterClientByAdminDto,
