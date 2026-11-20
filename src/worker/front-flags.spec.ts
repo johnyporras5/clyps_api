@@ -85,7 +85,10 @@ describe('lista del equipo: hasAccount', () => {
       workerId: number;
       userId: number | null;
       userEmail?: string | null;
+      temporarilyDeleted?: number;
+      permanentlyDeleted?: number;
     }[],
+    dto: Record<string, unknown> = {},
   ) {
     const qb: Record<string, jest.Mock> = {};
     for (const m of [
@@ -104,9 +107,18 @@ describe('lista del equipo: hasAccount', () => {
       string,
       unknown
     >;
+    // BE-OFF-4: la hora sale de la base (serverTime) y los borrados de
+    // catalog_deletion; las dos van por manager.query.
+    const query = jest.fn((sql: string) =>
+      Promise.resolve(
+        sql.includes('UTC_TIMESTAMP')
+          ? [{ t: '2026-11-20 19:55:39.123000' }]
+          : [{ entityId: 77 }],
+      ),
+    );
     Object.assign(service, {
       companyRepository: { findOne: jest.fn().mockResolvedValue({ id: 41 }) },
-      workerRepository: { createQueryBuilder: () => qb },
+      workerRepository: { createQueryBuilder: () => qb, manager: { query } },
       fileUploadService: { getFileUrl: jest.fn() },
       paginateQueryBuilder: jest.fn().mockResolvedValue({
         data: rows.map((r) => ({
@@ -120,9 +132,35 @@ describe('lista del equipo: hasAccount', () => {
     });
     const result = await (
       service as unknown as CompanyWorkerService
-    ).getCompanyWorkersWithNameFilterPaginated(1, {} as never);
-    return { result, select: qb.select };
+    ).getCompanyWorkersWithNameFilterPaginated(1, dto as never);
+    return { result, select: qb.select, andWhere: qb.andWhere };
   }
+
+  it('BE-OFF-4: trae serverTime siempre; sin since no hay deleted ni deletedIds', async () => {
+    const { result } = await list([{ workerId: 3, userId: null }]);
+    expect(result.serverTime).toBe('2026-11-20T19:55:39.123Z');
+    expect(result.deletedIds).toBeUndefined();
+    expect(result.data[0]).not.toHaveProperty('deleted');
+  });
+
+  it('BE-OFF-4: con since marca a los quitados del salón y trae los borrados de verdad', async () => {
+    const { result, andWhere } = await list(
+      [
+        { workerId: 3, userId: null, temporarilyDeleted: 0 },
+        { workerId: 4, userId: null, temporarilyDeleted: 1 },
+      ],
+      { since: '2026-11-19T12:00:00.000Z' },
+    );
+    expect(result.data.map((w) => [w.workerId, w.deleted])).toEqual([
+      [3, false],
+      [4, true],
+    ]);
+    expect(result.deletedIds).toEqual([77]);
+    // Con since no se esconden los borrados: se filtra por cambios.
+    const conditions = andWhere.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(conditions.join(' ')).toContain('cw.updated_at > :syncSince');
+    expect(conditions).not.toContain('cw.temporarily_deleted = 0');
+  });
 
   it('marca quién puede entrar: cuenta y correo', async () => {
     const { result } = await list([

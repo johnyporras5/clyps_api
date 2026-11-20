@@ -45,12 +45,13 @@ export class ServiceController {
     @Query() paginationDto: FindServicesDto,
   ): Promise<any> {
     const adminId = req.user.sub;
-    const { page, limit, name, status } = paginationDto;
+    const { page, limit, name, status, since } = paginationDto;
     return this.serviceService.findAllByCompanyWithWorkers(adminId, {
       page,
       limit,
       name,
       status,
+      since,
     });
   }
 

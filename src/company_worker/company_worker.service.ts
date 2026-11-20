@@ -28,6 +28,23 @@ import {
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { isEmailUnavailable } from '../auth/dto/register-client-by-admin.dto';
 import { EntitlementsService } from '../subscription/entitlements.service';
+import {
+  deletedIdsSince,
+  getServerTime,
+  recordCatalogDeletion,
+  resolveSince,
+  syncFields,
+  toUtcSql,
+} from '../common/sync/catalog-sync.util';
+
+/** Filtros de la lista de trabajadores (página y conteo). */
+interface WorkerListFilters {
+  companyId: number;
+  name?: string;
+  isActive?: string;
+  /** BE-OFF-4: `since` en UTC para SQL; null = sin filtro de cambios. */
+  syncSince: string | null;
+}
 
 /** Fila cruda (getRawMany) del listado de trabajadores antes de formatear. */
 interface WorkerListRawRow {
@@ -378,8 +395,18 @@ export class CompanyWorkerService {
     // 3. Validar que no tenga citas activas asociadas
     await this.assertWorkerHasNoActiveAppointments(workerId, company.id);
 
-    // 4. Eliminar el registro
-    await this.companyWorkerRepository.delete(companyWorker.id);
+    // 4. Eliminar el registro y anotar el borrado (BE-OFF-4) en la MISMA
+    // transacción: sin el aviso, los teléfonos que sincronizan con `since` lo
+    // seguirían mostrando para siempre.
+    await this.companyWorkerRepository.manager.transaction(async (manager) => {
+      await manager.getRepository(CompanyWorker).delete(companyWorker.id);
+      await recordCatalogDeletion(
+        manager,
+        company.id,
+        'company_worker',
+        companyWorker.id,
+      );
+    });
 
     return {
       message: `Trabajador eliminado exitosamente de la compañía '${company.name}'. El trabajador mantiene su cuenta y perfil.`,
@@ -453,6 +480,17 @@ export class CompanyWorkerService {
     // 2. Extraer page, limit, name e isActive del DTO
     const { page, limit, name, isActive } = paginationDto;
 
+    // BE-OFF-4: `since` se valida antes de todo y la hora se toma ANTES de
+    // leer (ver catalog-sync.util).
+    const sync = resolveSince(paginationDto.since);
+    const serverTime = await getServerTime(this.workerRepository.manager);
+    const filters: WorkerListFilters = {
+      companyId: company.id,
+      name,
+      isActive,
+      syncSince: sync.since ? toUtcSql(sync.since) : null,
+    };
+
     // 3. Crear QueryBuilder con alias correctos
     const queryBuilder = this.workerRepository
       .createQueryBuilder('worker')
@@ -477,25 +515,12 @@ export class CompanyWorkerService {
         'COALESCE(AVG(wf.stars), 0) AS averageRating',
         'COUNT(wf.id) AS totalReviews',
       ])
-      .where('cw.company_id = :companyId', { companyId: company.id })
-      .andWhere('cw.temporarily_deleted = 0')
-      .andWhere('cw.permanently_deleted = 0')
       .groupBy('worker.id')
       .addGroupBy('cw.id')
       .orderBy('worker.name', 'ASC');
 
-    // Filtrar por isActive si se proporciona (0 = inactivos, 1 = activos), si no se envía devuelve todos
-    if (isActive !== undefined) {
-      queryBuilder.andWhere('cw.is_active = :isActive', {
-        isActive: parseInt(isActive),
-      });
-    }
-
-    // 4. Aplicar filtro por nombre si se proporciona
-    if (name && name.trim() !== '') {
-      const searchTerm = `%${name.trim()}%`;
-      queryBuilder.andWhere('worker.name LIKE :search', { search: searchTerm });
-    }
+    // 4. Filtros (salón, borrados, isActive, nombre o `since`)
+    this.applyWorkerListFilters(queryBuilder, filters);
 
     // 5. Usar la función paginate
     const paginationOptions: PaginationOptions = {
@@ -507,9 +532,7 @@ export class CompanyWorkerService {
     const paginatedResult = await this.paginateQueryBuilder<WorkerListRawRow>(
       queryBuilder,
       paginationOptions,
-      company.id,
-      name,
-      isActive,
+      filters,
     );
 
     // 7. Formatear los datos y construir las URLs completas
@@ -544,13 +567,78 @@ export class CompanyWorkerService {
           result.userId !== null &&
           result.userId !== undefined &&
           !isEmailUnavailable(result.userEmail),
+        // BE-OFF-4: con `since` vienen también los quitados del salón.
+        ...(filters.syncSince
+          ? {
+              deleted:
+                Boolean(Number(result.temporarilyDeleted)) ||
+                Boolean(Number(result.permanentlyDeleted)),
+            }
+          : {}),
       };
     });
+
+    // BE-OFF-4: trabajadores quitados del salón con la fila borrada.
+    const deletedIds = sync.since
+      ? await deletedIdsSince(
+          this.workerRepository.manager,
+          [company.id],
+          'company_worker',
+          sync.since,
+        )
+      : undefined;
 
     return {
       data: formattedData,
       meta: paginatedResult.meta,
+      ...syncFields(serverTime, sync, deletedIds),
     };
+  }
+
+  /**
+   * Filtros de la lista de trabajadores, iguales para la página y el conteo.
+   *
+   * Sin `since`: los de siempre (sin borrados; `isActive` y nombre opcionales).
+   * Con `since` (BE-OFF-4): todo lo que cambió después, INCLUIDOS los quitados
+   * del salón, para que la app los saque. Cuenta como cambio el de la
+   * asignación (`company_worker`: estado, horario, servicios), el de sus datos
+   * (`worker`: nombre, foto) y el de su cuenta (`user`: correo → hasAccount).
+   */
+  private applyWorkerListFilters(
+    qb: SelectQueryBuilder<ObjectLiteral>,
+    filters: WorkerListFilters,
+  ): void {
+    qb.where('cw.company_id = :companyId', { companyId: filters.companyId });
+
+    if (filters.syncSince) {
+      qb.andWhere(
+        `(cw.updated_at > :syncSince
+          OR worker.updated_at > :syncSince
+          OR EXISTS (SELECT 1 FROM \`user\` su
+                      WHERE su.id = worker.user_id
+                        AND su.updated_at > :syncSince))`,
+        { syncSince: filters.syncSince },
+      );
+      return;
+    }
+
+    qb.andWhere('cw.temporarily_deleted = 0').andWhere(
+      'cw.permanently_deleted = 0',
+    );
+
+    // Filtrar por isActive si se proporciona (0 = inactivos, 1 = activos), si no se envía devuelve todos
+    if (filters.isActive !== undefined) {
+      qb.andWhere('cw.is_active = :isActive', {
+        isActive: parseInt(filters.isActive),
+      });
+    }
+
+    // Filtro por nombre si se proporciona
+    if (filters.name && filters.name.trim() !== '') {
+      qb.andWhere('worker.name LIKE :search', {
+        search: `%${filters.name.trim()}%`,
+      });
+    }
   }
 
   /**
@@ -580,9 +668,7 @@ export class CompanyWorkerService {
   private async paginateQueryBuilder<T extends ObjectLiteral>(
     queryBuilder: SelectQueryBuilder<ObjectLiteral>,
     options: PaginationOptions,
-    companyId: number,
-    name?: string,
-    isActive?: string,
+    filters: WorkerListFilters,
   ): Promise<{ data: T[]; meta: PaginationMeta }> {
     const { page, limit } = options;
     const skip = (page - 1) * limit;
@@ -593,32 +679,21 @@ export class CompanyWorkerService {
     // y no respeta el LIMIT en queries raw con grouping.
     const data = await queryBuilder.offset(skip).limit(limit).getRawMany<T>();
 
-    // 2. Crear una consulta de conteo separada
+    // 2. Crear una consulta de conteo separada, con los MISMOS filtros
     const countQueryBuilder = this.workerRepository
       .createQueryBuilder('worker')
-      .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id')
-      .where('cw.company_id = :companyId', { companyId })
-      .andWhere('cw.temporarily_deleted = 0')
-      .andWhere('cw.permanently_deleted = 0');
+      .innerJoin('company_worker', 'cw', 'cw.worker_id = worker.id');
+    this.applyWorkerListFilters(countQueryBuilder, filters);
 
-    // Aplicar filtro por isActive si existe
-    if (isActive !== undefined) {
-      countQueryBuilder.andWhere('cw.is_active = :isActive', {
-        isActive: parseInt(isActive),
-      });
-    }
-
-    // Aplicar filtro por nombre si existe
-    if (name && name.trim() !== '') {
-      const searchTerm = `%${name.trim()}%`;
-      countQueryBuilder.andWhere('worker.name LIKE :search', {
-        search: searchTerm,
-      });
-    }
-
-    // Contar trabajadores únicos
+    // Contar trabajadores únicos. Con `since` (BE-OFF-4) cuenta asignaciones:
+    // ahí pueden venir la vieja (quitada) y la nueva del mismo trabajador.
     const totalResult = await countQueryBuilder
-      .select('COUNT(DISTINCT worker.id)', 'count')
+      .select(
+        filters.syncSince
+          ? 'COUNT(DISTINCT cw.id)'
+          : 'COUNT(DISTINCT worker.id)',
+        'count',
+      )
       .getRawOne<{ count: string }>();
 
     const total = totalResult ? parseInt(totalResult.count, 10) : 0;

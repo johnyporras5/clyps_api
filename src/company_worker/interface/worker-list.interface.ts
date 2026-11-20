@@ -1,4 +1,5 @@
 import { PaginationResult } from '../../common/utils/pagination.util';
+import type { SyncResponseFields } from '../../common/sync/catalog-sync.util';
 export interface WorkerList {
   companyWorkerId: number;
   workerId: number;
@@ -21,5 +22,11 @@ export interface WorkerList {
    * Sin correo no entra, tenga cuenta (los de antes) o no (los nuevos).
    */
   hasAccount: boolean;
+  /**
+   * BE-OFF-4: solo con `?since=`. true = lo quitaron del salón (borrado
+   * suave): la app lo saca de su lista.
+   */
+  deleted?: boolean;
 }
-export type PaginatedWorkerListResult = PaginationResult<WorkerList>;
+export type PaginatedWorkerListResult = PaginationResult<WorkerList> &
+  SyncResponseFields;

@@ -32,6 +32,15 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { ServiceNotificationEmitter } from './service-notification.emitter';
 import { companyRoom, companyPublicRoom } from '../realtime/rooms';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import {
+  SyncResponseFields,
+  deletedIdsSince,
+  getServerTime,
+  recordCatalogDeletion,
+  resolveSince,
+  syncFields,
+  toUtcSql,
+} from '../common/sync/catalog-sync.util';
 
 /** Fila cruda (getRawMany) de los workers asignados a un servicio. */
 interface ServiceWorkerRawRow {
@@ -101,8 +110,16 @@ export class ServiceService {
    */
   async findAllByCompanyWithWorkers(
     adminId: number,
-    paginationOptions: PaginationOptions & { name?: string; status?: string },
-  ): Promise<PaginationResult<any>> {
+    paginationOptions: PaginationOptions & {
+      name?: string;
+      status?: string;
+      since?: string;
+    },
+  ): Promise<PaginationResult<any> & SyncResponseFields> {
+    // BE-OFF-4: se valida antes de todo y la hora se toma ANTES de leer.
+    const sync = resolveSince(paginationOptions.since);
+    const serverTime = await getServerTime(this.serviceRepository.manager);
+
     // 1. Verificar que el administrador tiene una compañía
     const company = await this.companyRepository.findOne({
       where: { userId: adminId },
@@ -118,18 +135,26 @@ export class ServiceService {
       .leftJoinAndSelect('service.category', 'category')
       .where('service.companyId = :companyId', { companyId: company.id });
 
-    // 2.b Filtro por nombre (igual que /workers): LIKE sobre service.name
-    if (paginationOptions.name && paginationOptions.name.trim() !== '') {
-      queryBuilder.andWhere('service.name LIKE :search', {
-        search: `%${paginationOptions.name.trim()}%`,
+    if (sync.since) {
+      // BE-OFF-4: solo los que cambiaron (también los que pasaron a
+      // inactivos: vienen con su `status`). Se ignoran nombre y estado.
+      queryBuilder.andWhere('service.updated_at > :syncSince', {
+        syncSince: toUtcSql(sync.since),
       });
-    }
+    } else {
+      // 2.b Filtro por nombre (igual que /workers): LIKE sobre service.name
+      if (paginationOptions.name && paginationOptions.name.trim() !== '') {
+        queryBuilder.andWhere('service.name LIKE :search', {
+          search: `%${paginationOptions.name.trim()}%`,
+        });
+      }
 
-    // 2.c Filtro por estado: '1' = activo, '0' = inactivo, ausente = todos
-    if (paginationOptions.status !== undefined) {
-      queryBuilder.andWhere('service.status = :status', {
-        status: parseInt(paginationOptions.status, 10),
-      });
+      // 2.c Filtro por estado: '1' = activo, '0' = inactivo, ausente = todos
+      if (paginationOptions.status !== undefined) {
+        queryBuilder.andWhere('service.status = :status', {
+          status: parseInt(paginationOptions.status, 10),
+        });
+      }
     }
 
     // 3. Aplicar paginación
@@ -152,10 +177,21 @@ export class ServiceService {
       }),
     );
 
+    // BE-OFF-4: servicios borrados de verdad (la fila ya no existe).
+    const deletedIds = sync.since
+      ? await deletedIdsSince(
+          this.serviceRepository.manager,
+          [company.id],
+          'service',
+          sync.since,
+        )
+      : undefined;
+
     // 5. Devolver resultado paginado con datos enriquecidos
     return {
       ...paginatedServices,
       data: enrichedData,
+      ...syncFields(serverTime, sync, deletedIds),
     };
   }
   /**
@@ -737,14 +773,17 @@ export class ServiceService {
       );
     }
 
-    // 4. Eliminar service_offers relacionados
-    await this.serviceOfferRepository.delete({ serviceId: id });
-
-    // 5. Eliminar el servicio
-    const result = await this.serviceRepository.delete(id);
-    if (result.affected === 0) {
-      throw new NotFoundException(`Service with id ${id} not found`);
-    }
+    // 4-5. Eliminar sus service_offers y el servicio, y anotar el borrado
+    // (BE-OFF-4) en la MISMA transacción: un borrado sin su aviso dejaría el
+    // servicio para siempre en los teléfonos que sincronizan con `since`.
+    await this.serviceRepository.manager.transaction(async (manager) => {
+      await manager.getRepository(ServiceOffer).delete({ serviceId: id });
+      const result = await manager.getRepository(Service).delete(id);
+      if (result.affected === 0) {
+        throw new NotFoundException(`Service with id ${id} not found`);
+      }
+      await recordCatalogDeletion(manager, service.companyId, 'service', id);
+    });
 
     this.emitServiceEvent('service.deleted', id, service.companyId, {
       serviceId: id,

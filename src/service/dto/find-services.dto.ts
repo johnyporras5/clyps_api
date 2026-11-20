@@ -10,4 +10,13 @@ export class FindServicesDto extends PaginationDto {
   @IsOptional()
   @IsIn(['0', '1'])
   status?: string;
+
+  /**
+   * BE-OFF-4: solo lo que cambió después de esta fecha (la `serverTime` de la
+   * sincronización anterior). Con `since` se ignoran `name` y `status`: la
+   * app necesita enterarse también de los que pasaron a inactivos.
+   */
+  @IsOptional()
+  @IsString()
+  since?: string;
 }

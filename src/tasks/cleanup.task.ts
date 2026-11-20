@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { DataSource } from 'typeorm';
 import { VerificationService } from '../verification/verification.service';
 import { TokenBlacklistService } from '../auth/services/token_blacklist.service';
+import {
+  CATALOG_DELETION_RETENTION_DAYS,
+  purgeCatalogDeletions,
+} from '../common/sync/catalog-sync.util';
 
 @Injectable()
 export class CleanupTask {
@@ -10,6 +15,7 @@ export class CleanupTask {
   constructor(
     private verificationService: VerificationService,
     private tokenBlacklistService: TokenBlacklistService,
+    private dataSource: DataSource,
   ) {}
 
   // ✅ Ejecutar cada 30 minutos para limpiar códigos expirados
@@ -52,5 +58,25 @@ export class CleanupTask {
     this.logger.log('🏁 Iniciando limpieza diaria...');
     await this.cleanupExpiredVerificationCodes();
     await this.cleanupExpiredBlacklistedTokens();
+    await this.cleanupOldCatalogDeletions();
+  }
+
+  // BE-OFF-4: los avisos de "servicio/trabajador borrado" se guardan 90 días.
+  // Un teléfono que lleve más sin sincronizar recibe `fullSync: true` y baja
+  // todo de nuevo, así que no necesita los más viejos.
+  async cleanupOldCatalogDeletions() {
+    try {
+      const deleted = await purgeCatalogDeletions(this.dataSource.manager);
+      if (deleted > 0) {
+        this.logger.log(
+          `🧹 Eliminados ${deleted} avisos de borrado de catálogo (> ${CATALOG_DELETION_RETENTION_DAYS} días)`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        'Error limpiando avisos de borrado de catálogo:',
+        error,
+      );
+    }
   }
 }

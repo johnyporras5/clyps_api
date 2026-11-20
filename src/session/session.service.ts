@@ -28,6 +28,14 @@ import {
   slotTakenException,
 } from './slot-conflict.util';
 import { parseCreatedOfflineAt } from '../common/utils/created-offline-at.util';
+import {
+  SyncResponseFields,
+  deletedIdsSince,
+  getServerTime,
+  resolveSince,
+  syncFields,
+  toUtcSql,
+} from '../common/sync/catalog-sync.util';
 import { Session } from './entities/session.entity';
 import { SessionPayment } from './entities/session-payment.entity';
 import { SessionPaymentLine } from './entities/session-payment-line.entity';
@@ -11611,6 +11619,8 @@ export class SessionService {
     page: number = 1,
     limit: number = 10,
     targetWorkerId?: number,
+    /** BE-OFF-4: `?since=`, solo lo que cambió después. */
+    since?: string,
   ): Promise<
     PaginationResult<{
       serviceId: number;
@@ -11635,32 +11645,74 @@ export class SessionService {
       // Cortesías completadas de este servicio (no suman a los contadores de
       // arriba ni al dinero; se muestran como "Cortesías: N").
       courtesyCount: number;
-    }>
+      /** BE-OFF-4: solo con `since`. true = ya no está asignado: quitarlo. */
+      deleted?: boolean;
+    }> &
+      SyncResponseFields
   > {
-    const { companyWorkerIds } = await this.resolveWorkerCompanyWorkerIds(
-      userId,
-      targetWorkerId,
-    );
+    // BE-OFF-4: `since` se valida antes de todo y la hora se toma ANTES de
+    // leer (ver catalog-sync.util).
+    const sync = resolveSince(since);
+    const serverTime = await getServerTime(this.serviceRepository.manager);
+
+    const { companyWorkerIds, companyIds } =
+      await this.resolveWorkerCompanyWorkerIds(userId, targetWorkerId);
+
+    // ¿El servicio tiene asignado a este trabajador? (service.workers[].id)
+    const assignedCondition = new Brackets((qb) => {
+      companyWorkerIds.forEach((cwId, idx) => {
+        const param = `cwId${idx}`;
+        const condition = `JSON_CONTAINS(JSON_EXTRACT(service.workers, '$[*].id'), CAST(:${param} AS JSON))`;
+        if (idx === 0) {
+          qb.where(condition, { [param]: cwId });
+        } else {
+          qb.orWhere(condition, { [param]: cwId });
+        }
+      });
+    });
 
     // 1) Catálogo: servicios donde service.workers contiene alguno de los
     //    company_worker.id del trabajador (service.workers[].id == company_worker.id).
+    //
+    //    BE-OFF-4, con `since`: los servicios de SU salón que cambiaron (precio,
+    //    a quién se asigna…) o cuyas estadísticas para él cambiaron (una cita
+    //    suya nueva o modificada). Los que ya no tiene asignados vienen con
+    //    `deleted: true`.
     const catalogQuery = this.serviceRepository
       .createQueryBuilder('service')
-      .leftJoinAndSelect('service.category', 'category')
-      .where(
-        new Brackets((qb) => {
-          companyWorkerIds.forEach((cwId, idx) => {
-            const param = `cwId${idx}`;
-            const condition = `JSON_CONTAINS(JSON_EXTRACT(service.workers, '$[*].id'), CAST(:${param} AS JSON))`;
-            if (idx === 0) {
-              qb.where(condition, { [param]: cwId });
-            } else {
-              qb.orWhere(condition, { [param]: cwId });
-            }
-          });
-        }),
-      )
-      .orderBy('service.id', 'DESC');
+      .leftJoinAndSelect('service.category', 'category');
+
+    if (sync.since) {
+      catalogQuery
+        .where('service.company_id IN (:...syncCompanyIds)', {
+          syncCompanyIds: companyIds.length ? companyIds : [0],
+        })
+        .andWhere(
+          `(service.updated_at > :syncSince
+            OR EXISTS (SELECT 1 FROM session_detail sd
+                        WHERE sd.service_id = service.id
+                          AND sd.company_worker_id IN (:...syncCwIds)
+                          AND sd.updated_at > :syncSince))`,
+          {
+            syncSince: toUtcSql(sync.since),
+            syncCwIds: companyWorkerIds.length ? companyWorkerIds : [0],
+          },
+        );
+    } else {
+      catalogQuery.where(assignedCondition);
+    }
+    catalogQuery.orderBy('service.id', 'DESC');
+
+    // BE-OFF-4: servicios de su salón borrados de verdad.
+    const deletedIds = sync.since
+      ? await deletedIdsSince(
+          this.serviceRepository.manager,
+          companyIds,
+          'service',
+          sync.since,
+        )
+      : undefined;
+    const syncExtra = syncFields(serverTime, sync, deletedIds);
 
     const total = await catalogQuery.getCount();
 
@@ -11674,7 +11726,7 @@ export class SessionService {
     };
 
     if (total === 0) {
-      return { data: [], meta: emptyMeta };
+      return { data: [], meta: emptyMeta, ...syncExtra };
     }
 
     const services = await catalogQuery
@@ -11683,7 +11735,7 @@ export class SessionService {
       .getMany();
 
     if (services.length === 0) {
-      return { data: [], meta: emptyMeta };
+      return { data: [], meta: emptyMeta, ...syncExtra };
     }
 
     const serviceIds = services.map((s) => s.id);
@@ -11854,10 +11906,12 @@ export class SessionService {
         totalEarned: parseFloat((totalCommissions + totalTips).toFixed(2)),
         totalTime: parseFloat(parseFloat(a?.totalTime || '0').toFixed(2)) || 0,
         courtesyCount: parseInt(a?.courtesyCount, 10) || 0,
+        // BE-OFF-4: con `since`, los que ya no tiene asignados se quitan.
+        ...(sync.since ? { deleted: !workerEntry } : {}),
       };
     });
 
-    return { data, meta: emptyMeta };
+    return { data, meta: emptyMeta, ...syncExtra };
   }
 
   /**
@@ -11869,7 +11923,17 @@ export class SessionService {
     page: number = 1,
     limit: number = 10,
     targetWorkerId?: number,
-  ): Promise<PaginationResult<any>> {
+    /** BE-OFF-4: `?since=`, solo lo que cambió después. */
+    since?: string,
+  ): Promise<PaginationResult<any> & SyncResponseFields> {
+    // BE-OFF-4: `since` se valida antes de todo y la hora se toma ANTES de
+    // leer (ver catalog-sync.util).
+    const sync = resolveSince(since);
+    const serverTime = await getServerTime(
+      this.sessionDetailRepository.manager,
+    );
+    const syncExtra = syncFields(serverTime, sync);
+
     const { companyWorkerIds, companyIds } =
       await this.resolveWorkerCompanyWorkerIds(userId, targetWorkerId);
 
@@ -11909,12 +11973,21 @@ export class SessionService {
         })
       : [];
 
-    const allIds = Array.from(
+    const candidateIds = Array.from(
       new Set<number>([
         ...apptByClient.keys(),
         ...createdClients.map((c) => c.id),
       ]),
     );
+    // BE-OFF-4: con `since`, solo los que cambiaron (su ficha, su cuenta) o
+    // cuyas citas con este trabajador cambiaron (total y última cita).
+    const allIds = sync.since
+      ? await this.workerClientIdsChangedSince(
+          candidateIds,
+          companyWorkerIds,
+          toUtcSql(sync.since),
+        )
+      : candidateIds;
     const total = allIds.length;
     const totalPages = Math.ceil(total / limit);
 
@@ -11939,6 +12012,7 @@ export class SessionService {
           hasNext: page < totalPages,
           hasPrev: page > 1,
         },
+        ...syncExtra,
       };
     }
 
@@ -11997,7 +12071,51 @@ export class SessionService {
         hasNext: page < totalPages,
         hasPrev: page > 1,
       },
+      ...syncExtra,
     };
+  }
+
+  /**
+   * BE-OFF-4: de los clientes de un trabajador, los que cambiaron después de
+   * `syncSince` (UTC para SQL): su ficha (nombre, foto, alias), su cuenta
+   * (correo) o alguna cita suya con este trabajador (cambia el total o la
+   * fecha de la última). Devuelve los ids en el mismo orden que `candidateIds`.
+   */
+  private async workerClientIdsChangedSince(
+    candidateIds: number[],
+    companyWorkerIds: number[],
+    syncSince: string,
+  ): Promise<number[]> {
+    if (candidateIds.length === 0) return [];
+
+    const changed = new Set<number>();
+
+    const byProfile: Array<{ id: number | string }> =
+      await this.clientRepository.manager.query(
+        `SELECT c.id
+           FROM client c
+           LEFT JOIN \`user\` u ON u.id = c.user_id
+          WHERE c.id IN (?)
+            AND (c.updated_at > ? OR u.updated_at > ?)`,
+        [candidateIds, syncSince, syncSince],
+      );
+    byProfile.forEach((r) => changed.add(Number(r.id)));
+
+    if (companyWorkerIds.length > 0) {
+      const byAppointments: Array<{ clientId: number | string }> =
+        await this.sessionDetailRepository.manager.query(
+          `SELECT DISTINCT s.client_id AS clientId
+             FROM session_detail d
+             JOIN session s ON s.id = d.session_id
+            WHERE d.company_worker_id IN (?)
+              AND s.client_id IS NOT NULL
+              AND (d.updated_at > ? OR s.updated_at > ?)`,
+          [companyWorkerIds, syncSince, syncSince],
+        );
+      byAppointments.forEach((r) => changed.add(Number(r.clientId)));
+    }
+
+    return candidateIds.filter((id) => changed.has(id));
   }
 
   /**

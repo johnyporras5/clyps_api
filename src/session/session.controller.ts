@@ -641,6 +641,8 @@ export class SessionController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('workerId') workerId?: string,
+    // BE-OFF-4: solo lo que cambió después de esta fecha.
+    @Query('since') since?: string,
   ) {
     const userId = req.user.sub;
     const userType = req.user?.userType;
@@ -654,6 +656,7 @@ export class SessionController {
       pageNum,
       limitNum,
       targetWorkerId,
+      since,
     );
   }
 
@@ -669,6 +672,8 @@ export class SessionController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('workerId') workerId?: string,
+    // BE-OFF-4: solo lo que cambió después de esta fecha.
+    @Query('since') since?: string,
   ) {
     const userId = req.user.sub;
     const userType = req.user?.userType;
@@ -682,6 +687,7 @@ export class SessionController {
       pageNum,
       limitNum,
       targetWorkerId,
+      since,
     );
   }
 

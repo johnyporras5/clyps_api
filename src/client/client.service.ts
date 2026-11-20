@@ -30,6 +30,13 @@ import {
   visitFrequencyFor,
 } from './visit-frequency.util';
 import { FindAllClientsDto } from './dto/find-all-clients.dto';
+import {
+  SyncResponseFields,
+  getServerTime,
+  resolveSince,
+  syncFields,
+  toUtcSql,
+} from '../common/sync/catalog-sync.util';
 import { isEmailUnavailable } from '../auth/dto/register-client-by-admin.dto';
 import {
   assertClientIdentificationFree,
@@ -315,10 +322,15 @@ export class ClientService {
     adminId: number,
     options: FindAllClientsDto,
     userRole?: string,
-  ): Promise<PaginationResult<any>> {
+  ): Promise<PaginationResult<any> & SyncResponseFields> {
     this.logger.log(
       `=== SERVICE: LISTANDO CLIENTES PARA USER ID: ${adminId} (rol: ${userRole ?? 'adm'}) ===`,
     );
+
+    // BE-OFF-4: `since` se valida antes de todo y la hora se toma ANTES de
+    // leer (ver catalog-sync.util).
+    const sync = resolveSince(options.since);
+    const serverTime = await getServerTime(this.clientRepository.manager);
 
     await this.validateUserExists(adminId);
 
@@ -397,7 +409,7 @@ export class ClientService {
     // se extraen los alias con JSON_EXTRACT y se compara con LOWER en ambos
     // lados para que la búsqueda sea case-insensitive igual que el nombre
     // (JSON_SEARCH usa collation binaria y distinguía mayúsculas/minúsculas).
-    if (options.name && options.name.trim() !== '') {
+    if (!sync.since && options.name && options.name.trim() !== '') {
       const searchTerm = `%${options.name.trim()}%`;
       queryBuilder.andWhere(
         "(client.name LIKE :search OR client.last_name LIKE :search OR CONCAT(client.name, ' ', client.last_name) LIKE :search OR LOWER(JSON_EXTRACT(client.company_aliases, '$[*].alias')) LIKE LOWER(:search))",
@@ -414,7 +426,23 @@ export class ClientService {
     // `isActive=0` sigue devolviendo los eliminados. No hay pantalla que lo
     // use, pero es la única forma de listarlos si alguien necesita recuperar
     // uno sin entrar a la base de datos.
-    {
+    //
+    // BE-OFF-4: con `since` no se filtra por estado (vienen vivos y
+    // eliminados, estos con `deleted: true`) y solo vienen los que cambiaron:
+    // su ficha (incluye alias por salón y la marca de eliminado), su cuenta
+    // (correo) o sus citas (cambia la fecha de su última cita).
+    if (sync.since) {
+      queryBuilder.andWhere(
+        `(client.updated_at > :syncSince
+          OR EXISTS (SELECT 1 FROM \`user\` cu
+                      WHERE cu.id = client.user_id
+                        AND cu.updated_at > :syncSince)
+          OR EXISTS (SELECT 1 FROM session cs
+                      WHERE cs.client_id = client.id
+                        AND cs.updated_at > :syncSince))`,
+        { syncSince: toUtcSql(sync.since) },
+      );
+    } else {
       const wantsActive =
         options.isActive === undefined
           ? true
@@ -467,15 +495,29 @@ export class ClientService {
     );
 
     // 6. Enriquecer datos de respuesta (SIN referencias a isPublic)
+    const data = this.enrichClientData(
+      result.data,
+      adminCompanies,
+      adminCompanyIds,
+      adminId,
+      lastAppointmentByClient,
+    );
+
     return {
-      data: this.enrichClientData(
-        result.data,
-        adminCompanies,
-        adminCompanyIds,
-        adminId,
-        lastAppointmentByClient,
-      ),
+      // BE-OFF-4: con `since`, cada fila dice si está eliminada del salón.
+      data: sync.since
+        ? data.map((row: Record<string, unknown>, i: number) => ({
+            ...row,
+            // Misma regla que el filtro SQL de "vivos" de arriba.
+            deleted:
+              resolveIsActiveForCompanies(
+                result.data[i],
+                sharedCompanyIds(result.data[i], adminCompanyIds),
+              ) === 0,
+          }))
+        : data,
       meta: result.meta,
+      ...syncFields(serverTime, sync),
     };
   }
 
