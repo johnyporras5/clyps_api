@@ -63,6 +63,36 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: npm run lint:ci
 
+  integration:
+    name: Pruebas de integración (MySQL real)
+    # Corren contra un MySQL 8 desechable en Docker (test/integration/
+    # global-setup.ts lo levanta y lo borra), con el mismo sql_mode que la base
+    # de DigitalOcean. La app de prueba arranca SIN .env ni secretos: no toca
+    # ninguna base real ni manda correos, push o cobros. Bloquean el deploy:
+    # cubren lo que las unitarias no pueden (SQL real, bloqueos, carreras).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci --prefer-offline --no-audit --fund=false
+
+      - name: Bajar MySQL 8
+        run: docker pull mysql:8.0
+
+      - name: Pruebas de integración
+        run: npm run test:integration -- --ci
+
+      - name: Log de la app de prueba (si falló)
+        if: failure()
+        run: cat /tmp/clyps-integration/server.log || true
+
   docker:
     name: Build de la imagen
     # Solo en PRs: valida el Dockerfile antes de mergear, porque App Platform
@@ -93,7 +123,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
-    needs: [verify]
+    needs: [verify, integration]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Cada rama despliega a su propia app, con su propia base. Los secrets

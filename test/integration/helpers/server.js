@@ -3,8 +3,9 @@
  * Arranca la app COMPILADA (dist/) para las pruebas de integración.
  *
  * La lanza global-setup en un proceso aparte, desde una carpeta vacía (sin
- * .env) y con las variables de helpers/env.ts. Igual que main.ts aplica el
- * ValidationPipe global; además DETIENE las tareas programadas (correos,
+ * .env) y con las variables de helpers/env.ts. Usa la MISMA configuración
+ * HTTP que main.ts (bootstrap/http-setup: proxy, límite de /sync/push y
+ * ValidationPipe); además DETIENE las tareas programadas (correos,
  * recordatorios…) apenas arranca, antes de abrir el puerto.
  *
  * Se usa dist/ y no ts-node porque con ts-node el AppModule no arranca
@@ -17,27 +18,23 @@ const root = process.env.IT_REPO_ROOT;
 const req = (m) => require(path.join(root, 'node_modules', m));
 
 const { NestFactory } = req('@nestjs/core');
-const { ValidationPipe } = req('@nestjs/common');
 const { SchedulerRegistry } = req('@nestjs/schedule');
 const { DataSource } = req('typeorm');
 const { AppModule } = require(path.join(root, 'dist', 'app.module'));
+const { applyHttpSetup } = require(
+  path.join(root, 'dist', 'bootstrap', 'http-setup'),
+);
 
 (async () => {
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn'],
+    // Igual que main.ts (lo necesita la firma del webhook de Cobrix).
+    rawBody: true,
   });
-  // Igual que main.ts: detrás del proxy, la IP real viene en X-Forwarded-For.
-  // Las pruebas mandan una IP por petición (como teléfonos distintos) para no
-  // chocar con el límite de 100 peticiones/min por IP, que sigue activo.
-  app.set('trust proxy', 1);
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
+  // La misma configuración que main.ts. Con `trust proxy`, las pruebas mandan
+  // una IP por petición (como teléfonos distintos) para no chocar con el
+  // límite de 100 peticiones/min por IP, que sigue activo.
+  applyHttpSetup(app);
   await app.init();
 
   const registry = app.get(SchedulerRegistry);

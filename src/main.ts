@@ -66,7 +66,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { applyHttpSetup } from './bootstrap/http-setup';
 
 async function bootstrap() {
   // Log immediately to catch any early errors - use console.error so Digital Ocean captures it
@@ -207,21 +207,10 @@ async function bootstrap() {
       }
     }
 
-    // Detrás de Nginx / Digital Ocean: confiar en X-Forwarded-For para que el
-    // rate limiting (ThrottlerGuard) cuente por IP real del cliente y no por la
-    // IP del proxy.
-    app.set('trust proxy', 1);
-
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-        transformOptions: {
-          enableImplicitConversion: true,
-        },
-      }),
-    );
+    // Proxy de confianza, límite de cuerpo de /sync/push y ValidationPipe
+    // global. Vive en bootstrap/http-setup.ts porque la app de las pruebas de
+    // integración usa EXACTAMENTE la misma configuración.
+    applyHttpSetup(app);
 
     const port = process.env.PORT ?? 4000; // CAMBIADO: 4000
     console.log(`🌐 Starting HTTP server on port ${port}...`);

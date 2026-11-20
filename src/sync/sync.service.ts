@@ -8,6 +8,7 @@ import {
   type Type,
 } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service';
+import { VALIDATION_PIPE_OPTIONS } from '../bootstrap/http-setup';
 import { AuthController } from '../auth/auth.controller';
 import { RegisterClientByAdminDto } from '../auth/dto/register-client-by-admin.dto';
 import type { AuthenticatedUser } from '../auth/types/authenticated-request';
@@ -41,13 +42,8 @@ export interface SyncOperationResult {
 const SESSION_ENDPOINT = `${SessionController.name}.${SessionController.prototype.createSessionWithDetail.name}`;
 const CLIENT_ENDPOINT = `${AuthController.name}.${AuthController.prototype.registerClientByAdmin.name}`;
 
-/** El mismo ValidationPipe que main.ts aplica a cada endpoint. */
-const validationPipe = new ValidationPipe({
-  whitelist: true,
-  forbidNonWhitelisted: true,
-  transform: true,
-  transformOptions: { enableImplicitConversion: true },
-});
+/** El MISMO ValidationPipe que main.ts aplica a cada endpoint (mismas opciones). */
+const validationPipe = new ValidationPipe(VALIDATION_PIPE_OPTIONS);
 
 /**
  * El endpoint suelto de crear cliente recibe form-data: todos los campos

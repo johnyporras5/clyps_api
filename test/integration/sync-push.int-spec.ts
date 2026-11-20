@@ -408,4 +408,215 @@ describe('BE-OFF-5 POST /sync/push (MySQL real)', () => {
     expect(statuses.slice(0, 10).every((s) => s === 400)).toBe(true);
     expect(statuses[10]).toBe(429);
   });
+
+  describe('tamaño del cuerpo', () => {
+    const longNote = (kb: number) => 'x'.repeat(kb * 1024);
+
+    it('50 citas con notas largas (~250 KB, más que el límite general de 100 KB) se procesan', async () => {
+      const fresh = await seedSalon();
+      const ops = Array.from({ length: 50 }, (_, i) => {
+        const op = sessionOp(fresh, futureSlot(100 + i, 14), {
+          clientId: fresh.clientIds[i % 3],
+        });
+        op.payload.description = longNote(5);
+        return op;
+      });
+      expect(JSON.stringify({ operations: ops }).length).toBeGreaterThan(
+        200 * 1024,
+      );
+      const res = await push(fresh.adminToken, ops);
+      expect(res.status).toBe(200);
+      expect(res.body.results.every((r: any) => r.status === 201)).toBe(true);
+    });
+
+    it('más de 1 MB: 413 y no se procesa nada', async () => {
+      const op = clientOp();
+      op.payload.location = longNote(1100);
+      const res = await push(salon.adminToken, [op]);
+      expect(res.status).toBe(413);
+      expect(
+        await count(
+          'SELECT COUNT(*) AS n FROM idempotency_key WHERE idem_key = ?',
+          [op.idempotencyKey],
+        ),
+      ).toBe(0);
+    });
+
+    it('el resto de la app sigue con el límite de 100 KB (no se subió para todos)', async () => {
+      const body = appointment(salon, { details: [futureSlot(160, 14)] });
+      body.description = longNote(150);
+      const res = await api('POST', '/sessions/create-with-detail', {
+        token: salon.adminToken,
+        body,
+      });
+      expect(res.status).toBe(413);
+    });
+  });
+
+  describe('carreras', () => {
+    it('el MISMO lote enviado dos veces a la vez: nada se duplica y ninguno da 500', async () => {
+      const fresh = await seedSalon();
+      const clientKey = newKey();
+      const ops = [
+        clientOp(clientKey),
+        sessionOp(fresh, futureSlot(170, 14), { clientRef: clientKey }),
+      ];
+      const [a, b] = await Promise.all([
+        push(fresh.adminToken, ops),
+        push(fresh.adminToken, ops),
+      ]);
+      expect([a.status, b.status]).toEqual([200, 200]);
+      const all = [...a.body.results, ...b.body.results];
+      // Lo posible: creado, en curso (el otro lo tenía) o su cliente en curso.
+      for (const r of all) expect([201, 409, 424]).toContain(r.status);
+      for (const r of all.filter((x) => x.status === 409)) {
+        expect(r.body.code).toBe('IDEMPOTENCY_IN_PROGRESS');
+      }
+      // En la base: UN cliente y UNA cita, pase lo que pase.
+      const clientIds = new Set(
+        all
+          .filter((r) => r.idempotencyKey === clientKey && r.status === 201)
+          .map((r) => r.body.clientId),
+      );
+      expect(clientIds.size).toBe(1);
+      const [clientId] = [...clientIds];
+      expect(
+        await count('SELECT COUNT(*) AS n FROM session WHERE client_id = ?', [
+          clientId,
+        ]),
+      ).toBe(1);
+    });
+
+    it.each([1, 2, 3])(
+      'ronda %p: dos teléfonos mandan lotes a la vez por el mismo horario → uno 201, el otro 409 SLOT_TAKEN',
+      async (round) => {
+        const fresh = await seedSalon();
+        const slot = futureSlot(180 + round, 14);
+        const [a, b] = await Promise.all([
+          push(fresh.adminToken, [
+            sessionOp(fresh, slot, { clientId: fresh.clientIds[0] }),
+          ]),
+          push(fresh.adminToken, [
+            sessionOp(fresh, slot, { clientId: fresh.clientIds[1] }),
+          ]),
+        ]);
+        const statuses = [
+          a.body.results[0].status,
+          b.body.results[0].status,
+        ].sort();
+        expect(statuses).toEqual([201, 409]);
+        expect(
+          await count(
+            `SELECT COUNT(*) AS n FROM session_detail
+              WHERE company_worker_id = ? AND status NOT IN (3, 4, 5)
+                AND start_datetime = ?`,
+            [fresh.workers[0].companyWorkerId, new Date(slot.start)],
+          ),
+        ).toBe(1);
+      },
+    );
+  });
+
+  describe('casos pequeños', () => {
+    it('si vienen clientRef y clientId, gana clientRef', async () => {
+      const clientKey = newKey();
+      const op = sessionOp(salon, futureSlot(190, 14), {
+        clientRef: clientKey,
+      });
+      op.payload.clientId = salon.clientIds[0];
+      const res = await push(salon.adminToken, [clientOp(clientKey), op]);
+      const created = res.body.results[0].body.clientId;
+      expect(res.body.results[1].status).toBe(201);
+      const [row] = await q<Array<{ client_id: number }>>(
+        'SELECT client_id FROM session WHERE id = ?',
+        [res.body.results[1].body.createdDetails[0].sessionId],
+      );
+      expect(row.client_id).toBe(created);
+      expect(row.client_id).not.toBe(salon.clientIds[0]);
+    });
+
+    it('un 409 SLOT_TAKEN guardado se repite dentro del lote aunque el horario se libere', async () => {
+      const slot = futureSlot(191, 14);
+      const blocker = await push(salon.adminToken, [
+        sessionOp(salon, slot, { clientId: salon.clientIds[0] }),
+      ]);
+      const loser = sessionOp(salon, slot, { clientId: salon.clientIds[1] });
+      const first = await push(salon.adminToken, [loser]);
+      expect(first.body.results[0].status).toBe(409);
+
+      await api(
+        'PATCH',
+        `/sessions/${blocker.body.results[0].body.createdDetails[0].sessionId}/cancel`,
+        { token: salon.adminToken, body: { reason: 'libera' } },
+      );
+      const again = await push(salon.adminToken, [loser]);
+      expect(again.body.results[0]).toMatchObject({
+        status: 409,
+        replayed: true,
+      });
+      expect(again.body.results[0].body).toEqual(first.body.results[0].body);
+    });
+
+    it('trabajadora de un salón SIN la app del equipo: 403 por operación, igual que el endpoint suelto', async () => {
+      const basic = await seedSalon();
+      // Plan Básico (sin app del equipo), al día.
+      await q(
+        "UPDATE subscription SET plan_id = 'basico' WHERE company_id = ?",
+        [basic.companyId],
+      );
+      const single = await api('POST', '/sessions/create-with-detail', {
+        token: basic.workers[0].token,
+        body: appointment(basic, { details: [futureSlot(192, 14)] }),
+      });
+      const res = await push(basic.workers[0].token, [
+        sessionOp(basic, futureSlot(192, 16), {
+          clientId: basic.clientIds[0],
+        }),
+      ]);
+      expect(single.status).toBe(403);
+      expect(res.body.results[0].status).toBe(403);
+      expect(res.body.results[0].body).toEqual(single.body);
+    });
+
+    it('clientRef a un cliente que "todavía se está procesando": 424', async () => {
+      const busyKey = newKey();
+      await q(
+        `INSERT INTO idempotency_key
+           (user_id, idem_key, endpoint, request_hash, status, created_at)
+         VALUES (?, ?, 'AuthController.registerClientByAdmin', ?, 'processing', UTC_TIMESTAMP())`,
+        [salon.adminUserId, busyKey, 'h'.repeat(64)],
+      );
+      const res = await push(salon.adminToken, [
+        sessionOp(salon, futureSlot(193, 14), { clientRef: busyKey }),
+      ]);
+      expect(res.body.results[0].status).toBe(424);
+      expect(res.body.results[0].body.message).toMatch(/procesando/);
+    });
+
+    it('cliente con campos que no son texto: en lote y luego suelto (form-data) es la misma operación', async () => {
+      const key = newKey();
+      const payload = {
+        name: 'Tipos',
+        lastName: 'Mixtos',
+        identification: cedula(),
+        isActive: 1,
+        birthdate: '1990-05-01',
+      };
+      const inBatch = await push(salon.adminToken, [
+        { idempotencyKey: key, type: 'create_client', payload },
+      ]);
+      expect(inBatch.body.results[0].status).toBe(201);
+
+      const form = new FormData();
+      for (const [k, v] of Object.entries(payload)) form.append(k, String(v));
+      const single = await api('POST', '/auth/register/client-by-admin', {
+        token: salon.adminToken,
+        form,
+        headers: { 'Idempotency-Key': key },
+      });
+      expect(single.status).toBe(201);
+      expect(single.headers.get('idempotent-replayed')).toBe('true');
+      expect(single.body.clientId).toBe(inBatch.body.results[0].body.clientId);
+    });
+  });
 });
