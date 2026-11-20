@@ -35,7 +35,8 @@ export const isStoredError = (error: unknown): error is HttpException => {
   return typeof code === 'string' && STORED_ERROR_CODES.has(code);
 };
 
-const UUID_RE =
+/** Formato de una Idempotency-Key (también en POST /sync/push). */
+export const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** JSON con las llaves ordenadas: el mismo body da el mismo hash. */

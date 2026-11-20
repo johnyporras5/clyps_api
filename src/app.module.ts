@@ -45,6 +45,7 @@ import { AdminPanelHiddenModule } from './admin_panel_hidden/admin-panel-hidden.
 import { AdminPanelContactsModule } from './admin_panel_contacts/admin-panel-contacts.module';
 import { CampaignEmailModule } from './campaign_email/campaign-email.module';
 import { IdempotencyModule } from './idempotency/idempotency.module';
+import { SyncModule } from './sync/sync.module';
 
 @Module({
   imports: [
@@ -161,6 +162,8 @@ import { IdempotencyModule } from './idempotency/idempotency.module';
     CampaignEmailModule,
     // BE-OFF-1: Idempotency-Key en crear cita y crear cliente (cola offline).
     IdempotencyModule,
+    // BE-OFF-5: POST /sync/push, varias operaciones offline en una llamada.
+    SyncModule,
   ],
   controllers: [AppController],
   providers: [

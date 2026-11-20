@@ -80,21 +80,46 @@ export class SubscriptionAccessGuard implements CanActivate {
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    return this.checkAccess(
+      request.user,
+      context.getHandler(),
+      context.getClass(),
+      `${request.method} ${request.originalUrl ?? request.url}`,
+    );
+  }
+
+  /**
+   * La revisión del guard, para un handler concreto de un controlador.
+   *
+   * La usa `canActivate` y también POST /sync/push (BE-OFF-5): cada operación
+   * del lote pasa por las MISMAS marcas que el endpoint suelto que reemplaza
+   * (crear cita lleva el bloqueo; crear cliente no). Así el lote no puede ser
+   * una puerta trasera para saltarse el bloqueo.
+   *
+   * Lanza el mismo 403 que el guard; devuelve true si puede pasar.
+   */
+  async checkAccess(
+    user: AuthenticatedRequest['user'] | undefined,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+    handler: Function,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+    controller: Function,
+    where: string,
+  ): Promise<boolean> {
     const feature = this.reflector.getAllAndOverride<unknown>(
       REQUIRES_FEATURE,
-      [context.getHandler(), context.getClass()],
+      [handler, controller],
     );
     const operation = this.reflector.getAllAndOverride<OperationRule>(
       REQUIRES_OPERATION,
-      [context.getHandler(), context.getClass()],
+      [handler, controller],
     );
     if (!feature && !operation) return true;
 
     const mode = this.mode;
     if (mode === 'off') return true;
 
-    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    const user = request.user;
     if (!user) throw new ForbiddenException('Sesión no válida');
 
     // El cliente final y el admin de plataforma no pertenecen a UN salón: el
@@ -168,9 +193,7 @@ export class SubscriptionAccessGuard implements CanActivate {
       this.logger.warn(
         `[enforcement=log] el usuario ${user.sub} (rol ${role}, company ` +
           `${user.companyId ?? 'sin claim'}) habría sido bloqueado en ` +
-          `${request.method} ${request.originalUrl ?? request.url}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `${where}: ${error instanceof Error ? error.message : String(error)}`,
       );
       return true;
     }

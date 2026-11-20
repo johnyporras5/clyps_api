@@ -167,6 +167,36 @@ export class IdempotencyService {
     );
   }
 
+  /**
+   * BE-OFF-5: la respuesta guardada de una clave de ESTE usuario en ESE
+   * endpoint (para `clientRef`: el cliente que creó un lote anterior). Nunca
+   * busca claves de otro usuario: un salón no puede apuntar al cliente creado
+   * por otro.
+   */
+  async findResult(
+    userId: number,
+    key: string,
+    endpoint: string,
+  ): Promise<
+    | { state: 'done'; status: number | null; body: unknown }
+    | { state: 'processing' }
+    | null
+  > {
+    const row = await this.keys.findOne({
+      where: { userId, idemKey: key.trim().toLowerCase(), endpoint },
+    });
+    if (!row) return null;
+    if (row.status !== 'done') return { state: 'processing' };
+    return {
+      state: 'done',
+      status: row.responseStatus ?? null,
+      body:
+        row.responseBody == null
+          ? null
+          : (JSON.parse(row.responseBody) as unknown),
+    };
+  }
+
   /** La petición falló: se libera la clave para que el reintento la ejecute. */
   async release(id: number): Promise<void> {
     await this.keys.delete({ id, status: 'processing' });
