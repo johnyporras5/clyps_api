@@ -104,6 +104,11 @@ export class Client {
   @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 6 })
   createdAt: Date;
 
+  // BE-OFF-3: cuándo se dio de alta DE VERDAD en la app sin red. NULL = se
+  // creó con conexión.
+  @Column({ name: 'created_offline_at', type: 'datetime', nullable: true })
+  createdOfflineAt: Date | null;
+
   // Relación uno a uno con User (opcional, ver `userId`).
   @OneToOne(() => User, { nullable: true, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })

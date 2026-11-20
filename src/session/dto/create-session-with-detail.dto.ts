@@ -104,4 +104,13 @@ export class CreateSessionWithDetailDto {
   @IsOptional()
   @IsString()
   descriptionIA?: string;
+
+  /**
+   * BE-OFF-3: cuándo se agendó DE VERDAD en la app sin red (ISO UTC con Z).
+   * Si es anterior al inicio, la cita se acepta aunque su hora ya haya pasado.
+   * El formato, el futuro y la antigüedad los valida parseCreatedOfflineAt.
+   */
+  @IsOptional()
+  @IsString()
+  createdOfflineAt?: string;
 }

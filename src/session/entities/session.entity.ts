@@ -74,6 +74,11 @@ export class Session {
   @Column({ name: 'original_start_datetime', type: 'datetime', nullable: true })
   originalStartDatetime: Date | null;
 
+  // BE-OFF-3: cuándo se agendó DE VERDAD en la app sin red. NULL = se creó
+  // con conexión. Permite aceptar una cita que llegó cuando ya había pasado.
+  @Column({ name: 'created_offline_at', type: 'datetime', nullable: true })
+  createdOfflineAt: Date | null;
+
   @Column({ name: 'status', nullable: true })
   status: number;
 

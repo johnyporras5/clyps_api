@@ -167,6 +167,8 @@ export interface SessionResponse {
   payment?: SessionPaymentResponse | null;
   createdAt?: Date;
   updatedAt?: Date;
+  /** BE-OFF-3: cuándo se agendó en la app sin red; null si fue con conexión. */
+  createdOfflineAt?: Date | null;
   // B1: estado de calificación del cliente para esta cita (aditivo).
   feedback?: {
     status: 'pending' | 'partial' | 'completed' | 'skipped';

@@ -27,6 +27,7 @@ import {
   lockWorkers,
   slotTakenException,
 } from './slot-conflict.util';
+import { parseCreatedOfflineAt } from '../common/utils/created-offline-at.util';
 import { Session } from './entities/session.entity';
 import { SessionPayment } from './entities/session-payment.entity';
 import { SessionPaymentLine } from './entities/session-payment-line.entity';
@@ -1017,6 +1018,12 @@ export class SessionService {
       throw new BadRequestException('La sesión debe tener un cliente asociado');
     }
 
+    // BE-OFF-3: cuándo se agendó de verdad en la app sin red (o null).
+    // Formato, futuro y antigüedad se validan aquí, antes de todo.
+    const createdOfflineAt = parseCreatedOfflineAt(
+      createSessionWithDetailDto.createdOfflineAt,
+    );
+
     const adminId = caller.sub;
 
     // CLYP-306: el creador puede ser admin (empresa por userId) o worker
@@ -1092,22 +1099,35 @@ export class SessionService {
     // ya pasó (walk-in). El worker/cliente nunca. El ESTADO se decide más abajo
     // según el FIN: si ya terminó → Completada; si sigue en curso → En proceso.
     // Margen de 5 min: el flujo normal ya permitía agendar hasta 5 min antes.
+    //
+    // BE-OFF-3: si la cita se agendó SIN RED antes de su hora
+    // (createdOfflineAt < inicio) y llega cuando ya pasó, se acepta para
+    // admin y worker, y entra como AGENDADA (no se fuerza Completada/En
+    // proceso): el salón la cierra después como cualquier otra. El tope de
+    // antigüedad de createdOfflineAt (7 días) impide usarlo para colar citas
+    // viejas.
     const pastRef =
       createSessionWithDetailDto.startDatetime ||
       createSessionWithDetailDto.sessionDatetime;
     let isPastStart = false;
+    let isLateOfflineSync = false;
     if (pastRef && new Date(pastRef).getTime() < Date.now() - 5 * 60_000) {
-      if (isWorker) {
+      if (
+        createdOfflineAt &&
+        createdOfflineAt.getTime() < new Date(pastRef).getTime()
+      ) {
+        isLateOfflineSync = true;
+      } else if (isWorker) {
         throw new BadRequestException(
           'No se pueden agendar citas en fechas pasadas.',
         );
-      }
-      if (!adminCompany.allowPastAppointments) {
+      } else if (!adminCompany.allowPastAppointments) {
         throw new BadRequestException(
           'No se pueden agendar citas en fechas pasadas. Actívalo en la configuración de la empresa.',
         );
+      } else {
+        isPastStart = true;
       }
-      isPastStart = true;
     }
 
     // 2. CLYP-311: en el flujo admin/worker NO se bloquea que el cliente tenga
@@ -1239,11 +1259,14 @@ export class SessionService {
       }
 
       // Resolver precio: oferta o normal
+      // BE-OFF-3: si se agendó sin red, la oferta se respeta aunque la tarea
+      // nocturna la haya vencido entre que se agendó y que llegó.
       const priceResolution = await this.resolveServicePrice(
         detail.serviceId,
         companyId,
         detail.offerId,
         createSessionWithDetailDto.sessionDatetime,
+        createdOfflineAt,
       );
 
       let serviceCostNumber: number;
@@ -1386,6 +1409,7 @@ export class SessionService {
           : 1,
       description: createSessionWithDetailDto.description,
       descriptionIA: createSessionWithDetailDto.descriptionIA,
+      createdOfflineAt,
     };
 
     console.log('📝 Creando sesión con datos:', {
@@ -1508,7 +1532,9 @@ export class SessionService {
 
     // Correos de la cita (uno solo, con todos los servicios) en segundo plano.
     // Cita con inicio pasado (ya arrancó) → no se envía correo de "confirmación".
-    if (!isPastStart) {
+    // BE-OFF-3: tampoco si se agendó sin red y llegó cuando ya había pasado.
+    // El aviso "Nueva cita" al salón (push) sí sale: lo envía el controlador.
+    if (!isPastStart && !isLateOfflineSync) {
       this.sendConfirmationEmails(
         session,
         createdDetails,
@@ -2421,6 +2447,8 @@ export class SessionService {
         null,
       createdAt: (session as any).createdAt || null,
       updatedAt: (session as any).updatedAt || null,
+      // BE-OFF-3: cuándo se agendó sin red; null si se creó con conexión.
+      createdOfflineAt: session.createdOfflineAt ?? null,
       // B1: estado de calificación del cliente para esta cita (aditivo). La
       // reseña se guarda por userId; session.clientId es el client.id, así que
       // se resuelve el userId del dueño de la cita.
@@ -10952,6 +10980,13 @@ export class SessionService {
     companyId: number,
     offerId?: number,
     referenceDate?: Date,
+    /**
+     * BE-OFF-3: cuándo se agendó sin red. Si viene, la oferta se respeta
+     * aunque la tarea nocturna ya la haya vencido (status 0 con su fecha de
+     * fin ya pasada). Una oferta que el dueño apagó a mano (status 0 y todavía
+     * dentro de fechas) NO se respeta.
+     */
+    createdOfflineAt?: Date | null,
   ): Promise<{
     finalPrice: number;
     appliedOfferId: number | null;
@@ -10968,19 +11003,31 @@ export class SessionService {
       };
     }
 
-    const checkDate = referenceDate ? new Date(referenceDate) : new Date();
+    // Sin fecha de la cita, se mira cuándo se agendó (sin red) o ahora.
+    const checkDate = referenceDate
+      ? new Date(referenceDate)
+      : (createdOfflineAt ?? new Date());
 
     // Buscar el service_offer con su oferta relacionada
-    const serviceOffer = await this.serviceOfferRepository
+    const query = this.serviceOfferRepository
       .createQueryBuilder('so')
       .innerJoinAndSelect('so.offer', 'offer')
       .where('so.serviceId = :serviceId', { serviceId })
       .andWhere('so.offerId = :offerId', { offerId })
       .andWhere('offer.companyId = :companyId', { companyId })
-      .andWhere('offer.status = 1')
       .andWhere('offer.startDate <= :checkDate', { checkDate }) // ← CAMBIO
-      .andWhere('offer.endDate >= :checkDate', { checkDate }) // ← CAMBIO
-      .getOne();
+      .andWhere('offer.endDate >= :checkDate', { checkDate }); // ← CAMBIO
+
+    if (createdOfflineAt) {
+      // Activa, o vencida por fecha (la apagó la tarea, no el dueño).
+      query.andWhere('(offer.status = 1 OR offer.endDate < :businessToday)', {
+        businessToday: businessToday(),
+      });
+    } else {
+      query.andWhere('offer.status = 1');
+    }
+
+    const serviceOffer = await query.getOne();
 
     if (!serviceOffer) {
       throw new BadRequestException(

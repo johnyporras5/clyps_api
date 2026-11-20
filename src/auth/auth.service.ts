@@ -48,6 +48,7 @@ import {
 } from '../common/utils/identification-conflict.util';
 import { isLegacyIdentityCompany } from '../common/utils/legacy-identity.util';
 import { generateUniqueUsername } from '../common/utils/username.util';
+import { parseCreatedOfflineAt } from '../common/utils/created-offline-at.util';
 import { FileUploadService } from '../common/services/file_upload.service';
 import { CompanyCategoryService } from '../company_category/company_category.service';
 import { SiteCategoryService } from '../site_category/site_category.service';
@@ -1353,6 +1354,11 @@ export class AuthService {
     let company: Company;
     let createdByCompanyWorkerId: number | null = null;
 
+    // BE-OFF-3: se valida antes de crear nada (formato, futuro, antigüedad).
+    const createdOfflineAt = parseCreatedOfflineAt(
+      registerDto.createdOfflineAt,
+    );
+
     if (caller.userType === 'adm') {
       const admin = await this.userRepository.findOne({
         where: { id: caller.sub, userType: 'adm' },
@@ -1682,6 +1688,7 @@ export class AuthService {
         location: registerDto.location,
         userId: user?.id ?? null,
         createdByCompanyWorkerId,
+        createdOfflineAt,
       });
       client = await this.clientRepository.save(newClient);
     }

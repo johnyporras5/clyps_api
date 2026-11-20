@@ -96,4 +96,13 @@ export class RegisterClientByAdminDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   confirmLink?: boolean;
+
+  /**
+   * BE-OFF-3: cuándo se dio de alta DE VERDAD en la app sin red (ISO UTC con
+   * Z). Solo se guarda. El formato, el futuro y la antigüedad los valida
+   * parseCreatedOfflineAt.
+   */
+  @IsOptional()
+  @IsString()
+  createdOfflineAt?: string;
 }

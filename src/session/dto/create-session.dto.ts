@@ -37,4 +37,11 @@ export class CreateSessionDto {
   @IsOptional()
   @IsString()
   descriptionIA?: string;
+
+  /**
+   * BE-OFF-3. Uso INTERNO: lo llena createSessionWithDetail ya validado. Sin
+   * decoradores a propósito: el ValidationPipe (whitelist) no lo acepta en el
+   * body de POST /sessions.
+   */
+  createdOfflineAt?: Date | null;
 }
